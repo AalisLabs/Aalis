@@ -58,16 +58,21 @@ describe('storage-local 宿主控制文件兜底', () => {
   });
 
   it('读密钥文件被拒（读全文、区间读、流式读、交出本地路径都算）', async () => {
-    await expect(storage.readFile('everything:/secrets.yaml', 'utf-8')).rejects.toThrow('密钥文件');
-    await expect(storage.readFileRange?.('everything:/secrets.yaml', 0, 5)).rejects.toThrow('密钥文件');
-    await expect(storage.createReadStream('everything:/secrets.yaml')).rejects.toThrow('密钥文件');
-    await expect(storage.resolveLocalPath?.('everything:/secrets.yaml')).rejects.toThrow('密钥文件');
+    const denied = '不能经存储读取宿主的密钥文件（只经宿主读写）';
+    await expect(storage.readFile('everything:/secrets.yaml', 'utf-8')).rejects.toThrow(denied);
+    await expect(storage.readFileRange?.('everything:/secrets.yaml', 0, 5)).rejects.toThrow(denied);
+    await expect(storage.createReadStream('everything:/secrets.yaml')).rejects.toThrow(denied);
+    await expect(storage.resolveLocalPath?.('everything:/secrets.yaml')).rejects.toThrow(denied);
   });
 
   it('主配置可以读、不能写；密钥文件也不能写', async () => {
     expect(await storage.readFile('everything:/aalis.config.yaml', 'utf-8')).toBe('name: T\n');
-    await expect(storage.writeFile('everything:/aalis.config.yaml', 'x')).rejects.toThrow('主配置');
-    await expect(storage.writeFile('everything:/secrets.yaml', 'x')).rejects.toThrow('密钥文件');
+    await expect(storage.writeFile('everything:/aalis.config.yaml', 'x')).rejects.toThrow(
+      '不能经存储修改宿主的主配置（只经宿主修改）',
+    );
+    await expect(storage.writeFile('everything:/secrets.yaml', 'x')).rejects.toThrow(
+      '不能经存储修改宿主的密钥文件（只经宿主读写）',
+    );
     expect(readFileSync(join(home, 'aalis.config.yaml'), 'utf-8')).toBe('name: T\n');
     expect(readFileSync(join(home, 'secrets.yaml'), 'utf-8')).toBe('key: SECRET-VALUE\n');
   });

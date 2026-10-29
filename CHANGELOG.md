@@ -18,6 +18,11 @@
 - `PluginEntry` 与 `PluginStatusEntry` 加 `failure`：激活失败时抛出的原值；`error` 改为由它现算，取值不变。
 - core 自己的四种失败挂 `code` 与数据属性，取值见包根类型 `CoreFailureCode`：`required-retry-exhausted`（`service`）、`provides-not-registered`（`services`）、`exclusive-conflict`（`service`）、`service-unavailable`（`service`、`provider`，即 `ServiceUnavailableError`）。message 不变。
 
+### 第一方插件给人看的文字进字典（@aalis/plugin-package-manager、@aalis/plugin-storage-local）
+
+- plugin-package-manager 导出的纯函数改交文字对象：`validatePackageSpec` 返回 `TextRef | undefined`，`buildUpdateSpecs` 的 `error` 是 `TextRef`，`describeNpmFailure` 返回 `TextRef`，`findUnmetPeers` 返回 `TextRef[]`。
+- plugin-storage-local 的存储操作抛出 `TextError`：message 不变，`name` 由 `Error` 变为 `TextError`，`String(err)` 的前缀随之变为 `TextError:`。
+
 ### 记忆压缩：摘要预算、保留原文与成段丢弃（@aalis/api-memory、@aalis/api-agent、@aalis/api-llm、@aalis/plugin-memory-summary、@aalis/plugin-agent、@aalis/plugin-memory-inmemory、@aalis/plugin-memory-sqlite、@aalis/plugin-memory-mongodb、@aalis/plugin-session-server）
 
 - **摘要预算**（plugin-memory-summary）：摘要长度按这个会话的自动压缩线算。预算是压缩线（按最近一次用量算）乘 `summaryBudgetRatio`（默认 0.1），不论怎么触发，但不超过这次要压的内容（上一份摘要加这次新压的对话）；不少于 1000 token、不超过压缩线的四分之一；最终不超过摘要模型物理上限（输出上限与窗口的四分之一取小）的三分之二，输出上限 8192 的模型最多约 5461 token；还没有用量时按要压的内容，同样不少于 1000 token、不超过物理上限的三分之二。插件详情里的「摘要 Token 上限（占窗口比例）」换成「摘要预算（占自动压缩线的比例）」。见 [plugin-memory-summary](docs/plugins/plugin-memory-summary.md) 的「摘要预算」。

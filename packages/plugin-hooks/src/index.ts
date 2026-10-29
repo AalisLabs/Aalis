@@ -6,6 +6,7 @@
 
 import { type HookRegistry, hooks, type MiddlewareFn, type MiddlewareNext, type RunOptions } from '@aalis/api-hooks';
 import { definePlugin, logger, provide } from '@aalis/core';
+import { t } from './texts.js';
 
 interface Entry {
   readonly fn: MiddlewareFn<unknown>;
@@ -74,7 +75,7 @@ export class Registry implements HookRegistry {
 
 export default definePlugin({
   name: '@aalis/plugin-hooks',
-  displayName: '钩子',
+  displayName: t('displayName'),
   subsystem: 'core',
   provides: [hooks],
   uses: { provide, logger },

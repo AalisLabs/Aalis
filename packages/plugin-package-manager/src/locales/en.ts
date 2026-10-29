@@ -2,6 +2,87 @@ import { defineLocale } from '@aalis/schema-i18n';
 import type { Source } from '../texts.js';
 
 export default defineLocale<Source>()({
+  displayName: 'Package manager',
+  noApp: 'The app service is unavailable, so package operations cannot run',
+  emptyName: 'The package name must be a non-empty string',
+  badName: 'Invalid package name: {name}',
+  badVersion: 'Invalid version: {name}@{version}',
+  noTargets: 'No update targets given',
+  duplicateTarget: 'The same package was given more than once: {name}',
+  tooManyTargets: 'Too many update targets: the arguments exceed {budget} bytes in total; submit them in batches',
+  npmDisk: 'Not enough disk space (ENOSPC): free some space and retry',
+  npmPermission:
+    'No write permission (EACCES): give the project directory and the npm cache directory (see npm config get cache) back to the user running Aalis, then retry; do not use sudo',
+  npmPlatform:
+    'Dependency {pkg} does not support the system or CPU architecture of this machine (EBADPLATFORM); this plugin cannot be installed here',
+  npmPlatformUnknown:
+    'A dependency does not support the system or CPU architecture of this machine (EBADPLATFORM); this plugin cannot be installed here',
+  npmPeer: 'Peer dependency conflict (market installs do not use legacy-peer-deps from .npmrc): {conflicts}',
+  npmBrowser:
+    'Downloading the browser failed: this plugin downloads Chrome while installing. Set a mirror for the Aalis process (environment variable PUPPETEER_CHROME_DOWNLOAD_BASE_URL), restart, and install again',
+  npmNative:
+    'Native module {pkg} failed to compile: this machine lacks C/C++ build tools. On macOS run xcode-select --install; on Linux install build-essential and python3; on Windows install Visual Studio "Desktop development with C++"; then retry',
+  npmNativeUnknown:
+    'A native module failed to compile: this machine lacks C/C++ build tools. On macOS run xcode-select --install; on Linux install build-essential and python3; on Windows install Visual Studio "Desktop development with C++"; then retry',
+  npmMissing:
+    'The registry has no such package or version ({code}): check the name and version; if you use a mirror it may not have synced yet, so retry later',
+  npmNetwork:
+    'Cannot reach the npm registry ({code}): check the network and proxy and retry; if the default registry is unreachable, run npm config set registry <registry URL> in a terminal to switch',
+  npmOther:
+    'npm failed: {error}. The full output is in the logs; see https://aalis.acenyan.com/guide/troubleshooting for common causes and fixes',
+  needsPeer: '{dependent} needs {peer}',
+  busy: 'A package operation is in progress ({operation}); retry in a moment',
+  opUpdate: 'updating {names, list}',
+  opInstall: 'installing {name}',
+  opUninstall: 'uninstalling {name}',
+  installedErrored: 'Installed {target}, but activation failed and it is now in the error state ({error})',
+  seeLogs: 'see the logs for details',
+  installedActivating:
+    'Installed {target}; it is still activating (past the slow-activation threshold, moved to the background); see the plugin list for the result',
+  installedPending: 'Installed {target}; not active yet, waiting for its required dependencies',
+  installedLoaded: 'Installed and loaded: {target}',
+  installedNotLoaded:
+    'Installed into {where}, but although it declares itself a plugin it was not loaded; check its keywords and entry export',
+  installedNonPlugin: 'Installed {target} (not a plugin package, so it does not appear in the plugin list)',
+  workspaceInstall:
+    'The root dependencies use the workspace: protocol, so npm install is refused here (it would write package-lock.json and break the pnpm workspace)',
+  workspaceUpdate: 'The root dependencies use the workspace: protocol, so npm install is refused here',
+  noRestart: 'The current host cannot restart, so the update cannot be completed',
+  noRootPackage: 'Cannot read the root package.json: {path}',
+  notUpdatable:
+    'These packages are not root dependencies (another plugin brought them in) or are not from the registry, so updating them alone would install a second copy; update the plugins that bring them in instead: {names, list}',
+  downgradeItem: '{name} (installed {installed} → target {version})',
+  unknown: 'unknown',
+  notUpgrade:
+    'These target versions are not higher than the installed ones (or the installed version cannot be read), so the update would be a downgrade and was refused: {items, list}',
+  preflightRejected:
+    'The dependency dry run did not pass; no files were changed. If it is a peer version requirement, select the depended-on packages too and retry.',
+  preflightFailed: 'The dependency dry run could not run: {error}',
+  installFailedRetry: 'Installation failed (the project was not restarted; you can retry): {error}',
+  updated: 'Updated {specs, list}; restarting…',
+  noPackageJson:
+    'Cannot read the package.json of {name}, so the market cannot tell what it is and will not uninstall it; if you are sure, run npm uninstall {name} in the project directory and restart',
+  lifeline:
+    '{name} is hosting the market and management interface itself; uninstalling it would make this page unavailable at once, leaving only the terminal to recover. To switch implementations, install the replacement and switch to it in the service preferences under Settings "System" first, then come back and uninstall this one.',
+  originWorkspace: 'it is a local source package in the workspace; remove it through git',
+  originLink:
+    'it points to a local directory through file:/link:; change that source and the dependency declaration to remove it',
+  originGit:
+    'it was installed from git, a URL or a user/repo shorthand; change the dependency declaration to remove it',
+  originAlias: 'it is an npm: alias of another package; change the dependency declaration to remove it',
+  originTransitive:
+    'it is not a root dependency (another plugin brought it in) and npm prunes it along with the plugin that brought it in',
+  notFromMarket: '{name} was not installed through the market: {why}.',
+  breaksDependents:
+    'Uninstalling would break dependencies: these plugins depend on services this plugin provides and no other plugin provides them: {dependents, list}. Disable them first, or enable or install an alternative provider.',
+  uninstalledConfigUnsaved:
+    'Plugin {name} was uninstalled (removed from the root dependencies and node_modules), but the config file could not be written ({error}): if needed, delete its config section and disabled flag from the config file by hand.',
+  uninstalledFlagUnsaved:
+    'Plugin {name} was uninstalled (removed from the root dependencies and node_modules), but the config file could not be written ({error}): if needed, delete its disabled flag from the config file by hand.',
+  uninstalledConfigRemoved:
+    'Plugin {name} was uninstalled (removed from the root dependencies and node_modules). Its config was deleted from the config file, along with the secrets only it used; data written under state/ in the home directory and elsewhere is not deleted, so clean it up by hand if needed.',
+  uninstalledConfigKept:
+    'Plugin {name} was uninstalled (removed from the root dependencies and node_modules). Its config stays in the config file, so it starts with the same config if reinstalled; data written under state/ in the home directory and elsewhere is not deleted, so clean it up by hand if needed.',
   kindCore: 'core',
   kindRuntime: 'host',
   kindApi: 'service contract',
@@ -9,11 +90,11 @@ export default defineLocale<Source>()({
   kindUtil: 'utility library',
   kindOther: 'non-plugin package',
   installUnmarked:
-    '{name} ({kind}) is not a plugin that can be installed or uninstalled; the marketplace does not install it. The marketplace only installs packages with the aalis-plugin / aalis-interface keyword.',
+    '{name} ({kind}) is not a plugin that can be installed or uninstalled; the market does not install it. The market only installs packages with the aalis-plugin / aalis-interface keyword.',
   installBundled:
-    '{name} ({kind}) is not a plugin that can be installed or uninstalled; the marketplace does not install it. It is put in place by the scaffold or by the plugins that depend on it; to upgrade the installed version, select it in the marketplace and submit with “Update selected”.',
+    '{name} ({kind}) is not a plugin that can be installed or uninstalled; the market does not install it. It is put in place by the scaffold or by the plugins that depend on it; to upgrade the installed version, select it in the market and submit with “Update selected”.',
   uninstallVital:
-    '{name} ({kind}) is not a plugin that can be installed or uninstalled; the marketplace does not uninstall it. Without it the instance cannot start and the marketplace goes away too, leaving only the terminal to recover; if you really mean it, run npm uninstall by hand.',
+    '{name} ({kind}) is not a plugin that can be installed or uninstalled; the market does not uninstall it. Without it the instance cannot start and the market goes away too, leaving only the terminal to recover; if you really mean it, run npm uninstall by hand.',
   uninstallPruned:
-    '{name} ({kind}) is not a plugin that can be installed or uninstalled; the marketplace does not uninstall it. npm prunes it automatically along with the plugins that depend on it; to remove it on its own, run npm uninstall by hand.',
+    '{name} ({kind}) is not a plugin that can be installed or uninstalled; the market does not uninstall it. npm prunes it automatically along with the plugins that depend on it; to remove it on its own, run npm uninstall by hand.',
 });

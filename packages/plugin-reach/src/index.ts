@@ -23,6 +23,7 @@ import { issueCredential } from './credential.js';
 import { codeDirsOf, entryOf, formOf, gitDirOf, realRootsOf } from './host-dirs.js';
 import { loginEnvs } from './process-env.js';
 import { SWEEP_EVERY_MS, sessionTmpOf, sweepSessionTmp } from './session-tmp.js';
+import { t } from './texts.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-reach —— 触及服务（契约见 @aalis/api-reach）
@@ -55,7 +56,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-reach',
-  displayName: '触及',
+  displayName: t('displayName'),
   subsystem: 'authority',
   provides: [reach],
   uses,

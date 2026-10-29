@@ -10,6 +10,7 @@ import { makeTempDirViaStorage, processService } from '@aalis/api-process';
 import type { StorageService } from '@aalis/api-storage';
 import { storage } from '@aalis/api-storage';
 import { definePlugin, events, logger, optional, provide } from '@aalis/core';
+import { t } from './texts.js';
 
 /** wait() 默认累计缓冲上限（stdout+stderr 合计）：10MB，足够正常输出，又防失控输出 OOM。 */
 const DEFAULT_MAX_BUFFER = 10 * 1024 * 1024;
@@ -280,7 +281,7 @@ export class LocalProcessService implements ProcessService {
 
 export default definePlugin({
   name: '@aalis/plugin-process-local',
-  displayName: '本地进程',
+  displayName: t('displayName'),
   subsystem: 'system',
   provides: [processService],
   // storage 只被 makeTempDir 用到，缺席时其余方法照常可用：声明为可选，不拦激活。

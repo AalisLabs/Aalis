@@ -40,4 +40,6 @@ export default defineLocale<Source>()({
   layerPlace: '{layer} “{place}”',
   installPack:
     'Install a language pack that provides it (search the plugin market or npm for the keyword {keywords, list, or}), or adjust the “Language” list in the session settings for {layer}',
+  installPackGlobal:
+    'Install a language pack that provides it (search the plugin market or npm for the keyword {keywords, list, or}), or adjust the “Language” row of the {layer} layer under Settings “Session defaults”',
 });

@@ -13,6 +13,7 @@ import {
 import { type InfoItem, type PageTab, type TableRow, webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, definePlugin, events, type Logger, provide } from '../../packages/core/src/index.js';
 import usageStats from '../../packages/plugin-usage-stats/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
@@ -201,7 +202,7 @@ describe('plugin-usage-stats', () => {
     const home = tempHome();
     const stack = await start(home);
     await seed(stack);
-    expect(stack.tabs().map(tab => tab.title)).toEqual(['按天', '按周', '按模型']);
+    expect(toSource(stack.tabs().map(tab => tab.title))).toEqual(['按天', '按周', '按模型']);
     expect(stack.tabs().flatMap(tab => tab.content.flatMap(component => component.columns ?? []))).not.toContainEqual(
       expect.objectContaining({ key: 'cost' }),
     );
@@ -274,7 +275,7 @@ describe('plugin-usage-stats', () => {
     const stack = await start(tempHome(), { prices: { a: '2, 0.5, 8' }, currency: 'USD' });
     await seed(stack);
     const columns = stack.tabs()[0]?.content[0]?.columns;
-    expect(columns).toContainEqual(expect.objectContaining({ key: 'cost', label: '费用（USD）' }));
+    expect(toSource(columns)).toContainEqual(expect.objectContaining({ key: 'cost', label: '费用（USD）' }));
     // 有费用时窄时留首列、输入与费用
     expect(primaryOf(columns)).toEqual(['day', 'input', 'cost']);
     // a：1M 输入里 0.4M 命中、0.1M 输出 → 0.6×2 + 0.4×0.5 + 0.1×8 = 2.2；10-04 的 2M 输入没报命中 → 2×2 + 0.2×8 = 5.6
@@ -306,8 +307,8 @@ describe('plugin-usage-stats', () => {
     await stack.app.plugin(rich, {});
     await stack.app.plugin(broken, {});
     await stack.app.plugins.idle();
-    expect(stack.tabs().map(tab => tab.title)).toEqual(['按天', '按周', '按模型', '余额']);
-    expect(await stack.pages.data<InfoItem[]>(PAGE, 'balance')).toEqual([
+    expect(toSource(stack.tabs().map(tab => tab.title))).toEqual(['按天', '按周', '按模型', '余额']);
+    expect(toSource(await stack.pages.data<InfoItem[]>(PAGE, 'balance'))).toEqual([
       { label: '显示名 rich-llm（CNY）', value: 12.5 },
       { label: '显示名 rich-llm（USD）', value: 3 },
       { label: '显示名 broken-llm', value: { text: '查不到：认证失败', state: 'error' }, kind: 'status' },
@@ -321,7 +322,9 @@ describe('plugin-usage-stats', () => {
 
   it('页面过登记门槛', async () => {
     const stack = await start(tempHome());
-    expect(stack.pages.view(PAGE)).toEqual(expect.objectContaining({ title: '用量统计', placement: 'plugin' }));
+    expect(toSource(stack.pages.view(PAGE))).toEqual(
+      expect.objectContaining({ title: '用量统计', placement: 'plugin' }),
+    );
     expect(stack.pages.logs).toEqual([]);
   });
 });

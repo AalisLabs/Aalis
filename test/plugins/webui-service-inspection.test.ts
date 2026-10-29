@@ -6,6 +6,7 @@ import { type StorageService, storage } from '../../packages/api-storage/src/ind
 import { defineService, type Logger, provide } from '../../packages/core/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { createConfigStore, installHostConfig } from '../../packages/runtime/src/config-store.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { HUB_PLUGINS, registerHubs } from '../fixtures/hubs.js';
 import { createInspectableApp } from '../helpers/inspectable-app.js';
 
@@ -97,7 +98,7 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
       expect(body.services[name].providers).toEqual([
         expect.objectContaining({
           contextId,
-          displayName: HUB_PLUGINS.find(plugin => plugin.name === contextId)?.displayName,
+          displayName: toSource(HUB_PLUGINS.find(plugin => plugin.name === contextId)?.displayName),
           exclusive: false,
         }),
       ]);

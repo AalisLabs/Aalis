@@ -25,18 +25,17 @@ import {
   pluginsService,
 } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
-import { asText, toSource } from '@aalis/schema-i18n';
+import { asText, TextError, type TextRef, textOf } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 
 const configSchema = defineConfig({
   prices: {
     type: 'map',
-    label: '单价',
-    description:
-      '每百万 token 的价格：键是模型 id，值依次写输入、缓存命中、输出三个价，用逗号隔开，如 deepseek-chat 写 2, 0.5, 8。' +
-      '填了才有费用一列，没填单价的模型不算进费用',
+    label: t('pricesLabel'),
+    description: t('pricesDescription'),
     default: {},
   },
-  currency: { type: 'string', label: '币种', description: '费用一列标的币种，只用于显示', default: 'CNY' },
+  currency: { type: 'string', label: t('currencyLabel'), description: t('currencyDescription'), default: 'CNY' },
 });
 
 const uses = {
@@ -57,7 +56,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-usage-stats',
-  displayName: '用量统计',
+  displayName: t('displayName'),
   subsystem: 'llm',
   configSchema,
   uses,
@@ -85,7 +84,7 @@ interface Price {
 const PAGE_KEY = 'usage-stats';
 /** 查余额的时限 */
 const BALANCE_TIMEOUT_MS = 10_000;
-const EMPTY = '还没有模型调用的记录';
+const EMPTY = t('empty');
 
 const isCount = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
 const isText = (value: unknown) => value === undefined || typeof value === 'string';
@@ -112,9 +111,7 @@ function parsePrices(prices: Record<string, string>): Map<string, Price> {
   for (const [model, text] of Object.entries(prices)) {
     const values = text.split(',').map(part => Number(part.trim()));
     if (values.length !== 3 || !values.every(isCount)) {
-      throw configError(
-        `单价「${model}」要写成输入、缓存命中、输出三个价，用逗号隔开，在 WebUI 或配置文件中改正后生效`,
-      );
+      throw configError(t('badPrice', { model }));
     }
     const [input, cached, output] = values as [number, number, number];
     parsed.set(model, { input, cached, output });
@@ -141,11 +138,13 @@ function addTotals(into: Totals, from: Totals): void {
 }
 
 /** 插件实例的显示名：插件的显示名（没有时用包名），非默认实例另带实例名；插件已不在的用实例 id */
-function instanceLabel(plugins: PluginManagerService | undefined, instance: string): string {
+function instanceLabel(plugins: PluginManagerService | undefined, instance: string): string | TextRef {
   const definition = plugins?.getPlugin(instance)?.definition;
   if (!definition) return instance;
-  const name = toSource(asText(definition.displayName)) ?? definition.name;
-  return instance === definition.name ? name : `${name}（${instance.slice(definition.name.length + 1)}）`;
+  const name = asText(definition.displayName) ?? definition.name;
+  return instance === definition.name
+    ? name
+    : t('instanceLabel', { name, instance: instance.slice(definition.name.length + 1) });
 }
 
 async function run(caps: Caps): Promise<void> {
@@ -185,9 +184,7 @@ async function run(caps: Caps): Promise<void> {
     }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      throw new Error(`用量账本 ${file} 读不出来：检查它的读写权限；要从空账本开始就把它移走后重载本插件`, {
-        cause: err,
-      });
+      throw new TextError(t('ledgerUnreadable', { file, error: textOf(err) }));
     }
   }
   if (unreadable > 0) logger.use.warn(`用量账本 ${file} 有 ${unreadable} 行读不懂，已跳过`);
@@ -270,36 +267,37 @@ async function run(caps: Caps): Promise<void> {
         const label = instanceLabel(caps.plugins.present ? caps.plugins.use : undefined, provider);
         try {
           const list = await balance(AbortSignal.timeout(BALANCE_TIMEOUT_MS));
-          return list.map(({ currency, amount }) => ({ label: `${label}（${currency}）`, value: amount }));
+          return list.map(({ currency, amount }) => ({ label: t('balanceLabel', { label, currency }), value: amount }));
         } catch (err) {
-          const reason = err instanceof Error ? err.message : String(err);
-          return [{ label, value: { text: `查不到：${reason}`, state: 'error' }, kind: 'status' }];
+          return [
+            { label, value: { text: t('balanceFailed', { error: textOf(err) }), state: 'error' }, kind: 'status' },
+          ];
         }
       }),
     );
     return items.flat();
   }
 
-  const description = priced ? '费用按配置里的单价估算，没填单价的模型不算在内' : undefined;
+  const description = priced ? t('description') : undefined;
   // 窄时留首列与输入，另一列有费用时是费用、没有时是输出
   const columns = (first: TableColumn[]): TableColumn[] => [
     ...first,
-    { key: 'input', label: '输入', primary: true },
-    { key: 'cached', label: '缓存命中' },
-    { key: 'output', label: '输出', primary: !priced },
-    ...(priced ? [{ key: 'cost', label: `费用（${cfg.currency}）`, primary: true }] : []),
+    { key: 'input', label: t('input'), primary: true },
+    { key: 'cached', label: t('cached') },
+    { key: 'output', label: t('output'), primary: !priced },
+    ...(priced ? [{ key: 'cost', label: t('cost', { currency: cfg.currency }), primary: true }] : []),
   ];
 
   const definePage = (withBalance: boolean) =>
     webui.use.definePage({
       key: PAGE_KEY,
-      title: '用量统计',
+      title: t('displayName'),
       icon: 'chart-column',
       content: {
         tabs: [
           {
             key: 'days',
-            title: '按天',
+            title: t('byDay'),
             content: [
               {
                 type: 'table',
@@ -307,14 +305,14 @@ async function run(caps: Caps): Promise<void> {
                 rowKey: 'day',
                 description,
                 empty: EMPTY,
-                columns: columns([{ key: 'day', label: '日期', primary: true }]),
+                columns: columns([{ key: 'day', label: t('day'), primary: true }]),
                 data: dayRows,
               },
             ],
           },
           {
             key: 'weeks',
-            title: '按周',
+            title: t('byWeek'),
             content: [
               {
                 type: 'table',
@@ -322,14 +320,14 @@ async function run(caps: Caps): Promise<void> {
                 rowKey: 'week',
                 description,
                 empty: EMPTY,
-                columns: columns([{ key: 'week', label: '周', primary: true }]),
+                columns: columns([{ key: 'week', label: t('week'), primary: true }]),
                 data: weekRows,
               },
             ],
           },
           {
             key: 'models',
-            title: '按模型',
+            title: t('byModel'),
             content: [
               {
                 type: 'table',
@@ -338,15 +336,21 @@ async function run(caps: Caps): Promise<void> {
                 description,
                 empty: EMPTY,
                 columns: columns([
-                  { key: 'model', label: '模型', primary: true },
-                  { key: 'provider', label: '服务商' },
+                  { key: 'model', label: t('model'), primary: true },
+                  { key: 'provider', label: t('provider') },
                 ]),
                 data: modelRows,
               },
             ],
           },
           ...(withBalance
-            ? [{ key: 'balance', title: '余额', content: [{ type: 'info' as const, id: 'balance', data: balances }] }]
+            ? [
+                {
+                  key: 'balance',
+                  title: t('balance'),
+                  content: [{ type: 'info' as const, id: 'balance', data: balances }],
+                },
+              ]
             : []),
         ],
       },
