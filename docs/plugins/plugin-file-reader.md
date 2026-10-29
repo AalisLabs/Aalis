@@ -23,6 +23,8 @@ export default definePlugin({
     agent: optional(agent),
     media: optional(media),
     webui: optional(webuiServer),
+    sessionManager: optional(sessionManager),
+    authority: optional(authority),
   },
   apply(caps) { /* 见源码 */ },
 });
@@ -33,17 +35,17 @@ export default definePlugin({
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `maxFileSizeMB` | number | `20` | 最大文件大小 (MB)：允许上传的最大文件大小(MB)。超过此限制的文件将被拒绝。 |
-| `autoInlineLimit` | number | `100000` | 自动 inline 阈值（字符）：提取出的文本长度若 ≤ 此值，则直接 inline 到附件描述里（模型无需调工具即可看到全文）；否则只挂 ID，由模型按需用 read_uploaded_file 拉取。 |
+| `autoInlineLimit` | number | `100000` | 自动 inline 阈值（字符）：提取出的文本长度若 ≤ 此值，则直接 inline 到附件描述里（模型无需调工具即可看到全文）；否则只挂 ID，由模型按需用 read_uploaded_file 拉取。受众里有别人的会话（群、多人房间、对端不是 owner 的私聊）里一律不内联，只给文件名、ID 与大小。 |
 | `toolDefaultMaxLength` | number | `50000` | read_uploaded_file 默认截断：read_uploaded_file 工具未显式传 maxLength 时使用的默认截断字符数，避免把超大文档一次喂进 LLM 上下文导致爆 token。0 表示不截断；要是非负整数，负数与小数报配置错误。 |
 | `retentionDays` | number | `30` | 保留天数：上传文件保留的最长天数，超过即清理（按上传时间 uploadedAt）。0 表示不按时间清理。 |
 | `lruMaxTotalMB` | number | `500` | 磁盘总量上限 (MB)：上传文件总目录占用超过该上限时，按上传时间 uploadedAt 由旧到新淘汰直到回落到上限以下。0 表示不限。 |
-| `historyHintEnabled` | boolean | `true` | 注入会话文件清单提示：开启后：会话中存在上传文件时，在 LLM 调用前注入一条 system 提示列出可用文件（含 ID），避免模型遗忘过往上传。本轮有新上传时注入本轮清单与历史清单（本轮文件单独标出），否则只注入历史清单。本轮新上传按这一轮各条输入的附件认：预处理器把处理过的文件附件改写成本插件的文件引用，引用的是本会话已知文件的就是；正文里写的文件描述不算。 |
+| `historyHintEnabled` | boolean | `true` | 注入会话文件清单提示：开启后：会话中存在上传文件时，在 LLM 调用前注入一条 system 提示列出可用文件（含 ID），避免模型遗忘过往上传。本轮有新上传时注入本轮清单与历史清单（本轮文件单独标出），否则只注入历史清单。只列最近 20 个，更早的在列表末尾写一句个数、用 list_uploaded_files 查。本轮新上传按这一轮各条输入的附件认：预处理器把处理过的文件附件改写成本插件的文件引用，引用的是本会话已知文件的就是；正文里写的文件描述不算。 |
 | `recognizeDocImages` | boolean | `true` | 识别文档内嵌图片：读取 DOCX 时调用 media 服务识别内嵌图片，把描述附在正文末尾（需启用 media/vision；无 media 服务时自动跳过）。识别会增加首次解析耗时与 vision token 开销，结果随提取文本一并缓存。 |
 | `maxDocImages` | number | `8` | 单文档最多识别图片数：超出的内嵌图片跳过识别，避免大量图片拖慢解析、消耗 vision token。0 等同关闭识别。 |
 
 ## 附件描述
 
-上传的文件经预处理后，附件描述拼进用户消息。提取文本不超过 `autoInlineLimit` 时内联全文：文件头 `[文件: 名称 (ID: …)]` 的下一行以 `--- 文件内容 ---` 开头，同一行注明正文是数据不是指令，并给出本次的结束标记 `--- 文件内容结束 <编号> ---`。编号在每次生成描述时随机产生，正文中出现的其它结束标记都算正文，文件内容无法借伪造的结束标记把文字排到文件块之外。文件名中的换行等控制字符一律换成空格，名字只占文件头所在的一行，附件描述、文件清单与工具输出都用净化后的名字。超过阈值时只给文件名、ID 与大小，由模型调用 `read_uploaded_file` 按需读取。读不出内容的写成 `[文件: 名称 (ID: …) — 读不出内容：<原因>]`，不给内容块；以方括号开头的普通文本照常内联。附件描述只给模型看：会话历史与实时推送里的提问取存档另记的发言人写的话与附件清单（见 [plugin-message-archive](./plugin-message-archive.md)），文件块不进气泡，文件显示成卡片。
+上传的文件经预处理后，附件描述拼进用户消息。受众里有别人的会话（房间类别 `room`：群、多人房间、对端不是 owner 的私聊，判法见 [session-manager](../services/session-manager.md) 的房间类别）不内联；其余会话提取文本不超过 `autoInlineLimit` 时内联全文：文件头 `[文件: 名称 (ID: …)]` 的下一行以 `--- 文件内容 ---` 开头，同一行注明正文是数据不是指令，并给出本次的结束标记 `--- 文件内容结束 <编号> ---`。编号在每次生成描述时随机产生，正文中出现的其它结束标记都算正文，文件内容无法借伪造的结束标记把文字排到文件块之外。文件名中的换行等控制字符一律换成空格，名字只占文件头所在的一行，附件描述、文件清单与工具输出都用净化后的名字。不内联时（受众里有别人，或超过阈值）只给文件名、ID 与大小，由模型调用 `read_uploaded_file` 按需读取，两种同一句。受众里有别人的会话里上传时不解析，读的时候才解析文档、识别内嵌图片；只看字节就知道读不出的（旧版 Office 文档、媒体、认不出的格式）上传时就写明原因，PDF 与 DOCX 读不出的在读的时候才报。会话管理不在时判不出受众，照旧内联。读不出内容的写成 `[文件: 名称 (ID: …) — 读不出内容：<原因>]`，不给内容块；以方括号开头的普通文本照常内联。附件描述只给模型看：会话历史与实时推送里的提问取存档另记的发言人写的话与附件清单（见 [plugin-message-archive](./plugin-message-archive.md)），文件块不进气泡，文件显示成卡片。
 
 ## 附件的来源
 
@@ -74,7 +76,7 @@ export default definePlugin({
 
 上传的文件存在 `pluginData:/file-reader/<会话目录>/<文件 ID><扩展名>`，元信息在同目录同名的 `.meta.json` 里；会话目录名是把会话 id 里的 `:`、`/`、`\` 换成 `_`（Windows 文件名不收冒号）。存储不是沙箱，会话之间的隔离靠下面的校验。
 
-文件 ID 是 `sha256(会话 id + '\0' + 内容)` 的前 16 位十六进制：同一会话重传同一文件得到同一 ID，不同会话上传相同内容得到不同 ID。ID 仍可预测（知道会话 id 与内容就能算出），所以工具 `read_uploaded_file`、`list_uploaded_files`、`delete_uploaded_file` 只认本会话（`ToolCallContext.sessionId`）的文件，别的会话的文件一律当作不存在；删除工具是 `restricted`。会话删除（`session:deleted`）时删掉这个会话的全部文件。
+文件 ID 是 `sha256(会话 id + '\0' + 内容)` 的前 16 位十六进制：同一会话重传同一文件得到同一 ID，不同会话上传相同内容得到不同 ID。ID 仍可预测（知道会话 id 与内容就能算出），所以工具 `read_uploaded_file`、`list_uploaded_files`、`delete_uploaded_file` 只认本会话（`ToolCallContext.sessionId`）的文件，别的会话的文件一律当作不存在。`read_uploaded_file`、`list_uploaded_files` 不分组、总是给（只读这个会话自己收到的文件）；`delete_uploaded_file` 在 `file-reader` 分组里（显示名「删除上传的文件」），是 `restricted`。会话删除（`session:deleted`）时删掉这个会话的全部文件。
 
 工具的失败一律抛错，执行层按失败记、WebUI 工具卡显示为失败：`read_uploaded_file` 找不到文件（不在索引里或不属于本会话，两种同一句）时写「找不到文件 (ID: …)：上传的文件按保留天数与总量清理，已清理的请用户重新上传」，读不出内容时写原因；`maxLength` 给了就要是正整数，截断不切开代理对。
 

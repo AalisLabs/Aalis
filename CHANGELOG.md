@@ -556,6 +556,13 @@
 - 删除事实也要附本人原话：提取输出的 `remove` 由 id 字符串的数组改为 `[{ id, sourceQuote }]`，只给 id 的不删、记 warn；别人一句「他不喜欢猫了」删不掉他的事实。
 - 原话与他的话核对前同样规整：NFKC（全角与半角归成同一个字）、小写，去掉 Unicode 标点、空白与不显示的字符，符号照留。规整后不含字母或数字的原话（全是标点、符号或表情，如「...」「……」「👍」）按没给原话丢弃、记 warn；此前「...」不核对、直接通过。
 
+### 群文件不整份进上下文（@aalis/plugin-file-reader）
+
+- 受众里有别人的会话（房间类别 `room`：群、多人房间、对端不是 owner 的私聊）里上传的文件不再内联进上下文，描述只写名字、ID 与大小，要看时用 `read_uploaded_file` 读；受众只有 owner 的会话与内部会话照旧按 `autoInlineLimit` 内联，超过内联上限的说明改成同一句。这些会话里上传时不解析，读的时候才解析文档、识别内嵌图片；只看字节就知道读不出的（旧版 Office 文档、媒体、认不出的格式）上传时就写明原因，PDF 与 DOCX 读不出的在读的时候才报。
+- 每轮注入的文件清单只列最近 20 个，更早的在列表末尾写一句个数。
+- `read_uploaded_file`、`list_uploaded_files` 移出 `file-reader` 分组、总是给；分组里只剩 `delete_uploaded_file`，分组名不变、显示名改「删除上传的文件」。plugin-mcp-server 的 `toolGroups` 里列了 `file-reader`（不含 `*`）的，不再暴露这两个工具。
+- 新加会话管理与权限服务的可选依赖（`@aalis/api-session-manager`、`@aalis/api-authority`）。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

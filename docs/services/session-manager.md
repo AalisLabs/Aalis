@@ -115,7 +115,7 @@ interface SessionInfo {
 
 建、删子会话时父会话的子会话列表也变了：子会话的 `session:created` 或 `session:deleted` 之后，父会话随后发一次 `session:updated`。会话列表据此更新父会话的子会话数（[plugin-session-server](../plugins/plugin-session-server.md) 的增量推送）。
 
-**只想监听这些事件**（而不调用服务）的插件也应当依赖本 `-api` 包——它锚定了 `import type {} from '@aalis/core'` 让 augmentation 生效（`index.ts`）。`plugin-file-reader` 就是仅为 `session:deleted` 事件而 `import type {} from '@aalis/api-session-manager'`（`plugin-file-reader/src/index.ts`）。
+**只想监听这些事件**（而不调用服务）的插件也应当依赖本 `-api` 包——它锚定了 `import type {} from '@aalis/core'` 让 augmentation 生效（`index.ts`）。
 
 ### 2.4 插件按会话、按场所存的数据（`metadata`）
 
@@ -144,7 +144,7 @@ interface SessionInfo {
 
 这几项在 `createSession`、`createChildSession`、`ensureSession` 的会话字段参数里带上一律丢弃。读表时类型不对的（来源字段、创建来源、所属工作区、绑定、当前目录）去掉这一项照常载入，并告警。
 
-**房间类别**：纯函数 `roomClass(info, lookup, isOwner)` 按这些字段判这个会话的受众里有谁，子会话取根会话的。它用在按受众定的行为上，如网关的结构性放行、摘要模板、检查点的默认范围与发送者前缀；另有一处按它定能不能取：[media 判据](./media.md#媒体判据)里本机文件的非人回合条款（只有一位参与者、他是 owner、类别不是 `room` 的能取）：
+**房间类别**：纯函数 `roomClass(info, lookup, isOwner)` 按这些字段判这个会话的受众里有谁，子会话取根会话的。它用在按受众定的行为上，如网关的结构性放行、摘要模板、检查点的默认范围、发送者前缀与上传的文件内不内联；另有一处按它定能不能取：[media 判据](./media.md#媒体判据)里本机文件的非人回合条款（只有一位参与者、他是 owner、类别不是 `room` 的能取）：
 
 | 会话 | 房间类别 |
 |---|---|
@@ -202,6 +202,7 @@ interface SessionInfo {
 | `plugin-subtask` | `createChildSession(parentId, { inputContext: task, metadata })` 派发子任务（metadata 里是会话设置的 `childMetadata`）；`agent:turn:after` 里 `completeSession()` 回报父会话；按 `status` 与 `lastTurn` 报子任务的状态，交回结果后闲置到期 `deleteSession()` | `plugin-subtask/src/index.ts` |
 | `plugin-session-server` | 会话协议的会话列表与增删改：`listSessions`、`createSession`、`updateSession`、`deleteSession`，摘要的场所取 `placeOf`、`getPlace`（空记录不给，§2.5），分区按 `kind`（§2.2） | `plugin-session-server/src/sessions.ts` |
 | `plugin-memory-summary` | 选摘要模板读会话记录与 `roomClass`（可选依赖，缺席时用工作模板） | `plugin-memory-summary/src/index.ts` |
+| `plugin-file-reader` | 按 `getSession` 与 `roomClass` 判会话的房间类别，`room` 的不内联上传的文件；可选依赖，缺席时按 `internal` 照旧内联 | `plugin-file-reader/src/index.ts` |
 | `plugin-trigger-policy`、`plugin-trigger-laya`、`plugin-flow-control` | 按 `fromElsewhere` 认出从别的平台往房间里插话，直接放行 | 各自的 `src/index.ts` |
 | `plugin-tool-session`、`plugin-tool-onebot`、`plugin-memory-history` | 取别的会话的历史与消息前调 `takeFrom`（§2.8） | 各自的 `src/index.ts` |
 | `plugin-image-sender`、`plugin-media` | 经 api-media 的 `mediaScopeOf` 取别的会话的媒体：先调 `takeFrom`（§2.8），按目录名反查媒体所属的会话用 `getSession` 与 `listSessions` | `api-media/src/scope.ts` |
