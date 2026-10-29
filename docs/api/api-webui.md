@@ -725,8 +725,8 @@ interface LogQuery extends LogFilter { limit?: number } // 默认 200，上限 5
 | `GET /api/models/:service` | 查询参数 `dependency?` | `LLMModelsResponse`（`:service` 是 `llm`）或 `OptionsResponse`（其余） |
 | `POST /api/llm-providers/:contextId/refresh` | — | `{ ok: true, added, removed, total }` |
 
-- 先找贡献点 `webui:options` 里同名的来源：插件经它交自己的可选项来源（`{ id, list(dependency?) }`，`id` 就是字段的 `dynamicOptions`），同名的有几家时取全局键最前的那家，`dependency` 原样交给它，回 `{ models, details }`。可选项带名字与说明（`OptionDetail`）。第一方的来源：plugin-i18n 的 `i18n-languages`、plugin-skills 的 `skills`、plugin-authority 的 `authority-operations` 与 `authority-groups`、两个向量化提供者的 `embedding-openai` 与 `embedding-ollama`。来源名按插件定，同一个插件开了几个实例时各实例的字段都取最前那家。
-- 没有贡献的来源由宿主回答：`llm`（模型列表，模型字段的可选项走它）；`toolGroups`（工具分组：已登记的分组与工具上出现过的分组的并集，`'*'` 是全部分组、总在最前，登记过的分组下面一行写它的说明）；`llm-thinking`（深度思考的档位：`dependency` 是条目 id `<提供者实例 id>/<模型 id>`，按那个模型声明的档位给，写法不对回 400；没带时回空的可选项，不替调用方挑模型；模型不能调时 `models` 与 `details` 为空）。
+- 先找贡献点 `webui:options` 里同名的来源：插件经它交自己的可选项来源（`{ id, list(dependency?) }`，`id` 就是字段的 `dynamicOptions`），同名的有几家时取全局键最前的那家，`dependency` 原样交给它，回 `{ models, details }`。可选项（`OptionDetail`）带名字与说明，可以带成员 `members`（选上这一项会带上的成员的名字，界面在这一项下面写「包含 N 项」、点开列出）；插件的选项来源交得了 `members`、交不了 `others`。第一方的来源：plugin-i18n 的 `i18n-languages`、plugin-skills 的 `skills`、plugin-authority 的 `authority-operations` 与 `authority-groups`、两个向量化提供者的 `embedding-openai` 与 `embedding-ollama`。来源名按插件定，同一个插件开了几个实例时各实例的字段都取最前那家。
+- 没有贡献的来源由宿主回答：`llm`（模型列表，模型字段的可选项走它）；`toolGroups`（工具分组：已登记的分组与工具上出现过的分组的并集，`'*'` 是全部分组、总在最前，登记过的分组下面一行写它的说明；有工具的分组带组内工具的名字（`members`），不属于任何分组的工具另交 `others`，界面写在可选项末尾一行、点开列出）；`llm-thinking`（深度思考的档位：`dependency` 是条目 id `<提供者实例 id>/<模型 id>`，按那个模型声明的档位给，写法不对回 400；没带时回空的可选项，不替调用方挑模型；模型不能调时 `models` 与 `details` 为空）。
 - 其余服务名合起那个服务各提供者的 `listModels()`，回 `{ models }`（如人设）。
 - 刷新：`:contextId` 是提供者的插件实例，与模型的 `contextId` 相同；名下的模型都不能运行时刷新、或名下没有模型时回 404。
 
@@ -734,21 +734,22 @@ interface LogQuery extends LogFilter { limit?: number } // 默认 200，上限 5
 interface LLMModelsResponse { providers: LLMModelEntry[] }
 interface LLMModelEntry {
   model: string;
-  provider: string; // 显示名
+  provider: string | TextRef; // 显示名
   contextId: string; // 提供它的插件实例，llm-ref 的取值 { provider, model } 认的是它
   capabilities: string[];
 }
 interface OptionsResponse {
   models: string[]; // 取值
   details?: OptionDetail[]; // 带名字的可选项，有它时按它画
-  labels?: Record<string, string>; // 不在可选项里的取值的名字（换了模型以后存着的档位）
+  labels?: Record<string, string | TextRef>; // 不在可选项里的取值的名字（换了模型以后存着的档位）
+  others?: { label: string | TextRef; members: string[] }; // 不属于任何可选项的成员与这一行的名字，只有宿主回答的来源交
 }
 interface OptionDetail {
   value: string;
-  label: string;
+  label: string | TextRef;
   default?: true; // 没设时生效的那一项
-  description?: string; // 工具分组的说明
-  pluginName?: string; // 登记工具分组的插件
+  description?: string | TextRef; // 写在选项下面的一行说明（工具分组的概述）
+  members?: string[]; // 选上这一项会带上的成员的名字（工具分组里的工具）；没有成员时不交
 }
 ```
 

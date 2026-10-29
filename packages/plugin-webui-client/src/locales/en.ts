@@ -616,6 +616,8 @@ export default defineLocale<Source>()({
   shapeInfo: "an array of '{ label, value }'",
   shapeText: 'text',
   optionDefault: '{label} (default)',
+  optionMembers: '{count, plural, one {Includes # item} other {Includes # items}}',
+  optionMembersOf: '{option}: {count, plural, one {includes # item} other {includes # items}}',
   switchOn: 'On',
   switchOff: 'Off',
   optionsMalformed: 'The options response is not in the expected shape',

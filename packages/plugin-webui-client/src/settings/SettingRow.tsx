@@ -53,7 +53,7 @@ export function SettingRow({
   save,
 }: SettingRowProps) {
   const [version, refetch] = useReducer((n: number) => n + 1, 0);
-  const { options, names, loaded, error: optionsError } = useFieldOptions(field, version, dependency?.value);
+  const { options, names, others, loaded, error: optionsError } = useFieldOptions(field, version, dependency?.value);
   const labelId = useId();
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -133,7 +133,7 @@ export function SettingRow({
             <Editor
               field={field}
               value={value}
-              options={{ options, names, error: optionsError, refetch }}
+              options={{ options, names, others, error: optionsError, refetch }}
               labelId={labelId}
               busy={busy}
               onCommit={commit}

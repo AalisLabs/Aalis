@@ -563,6 +563,13 @@
 - `read_uploaded_file`、`list_uploaded_files` 移出 `file-reader` 分组、总是给；分组里只剩 `delete_uploaded_file`，分组名不变、显示名改「删除上传的文件」。plugin-mcp-server 的 `toolGroups` 里列了 `file-reader`（不含 `*`）的，不再暴露这两个工具。
 - 新加会话管理与权限服务的可选依赖（`@aalis/api-session-manager`、`@aalis/api-authority`）。
 
+### 选工具分组时看得到组里的工具（@aalis/api-webui、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/plugin-tools）
+
+- api-webui：`OptionDetail` 与 `OptionItem` 加 `members`（选上这一项会带上的成员的名字），`OptionsResponse` 加 `others`（不属于任何可选项的成员与这一行的名字，只有宿主回答的来源交）。
+- plugin-webui-server：`/api/models/toolGroups` 的每个有工具的分组带组内工具的名字，另交不属于任何分组的工具（`others`）。
+- plugin-webui-client：设置与插件配置里的多选在带成员的选项下写「包含 N 项」、点开列出，默认收起；来源给了 `others` 时末尾一行写它的名字（工具分组写「不属于任何分组的工具」），同样点开列出。
+- plugin-tools：「工具分组」的说明写明不属于任何分组的工具总是给。
+
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
 - create-aalis 写进生成项目的依赖版本一律查注册表的 latest。此前插件的版本取自 npm 检索结果里的版本，检索索引在发布后可能还是旧版本号，写成 `^<旧版>` 会把项目锁在旧次版本上。

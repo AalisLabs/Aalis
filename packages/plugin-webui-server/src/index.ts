@@ -818,19 +818,34 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     }
 
     // 工具分组：已登记的分组与工具上出现过的分组取并集，按名字排；登记过的写名字、说明取 summary（description 只给模型），
-    // 没登记的写原名。'*' 是全部分组（api-tools 的分组约定），总在最前
+    // 没登记的写原名。'*' 是全部分组（api-tools 的分组约定），总在最前、不带成员。有工具的分组带组内工具的名字（members，按
+    // 名字排，一个工具在几组就在每组都列，同一组写了两遍的只列一次）；不属于任何分组的工具另交 others，没有时不交
     if (serviceName === 'toolGroups') {
       const registered = new Map((caps.tools.present ? caps.tools.use.getGroups() : []).map(g => [g.name, g]));
-      const names = new Set(registered.keys());
-      for (const tool of caps.tools.present ? caps.tools.use.getAll() : [])
-        for (const g of tool.groups ?? []) names.add(g);
+      const members = new Map<string, string[]>();
+      const ungrouped: string[] = [];
+      for (const tool of caps.tools.present ? caps.tools.use.getAll() : []) {
+        if (!tool.groups?.length) ungrouped.push(tool.name);
+        for (const g of new Set(tool.groups)) {
+          const list = members.get(g) ?? [];
+          list.push(tool.name);
+          members.set(g, list);
+        }
+      }
+      const names = new Set([...registered.keys(), ...members.keys()]);
       const details: OptionDetail[] = [...names].sort().map(name => {
         const group = registered.get(name);
-        return group ? { value: name, label: group.label, description: group.summary } : { value: name, label: name };
+        return {
+          value: name,
+          label: group?.label ?? name,
+          description: group?.summary,
+          members: members.get(name)?.sort(),
+        };
       });
       res.json({
         models: ['*', ...details.map(detail => detail.value)],
         details: [{ value: '*', label: t('allGroups') }, ...details],
+        ...(ungrouped.length > 0 ? { others: { label: t('ungroupedTools'), members: ungrouped.sort() } } : {}),
       });
       return;
     }

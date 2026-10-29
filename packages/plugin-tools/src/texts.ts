@@ -10,7 +10,7 @@ const SOURCE = {
   noticeFailedExit: '后台任务 {id}（{tool}）失败：退出码 {code}，用时 {ms, duration}',
   noticeFailed: '后台任务 {id}（{tool}）失败，用时 {ms, duration}',
   groupsLabel: '工具分组',
-  groupsDescription: '这个会话能用的工具分组，* 为全部；为空时只给不属于任何分组的工具',
+  groupsDescription: '这个会话能用的工具分组，* 为全部；不属于任何分组的工具总是给',
 } as const;
 export type Source = typeof SOURCE;
 

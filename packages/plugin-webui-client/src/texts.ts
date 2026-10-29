@@ -601,6 +601,8 @@ const SOURCE = {
   shapeInfo: "'{ label, value }' 的数组",
   shapeText: '文字',
   optionDefault: '{label}（默认）',
+  optionMembers: '包含 {count, number} 项',
+  optionMembersOf: '{option}：包含 {count, number} 项',
   switchOn: '开',
   switchOff: '关',
   optionsMalformed: '可选项的回应不是预期的形状',

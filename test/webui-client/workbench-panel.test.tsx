@@ -834,6 +834,132 @@ describe('右侧面板与会话头', () => {
     const web = panel().getByRole('checkbox', { name: '联网' });
     expect(document.getElementById(web.getAttribute('aria-describedby') ?? '')?.textContent).toBe('搜索与抓取网页');
   });
+
+  it('多选的可选项带成员时，下面有「包含 N 项」的展开（读屏名带这一项的名字），默认收起，点开列出成员、不改勾选；末尾一行写来源给的名字，不属于哪一项，在最后一个选项之后、自定义输入框之前，同样点开列出', async () => {
+    const rows = [
+      row('groups', {
+        field: { type: 'multiselect', label: '工具分组', dynamicOptions: 'toolGroups', allowCustom: true },
+        value: ['*'],
+        effective: ['*'],
+        source: 'session',
+      }),
+    ];
+    app = await renderApp(
+      '/s/s1/settings',
+      { ...subscribe(), 'session/config/get': () => ({ items: rows }) },
+      {
+        '/api/models/toolGroups': {
+          details: [
+            { value: '*', label: '全部分组' },
+            { value: 'web', label: '网页', members: ['web_fetch', 'web_search'] },
+          ],
+          others: { label: '不属于任何分组的工具', members: ['file_read'] },
+        },
+      },
+    );
+    fireEvent.click(await settingRow('工具分组').findByRole('button', { name: /工具分组/ }));
+    const members = panel().getByRole('button', { name: '网页：包含 2 项' });
+    expect(members.textContent).toBe('包含 2 项');
+    expect(members.getAttribute('aria-expanded')).toBe('false');
+    expect(panel().queryByText('web_fetch')).toBeNull();
+    fireEvent.click(members);
+    expect(members.getAttribute('aria-expanded')).toBe('true');
+    expect(panel().getByText('web_fetch')).toBeTruthy();
+    expect(panel().getByText('web_search')).toBeTruthy();
+    expect((panel().getByRole('checkbox', { name: '网页' }) as HTMLInputElement).checked, '点开成员不勾选').toBe(false);
+    expect(requests('session/config/update')).toEqual([]);
+
+    const others = panel().getByRole('button', { name: '不属于任何分组的工具' });
+    expect(others.closest('.field-option'), '末尾一行不是哪一项的子行').toBeNull();
+    const last = panel().getByRole('checkbox', { name: '网页' }).closest('.field-option') as HTMLElement;
+    expect(last.compareDocumentPosition(others) & Node.DOCUMENT_POSITION_FOLLOWING, '在最后一个选项之后').toBeTruthy();
+    const custom = panel().getByRole('textbox', { name: '添加工具分组' });
+    expect(
+      others.compareDocumentPosition(custom) & Node.DOCUMENT_POSITION_FOLLOWING,
+      '在自定义输入框之前',
+    ).toBeTruthy();
+    expect(others.getAttribute('aria-expanded')).toBe('false');
+    expect(panel().queryByText('file_read')).toBeNull();
+    fireEvent.click(others);
+    expect(panel().getByText('file_read')).toBeTruthy();
+
+    const all = panel().getByRole('checkbox', { name: '全部分组' }).closest('.field-option') as HTMLElement;
+    expect(within(all).queryByRole('button'), '没有成员的一项没有展开').toBeNull();
+  });
+
+  it('可选项接口给的成员不合形状：不是字符串的不画、重名的只画一次，没有成员的没有展开；others 的成员为空或名字不是字符串时没有末尾那一行', async () => {
+    const multi = (key: string, label: string, source: string) =>
+      row(key, {
+        field: { type: 'multiselect', label, dynamicOptions: source },
+        value: [],
+        effective: [],
+        source: 'session',
+      });
+    const rows = [multi('first', '甲组', 'zz-first'), multi('second', '乙组', 'zz-second')];
+    app = await renderApp(
+      '/s/s1/settings',
+      { ...subscribe(), 'session/config/get': () => ({ items: rows }) },
+      {
+        '/api/models/zz-first': {
+          details: [
+            { value: 'a', label: '甲', members: [1, 'a1', 'a1'] },
+            { value: 'b', label: '乙', members: [] },
+          ],
+          others: { label: '其余', members: [] },
+        },
+        '/api/models/zz-second': {
+          details: [{ value: 'c', label: '丙' }],
+          others: { label: 1, members: ['c1'] },
+        },
+      },
+    );
+    fireEvent.click(await settingRow('甲组').findByRole('button', { name: /甲组/ }));
+    const members = panel().getByRole('button', { name: '甲：包含 1 项' });
+    fireEvent.click(members);
+    expect(
+      [...(members.nextElementSibling?.querySelectorAll('li') ?? [])].map(item => item.textContent),
+      '只画字符串的成员，重名的一次',
+    ).toEqual(['a1']);
+    const empty = panel().getByRole('checkbox', { name: '乙' }).closest('.field-option') as HTMLElement;
+    expect(within(empty).queryByRole('button'), '成员为空的没有展开').toBeNull();
+    expect(panel().queryByRole('button', { name: '其余' }), 'others 的成员为空').toBeNull();
+    fireEvent.click(panel().getByRole('button', { name: '完成' }));
+
+    fireEvent.click(settingRow('乙组').getByRole('button', { name: /乙组/ }));
+    await panel().findByRole('checkbox', { name: '丙' });
+    const choices = panel().getByRole('checkbox', { name: '丙' }).closest('fieldset') as HTMLElement;
+    expect(within(choices).queryAllByRole('button'), 'others 的名字不是字符串').toEqual([]);
+  });
+
+  it('有序的多选：成员的展开在上下移那一行的下面', async () => {
+    const rows = [
+      row('language', {
+        field: { type: 'multiselect', label: '语言', ordered: true, dynamicOptions: 'zz-languages' },
+        value: ['en'],
+        effective: ['en'],
+        source: 'session',
+      }),
+    ];
+    app = await renderApp(
+      '/s/s1/settings',
+      { ...subscribe(), 'session/config/get': () => ({ items: rows }) },
+      {
+        '/api/models/zz-languages': {
+          details: [
+            { value: 'en', label: 'English', members: ['en-GB', 'en-US'] },
+            { value: 'ja', label: '日本語' },
+          ],
+        },
+      },
+    );
+    fireEvent.click(await settingRow('语言').findByRole('button', { name: /语言/ }));
+    const members = panel().getByRole('button', { name: 'English：包含 2 项' });
+    const line = panel().getByRole('checkbox', { name: 'English' }).closest('.field-ordered') as HTMLElement;
+    expect(within(line).getByRole('button', { name: '下移 English' })).toBeTruthy();
+    expect(line.contains(members)).toBe(false);
+    expect(line.parentElement?.contains(members)).toBe(true);
+    expect(line.compareDocumentPosition(members) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
   it('有序的多选：选中的按取值的先后排在前面，各带上移、下移（读屏名是整句）；移动后写回新的顺序，焦点留在被移动的项上', async () => {
     let value = ['zh-CN', 'en'];
     const rows = () => [

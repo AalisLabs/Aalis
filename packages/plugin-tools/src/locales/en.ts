@@ -10,5 +10,5 @@ export default defineLocale<Source>()({
   noticeFailed: 'Background task {id} ({tool}) failed after {ms, duration}',
   groupsLabel: 'Tool groups',
   groupsDescription:
-    'The tool groups this session can use; * means all. When empty, only tools that belong to no group are given',
+    'The tool groups this session can use; * means all. Tools that belong to no group are always given',
 });

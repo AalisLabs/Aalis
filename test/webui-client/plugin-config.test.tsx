@@ -16,7 +16,8 @@ import { choose, type Harness, installDialog, renderApp } from './harness.js';
 // 插件详情的配置：按 schema 画的整张表，接到真实的插件路由与宿主（host-config 加密钥存储）上，列表、草稿、保存、拆出密钥、
 // 解析整条走一遍。secret: true 的字段在配置文档里是引用 { $secret: 键 }：表单只写「已设置」与键名，「更换」后输入的新值替换
 // （顶层与分组写进原来的键，数组元素里另建新键），留空保持，「清除」送空值；只送改了的顶层键，清空的顶层键送 null。
-// 插件失败时也能改配置，保存即重载；服务端逐项的问题写在对应的行下
+// 插件失败时也能改配置，保存即重载；服务端逐项的问题写在对应的行下。表单自己取动态可选项，来源另给的不属于任何可选项的成员
+// 在多选末尾一行列出
 // ════════════════════════════════════════════════════════════
 
 let ui: Harness | undefined;
@@ -44,6 +45,11 @@ afterEach(async () => {
 
 /** 模型字段的可选项：一个服务一个模型 */
 const MODELS = { providers: [{ contextId: 'llm-a', model: 'model-a', provider: '服务甲' }] };
+/** 工具分组字段的可选项：一个带成员的分组，另有不属于任何分组的工具 */
+const TOOL_GROUPS = {
+  details: [{ value: 'web', label: '网页', members: ['web_fetch'] }],
+  others: { label: '不属于任何分组的工具', members: ['file_read'] },
+};
 
 /**
  * 按文档登记插件（引用经密钥存储解析）、挂上真实路由，在 /plugins/:name 上渲染整个前端。`others` 是文档里别的实例的
@@ -109,6 +115,7 @@ async function boot(
     {
       '/api/plugins': list,
       '/api/models/llm': MODELS,
+      '/api/models/toolGroups': TOOL_GROUPS,
       [`/api/plugins/${name}/config`]: async ({ body }: { body?: unknown }) => {
         puts.push((body as { config: Record<string, unknown> }).config);
         const reply = await invoke('PUT /api/plugins/:name/config', { params: { name }, body, headers: {} });
@@ -510,5 +517,16 @@ describe('失败的插件', () => {
     expect(app.plugins.getPlugin('flaky')?.state).toBe('active');
     expect(await summary().findByText('运行中')).toBeTruthy();
     expect(summary().queryByText('待配置')).toBeNull();
+  });
+});
+
+describe('动态可选项', () => {
+  it('多选的可选项来源另给了不属于任何可选项的成员：末尾一行写它的名字，点开列出', async () => {
+    const schema = {
+      groups: { type: 'multiselect', label: '工具分组', dynamicOptions: 'toolGroups', default: [] },
+    } satisfies ConfigSchema;
+    await boot('zz-groups', schema, {});
+    fireEvent.click(await form().findByRole('button', { name: '不属于任何分组的工具' }));
+    expect(form().getByText('file_read')).toBeTruthy();
   });
 });

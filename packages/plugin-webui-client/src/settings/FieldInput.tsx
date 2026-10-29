@@ -1,12 +1,22 @@
 import { ArrowDown, ArrowUp, RotateCw } from 'lucide-react';
 import { type ReactNode, useId, useLayoutEffect, useReducer, useRef, useState } from 'react';
+import { Disclosure } from '../components/Disclosure';
 import { IconButton } from '../components/IconButton';
 import { Select } from '../components/Select';
 import { useToast } from '../components/Toast';
 import { composing } from '../keys';
 import { tr } from '../language';
 import { isRecord, postJson } from '../rest';
-import { type Field, isModelField, type Option, optionLabel, valueKey, withChosen, withCurrent } from './field';
+import {
+  type Field,
+  isModelField,
+  type Option,
+  type Others,
+  optionLabel,
+  valueKey,
+  withChosen,
+  withCurrent,
+} from './field';
 import { useFieldOptions } from './options';
 import './FieldInput.css';
 
@@ -27,10 +37,13 @@ export interface FieldCommon {
   'data-autofocus'?: boolean;
 }
 
-/** 字段的可选项与不在可选项里的取值的名字；refetch 让它重取（模型服务重新探测之后） */
+/**
+ * 字段的可选项、不在可选项里的取值的名字与不属于任何可选项的成员；refetch 让它重取（模型服务重新探测之后）
+ */
 export interface FieldOptions {
   options: Option[];
   names?: readonly Option[];
+  others?: Others;
   error?: Error;
   refetch(): void;
 }
@@ -93,8 +106,8 @@ export function FieldInput(props: FieldInputProps) {
 /** 调用方没给可选项：自己取 */
 function OwnOptions(props: FieldInputProps) {
   const [version, refetch] = useReducer((n: number) => n + 1, 0);
-  const { options, names, error } = useFieldOptions(props.field, version, props.dependency);
-  return <FieldInput {...props} options={{ options, names, error, refetch }} />;
+  const { options, names, others, error } = useFieldOptions(props.field, version, props.dependency);
+  return <FieldInput {...props} options={{ options, names, others, error, refetch }} />;
 }
 
 /** 选择：不是必填的可以选空的一项（交出 undefined）；empty 是空的那一项的名字 */
@@ -162,7 +175,8 @@ type Step = -1 | 1;
 
 /**
  * 多选：一列复选框。有序的（field.ordered）选中的按取值的先后排在前面，各带上移、下移，写回的取值就是这个顺序；没选的接在
- * 后面，勾上的排到最后。勾选、取消与移动之后焦点留在那一项上
+ * 后面，勾上的排到最后。勾选、取消与移动之后焦点留在那一项上。带成员的项下面另起一行是「包含 N 项」的展开；来源另给了
+ * 不属于任何可选项的成员时，末尾一行写它的名字、同样能展开
  */
 function MultiInput({ field, value, onChange, common, options }: ChoiceProps) {
   const [custom, setCustom] = useState('');
@@ -219,7 +233,7 @@ function MultiInput({ field, value, onChange, common, options }: ChoiceProps) {
         // 带说明的项：名字另起一个 id 作读屏名，说明作描述
         const described = option.description === undefined ? undefined : `${common.id}-${index}`;
         const check = (
-          <label key={option.key} className="field-check">
+          <label className="field-check">
             <input
               ref={keep(0, option.key)}
               type="checkbox"
@@ -247,16 +261,33 @@ function MultiInput({ field, value, onChange, common, options }: ChoiceProps) {
             )}
           </label>
         );
-        if (!field.ordered) return check;
-        // 勾选与取消时这一行的外层不变，复选框不重挂
+        // 每项包一层，勾选与取消时外层不变，复选框不重挂
         return (
-          <div key={option.key} className="field-ordered">
-            {check}
-            {keys.has(option.key) && moveButton(option, index, -1)}
-            {keys.has(option.key) && moveButton(option, index, 1)}
+          <div key={option.key} className="field-option">
+            {field.ordered ? (
+              <div className="field-ordered">
+                {check}
+                {keys.has(option.key) && moveButton(option, index, -1)}
+                {keys.has(option.key) && moveButton(option, index, 1)}
+              </div>
+            ) : (
+              check
+            )}
+            {option.members && (
+              <Members
+                text={tr('optionMembers', { count: option.members.length })}
+                label={tr('optionMembersOf', { option: option.label, count: option.members.length })}
+                members={option.members}
+              />
+            )}
           </div>
         );
       })}
+      {options.others && (
+        <div className="field-others">
+          <Members text={options.others.label} members={options.others.members} />
+        </div>
+      )}
       {field.allowCustom && (
         <input
           aria-label={tr('addField', { label: field.label })}
@@ -274,6 +305,28 @@ function MultiInput({ field, value, onChange, common, options }: ChoiceProps) {
       )}
       {options.error && <p className="field-note">{tr('optionsFailed', { error: options.error.message })}</p>}
     </fieldset>
+  );
+}
+
+/**
+ * 成员的展开：默认收起，点开列出成员的名字；在复选框的 label 之外，点它不改勾选。label 是读屏名（带上它属于哪一项，几个
+ * 选项的展开读屏分得开）
+ */
+function Members({ text, label, members }: { text: string; label?: string; members: readonly string[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Disclosure expanded={open} onToggle={() => setOpen(!open)} label={label}>
+        {text}
+      </Disclosure>
+      {open && (
+        <ul className="field-members">
+          {members.map(member => (
+            <li key={member}>{member}</li>
+          ))}
+        </ul>
+      )}
+    </>
   );
 }
 

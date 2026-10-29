@@ -2480,6 +2480,28 @@ describe('控件与文字的比例', () => {
       };
     });
 
+  /**
+   * 一个带概述、有两个工具的分组：工具分组的多选里这一项下面有「包含 2 项」；探针工具 zz_deploy 不带分组，末尾另有不属于
+   * 任何分组的一行
+   */
+  const groupedTools = definePlugin({
+    name: 'zz-e2e-grouped',
+    uses: { tools },
+    apply({ tools }) {
+      tools.use.registerGroup({ name: 'zz-e2e-group', label: '甲组', summary: '甲组的概述' });
+      for (const name of ['zz_e2e_a', 'zz_e2e_b']) {
+        tools.use.register({
+          definition: {
+            type: 'function',
+            function: { name, description: name, parameters: { type: 'object', properties: {} } },
+          },
+          handler: async () => '',
+          groups: ['zz-e2e-group'],
+        });
+      }
+    },
+  });
+
   /** 宿主的输入框与次要、主要按钮：从会话头的「更多」打开改名框量，量完关上 */
   async function hostControls(page: Page) {
     const dialog = aria('改名', 'dialog');
@@ -2684,10 +2706,12 @@ describe('控件与文字的比例', () => {
     expect(problems).toEqual([]);
   }, 60_000);
 
-  it('触屏：会话页（审批等着）、会话设置、房间表（选中一行）、计划任务、插件前端与它的两种确认框、平板的首页里，看得见的可点元素点按范围都不小于 44×44、贴在元素上、不被别的元素压住，有底色的按钮看得见的比点按范围矮；插件前端的按钮、输入框与宿主的次要按钮、输入框一样，插件自己整个重置掉的按钮不挡住页面别处', async () => {
-    const stack = await startStack({}, [cronEnginePlugin, schedulerPlugin, await scaffolded(), framesPlugin()], {
-      'onebot:10000:group:20001': '读书会',
-    });
+  it('触屏：会话页（审批等着）、会话设置（另开着带成员的多选）、房间表（选中一行）、计划任务、插件前端与它的两种确认框、平板的首页里，看得见的可点元素点按范围都不小于 44×44、贴在元素上、不被别的元素压住，有底色的按钮看得见的比点按范围矮；多选里一项只有字那一段能点，末尾不属于任何一项的那一行与复选框左对齐；插件前端的按钮、输入框与宿主的次要按钮、输入框一样，插件自己整个重置掉的按钮不挡住页面别处', async () => {
+    const stack = await startStack(
+      {},
+      [cronEnginePlugin, schedulerPlugin, await scaffolded(), framesPlugin(), groupedTools],
+      { 'onebot:10000:group:20001': '读书会' },
+    );
     const { page, problems } = await openPage(stack, VIEWPORTS.phone);
     const faults: Record<string, string[]> = {};
     const filled: number[] = [];
@@ -2707,6 +2731,24 @@ describe('控件与文字的比例', () => {
     await page.locator(aria('会话面板', 'menuitem')).click();
     await page.waitForSelector('.setting-row');
     await audit('会话设置');
+    await page.locator('.setting-row[aria-label="工具分组"] .setting-row-main').click();
+    await page.waitForSelector(aria('不属于任何分组的工具', 'button'));
+    await audit('会话设置的多选');
+    // 无序的一项只有字那一段能点：这一行右端的空白处点了不勾选
+    const grouped = aria('甲组', 'checkbox');
+    const [x, y] = await page.$eval(grouped, input => {
+      const label = input.closest('label') as Element;
+      label.scrollIntoView({ block: 'center' });
+      const { right } = (input.closest('fieldset') as Element).getBoundingClientRect();
+      const { top, bottom } = label.getBoundingClientRect();
+      return [right - 4, (top + bottom) / 2];
+    });
+    await page.mouse.click(x, y);
+    expect(await page.$eval(grouped, input => (input as HTMLInputElement).checked), '行右端的空白处').toBe(false);
+    // 末尾不属于任何一项的那一行不缩进：展开按钮的左边与复选框的左边对齐
+    const left = (selector: string) => page.$eval(selector, element => element.getBoundingClientRect().left);
+    const others = aria('不属于任何分组的工具', 'button');
+    expect(Math.abs((await left(others)) - (await left(grouped))), '末尾那一行与复选框左对齐').toBeLessThanOrEqual(1);
 
     await page.goto(`${stack.origin}/rooms?platform=onebot`);
     await page.waitForSelector(`td[data-column="name"] ${text('读书会')}`);
@@ -2761,6 +2803,7 @@ describe('控件与文字的比例', () => {
     expect(faults).toEqual({
       会话页: [],
       会话设置: [],
+      会话设置的多选: [],
       房间表: [],
       计划任务: [],
       插件前端: [],

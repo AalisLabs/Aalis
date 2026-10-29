@@ -31,7 +31,16 @@
   white-space: nowrap;
 }
 
-/* 有序的多选的一行（选不选都包一层，勾选时复选框不重挂）：选中的上移、下移在行尾对齐 */
+/*
+ * 多选的一项（每项包一层，勾选时复选框不重挂）与末尾不属于任何一项的那一行：这一层不参与排版，复选框的 label 照旧只有字
+ * 那一段能点；带成员的，「包含 N 项」的展开与成员的名字另起一行在下面
+ */
+.field-option,
+.field-others {
+  display: contents;
+}
+
+/* 有序的多选的一行：选中的上移、下移在行尾对齐 */
 .field-ordered {
   display: flex;
   align-items: center;
@@ -57,11 +66,35 @@
 
 .field-note,
 .field-problem,
-.field-row-required {
+.field-row-required,
+.field-option > .disclosure,
+.field-others > .disclosure,
+.field-members {
   font-size: var(--text-xs);
   line-height: var(--leading-xs);
   color: var(--color-text-3);
   overflow-wrap: anywhere;
+}
+
+/* 成员的展开按点按范围占排版的高，不靠 ::before 伸出去压住上下两行 */
+.field-option > .disclosure,
+.field-others > .disclosure {
+  min-height: var(--hit);
+}
+
+/* 选项的成员缩进到复选框的文字下；末尾那一行不属于哪一项，与复选框左对齐，和上面隔开 */
+.field-option > .disclosure,
+.field-members {
+  margin: 0 0 0 calc(var(--icon-sm) + var(--space-2));
+}
+
+.field-others > .disclosure {
+  margin-top: var(--space-1);
+}
+
+.field-members {
+  padding: 0;
+  list-style: none;
 }
 
 .field-problem {
