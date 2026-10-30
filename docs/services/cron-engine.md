@@ -50,8 +50,10 @@ export type CronExprKind = 'cron' | 'interval';
 
 export type ValidateResult =
   | { ok: true; kind: CronExprKind; normalized: string; intervalSeconds?: number }
-  | { ok: false; reason: string };
+  | { ok: false; text: string | TextRef };
 ```
+
+失败分支的 `text` 是给人看的原因：`util-cron` 的实现给它字典里的文字对象，第三方引擎交字符串也可以。交给模型与写日志的取 `toSource`；要抛给人看的错时，字符串用 `Error`，文字对象用 `TextError`。
 
 `validate`（即 `util-cron` 的 `validateCronExpr`）是创建期的护栏：逐字段校验，任一字段解析为空集（如 `abc`、`5-`、超界单值）即拒绝，避免静默生成永不触发的死任务。
 
@@ -92,6 +94,7 @@ export type ValidateResult =
 import { cronEngine } from '@aalis/api-cron-engine';
 import type { CronEngine, CronSubscribeOptions } from '@aalis/api-cron-engine';
 import { definePlugin, lifecycle, provide } from '@aalis/core';
+import { TextError } from '@aalis/schema-i18n';
 import { matchesCron, normalizeCronExpr, validateCronExpr } from '@aalis/util-cron';
 
 export default definePlugin({
@@ -108,7 +111,7 @@ export default definePlugin({
     const service: CronEngine = {
       subscribe(expr, handler, options?: CronSubscribeOptions) {
         const v = validateCronExpr(expr);
-        if (!v.ok) throw new Error(v.reason);
+        if (!v.ok) throw typeof v.text === 'string' ? new Error(v.text) : new TextError(v.text);
         const id = nextId++;
         if (v.kind === 'interval') {
           const timer = setInterval(() => void handler(), (v.intervalSeconds ?? 0) * 1000);
@@ -159,7 +162,7 @@ export default definePlugin({
 - 多订阅者**共享一条对齐到整分钟的 tick**：每轮 tick 结束时按「下一个整分钟边界」重排一次 `setTimeout`（`scheduleNextTick`，`packages/plugin-cron-engine/src/index.ts`），**不用 `setInterval`**——后者的误差会累积，攒够一分钟就整分钟丢触发。`runMinute` 对某个整分钟逐个 `matchesCron`。
 - **tick 晚到要回补，且回补有上限**：引擎记下已求值过的最后一个整分钟 `lastTickMinute`，每轮把 `(lastTickMinute, 当前整分钟]` 之间的每个整分钟各求值一遍——事件循环阻塞、机器休眠唤醒导致定时器晚到时不丢分钟。落后超过 5 分钟（`MAX_CATCHUP_MINUTES`）时只回补最近 5 分钟，其余分钟明确跳过并 `logger.use.warn` 一次说明跳过了多少分钟：合盖一夜醒来不该把几百分钟的任务一次性全轰出去。
 - handler 必须包 try/catch，且对 Promise 返回值 `.catch` 记日志——**一个订阅者抛错不能影响其余**（参考实现的 `runMinute` 与 interval 分支各有同步/异步两条 catch）。
-- `subscribe` 里若给了 `timeZone`，应提前 `new Intl.DateTimeFormat({ timeZone })` 探测合法性并抛「非法时区」，不要拖到分钟 tick 才静默失败。
+- `subscribe` 里若给了 `timeZone`，应提前 `new Intl.DateTimeFormat({ timeZone })` 探测合法性并抛「非法时区」（参考实现抛的是 `TextError`），不要拖到分钟 tick 才静默失败。
 - `onDispose` 清空所有 timer 与订阅表。
 
 ## 5. 标准消费方式

@@ -36,7 +36,7 @@ export default definePlugin({
 | `personasDir` | string | `'personas:/'` | 人设目录：人设文件所在目录的 storage URI（默认 `personas:/`，即家目录的 `self/personas`；不含 `:/` 时首段视为存储根名，单段裸名归 `data` 根） |
 | `statePersistence` | boolean | `false` | 状态持久化：启用后，角色状态（心情、当前行为等 outputFormat 字段）会在同一会话内延续并注入到下一轮提示中 |
 | `timeInjection` | boolean | `true` | 时间注入：启用后，当前时间会自动注入到系统提示中 |
-| `timeZone` | string | `''` | 时区 (IANA)：例如 Asia/Shanghai、Europe/London、America/New_York。留空使用系统本地时区。 |
+| `timeZone` | string | `''` | 时区 (IANA)：例如 Asia/Shanghai、Europe/London、America/New_York。留空使用系统本地时区。只管模型看到的当前时间；给人看的时间一律按服务进程的时区 |
 | `persona` | select | `'default'` | 人设：角色卡名，可选项来自 `listModels()`，可以写列表里没有的卡（找不到时用主卡）；可按会话设，1 级能改 |
 | `systemPromptExtra` | textarea | `''` | 额外提示：追加在人设提示之后、结构化输出格式说明之前；可按会话设，只有 owner 能改 |
 | `disableOutputFormat` | boolean | `false` | 不用结构化输出：回复纯文本；可按会话设，只有 owner 能改 |

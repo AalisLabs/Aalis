@@ -138,7 +138,7 @@ function compressionDue(usage: CompressionUsage, lines: CompressionLines): boole
   scope: 'session' | 'all';
   types?: string[];
   sessionId?: string;
-  results: Array<{ source; type?; success; message }>;
+  results: Array<{ source: string; type?: string; success: boolean; message: string | TextRef }>;
 }
 
 'memory:clear-type': ClearTypeContribution; // { id: string; label: string | TextRef }

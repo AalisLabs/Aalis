@@ -60,7 +60,7 @@ agent 在一次流式调用里按 `index` 给每个工具调用配一个 `callId
 
 ### 会话协议
 
-会话服务（`@aalis/plugin-session-server`）收到带名字的进度时给出工具卡（`tool-call` 条目，`itemId` 就是 `callId`，状态 `generating`，只有工具名、`args` 为空），同一个调用之后的进度不再推；`tool:execute` 开始时同一张卡转为 `running`。生成了却没有执行的调用在回合结束时收尾，结果写「没有执行」：回合被停止的为 `aborted`，其余（达到工具调用上限、回合出错）为 `failed`。参数不合法、执行前的钩子出错这类没有执行就失败的调用，agent 照样发一对 `tool:execute`，卡片按结束的错误结果收成失败。见 [api-session-protocol](../api/api-session-protocol.md)。
+会话服务（`@aalis/plugin-session-server`）收到带名字的进度时给出工具卡（`tool-call` 条目，`itemId` 就是 `callId`，状态 `generating`，只有工具名、`args` 为空），同一个调用之后的进度不再推；`tool:execute` 开始时同一张卡转为 `running`。生成了却没有执行的调用在回合结束时收尾：回合被停止的为 `aborted`，其余（达到工具调用上限、回合出错）为 `failed`，带 `notExecuted`、没有结果，界面按它写出没有执行。参数不合法、执行前的钩子出错这类没有执行就失败的调用，agent 照样发一对 `tool:execute`，卡片按结束的错误结果收成失败。见 [api-session-protocol](../api/api-session-protocol.md)。
 
 ## 测试要点
 

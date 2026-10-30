@@ -5,7 +5,7 @@
 - **服务注册名**：描述符 `storage`（`name: 'storage'`），业务层是 `BoundStorage`：调用转发给选中的存储提供者，另带本插件私有目录的视图 `own`。
 - **契约包**：`@aalis/api-storage`（`packages/api-storage/src/index.ts`）。
 - **参考实现**：`@aalis/plugin-storage-local`（`packages/plugin-storage-local/src/index.ts`）。
-- **它不是沙箱**：见 [§6](#6-能力风险-影响安全边界)。
+- **它不是沙箱**：见 [§6](#_6-能力-风险-→-影响-安全边界)。
 
 > 建议先阅读 URI 文法：[docs/concepts/storage-uri-grammar.md](../concepts/storage-uri-grammar.md)。本文聚焦如何实现 storage provider 以及如何消费该服务。
 
@@ -40,7 +40,7 @@ export interface StorageService {
 ```ts
 export interface StorageRootInfo {
   name: string;
-  label?: string;
+  label?: string | TextRef;
   kind: StorageRootKind;
   browsable: boolean;
   readable: boolean;

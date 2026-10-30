@@ -100,9 +100,11 @@ export interface WorkflowRun {
   finishedAt?: number;
   vars: Record<string, unknown>;     // 实例变量（def.vars + trigger payload/运行时传入）
   nodes: NodeRunInfo[];              // 节点运行明细
-  error?: string;                    // 整体错误（首个失败的简要）
+  error?: string | TextRef;          // 整体错误（首个失败的简要）
 }
 ```
+
+运行的 `error` 与节点的原因（`NodeRunInfo.error`）都是 `string | TextRef`，可以是文字对象，按读者语言显示；交给模型与写日志的取 `toSource`。
 
 ### 事件契约
 
@@ -273,7 +275,7 @@ const run = await workflow.use.runWorkflow(id, vars, 'manual:foo', { platform, u
 ```ts
 if (!workflow.present) return;               // optional 依赖：先看 present 降级
 const run = await workflow.use.runWorkflow('daily-report', { date: '2026-06-22' }, 'event:custom');
-if (run.status !== 'success') logger.use.warn(`工作流运行未成功（${run.status}）: ${run.error ?? ''}`);
+if (run.status !== 'success') logger.use.warn(`工作流运行未成功（${run.status}）: ${toSource(run.error) ?? ''}`);
 ```
 
 ### 用事件触发（解耦，推荐跨插件做法）

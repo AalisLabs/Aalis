@@ -62,7 +62,7 @@ interface AgentService {
 
 ```ts
 interface TokenUsagePart {
-  label: string;                        // 显示名
+  label: string | TextRef;              // 显示名
   tokens: number;
   injectors?: Record<string, number>;   // 这一项按注入者的明细，键是注入者的全局键「插件实例 id/局部 id」
 }
@@ -105,7 +105,7 @@ type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void>) => P
 | `agent:tool:before` | 工具调用之前 | `{ name, args, toolCallContext }` |
 | `agent:tool:after` | 工具调用之后；`result` 可以改写，写进 `metadata` 的键随这次工具结果落库（tool 消息的元数据，`turnId`、`callId` 由 agent 写），供回看历史的一方还原调用的结局 | `{ name, result, toolCallContext, metadata }` |
 | `agent:reply:before` | 发出回复之前 | `{ content, archiveContent?, visibleContent?, sessionId, ... }` |
-| `agent:turn:after` | 一轮处理完成（这一轮在 `agent:turn:before` 被拦下时不触发） | `{ inputs, reply, outcome, error?, sessionId, turnId }`；`inputs` 与 `agent:turn:before` 的同一份 |
+| `agent:turn:after` | 一轮处理完成（这一轮在 `agent:turn:before` 被拦下时不触发） | `{ inputs, reply, outcome, error?, sessionId, turnId }`；`inputs` 与 `agent:turn:before` 的同一份，`error` 是 `string \| TextRef` |
 
 一轮的输入是 `TurnInput`：
 

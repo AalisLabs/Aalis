@@ -15,7 +15,7 @@
 
 ```ts
 export interface TriggerService {
-  readonly label: string;
+  readonly label: string | TextRef;
 }
 
 export const trigger = defineService<TriggerService>('trigger');

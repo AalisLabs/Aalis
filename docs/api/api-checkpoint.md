@@ -42,7 +42,7 @@ interface RollbackResult {
   ok: boolean;
   restored: string[];
   deleted: string[];
-  errors: Array<{ uri: string; reason: string }>;
+  errors: Array<{ uri: string; reason: string | TextRef }>;
   alsoChangedBy: Array<{ uri: string; turnIds: string[] }>;
 }
 

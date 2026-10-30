@@ -25,7 +25,7 @@ interface ServiceView<T = unknown> {
   instance: T;
   contextId: string;  // 逻辑身份：路由 / 显示 / 偏好
   priority: number;
-  label?: string;
+  label?: unknown;    // 展示值（字符串或文字对象），core 原样转交
 }
 ```
 
@@ -69,7 +69,7 @@ export default definePlugin({
 `options`：
 
 - `priority?: number`
-- `label?: string` —— 供管控视图展示
+- `label?: unknown` —— 展示值（字符串或文字对象），core 原样转交，供管控视图展示
 - `entryId?: string` —— 条目的逻辑身份（偏好、展示与 `of(id)` 认它），缺省为本激活 id。一个激活登记同一服务的多条时各给一个，`list()` 与 `of(id)` 才分得清；托管自己不运行代码的包（如 WebUI 服务端替扫描到的前端包登记）时取被托管包的 id。格式由服务契约约定，core 不检查；清理与 `provides` 核对仍归本激活
 
 内置能力（`events` / `logger` / `config` / `lifecycle` / `provide` / `services`）由根激活独占提供、始终在场，绑的是这次激活自身，不可被普通 `provide` 替换。`app` / `plugins` 是 core 提供的宿主服务；`hostConfig`（`@aalis/api-host-config`）由宿主提供；`hooks` / `contributions`（`@aalis/api-hooks` / `@aalis/api-contributions`）由插件提供，默认提供者是 `@aalis/plugin-hooks` / `@aalis/plugin-contributions`。它们都须显式写进 `uses`。
