@@ -107,7 +107,7 @@ describe('/clear 的类型由各插件登记', () => {
   it('不认识的类型（含删掉的别名 history）：回不认识并列出现有类型，不清理', async () => {
     const { exec, clearSession } = await world({ probes: [probe('zz-foo', [{ id: 'foo', label: '探针数据' }], true)] });
     expect(await exec('/clear -t history')).toBe(
-      '未知清理类型: history。可用类型: all, context, foo。说明见 /help clear',
+      '未知清理类型：history。可用类型：all, context, foo。说明见 /help clear',
     );
     expect(clearSession).not.toHaveBeenCalled();
   });
@@ -123,7 +123,7 @@ describe('/clear 的类型由各插件登记', () => {
   it('贡献点插件不在：-t 只认 all，/clear -t context 回不认识；/clear 照常清', async () => {
     const { exec, typeLines, clearSession } = await world({ noContributions: true });
     expect(await typeLines()).toEqual(['  - all：全部类型']);
-    expect(await exec('/clear -t context')).toBe('未知清理类型: context。可用类型: all。说明见 /help clear');
+    expect(await exec('/clear -t context')).toBe('未知清理类型：context。可用类型：all。说明见 /help clear');
     expect(clearSession).not.toHaveBeenCalled();
     expect(await exec('/clear')).toBe('当前会话消息历史已清空');
     expect(clearSession).toHaveBeenCalledWith('s-cur');
@@ -138,9 +138,9 @@ describe('/clear 的类型说明', () => {
 
   it('老习惯敲 /clear list、选项值用空格写多了：报未知子指令或多余参数并指向 /help clear，不进确认、不清理', async () => {
     const { exec, guardCalls, clearSession } = await world();
-    expect(await exec('/clear list')).toBe('未知子指令或多余参数: list。输入 /help clear 查看用法。');
+    expect(await exec('/clear list')).toBe('未知子指令或多余参数：list。输入 /help clear 查看用法。');
     // -t 只取下一个词，第二个 context 落成多余参数
-    expect(await exec('/clear -t context context')).toBe('未知子指令或多余参数: context。输入 /help clear 查看用法。');
+    expect(await exec('/clear -t context context')).toBe('未知子指令或多余参数：context。输入 /help clear 查看用法。');
     expect(guardCalls).toEqual([]);
     expect(clearSession).not.toHaveBeenCalled();
   });

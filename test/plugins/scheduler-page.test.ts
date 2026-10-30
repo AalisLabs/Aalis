@@ -225,9 +225,9 @@ describe('新建', () => {
       expect(resolveText(error, ['en'])).toBe(
         'Invalid cron expression (needs 5 fields or an alias): every five minutes',
       );
-      expect(resolveText(error, ['zh-CN'])).toBe('非法 cron 表达式（需 5 字段或别名）: every five minutes');
+      expect(resolveText(error, ['zh-CN'])).toBe('非法 cron 表达式（需 5 字段或别名）：every five minutes');
       expect(await createByTool({ name: 'k', cron: '61 * * * *', content: 'x' })).toEqual({
-        error: 'cron 第 1 字段非法（解析为空）: "61"',
+        error: 'cron 第 1 字段非法（解析为空）："61"',
       });
       expect(jobs()).toEqual([]);
       expect(files.has('data:/scheduler-jobs.json')).toBe(false);
@@ -258,7 +258,7 @@ describe('新建', () => {
       const service = svc();
       if (!service) throw new Error('scheduler 服务未提供');
       const job = { ...base, cron: 'every five minutes' };
-      const reason = '非法 cron 表达式（需 5 字段或别名）: every five minutes';
+      const reason = '非法 cron 表达式（需 5 字段或别名）：every five minutes';
       expect(() => service.addJob(job)).toThrow(reason);
       expect(() => service.setJob(job)).toThrow(reason);
       expect(jobs()).toEqual([]);
@@ -328,7 +328,7 @@ describe('编辑', () => {
             input: { cron: '@every soon', sessionId: 'internal', platform: 'internal', content: 'y' },
           }),
         ),
-      ).toEqual(refused(500, '无法识别的 @every 表达式: @every soon'));
+      ).toEqual(refused(500, '无法识别的 @every 表达式：@every soon'));
       expect(jobs()).toMatchObject([{ name: 'j', cron: '@daily', content: 'x' }]);
     });
   });
@@ -695,7 +695,7 @@ describe('读不出来与没排上的提示', () => {
             id: 'unscheduled:tz',
             level: 'error',
             title: '计划任务「tz」没有排上，不会运行',
-            detail: '在配置文件里改正这个任务的 cron 或 timeZone，保存后生效。原因：非法时区: Mars/Olympus',
+            detail: '在配置文件里改正这个任务的 cron 或 timeZone，保存后生效。原因：非法时区：Mars/Olympus',
             open: 'config',
           },
         ]);
@@ -881,7 +881,7 @@ describe('计划任务给人看的出口按读者的语言', () => {
     ],
     'zh-CN': [
       '计划任务「tz」没有排上，不会运行',
-      '在配置文件里改正这个任务的 cron 或 timeZone，保存后生效。原因：非法时区: Mars/Olympus',
+      '在配置文件里改正这个任务的 cron 或 timeZone，保存后生效。原因：非法时区：Mars/Olympus',
       '已执行 every',
       '成功',
       'cron、固定间隔、一次性运行时间、X 秒后执行必须填写其中之一',

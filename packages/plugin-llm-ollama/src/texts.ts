@@ -28,11 +28,11 @@ const SOURCE = {
     '启动时请求 /api/tags 发现已安装的模型，WebUI 可刷新模型列表。服务不提供 /api/tags 时关闭：不发发现请求，只注册 customModels（此时必填），也不支持刷新。',
   modelCapabilitiesLabel: '单模型能力覆盖',
   modelCapabilitiesDescription:
-    '强制覆盖某模型的能力(优先级最高,高于 /api/show 自动探测与家族表),与 adapter 默认能力取并集。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：nemotron3:33b: chat,vision,tool_calling',
+    '强制覆盖某模型的能力（优先级最高，高于 /api/show 自动探测与家族表），与 adapter 默认能力取并集。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：nemotron3:33b: chat,vision,tool_calling',
   providerCapabilitiesLabel: '适配器默认能力（逗号分隔）',
   providerCapabilitiesDescription:
-    '兜底默认能力:仅当某模型既无法从 Ollama /api/show 探测、又不在内置家族表时才使用。能力现已自动探测,通常留空即可（填了反而可能给不支持的模型乱标能力）。例：chat,tool_calling,streaming',
-  timeoutLabel: '停顿超时 (秒)',
+    '兜底默认能力：仅当某模型既无法从 Ollama /api/show 探测、又不在内置家族表时才使用。能力现已自动探测，通常留空即可（填了反而可能给不支持的模型乱标能力）。例：chat,tool_calling,streaming',
+  timeoutLabel: '停顿超时（秒）',
   timeoutDescription:
     '多久收不到新的生成内容算超时（秒）。一直在输出（含思考内容）不算超时；工具调用要等 Ollama 生成完整才一次给出，生成期间不算输出；不流式的请求（含带音频的请求）要在这段时间内收到整份回复。大模型或长上下文出第一段内容慢、工具参数很长时，建议适当调大。0 = 不限制。',
   temperatureLabel: '温度',
@@ -51,7 +51,7 @@ const SOURCE = {
   unreachable: 'Ollama 连不上服务：检查 baseUrl 与网络，详情见日志',
   notJson: 'Ollama 应答不是 JSON ({status})；详情见日志',
   discoveryNotJson: '响应不是 JSON: {excerpt}',
-  discoveryNotList: '响应不是模型列表（需要 models 数组，每项带字符串 name）: {excerpt}',
+  discoveryNotList: '响应不是模型列表（需要 models 数组，每项带字符串 name）：{excerpt}',
   discoveryFailed: '模型发现失败 {url}: {error}',
   emptyBody: 'Ollama API 返回了空的响应体，无法进行流式读取',
   imagesUnavailable: '图片全部获取失败（共 {count} 张），拒绝降级为纯文本请求',

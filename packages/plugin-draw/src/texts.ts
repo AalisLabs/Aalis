@@ -20,11 +20,11 @@ const SOURCE = {
   headlessDescription: '调试时可关闭以观察渲染页面',
   executablePathLabel: 'Chrome 路径（留空自动探测）',
   executablePathDescription: '留空使用 puppeteer 缓存的 Chrome（与浏览器工具共用同一份二进制，进程独立）',
-  idleShutdownSecLabel: '空闲关停 (秒)',
+  idleShutdownSecLabel: '空闲关停（秒）',
   idleShutdownSecDescription: '渲染引擎空闲该时长后关停 Chromium 释放内存；0 = 常驻',
   maxConcurrencyLabel: '渲染并发上限',
   maxConcurrencyDescription: '同时进行的渲染任务数上限；群内多人并发画图时超出的排队，防无界 page + ffmpeg 拖垮机器',
-  animMaxDurationSecLabel: '动图时长上限 (秒)',
+  animMaxDurationSecLabel: '动图时长上限（秒）',
   animMaxDurationSecDescription: 'draw_animation 的动画时长硬上限',
   animDefaultFpsLabel: '动图默认帧率',
   animDefaultFpsDescription: '未显式指定 fps 时使用；上限 25',
@@ -34,7 +34,7 @@ const SOURCE = {
   animMaxOutputMBDescription: '超出即报错（OneBot 内联投递上限 10MB，留余量）',
   clearType: '图片缓存',
   cleared: '绘图产物已清空（{count, number} 个）',
-  clearFailed: '绘图产物清空失败: {error}',
+  clearFailed: '绘图产物清空失败：{error}',
 } as const;
 export type Source = typeof SOURCE;
 

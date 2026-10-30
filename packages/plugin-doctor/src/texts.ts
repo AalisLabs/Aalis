@@ -59,7 +59,7 @@ const SOURCE = {
   preferencesInEffect: '没有未生效的服务偏好',
   pluginLine: '{instance}: {reason}',
   reportTitle: '**系统诊断 — {at, datetime, medium}**',
-  reportSummary: '汇总: 通过 {ok, number}　警告 {warn, number}　错误 {error, number}',
+  reportSummary: '汇总：通过 {ok, number}　警告 {warn, number}　错误 {error, number}',
   reportErrors: '__错误__',
   reportWarnings: '__警告__',
   reportPassed: '__通过__',

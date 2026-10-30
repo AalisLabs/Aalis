@@ -26,8 +26,8 @@ const SOURCE = {
   historyRowsLabel: '历史行数',
   historyRowsDescription:
     '窗口的行数，只算 user / assistant 且正文是字符串的行：从 memory 多取一倍，过滤后留最后这么多行。',
-  endpointNotHttp: 'plugin-trigger-laya 配置错误: endpoint 须为 HTTP 地址',
-  endpointQuery: 'plugin-trigger-laya 配置错误: endpoint 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径',
+  endpointNotHttp: 'plugin-trigger-laya 配置错误：endpoint 须为 HTTP 地址',
+  endpointQuery: 'plugin-trigger-laya 配置错误：endpoint 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径',
   inactive:
     'Laya 触发判定未生效（生效的触发插件是「{label}」），不检查侧车；要启用它，在配置文件的 servicePreferences 里把 trigger 指向 @aalis/plugin-trigger-laya',
   inactiveNone:
@@ -36,7 +36,7 @@ const SOURCE = {
   fallbackNote: '{problems}，判定按兜底只回点名',
   unavailable: '判定不可用（{reason}）',
   stale: '上次判定不可用（{reason}），尚未经请求确认恢复',
-  circuitOpen: '侧车连续 {count} 次失败，最近一次: {why}；熔断 {seconds}s 后重试',
+  circuitOpen: '侧车连续 {count} 次失败，最近一次：{why}；熔断 {seconds}s 后重试',
   timeout: '超时（{ms}ms）',
   notJson: '响应不是 JSON',
   badLogit: '响应的 logit 不是有限数',
@@ -54,13 +54,13 @@ const SOURCE = {
   blind:
     '近 {total} 条带图消息有 {count} 条判定时只有图片指针、没有内容描述：media 未开启图片到达即识别（vision.recognizeOnArrival），或没有可用的识别模型',
   notManaged: '不托管侧车：{problem}',
-  dirNotAbsolute: 'sidecarDir 须为绝对路径（当前: {dir}）',
+  dirNotAbsolute: 'sidecarDir 须为绝对路径（当前：{dir}）',
   badEndpoint:
-    '托管侧车时侧车地址须为 http://127.0.0.1:<端口>（不带路径），侧车只监听本机、端口取自这里（当前: {endpoint}）',
+    '托管侧车时侧车地址须为 http://127.0.0.1:<端口>（不带路径），侧车只监听本机、端口取自这里（当前：{endpoint}）',
   noProcess: 'process 服务缺席，拉不起侧车',
   spawnFailed: '拉起侧车失败（{error}）',
   exited: '侧车退出（{why}）',
-  exitedTail: '侧车退出（{why}；标准错误最后一行: {tail}）',
+  exitedTail: '侧车退出（{why}；标准错误最后一行：{tail}）',
   startupTimeout: '启动超时：{seconds}s 内没有就绪',
   killedBy: '被信号 {signal} 终止',
   exitCode: '退出码 {code}',

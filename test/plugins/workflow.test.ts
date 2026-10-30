@@ -166,7 +166,7 @@ describe('workflow validateGraph', () => {
     expect(toSource(validateGraph(wrap({ id: 'a', type: 'wait' })))).toMatch(/seconds/);
     const unknownType = validateGraph(wrap({ id: 'a', type: 'mystery' }));
     expect(unknownType).toMatchObject({ i18n: '@aalis/plugin-workflow', key: 'unknownNodeType' });
-    expect(toSource(unknownType)).toBe('节点 "a" 类型未知: mystery');
+    expect(toSource(unknownType)).toBe('节点 "a" 类型未知：mystery');
     // 合法 agent 节点通过
     expect(validateGraph(wrap({ id: 'a', type: 'agent', instruction: '干活' }))).toBeNull();
   });

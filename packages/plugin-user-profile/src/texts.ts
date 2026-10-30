@@ -54,8 +54,8 @@ const SOURCE = {
   factTemporary: '临时状态',
   clearType: '用户档案（跨会话）',
   clearSkipped: '用户档案是跨会话数据，只在清理全部会话时清，本次未清理',
-  clearDone: '用户档案已清空 ({count, number} 条)',
-  clearFailed: '用户档案清空失败: {error}',
+  clearDone: '用户档案已清空（{count, number} 条）',
+  clearFailed: '用户档案清空失败：{error}',
   // 档案页（标题与工具分组名同一称呼）
   profiles: '用户档案',
   pageDescription: '她从对话里记下的关于各人的事实，会带进以后的对话。这里只能删除，不能改写。',

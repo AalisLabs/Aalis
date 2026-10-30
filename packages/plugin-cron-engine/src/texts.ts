@@ -4,7 +4,7 @@ import en from './locales/en.js';
 
 const SOURCE = {
   displayName: 'Cron 调度引擎',
-  badTimeZone: '非法时区: {timeZone}',
+  badTimeZone: '非法时区：{timeZone}',
 } as const;
 export type Source = typeof SOURCE;
 

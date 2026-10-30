@@ -176,7 +176,7 @@ describe('工作流运行的错误原因', () => {
     });
     setLanguage(['zh-CN']);
     expect(await request('actions/runWorkflow', 'POST', { rowKey: 'zz-manual' })).toEqual({
-      error: '运行没有成功（失败）：节点 "a" 失败: \'tools\' 服务不可用',
+      error: '运行没有成功（失败）：节点 "a" 失败：\'tools\' 服务不可用',
     });
   });
 });

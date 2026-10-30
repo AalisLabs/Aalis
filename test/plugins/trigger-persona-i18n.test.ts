@@ -76,7 +76,7 @@ const CASES = {
     clear: ['Cleared the persona state of this session', 'Cleared the persona state of all sessions'],
   },
   'zh-CN': {
-    configError: 'plugin-trigger-laya 配置错误: endpoint 须为 HTTP 地址',
+    configError: 'plugin-trigger-laya 配置错误：endpoint 须为 HTTP 地址',
     clear: ['当前会话角色状态已清空', '所有会话角色状态已清空'],
   },
 };

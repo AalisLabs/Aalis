@@ -93,7 +93,7 @@ describe('POST /api/plugins/:name/instances 的配置与改配置同一套', () 
     expect(reply.body).toEqual({
       ok: true,
       instanceId: 'grouped:x',
-      message: '已创建实例 grouped:x（已忽略未声明的配置字段: typo, retry.extra）',
+      message: '已创建实例 grouped:x（已忽略未声明的配置字段：typo, retry.extra）',
       ignored: ['typo', 'retry.extra'],
     });
     expect(w.store.getPluginConfig('grouped:x')).toEqual({ timeoutMs: 60, retry: { delayMs: 100, maxTries: 3 } });

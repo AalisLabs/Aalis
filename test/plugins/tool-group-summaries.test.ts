@@ -187,11 +187,11 @@ describe('工具插件的分组带文字对象的概述', () => {
     }
     expect(summaries).toEqual([
       [
-        'OKX 虚拟币交易工具集 (模拟盘)，提供行情查询、账户管理、下单交易等功能',
+        'OKX 虚拟币交易工具集（模拟盘），提供行情查询、账户管理、下单交易等功能',
         'OKX crypto trading tools (demo trading): market data, account management, order placement and more',
       ],
       [
-        'OKX 虚拟币交易工具集 (实盘)，提供行情查询、账户管理、下单交易等功能',
+        'OKX 虚拟币交易工具集（实盘），提供行情查询、账户管理、下单交易等功能',
         'OKX crypto trading tools (live trading): market data, account management, order placement and more',
       ],
     ]);

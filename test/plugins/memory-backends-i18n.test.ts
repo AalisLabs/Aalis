@@ -101,7 +101,7 @@ describe('记忆后端的插件失败原因：带文字对象，en 是英文，z
         ),
       errorName: 'TextError',
       en: 'MongoDB connection failed (make sure MongoDB is running and the uri config item is right): connect ECONNREFUSED 127.0.0.1:1',
-      zh: 'MongoDB 连接失败（确认 MongoDB 在运行、配置项 uri 写对）: connect ECONNREFUSED 127.0.0.1:1',
+      zh: 'MongoDB 连接失败（确认 MongoDB 在运行、配置项 uri 写对）：connect ECONNREFUSED 127.0.0.1:1',
     },
     {
       name: 'MongoDB 库名超长',

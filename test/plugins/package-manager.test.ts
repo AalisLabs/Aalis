@@ -498,7 +498,7 @@ describe('install（只有一条路径：写根依赖）', () => {
     h.deps.pluginStatus = () => [entry('@scope/foo:b', 'error', '坏配置'), entry('@scope/foo', 'active')];
     expect(toSource(await createPackageManager(h.deps).install('@scope/foo'))).toEqual({
       ok: true,
-      message: '已安装并加载: @scope/foo',
+      message: '已安装并加载：@scope/foo',
       plugin: '@scope/foo',
     });
   });

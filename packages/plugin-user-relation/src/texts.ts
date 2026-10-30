@@ -141,8 +141,8 @@ const SOURCE = {
   // /clear
   clearType: '用户关系图谱（跨会话）',
   clearSkipped: '关系图是跨会话数据，只在清理全部会话时清，本次未清理',
-  clearDone: '关系图已清空 ({count, number} 条)',
-  clearFailed: '关系图清空失败: {error}',
+  clearDone: '关系图已清空（{count, number} 条）',
+  clearFailed: '关系图清空失败：{error}',
   // 关系名（存储里的英文键照旧）
   relationInitiator: '发起者',
   relationParticipant: '参与者',

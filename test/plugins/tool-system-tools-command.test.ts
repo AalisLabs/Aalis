@@ -39,6 +39,6 @@ describe('/tools', () => {
       session: { sessionId: 's', platform: 'webui', userId: 'u1', sessionType: 'private', raw: '/tools' },
       options: {},
     });
-    expect(String(toSource(out))).toBe(['机器交互工具:', '  file', '  system', '  http'].join('\n'));
+    expect(String(toSource(out))).toBe(['机器交互工具：', '  file', '  system', '  http'].join('\n'));
   });
 });

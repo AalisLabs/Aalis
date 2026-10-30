@@ -23,7 +23,7 @@ const SOURCE = {
   noMemory: 'memory 服务不可用',
   clearedAll: '所有会话摘要已清空',
   clearedSession: '当前会话摘要已清空',
-  clearFailed: '摘要清空失败: {error}',
+  clearFailed: '摘要清空失败：{error}',
 } as const;
 export type Source = typeof SOURCE;
 

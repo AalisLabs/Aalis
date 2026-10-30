@@ -27,7 +27,7 @@ const SOURCE = {
   dailyGroup: 'OneBot 只读与日常',
   dailyGroupSummary: '只读查询（群信息/成员/好友列表/历史/登录信息）+ 日常低风险互动（戳一戳、好友赞）',
   groupGroup: 'OneBot 群务',
-  groupGroupSummary: '群务管理：禁言/全员禁言/踢人/撤回消息/设置群名片/改群名/设管理员/群打卡/审批加群申请 等',
+  groupGroupSummary: '群务管理：禁言/全员禁言/踢人/撤回消息/设置群名片/改群名/设管理员/群打卡/审批加群申请等',
   personalGroup: 'OneBot 个人/私聊',
   personalGroupSummary: '影响 bot 账号本身的人际关系：退群、删好友、处理好友申请、接受/拒绝入群邀请',
 } as const;

@@ -28,7 +28,7 @@ const SOURCE = {
   clearType: '会话角色状态',
   clearedAll: '所有会话角色状态已清空',
   clearedSession: '当前会话角色状态已清空',
-  clearFailed: '角色状态清空失败: {error}',
+  clearFailed: '角色状态清空失败：{error}',
 } as const;
 export type Source = typeof SOURCE;
 

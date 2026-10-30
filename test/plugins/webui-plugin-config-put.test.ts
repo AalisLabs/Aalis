@@ -176,7 +176,7 @@ describe('PUT /api/plugins/:name/config 与 watch 路径对齐', () => {
     expect(unknown.status).toBe(200);
     expect(unknown.body, '被裁的字段回给调用方，不静默吞掉').toEqual({
       ok: true,
-      message: '插件 target 配置已更新（已忽略未声明的配置字段: sneaky）',
+      message: '插件 target 配置已更新（已忽略未声明的配置字段：sneaky）',
       ignored: ['sneaky'],
       removed: [],
     });
@@ -210,7 +210,7 @@ describe('PUT /api/plugins/:name/config 与 watch 路径对齐', () => {
     expect(reply.status).toBe(200);
     expect(reply.body).toEqual({
       ok: true,
-      message: '插件 target 配置已更新（已忽略未声明的配置字段: sneaky）（已从配置文件移除未声明的字段: legacyKnob）',
+      message: '插件 target 配置已更新（已忽略未声明的配置字段：sneaky）（已从配置文件移除未声明的字段：legacyKnob）',
       ignored: ['sneaky'],
       removed: ['legacyKnob'],
     });
@@ -305,7 +305,7 @@ describe('PUT /api/plugins/:name/config 无改动时不重建插件', () => {
     expect(reply.status).toBe(200);
     expect(reply.body).toEqual({
       ok: true,
-      message: '插件 target 配置无改动，已写回配置文件（已忽略未声明的配置字段: typoField）',
+      message: '插件 target 配置无改动，已写回配置文件（已忽略未声明的配置字段：typoField）',
       ignored: ['typoField'],
       removed: [],
     });

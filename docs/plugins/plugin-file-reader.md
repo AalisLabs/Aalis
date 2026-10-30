@@ -34,7 +34,7 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `maxFileSizeMB` | number | `20` | 最大文件大小 (MB)：允许上传的最大文件大小(MB)。超过此限制的文件将被拒绝。 |
+| `maxFileSizeMB` | number | `20` | 最大文件大小 (MB)：允许上传的最大文件大小（MB）。超过此限制的文件将被拒绝。 |
 | `autoInlineLimit` | number | `100000` | 自动 inline 阈值（字符）：提取出的文本长度若 ≤ 此值，则直接 inline 到附件描述里（模型无需调工具即可看到全文）；否则只挂 ID，由模型按需用 read_uploaded_file 拉取。受众里有别人的会话（群、多人房间、对端不是 owner 的私聊）里一律不内联，只给文件名、ID 与大小。 |
 | `toolDefaultMaxLength` | number | `50000` | read_uploaded_file 默认截断：read_uploaded_file 工具未显式传 maxLength 时使用的默认截断字符数，避免把超大文档一次喂进 LLM 上下文导致爆 token。0 表示不截断；要是非负整数，负数与小数报配置错误。 |
 | `retentionDays` | number | `30` | 保留天数：上传文件保留的最长天数，超过即清理（按上传时间 uploadedAt）。0 表示不按时间清理。 |

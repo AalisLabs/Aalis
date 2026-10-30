@@ -181,7 +181,7 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
 
   it('storage_uri 读不出时照实报原因：未知存储根不报成「不存在」', async () => {
     const out = await send({ kind: 'image', storage_uri: 'nope:/cat.png' });
-    expect(out.error).toMatch(/^未知存储根: nope/);
+    expect(out.error).toMatch(/^未知存储根：nope/);
     expect(outbound).toHaveLength(0);
   });
 

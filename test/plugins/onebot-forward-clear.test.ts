@@ -216,7 +216,7 @@ describe('plugin-adapter-onebot: 参与 memory:clear', () => {
     const { mem, clear } = await world();
     vi.spyOn(mem, 'commitMetadata').mockRejectedValue(new Error('后端故障'));
     expect(await clear('all')).toEqual([
-      { source: 'onebot-forward', success: false, message: '合并转发原文清空失败: 后端故障' },
+      { source: 'onebot-forward', success: false, message: '合并转发原文清空失败：后端故障' },
     ]);
   });
 

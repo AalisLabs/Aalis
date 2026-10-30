@@ -8,7 +8,7 @@ const SOURCE = {
   enabledLabel: '启用任务计划工具',
   clearedAll: '所有会话待办已清空（{count, number} 个会话）',
   clearedSession: '当前会话待办已清空',
-  clearFailed: '待办清空失败: {error}',
+  clearFailed: '待办清空失败：{error}',
 } as const;
 export type Source = typeof SOURCE;
 

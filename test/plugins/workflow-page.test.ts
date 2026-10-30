@@ -178,7 +178,7 @@ describe('工作流页', () => {
     await app.plugins.unload(toolsPlugin.name);
     expect(toSource(await pages.act('workflows', 'runWorkflow', { rowKey: 'zz-manual' }))).toEqual({
       status: 500,
-      body: { error: '运行没有成功（失败）：节点 "a" 失败: \'tools\' 服务不可用' },
+      body: { error: '运行没有成功（失败）：节点 "a" 失败：\'tools\' 服务不可用' },
     });
   });
 

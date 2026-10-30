@@ -174,7 +174,7 @@ describe('plugin-todo-list: 参与 memory:clear', () => {
     const { app, host, clear, updates } = await world();
     vi.spyOn(host.services.use.get(memory)!, 'listMetadata').mockRejectedValueOnce(new Error('后端故障'));
     expect(toSource(await clear('all'))).toEqual([
-      { source: 'todo-list', success: false, message: '待办清空失败: 后端故障' },
+      { source: 'todo-list', success: false, message: '待办清空失败：后端故障' },
     ]);
     expect(updates).toEqual([]);
     await app.stop();

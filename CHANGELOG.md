@@ -79,7 +79,7 @@ core 定为 0.21.0。给人看的文字改为文字对象，由出口按读者�
 - 给人看的数量按读者的语言写千分位。
 - runtime 加载插件之前的终端输出（启动、宿主参数与 `--init`、实例锁、重启与回滚提示、致命错误的标签）改为英文；经 WebUI 显示的配置报错按读者的语言。
 - 诊断页的「类别」、作品站的告警类型、部署结果与作品类型、作品审核的步骤与结论、关系图的实体类型与事件类别，以及白纸的取消来源、出网方式、绑定代理的状态、告警的类别与成品类型里的 other 显示中文名，不再显示英文标识；作品审核「历史」里撤下一条的「裁决者与理由」由 JSON 改为句子；白纸的停开时间按读者的语言写、按服务进程的时区；配置标签「摘要最大字数」「单条事实字数上限」改为「摘要最大字符数」「单条事实字符数上限」，用户档案「每 N 条消息提取一次」的说明与 `/profile` 的说明去掉「Aalis」。
-- `/model`、`/persona` 列表为空时回「(无可用模型)」「(无可用人设)」（0.20 写成「(无可用可用模型)」「(无可用可用人设)」）。
+- `/model`、`/persona` 列表为空时回「（无可用模型）」「（无可用人设）」（0.20 写成「(无可用可用模型)」「(无可用可用人设)」）。
 - 从市场装插件后主实例激活失败时，回执里的原因与插件页、「需要处理」同一说法：core 自己的四种失败按插件页的写法（如「服务 x 为独占登记，不能再添加提供者」，0.20 是 core 的摘要「服务 "x" 为独占登记，不能添加另一个提供者」），带文字对象的报错只写那句说明、不再接「 ← 原因」。
 
 **脚手架**
@@ -186,7 +186,7 @@ core 定为 0.21.0。给人看的文字改为文字对象，由出口按读者�
 - 三家的 `timeout`（秒，默认 120，0 为不限）改为多久收不到新的生成内容算超时：从发出请求起计时，流式请求每收到一段正文、思考或工具调用的名字与参数就重新计时，一直在输出的请求总时长超过 `timeout` 也照常读完；保活注释、空行与没有生成内容的帧不算，停住时只发这些的连接照样超时；调用方处理已交出的一段的时间不算。不流式的请求（含 llm-ollama 带音频的请求）照旧要在 `timeout` 秒内收到整份回复。此前 `timeout` 是整个请求的总时限，流式时连读流一起算。
 - `timeout` 为 0 或大于 300 秒时按设置生效。此前生成请求受 Node 自带 fetch 的默认时限约束，等响应头或读流停顿满 300 秒就断开，报成「连不上服务」或 `terminated`。
 - 三家的对话请求经插件自己的连接池发出，不走全局 dispatcher：经 `NODE_USE_ENV_PROXY` 或 `setGlobalDispatcher` 配的代理对对话请求不起作用（列模型与能力探测照旧）。插件停用或重载时关闭连接池，之后还拿着旧句柄发的请求报「<提供者> 插件已停用或重载，这次请求没有发出」。
-- 超时的错误信息改为「<提供者> 请求超时：<timeout> 秒内没有收到新的生成内容，可在配置里调大 timeout」；配置项的标签改为「停顿超时 (秒)」。
+- 超时的错误信息改为「<提供者> 请求超时：<timeout> 秒内没有收到新的生成内容，可在配置里调大 timeout」；配置项的标签改为「停顿超时（秒）」。
 - api-llm 加 `idleTimeout(ms, signal?)` 与 `IDLE_TIMEOUT_MAX_MS`：给服务商用的按停顿计时，返回交给请求的 `signal`、收到新的生成内容时调用的 `touch`，与交出一段前后调用的 `pause`、`resume`；`ms` 不是数时抛 `RangeError`。见 [api-llm](docs/api/api-llm.md) 的「生成请求的超时」。
 
 ### 插件配置可按会话覆盖，会话设置拆成新插件（新包 @aalis/api-session-settings、@aalis/plugin-session-settings；@aalis/schema-config、@aalis/api-host-config、@aalis/runtime、@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/api-webui、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/api-agent、@aalis/plugin-agent、@aalis/api-persona、@aalis/plugin-persona、@aalis/api-tools、@aalis/plugin-tools、@aalis/plugin-skills、@aalis/api-memory、@aalis/plugin-memory-summary、@aalis/plugin-memory-history、@aalis/plugin-memory-vector、@aalis/plugin-tool-session、@aalis/plugin-user-relation、@aalis/plugin-subtask、@aalis/plugin-paper、@aalis/plugin-i18n、@aalis/api-authority、@aalis/plugin-authority、@aalis/plugin-commands、@aalis/api-gateway、@aalis/plugin-gateway、@aalis/api-trigger、@aalis/plugin-trigger-policy、@aalis/plugin-trigger-laya、@aalis/plugin-flow-control、@aalis/api-llm、@aalis/api-embedding、@aalis/plugin-embedding-openai、@aalis/plugin-embedding-ollama、@aalis/api-reach、@aalis/plugin-reach、@aalis/plugin-cli、@aalis/plugin-media、@aalis/api-platform、@aalis/plugin-adapter-onebot、@aalis/plugin-user-profile、@aalis/plugin-websearch-serper、@aalis/plugin-doctor、@aalis/create-aalis、@aalis/create-aalis-plugin）

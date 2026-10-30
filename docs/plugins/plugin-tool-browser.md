@@ -34,7 +34,7 @@ export default definePlugin({
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `headless` | boolean | `true` | 无头模式：是否以无头模式运行浏览器（无 GUI 窗口）。 |
-| `defaultTimeout` | number | `30000` | 默认超时(ms)：页面导航和操作的默认超时时间。 |
+| `defaultTimeout` | number | `30000` | 默认超时（ms）：页面导航和操作的默认超时时间。 |
 | `viewportWidth` | number | `1280` | 视口宽度 |
 | `viewportHeight` | number | `720` | 视口高度 |
 | `maxPages` | number | `5` | 最大页面数：同时打开的最大页面数量。超出后关闭最早打开的页面。 |

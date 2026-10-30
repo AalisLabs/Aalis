@@ -6,7 +6,7 @@ const SOURCE = {
   displayName: '浏览器工具',
   headlessLabel: '无头模式',
   headlessDescription: '是否以无头模式运行浏览器（无 GUI 窗口）。',
-  defaultTimeoutLabel: '默认超时(ms)',
+  defaultTimeoutLabel: '默认超时（ms）',
   defaultTimeoutDescription: '页面导航和操作的默认超时时间。',
   viewportWidthLabel: '视口宽度',
   viewportHeightLabel: '视口高度',

@@ -163,7 +163,7 @@ describe('plugin-memory-mongodb 连接失败的包装错误', () => {
     const { error } = await settle(openAndProvide(client, CONFIG, harness().caps));
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toBe(
-      'MongoDB 连接失败（确认 MongoDB 在运行、配置项 uri 写对）: connect ECONNREFUSED 127.0.0.1:1',
+      'MongoDB 连接失败（确认 MongoDB 在运行、配置项 uri 写对）：connect ECONNREFUSED 127.0.0.1:1',
     );
     expect((error as Error).cause).toBe(original);
   });

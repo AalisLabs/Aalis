@@ -58,7 +58,7 @@ describe('trigger-laya 配置解析', () => {
   ])('侧车地址%s：读配置时报错', (_form, endpoint) => {
     // 整句相等：报错不带地址
     expect(() => readConfig({ endpoint })).toThrow(
-      new Error('plugin-trigger-laya 配置错误: endpoint 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径'),
+      new Error('plugin-trigger-laya 配置错误：endpoint 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径'),
     );
   });
 

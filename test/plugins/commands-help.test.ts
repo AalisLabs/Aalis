@@ -208,7 +208,7 @@ describe('help: 登记', () => {
       .action(argv => String(argv.options.to));
     const run = (args: string[]) => reg.execute('unit', { sessionId: 's', platform: 'test', args, raw: '' });
     expect(await run(['-t', 'f'])).toBe('f');
-    expect(await run(['-t', 'k'])).toBe('选项 --to 只能是: c, f');
+    expect(await run(['-t', 'k'])).toBe('选项 --to 只能是：c, f');
   });
 
   it('取值可以是函数：帮助与取值校验每次现取', async () => {
@@ -219,7 +219,7 @@ describe('help: 登记', () => {
       .option('to', '-t <to:string>', { choices: () => units })
       .action(argv => String(argv.options.to));
     const run = (args: string[]) => reg.execute('unit', { sessionId: 's', platform: 'test', args, raw: '' });
-    expect(await run(['-t', 'f'])).toBe('选项 --to 只能是: c');
+    expect(await run(['-t', 'f'])).toBe('选项 --to 只能是：c');
     units.push('f');
     expect(reg.detail(['unit'], caller).split('\n').slice(-2)).toEqual(['  - c', '  - f']);
     expect(await run(['-t', 'f'])).toBe('f');
@@ -347,7 +347,7 @@ describe('help: 按调用者的等级过滤', () => {
 
   it('直接执行用不了的指令：拒绝提示照旧点名指令', async () => {
     const { ask } = await setup();
-    expect(await ask(MEMBER, '/shutdown')).toBe('权限不足: "command:shutdown" 需等级 2（当前 0）');
+    expect(await ask(MEMBER, '/shutdown')).toBe('权限不足："command:shutdown" 需等级 2（当前 0）');
   });
 
   it('-h 与 --help 回的就是 /help <指令>：忽略同时写的参数，不执行；用不了的同样当作不存在', async () => {
@@ -375,9 +375,9 @@ describe('help: 按调用者的等级过滤', () => {
 
   it('未知选项：能用的指令附上用法；用不了的只回错误', async () => {
     const { ask } = await setup();
-    expect(await ask(MEMBER, '/probe x --bogus')).toBe(`未知选项: --bogus\n\n${await ask(MEMBER, '/help probe')}`);
-    expect(await ask(MEMBER, '/clear all --bogus')).toBe('未知选项: --bogus');
-    expect(await ask(OWNER, '/clear all --bogus')).toBe(`未知选项: --bogus\n\n${await ask(OWNER, '/help clear all')}`);
+    expect(await ask(MEMBER, '/probe x --bogus')).toBe(`未知选项：--bogus\n\n${await ask(MEMBER, '/help probe')}`);
+    expect(await ask(MEMBER, '/clear all --bogus')).toBe('未知选项：--bogus');
+    expect(await ask(OWNER, '/clear all --bogus')).toBe(`未知选项：--bogus\n\n${await ask(OWNER, '/help clear all')}`);
   });
 
   it('判据与执行同一份：authorityOverrides 放开的列出，deniedCapabilities 禁掉的不列', async () => {
@@ -388,7 +388,7 @@ describe('help: 按调用者的等级过滤', () => {
     const overview = await ask(MEMBER, '/help');
     expect(overview).toContain('- /restart — 重启应用');
     expect(overview).not.toContain('/status');
-    expect(await ask(MEMBER, '/status')).toBe('已被系统禁用: command:status');
+    expect(await ask(MEMBER, '/status')).toBe('已被系统禁用：command:status');
   });
 
   it('停用权限插件之后帮助与执行一致：都按 fail-closed，owner 的帮助不列受限指令，直接执行也被拒', async () => {
@@ -423,7 +423,7 @@ describe('/status：只给计数', () => {
     );
     await app.plugins.idle();
     expect(await ask(MEMBER, '/status')).toMatch(
-      /^系统状态：\n\n- 插件: 在跑 6 个，出错 1 个\n- 已注册工具: 0 个\n- 已注册指令: \d+ 个\n\n逐项检查用 \/doctor$/,
+      /^系统状态：\n\n- 插件：在跑 6 个，出错 1 个\n- 已注册工具：0 个\n- 已注册指令：\d+ 个\n\n逐项检查用 \/doctor$/,
     );
   });
 });

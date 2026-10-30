@@ -52,6 +52,6 @@ describe('storage-local 整体登记一个提供者', () => {
     await app.plugin(storageLocal, { roots: [] });
     await app.plugins.idle();
     const local = app.bind({ storage }).storage.use;
-    expect(() => local.stat('nope:/a')).toThrow(/^未知存储根: nope（已注册根: .*workspace.*）$/);
+    expect(() => local.stat('nope:/a')).toThrow(/^未知存储根：nope（已注册根：.*workspace.*）$/);
   });
 });

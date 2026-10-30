@@ -6,7 +6,7 @@ import en from './locales/en.js';
 const SOURCE = {
   displayName: '文件读取',
   maxFileSizeMBLabel: '最大文件大小 (MB)',
-  maxFileSizeMBDescription: '允许上传的最大文件大小(MB)。超过此限制的文件将被拒绝。',
+  maxFileSizeMBDescription: '允许上传的最大文件大小（MB）。超过此限制的文件将被拒绝。',
   autoInlineLimitLabel: '自动 inline 阈值（字符）',
   autoInlineLimitDescription:
     '提取出的文本长度若 ≤ 此值，则直接 inline 到附件描述里（模型无需调工具即可看到全文）；否则只挂 ID，由模型按需用 read_uploaded_file 拉取。受众里有别人的会话（群、多人房间、对端不是 owner 的私聊）里一律不内联，只给文件名、ID 与大小。',

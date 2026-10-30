@@ -60,7 +60,7 @@ describe('/doctor 需要等级 2', () => {
       ['lv1', 1],
     ] as const) {
       const out = await commands.execute('doctor', input(userId));
-      expect(out, `等级 ${level} 跑到了 /doctor`).toContain(`权限不足: "command:doctor" 需等级 2（当前 ${level}）`);
+      expect(out, `等级 ${level} 跑到了 /doctor`).toContain(`权限不足："command:doctor" 需等级 2（当前 ${level}）`);
       expect(out).not.toContain('汇总');
     }
   });
@@ -71,6 +71,6 @@ describe('/doctor 需要等级 2', () => {
 
     // 直接调注册表，没有发出者可问：指令若声明了 confirm，这里会被取消而不是出报告
     const out = await commands.execute('doctor', input('lv2'));
-    expect(out).toMatch(/汇总: 通过 \d+/);
+    expect(out).toMatch(/汇总：通过 \d+/);
   });
 });

@@ -61,11 +61,11 @@ const SOURCE = {
   modelsLabel: '可用模型',
   personasLabel: '可用人设',
   pagedNoMatch: '无匹配 "{keyword}" 的{label}',
-  pagedNone: '(无{label})',
-  pagedHeader: '{label}（共 {count, number} · 第 {page, number}/{pages, number} 页）:',
-  pagedHeaderMatching: '{label}（含"{keyword}" 共 {count, number} · 第 {page, number}/{pages, number} 页）:',
-  pagedHint: '—— 翻页: {command} -p {next}　搜索: {command} <关键词>',
-  pagedHintMatching: '—— 翻页: {command} {keyword} -p {next}',
+  pagedNone: '（无{label}）',
+  pagedHeader: '{label}（共 {count, number} · 第 {page, number}/{pages, number} 页）：',
+  pagedHeaderMatching: '{label}（含"{keyword}" 共 {count, number} · 第 {page, number}/{pages, number} 页）：',
+  pagedHint: '—— 翻页：{command} -p {next}　搜索：{command} <关键词>',
+  pagedHintMatching: '—— 翻页：{command} {keyword} -p {next}',
 } as const;
 export type Source = typeof SOURCE;
 

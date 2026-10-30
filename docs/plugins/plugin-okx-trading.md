@@ -31,7 +31,7 @@ export default definePlugin({
 | `passphrase` | string | 必填 | Passphrase：创建 API 时设定的口令（secret） |
 | `baseUrl` | string | `'https://www.okx.com'` | API 地址：默认实盘地址，可改为自定义域名。带查询串或片段（`?` 或 `#` 之后的部分：插件在它后面拼路径）时激活报配置错误 |
 | `demo` | boolean | `true` | 模拟盘：启用后将使用模拟交易环境，强烈建议先在模拟盘测试 |
-| `confirmRealMoney` | boolean | `false` | 确认实盘风险：仅当关闭模拟盘(demo:false)、用真实资金时，须显式设为 true 以确认风险；否则不暴露下单/撤单/策略/划转/提币等交易工具，仅保留查询。 |
+| `confirmRealMoney` | boolean | `false` | 确认实盘风险：仅当关闭模拟盘（demo:false）、用真实资金时，须显式设为 true 以确认风险；否则不暴露下单/撤单/策略/划转/提币等交易工具，仅保留查询。 |
 | `timeoutMs` | number | `15000` | 请求超时 (ms) |
 | `enableTrading` | boolean | `true` | 启用交易工具：关闭后仅保留查询类工具，不暴露下单/撤单操作 |
 | `enableAlgo` | boolean | `false` | 启用策略委托：启用止盈止损 / 计划委托工具 |

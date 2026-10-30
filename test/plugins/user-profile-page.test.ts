@@ -234,9 +234,9 @@ describe('用户档案页', () => {
     ]);
     expect(replies.map(reply => renderIn(reply as string | TextRef, 'zh-CN'))).toEqual([
       '已清空全部用户档案（1 条）',
-      '用户档案已清空 (1 条)',
+      '用户档案已清空（1 条）',
       '已清空全部用户档案（2 条）',
-      '用户档案已清空 (2 条)',
+      '用户档案已清空（2 条）',
     ]);
   });
 

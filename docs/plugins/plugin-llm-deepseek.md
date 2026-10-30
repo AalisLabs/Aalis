@@ -33,7 +33,7 @@ definePlugin({
 | `discoverModels` | boolean | `true` | 自动发现模型：启动时请求 /models 发现可用模型。网关不提供 /models 时关闭：不发发现请求，只注册 customModels（此时必填）。 |
 | `modelCapabilities` | textarea | `''` | 单模型能力覆盖：按行指定某个模型的能力集。有该模型的表项时**覆盖**插件启发式推断，与 adapter 默认能力仍取并集。 格式：`&lt;modelId&gt;: &lt;cap1&gt;,&lt;cap2&gt;,...`，每行一条。如：deepseek-chat: chat,tool_calling,streaming |
 | `providerCapabilities` | string | `''` | 适配器默认能力（逗号分隔）：为本适配器下所有模型额外补充的能力。最终某模型的能力 = 此处能力 ∪ 模型级别能力。例：chat,tool_calling,streaming |
-| `timeout` | number | `120` | 停顿超时 (秒)：多久收不到新的生成内容算超时（秒）。一直在输出（含思考内容）不算超时；不流式的请求要在这段时间内收到整份回复。0 = 不限制。 |
+| `timeout` | number | `120` | 停顿超时（秒）：多久收不到新的生成内容算超时（秒）。一直在输出（含思考内容）不算超时；不流式的请求要在这段时间内收到整份回复。0 = 不限制。 |
 | `temperature` | number | `0.7` | 温度：0-2，越高越随机 |
 | `maxTokens` | number | `8192` | 最大 Token：单次回复最大生成 token 数，须为正整数，否则实例转为出错 |
 | `contextLength` | number | `131072` | 上下文长度：模型上下文窗口大小 |

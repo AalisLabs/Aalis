@@ -18,7 +18,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 const MEMBER = { platform: 'onebot', userId: '30001' };
 const DM = `onebot:10000:private:${MEMBER.userId}`;
 const GROUP = 'onebot:10000:group:20001';
-const DENIED = '权限不足: "command:clear" 需等级 1（当前 0）';
+const DENIED = '权限不足："command:clear" 需等级 1（当前 0）';
 const SESSIONS = [
   ['群里', GROUP],
   ['私聊', DM],
