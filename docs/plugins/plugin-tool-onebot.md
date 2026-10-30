@@ -100,7 +100,7 @@ export default definePlugin({
 | `onebot_resolve_session_id` | 把（self_id, target_type, target_id）解析成 Aalis 内部 sessionId |
 | `onebot_get_session_history` | 按 QQ 群/私聊号读取最近若干条历史 |
 
-这两个工具可从任意会话调用。`onebot_resolve_session_id` 只拼会话 id、不读历史；`onebot_get_session_history` 能读哪些会话按会话管理的跨会话规则（[plugin-session-manager](./plugin-session-manager.md)），与通用的 `session_get_history` 同一条。
+这两个工具可从任意会话调用。`onebot_resolve_session_id` 只拼会话 id、不读历史；`onebot_get_session_history` 能读哪些会话按会话管理的跨会话规则（[plugin-session-manager](./plugin-session-manager.md)），与通用的 `session_get_history` 同一条。门槛不同：本插件的工具都不声明 risk，`onebot_get_session_history` 等级 0 也能用（`session_get_history` 要等级 1），默认能读同平台别的群；要挡就在这个群关「读别的群」，或把取别的会话的范围设成本会话。
 
 ### 请求处理（无配置开关）
 

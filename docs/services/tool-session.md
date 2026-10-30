@@ -110,7 +110,7 @@ const result = await history.getHistory({ sessionId, limit }, callCtx);
 
 ## 6. 能力 / 风险
 
-- **能读哪些会话按会话管理的取别的会话的规则**（[会话管理服务](./session-manager.md) 的 `canTake`）：取别的会话的范围（本会话、同平台、全部，默认同平台）与读别的群、读别人的私聊、跨机器人账号三个开关是会话管理的按会话字段，对所有人一样；授权身份自己与她的私聊不用开关。本服务不再有自己的范围，也没有平台插件注入的检查器。
+- **能读哪些会话按会话管理的取别的会话的规则**（[会话管理服务](./session-manager.md) 的 `canTake`）：取别的会话的范围（本会话、同平台、全部，默认同平台）与读别的群、读别人的私聊、跨机器人账号三个开关是会话管理的按会话字段，对所有人一样；授权身份自己与她的私聊不用开关。
 - 这与 [鉴权系统](../plugins/plugin-authority.md) 的 level/risk 是两套机制：`session_get_history` 工具本身的 minLevel 由工具的 risk 决定（见 [工具](../plugins/plugin-tools.md)），而**跨会话边界**由会话管理的规则决定。二者叠加，缺一不可。
 - 本服务**不做** SSRF / 沙箱：它只读已落库的会话消息，无外部 egress。
 

@@ -320,7 +320,7 @@ await events.use.emit('trigger:fired', {
 
 ### 触发器全部委托 cron-engine
 
-`cron` / `interval` 触发器都转成 cron-engine 的 `subscribe`（`interval` → `@every Ns`），与 scheduler 共享整分钟 tick，不再各自 `setInterval`（`triggers.ts`）。所以 `cron-engine` 是**硬依赖**（`required`）。`once` 用 `setTimeout`，触发即把 `firedAt` 记入 `runsFile`，一生只触发一次；`runsFile` 读不出（不存在以外的读取错误、解析失败、结构不对）时本次运行拒写该文件，也不安排任何 once（`RunStore.onceLedgerReadable`），避免拿空记录重放已触发过的一次性工作流；**定义不存在时记录随之清除**——`removeWorkflow` 删掉定义文件后当场清（有文件的定义删不掉文件时抛错、不清掉记录；只在内存里的定义照常删除），手删 yaml 则由启动时的 `prune`（扫完定义、注册触发器之前）按现存定义集补清，定义者记录同样清；`event` 用 `events.use.on` 订阅（`triggers.ts`）。
+`cron` / `interval` 触发器都转成 cron-engine 的 `subscribe`（`interval` → `@every Ns`），与 scheduler 共享整分钟 tick（`triggers.ts`）。所以 `cron-engine` 是**硬依赖**（`required`）。`once` 用 `setTimeout`，触发即把 `firedAt` 记入 `runsFile`，一生只触发一次；`runsFile` 读不出（不存在以外的读取错误、解析失败、结构不对）时本次运行拒写该文件，也不安排任何 once（`RunStore.onceLedgerReadable`），避免拿空记录重放已触发过的一次性工作流；**定义不存在时记录随之清除**——`removeWorkflow` 删掉定义文件后当场清（有文件的定义删不掉文件时抛错、不清掉记录；只在内存里的定义照常删除），手删 yaml 则由启动时的 `prune`（扫完定义、注册触发器之前）按现存定义集补清，定义者记录同样清；`event` 用 `events.use.on` 订阅（`triggers.ts`）。
 
 ### storage 不是沙盒
 
