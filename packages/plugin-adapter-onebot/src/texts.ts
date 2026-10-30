@@ -140,6 +140,7 @@ const SOURCE = {
   notUrl: '地址不是网址，不交给实现端，已拒发',
   cannotInline: '{format} 格式不能内联，已拒发',
   tooLargeToInline: '超过内联上限，不交给实现端去拉，已拒发',
+  tooManyMedia: '一条回复最多发 {max, number} 个媒体，多出的 {count, number} 个已拒发',
   wsNotConnected: 'WebSocket 未连接',
   actionFailed: 'OneBot action {action} 失败（retcode={retcode}）',
   actionFailedDetail: 'OneBot action {action} 失败（retcode={retcode}）：{detail}',

@@ -26,6 +26,7 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 // 出站正文默认按纯文字发：只有带 markup 的（她的回复）才把 <at>、<image|record|video url>、<reply>、<face> 解析成
 // 平台的 @、媒体与引用并分条；指令回显、宿主提示与第三方插件的文字原样整条发出。她回复里媒体标记的网址由适配器
 // 经 safeFetch 取下来内联，不交给实现端去拉；地址不是网址的标记去掉（这里没装 plugin-image-sender，存储地址的也一样）。
+// 一条回复最多内联 10 个媒体（多出的不下载、去掉，投递报失败），同时最多下载 4 个；各条按顺序发，前面的文字不等后面的下载。
 // 本地起一个假的 OneBot 实现端记录发出的 action。
 // ════════════════════════════════════════════════════════════
 
@@ -56,6 +57,10 @@ let httpBase: string;
 const fetched: string[] = [];
 /** /pair-* 里还在等另一个请求的回应 */
 const pairWaiting: Array<() => void> = [];
+/** /held-* 的回应：测试放行之前一直挂着 */
+const held: Array<() => void> = [];
+/** /slow-* 同时在途的请求数与它的峰值 */
+const slow = { inFlight: 0, peak: 0 };
 
 beforeAll(async () => {
   httpServer = createServer((req, res) => {
@@ -65,6 +70,18 @@ beforeAll(async () => {
       res.end(PNG);
     };
     if (req.url === '/ok.png') return png();
+    if (req.url?.startsWith('/held-')) {
+      held.push(png);
+      return;
+    }
+    if (req.url?.startsWith('/slow-')) {
+      slow.peak = Math.max(slow.peak, ++slow.inFlight);
+      setTimeout(() => {
+        slow.inFlight--;
+        png();
+      }, 100);
+      return;
+    }
     if (req.url === '/note.png') {
       res.writeHead(200, { 'content-type': 'image/png' });
       res.end('llm:\n  apiKey: <占位 key>\n');
@@ -106,6 +123,8 @@ const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
   for (const c of cleanups.splice(0).reverse()) await c();
   fetched.length = 0;
+  held.length = 0;
+  slow.peak = 0;
 });
 
 async function until(cond: () => boolean, ms = 8000): Promise<void> {
@@ -369,6 +388,52 @@ describe('onebot：她回复里媒体标记的网址先经 safeFetch 取下来',
       });
       expect(delivery).toEqual({ ok: true });
       expect(t.sent().map(s => s.map(seg => seg.type))).toEqual([['text'], ['image'], ['text'], ['image']]);
+    });
+
+    it('一条回复里的网址同时最多下载 4 个', async () => {
+      const t = await boot();
+      const markers = Array.from({ length: 6 }, (_, i) => `<image url="http://${httpBase}/slow-${i}.png"/>`);
+      const delivery = await t.send({
+        sessionId: GROUP,
+        content: `看${markers.join('')}`,
+        source: 'agent',
+        markup: true,
+      });
+      expect(delivery).toEqual({ ok: true });
+      expect(t.mediaFiles()).toHaveLength(6);
+      expect(slow.peak).toBeLessThanOrEqual(4);
+    });
+
+    it('一条回复最多内联 10 个媒体：多出的不下载、去掉，文字照发，投递报多出的个数', async () => {
+      const t = await boot();
+      const markers = Array.from({ length: 12 }, () => `<image url="http://${httpBase}/ok.png"/>`);
+      const delivery = await t.send({
+        sessionId: GROUP,
+        content: `看${markers.join('')}`,
+        source: 'agent',
+        markup: true,
+      });
+      expect(fetched).toHaveLength(10);
+      expect(t.mediaFiles()).toHaveLength(10);
+      expect(t.sent()[0]).toEqual([{ type: 'text', data: { text: '看' } }]);
+      expect(delivery?.ok === false && toSource(delivery.error)).toContain(
+        '一条回复最多发 10 个媒体，多出的 2 个已拒发',
+      );
+    });
+
+    it('前面的文字不等后面的图下载：先发出，图下载完按原位置发，后面的文字跟在图后', async () => {
+      const t = await boot();
+      const pending = t.send({
+        sessionId: GROUP,
+        content: `先说<image url="http://${httpBase}/held-a.png"/>后说`,
+        source: 'agent',
+        markup: true,
+      });
+      await until(() => t.sent().length > 0 && held.length > 0, 2000);
+      expect(t.sent()).toEqual([[{ type: 'text', data: { text: '先说' } }]]);
+      for (const reply of held.splice(0)) reply();
+      expect(await pending).toEqual({ ok: true });
+      expect(t.sent().map(s => s.map(seg => seg.type))).toEqual([['text'], ['image'], ['text']]);
     });
 
     it('debug 日志记内联之前的正文', async () => {

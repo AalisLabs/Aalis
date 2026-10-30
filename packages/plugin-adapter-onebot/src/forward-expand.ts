@@ -117,10 +117,10 @@ const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 const FORWARD_METADATA_NS = 'onebot:forward';
 
 /**
- * 把一个异步函数包成"同时最多 N 路"的并发受限版本。
- * 用于合并转发内大量图片识别请求时削峰，避免压垮上游 / 触发限流。
+ * 把一个异步函数包成"同时最多 N 路"的并发受限版本，排队的按调用先后。
+ * 用于合并转发内大量图片识别请求与她回复里媒体标记的下载削峰，避免压垮上游 / 触发限流、占满内存。
  */
-function createConcurrencyLimited<TArg, TRet>(
+export function createConcurrencyLimited<TArg, TRet>(
   fn: (arg: TArg) => Promise<TRet>,
   limit: number,
 ): (arg: TArg) => Promise<TRet> {
