@@ -11,7 +11,8 @@ import { deferred } from '../helpers/deferred.js';
 // 结束、被放掉、在网关相位被挡下）去掉记下的；子任务那一轮结束时还有没落定的追问，这一轮的回复不交回、不完成，等追问那一轮。
 // 删除只在定时器里做，延时截到 24 小时、到点重判；
 // 插件重载之后按会话记录上的 lastTurn.endedAt 补删或重排。销毁之前把回报（名字、状态、原因、结果、任务）写进父会话记录，
-// check_subtask、wait_subtasks 读到即删，父会话提醒列出它的那一轮结束后删；父会话清空时一并清掉。已删的子会话收到还没开跑的
+// check_subtask、wait_subtasks 读到即删，父会话提醒列出它的那一轮回复或静默收尾后删（出错、被停止的一轮留着，下一轮照常
+// 列出）；父会话清空时一并清掉。已删的子会话收到还没开跑的
 // 派发与追问不跑。时钟用假时钟。
 // ════════════════════════════════════════════════════════════
 
@@ -388,6 +389,38 @@ describe('回报', () => {
     }
     expect(reports(hub, parent.id)).toEqual([]);
     expect(await hub.reminder(parent.id)).toBeUndefined();
+  });
+
+  /** 子任务交回结果后随即销毁（0），父会话跑一轮、其间的提醒列出它；返回那次提醒 */
+  async function listedIn(outcome: HookContextMap['agent:turn:after']['outcome']) {
+    const { hub, parent, child, call } = await setup(0);
+    await hub.turn(child.id, 'replied');
+    await advance(0);
+    let seen: string | undefined;
+    await hub.turn(parent.id, outcome, {
+      source: 'webui-user',
+      during: async () => {
+        seen = await hub.reminder(parent.id);
+      },
+    });
+    expect(seen).toContain('<结果>');
+    return { hub, parent, child, call };
+  }
+
+  it.each<HookContextMap['agent:turn:after']['outcome']>([
+    'error',
+    'aborted',
+  ])('列出它的那一轮以 %s 收尾：回报留着，下一轮照常列出，check_subtask 取得到', async outcome => {
+    const { hub, parent, child, call } = await listedIn(outcome);
+    expect(await hub.reminder(parent.id)).toContain('<结果>');
+    expect((await call('check_subtask', { subtask_ids: [child.id] })).subtasks).toEqual([
+      expect.objectContaining({ id: child.id, result: '<结果>', destroyed: true }),
+    ]);
+  });
+
+  it('列出它的那一轮静默收尾：与回复了一样，那一轮结束后删', async () => {
+    const { hub, parent } = await listedIn('silent');
+    expect(reports(hub, parent.id)).toEqual([]);
   });
 
   it('delete_subtask 与父会话清空连带的删除不写回报', async () => {
