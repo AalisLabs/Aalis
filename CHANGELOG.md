@@ -26,7 +26,7 @@ core 定为 0.21.0。给人看的文字改为文字对象，由出口按读者�
 - @aalis/schema-i18n（新包）：给人看的文字对象与原文字典的库，含 ICU 消息格式与按语言链解析，零依赖、浏览器可用。
 - @aalis/api-i18n（新包）：i18n 服务的契约（描述符 `i18n`），出口的统一渲染写法 `localizeFor`，语言包的贡献点 `i18n:pack`。
 - @aalis/plugin-i18n（新包）：i18n 服务的默认提供者，按读者的语言链渲染文字对象；配置项「语言」是有序的语言列表，每项是语言标签，作者默认 `['en']`；语言列表由 create-aalis 新建项目时写定，Aalis 运行时不跟随系统语言；带「翻译」页；诊断 `i18n.languages` 与「需要处理」提示在语言列表里没有任何插件提供的语言时提示，只提示、不报错。
-- `npm create aalis` 的最小档装 plugin-i18n；已有部署升级时不会自动装上。没装时各处一律显示原文（第一方插件的原文是中文）。
+- `npm create aalis` 的最小档装 plugin-i18n；npm 装的已有部署升级时不会自动装上，从源码运行（扫 `packages/` 发现插件）的部署随之加载。没装时各处一律显示原文（第一方插件的原文是中文）。
 
 **语言与读者**
 
@@ -207,7 +207,7 @@ core 定为 0.21.0。给人看的文字改为文字对象，由出口按读者�
 
 **会话设置插件**
 
-- 会话设置拆成新插件 @aalis/plugin-session-settings：`npm create aalis` 的最小档装它，已有部署升级时不会自动装上。不装、没启用或会话管理没起来时，`/session` 系列指令、设置的「会话默认」、会话面板的「设置」标签、输入框旁的快捷切换与房间页的「场所设置」都没有，建不了子任务与经会话协议建的子会话；插件详情里这些字段照常能改，各插件只用插件配置里的值（平台档、平台类型档、场所与会话层这段时间不生效）。
+- 会话设置拆成新插件 @aalis/plugin-session-settings：`npm create aalis` 的最小档装它，npm 装的已有部署升级时不会自动装上，从源码运行（扫 `packages/` 发现插件）的部署随之加载。不装、没启用或会话管理没起来时，`/session` 系列指令、设置的「会话默认」、会话面板的「设置」标签、输入框旁的快捷切换与房间页的「场所设置」都没有，建不了子任务与经会话协议建的子会话；插件详情里这些字段照常能改，各插件只用插件配置里的值（平台档、平台类型档、场所与会话层这段时间不生效）。
 - 层：全局（插件配置）› 平台档 › 平台类型档 › 场所 › 本会话，后面的压过前面的。原来的「全局默认」改称「全局（插件配置）」，改它就是改对应插件的配置，插件详情同步显示；「父会话」一层没有了。
 - 配置文件：`sessionConfig.defaults` 没有了，全局层就是各插件的配置段；平台档与平台类型档多一级插件实例 id（`sessionConfig.platforms.<平台>.<实例 id>.<字段>`）；原来的 `sessionConfig.types.<平台>.<类型>` 改名 `platformTypes`，`types` 段不再认：读到告警一次、不生效，按层写时原样留着。写了不认识的实例 id、或实例值不是对象时日志告警一次；只剩键名的空段不告警。写平台档、平台类型档时只改这一项，配置文件里读不懂的部分原样留着；要写的路径上已有的值不是对象时拒收，回执点名那一段。
 - 存储：场所与会话的覆盖值从会话管理记录的 `config` 字段挪到同一条记录的 `metadata['session-settings']` 里，按插件实例分开。
@@ -237,7 +237,7 @@ core 定为 0.21.0。给人看的文字改为文字对象，由出口按读者�
 - 模型没设时写此刻在用的模型：会话里哪一层都没设时写「跟随服务偏好（此刻：<模型名>）」，设置页全局层没设时写「跟随全局偏好（此刻：<模型名>）」，输入框旁的快捷切换同样写此刻的模型。子任务模型没设时写「不另指定（与本会话相同）」。
 - 默认模型：「会话默认 › 全局 › 模型」改的是 agent 的本插件偏好（插件详情「服务偏好」里 agent 的 llm 一行，两处是同一个值），原来改的是全进程的 llm 全局偏好，连带改掉标题生成和摘要用的模型。全局偏好挪回「设置 › 系统 › 服务偏好」作普通一行。agent 没设本插件偏好时照旧跟随全局偏好，聊天用的模型不变。全局层写不存在的模型被拒（与插件详情一致），其余层照旧不当场核对。agent 配置段里手写的 `llm` 键不生效，日志告警一次。
 - 深度思考的可选档按 agent 实际在用的模型列出：给 agent 单设了模型偏好时，原来列的是全局偏好那个模型的档位。会话设置不在、agent 也没设本插件偏好时，插件详情里深度思考的下拉没有可选档。
-- 工具分组的下拉：没登记的分组（如会话历史读取插件不在时它的分组）不再从列表里消失，`*` 总写「全部分组」，每个分组下面一行写它的说明。同时装了 Ollama 与 OpenAI 两个向量化提供者时，各自的「Embedding 模型」下拉只列自己的模型。可选项来源 `platform` 与 `gateway-scopes` 没有了。
+- 工具分组的下拉：没登记的分组（如会话历史读取插件不在时它的分组）不再从列表里消失，`*` 总写「全部分组」，每个分组下面一行写它的说明。同时装了 Ollama 与 OpenAI 两个向量化提供者时，各自的「Embedding 模型」下拉只列自己的模型。
 - 会话设置不在时 WebUI 收到的说法是「会话设置不在（@aalis/plugin-session-settings 没装、没启用，或会话管理没起来）」。
 
 **各插件的项**
@@ -282,7 +282,7 @@ core 定为 0.21.0。给人看的文字改为文字对象，由出口按读者�
 - @aalis/api-tools：新增必需成员 `ToolService.sessionGroups(sessionId, platform?)`；对 `SessionConfig` 的增强删掉。
 - @aalis/api-agent：`TokenUsageEvent.historyLimit` 由 agent 填，第三方 agent 不填时摘要的条数线会静默失效；`AgentService.assignModel` 必须实现；对 `SessionConfig` 的增强删掉。
 - @aalis/api-memory：共享的召回范围 `MEMORY_RECALL_SCOPE_SETTING`、`memoryRecallScope` 与类型 `MemoryRecallScope` 删掉，各记忆插件用自己的范围字段；新增 `historyCleared`（`memory:clear` 之后判消息历史清成没有）。
-- @aalis/api-reach：对 `SessionConfig` 的增强（`accessTier`、`accessOnBoundary`）删掉，档位与越界策略还不能按会话设。
+- @aalis/api-reach：对 `SessionConfig` 的增强（`accessTier`、`accessOnBoundary`）删掉，plugin-reach 的档位固定为工作区档、越界要问。
 - @aalis/api-gateway：作用域函数 `extractTargetId`、`isScopeEnabled`、`resolveEffectiveConfig` 删掉；新增「生效范围」字段 `REPLY_AUDIENCE_FIELD`、判定 `audienceIncludes` 与 `InboundPhaseData.chat`（网关给没有 `source` 的入站算的聊天窗口）；网关在入站相位之前等会话管理收录。
 - @aalis/api-trigger：`createBotNames` 去掉 `sessionManager` 参数，人设服务按会话自己读。
 - @aalis/api-embedding：`EmbeddingService.listModels?` 删掉，配置下拉的可选模型由提供者经贡献点 `webui:options` 交出。
@@ -416,8 +416,8 @@ core 定为 0.21.0。给人看的文字改为文字对象，由出口按读者�
 ### 触及只按这一轮的主体，删掉污点与来源账本（@aalis/api-reach、@aalis/plugin-reach）
 
 - api-reach 的 `ReachInput` 删掉 `roomClass`、`tainted`、`othersContent`：上限只按主体，主体是 owner 的一轮有本地效果，不看会话的受众。`ReachPrincipal` 删掉 `{ subtaskOf }`：子任务不再与父会话实时的触及取较小值，它的主体由权限服务的 `principalOf` 判（类别随派它的那一轮，参与者按这次调用的）。`LocalReach` 删掉 `tainted`、`othersContent`、`skills`；`ReachAskReason` 删掉 `outbound`；`SandboxPolicy` 删掉 `provenanceDeny`，`sandboxPolicyOf` 不再因污点断网、拒写技能目录；`ReachCredential` 删掉 `tainted` 与 `noteWrite`；`ReachService` 删掉 `markTainted` 与 `provenanceOf`，类型 `ProvenanceRecord` 删掉。
-- plugin-reach 不再用存储服务（删掉必需依赖 `storage` 与 `@aalis/api-storage`），不再读写插件数据里的 `reach/provenance.json`。没有本地效果时回给模型的话改为「这一轮不只有 owner 的话，没有本地效果」。触及接线之后，owner 在群里亲手发起的一轮有本地效果，主目录是这个群所在场所的白纸。
-- plugin-reach 沙箱里的命令拿到完整的登录环境，不再按名字或值猜凭据：名字像凭据的变量（含 `TOKEN`、`SECRET`、`PASSWORD`、`CREDENTIAL` 等，或按 `_` 分段有 `KEY`、`PASS`、`AUTH` 等一段的）、值里带密码的网址与密码管理器的会话令牌照样带上（此前去掉）；能进沙箱的只有主体是 owner 的一轮。只去掉 `AALIS_*` 与 `SSH_AUTH_SOCK`。登录环境里原有的 git 命令行配置（`GIT_CONFIG_COUNT` 与各组、`GIT_CONFIG_PARAMETERS`）照留，沙箱注入的几项接在原有的那组后面编号（此前整组去掉、注入的从 0 编号）。
+- plugin-reach 不再用存储服务（删掉必需依赖 `storage` 与 `@aalis/api-storage`），不再读写插件数据里的 `reach/provenance.json`。没有本地效果时回给模型的话改为「这一轮不只有 owner 的话，没有本地效果」。
+- plugin-reach 的凭据交出的沙箱环境（`processEnv('sandbox')`）是完整的登录环境，不再按名字或值猜凭据：名字像凭据的变量（含 `TOKEN`、`SECRET`、`PASSWORD`、`CREDENTIAL` 等，或按 `_` 分段有 `KEY`、`PASS`、`AUTH` 等一段的）、值里带密码的网址与密码管理器的会话令牌照样带上（此前去掉）；没有本地效果的凭据不交环境，拿得到它的只有主体是 owner 的一轮。只去掉 `AALIS_*` 与 `SSH_AUTH_SOCK`。登录环境里原有的 git 命令行配置（`GIT_CONFIG_COUNT` 与各组、`GIT_CONFIG_PARAMETERS`）照留，沙箱注入的几项接在原有的那组后面编号（此前整组去掉、注入的从 0 编号）。
 
 ### 取别的会话的媒体按同一规则，本机文件按主体（@aalis/api-media、@aalis/plugin-image-sender、@aalis/plugin-media）
 
@@ -430,12 +430,13 @@ core 定为 0.21.0。给人看的文字改为文字对象，由出口按读者�
 - 她回复里存储地址的媒体标记过同一份判据，按回复所在的那一轮判，见「通道层：回合开始的钩子与按回合认消息」一节。
 - api-media 新导出这份判据：`mediaScopeOf(call, services)` 交出一次调用的判定，`call` 是 `MediaScopeCall`（`sessionId`、`platform?`、必填的 `participants`、`inbound?`）加取用判定 `approveFor`（同工具调用上下文的）：工具交它的工具调用上下文，逐个参与者判；没有可挂审批的调用的（回复里的标记）交只按一个授权身份判的（第一方取 api-tools 的 `actingIdentity`）。两个工具与回复里的标记都用它。底下是 `mediaInScope(target, call, deps)`（`deps` 是 `MediaScopeDeps`，别的会话的取用判定 `take` 与本机文件判定 `local` 由调用方给）与本机文件判法 `localFileInScope(call, deps)`（`deps` 是 `LocalFileDeps`；非人回合的条款只认唯一的参与者是 owner）；另导出把地址规整成可比形态的 `mediaRef`（网址与存储地址，其余没有）与取历史里系统记下的媒体引用的 `historyMediaRefs`。api-media 新加 api-authority（只用它的类型）、api-session-manager 与 api-storage 的依赖。
 
-### 审批推到 owner 的 IM 私聊，改动照给，在场一条规则（@aalis/api-approval、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/plugin-chat-approval、@aalis/plugin-cli、@aalis/plugin-webui-client）
+### 审批推到 owner 的 IM 私聊，改动照给，在场一条规则（新包 @aalis/plugin-chat-approval；@aalis/api-approval、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/plugin-cli、@aalis/plugin-webui-client、@aalis/create-aalis）
 
 - 审批卡的改动一律照给：api-approval 的 `ApprovalFacts.diff.patch` 与 api-session-protocol 审批对象的 `facts.diff.patch` 改为必有，审批服务不再按路径（`.env`、私钥、凭据文件等）或内容（令牌前缀、「密钥名 = 值」等）猜密钥、整段不给。改 `.env`、内容像密钥的改动，WebUI、终端与 IM 私聊的卡上都逐字显示，审计里也有。
 - api-approval 的 `ApprovalSurface.attend` 与 `SurfaceBinding.attend` 加可选的第三个参数 `scope`（新导出的类型 `AttendScope`，`{ selfId?, window? }`）：给了的接入只覆盖限定的那些审批，只因它们算在场、只收和只能应答它们。给 `window`（群窗口的根会话 id）的覆盖根会话就是这个窗口的（连同它的子会话）、不是只有 owner 能批的；不给 `window` 的（IM 私聊）覆盖只有 owner 能批的、这一轮的参与者里有接入的身份、且所在会话的根会话的机器人账号（`originChat.selfId`）就是 `selfId` 的。不给 `scope` 的覆盖全部。审批服务按它判推给谁、算谁在场、认谁的应答。
 - 推给审批面客户端、还没结的审批让它一直算在场：终端推出卡之后不再按键，卡照样等到结算或满 300 秒（此前到最近一次按键满 10 分钟就进 30 秒宽限，按没人在场结算）。客户端上报离开时，推给它、还没结的对它算没收到，报某一张没送到时只这一张算没收到；再报在场时同一张再推一次：WebUI 页面转到后台再回来时会再收到同一张（按 id 收，不重复）；同一张审批可能对同一个客户端推出不止一次。
-- plugin-chat-approval（聊天审批，还没发布过）：每个（owner 的 IM 身份，机器人账号）一份接入。她与这个账号的私聊是会话管理里这个账号下、出生平台的适配器明确声明为一对一、对端就是她的根会话；有这样的私聊才建接入，没有就等她私聊这个账号之后。机器人账号登记成 owner、实现端又上报了机器人自己发的消息时，那个身份没有这样的私聊：那条消息不算她在场，也不能应答。她经这个账号亲手说话（私聊或群里，点没点名都算）即在场，接入随之建起；审批服务说她已不在场时撤掉（默认实现：10 分钟内没说话、推给她的都已结），再说话时重建。她经这个账号发起的、只有她能批的审批，在私聊里、在群里都推到这个私聊，不发进群（群里的参与者审批见「通道层：群里的审批消息」一节）；卡上总有一行来源，写群或私聊与窗口 id，会话名只作附注；子会话里的审批在来源一行之后另有一行「子任务：…」，写根会话以下各级子会话的标题。应答只认在这个私聊里引用审批消息、正文是应答词的回复（回复开头客户端自动插的对机器人账号的 @ 不算正文）：「同意」「approve」为批准，「拒绝」「deny」开头为拒绝，后面是原因，不论长短、原样转给模型；没引用审批消息的（私聊与群里一样）与引用了但不是应答词的都当普通消息交给这一轮，不回提示。一张卡确定没送达（网关不在、没有适配器接手、投递失败）时只这一张对她算没收到，同一处已经送达的别的卡照旧等着；WebUI 或终端在场就照常在那里等，否则按 30 秒宽限结算，其间她再说话，没送达的那张重发、送达过的不再发；过期那一行只发给送达过的。投递结果未知（适配器报未确认，或等满时限没等到回执）的按可能已经送达处理，不算没收到、不补推，同一张不会出现两次。从 WebUI 往她的私聊或群里插话发起的审批不推到 IM。
+- plugin-chat-approval（新包，聊天审批）：每个（owner 的 IM 身份，机器人账号）一份接入。她与这个账号的私聊是会话管理里这个账号下、出生平台的适配器明确声明为一对一、对端就是她的根会话；有这样的私聊才建接入，没有就等她私聊这个账号之后。机器人账号登记成 owner、实现端又上报了机器人自己发的消息时，那个身份没有这样的私聊：那条消息不算她在场，也不能应答。她经这个账号亲手说话（私聊或群里，点没点名都算）即在场，接入随之建起；审批服务说她已不在场时撤掉（默认实现：10 分钟内没说话、推给她的都已结），再说话时重建。她经这个账号发起的、只有她能批的审批，在私聊里、在群里都推到这个私聊，不发进群（群里的参与者审批见「通道层：群里的审批消息」一节）；卡上总有一行来源，写群或私聊与窗口 id，会话名只作附注；子会话里的审批在来源一行之后另有一行「子任务：…」，写根会话以下各级子会话的标题。应答只认在这个私聊里引用审批消息、正文是应答词的回复（回复开头客户端自动插的对机器人账号的 @ 不算正文）：「同意」「approve」为批准，「拒绝」「deny」开头为拒绝，后面是原因，不论长短、原样转给模型；没引用审批消息的（私聊与群里一样）与引用了但不是应答词的都当普通消息交给这一轮，不回提示。一张卡确定没送达（网关不在、没有适配器接手、投递失败）时只这一张对她算没收到，同一处已经送达的别的卡照旧等着；WebUI 或终端在场就照常在那里等，否则按 30 秒宽限结算，其间她再说话，没送达的那张重发、送达过的不再发；过期那一行只发给送达过的。投递结果未知（适配器报未确认，或等满时限没等到回执）的按可能已经送达处理，不算没收到、不补推，同一张不会出现两次。从 WebUI 往她的私聊或群里插话发起的审批不推到 IM。
+- create-aalis 的 standard 档装 plugin-chat-approval，没选 IM 平台时它不接入。
 
 ### 通道层：多人的一轮逐动作审批（@aalis/api-tools、@aalis/api-authority、@aalis/api-approval、@aalis/api-session-protocol、@aalis/api-agent、@aalis/plugin-authority、@aalis/plugin-tools、@aalis/plugin-agent、@aalis/plugin-commands、@aalis/plugin-session-server、@aalis/plugin-webui-client、@aalis/plugin-subtask、@aalis/plugin-scheduler、@aalis/plugin-workflow、@aalis/plugin-paper、@aalis/plugin-mcp-server、@aalis/plugin-tool-session、@aalis/plugin-tool-onebot、@aalis/plugin-memory-history、@aalis/plugin-image-sender、@aalis/plugin-media）
 
@@ -481,7 +482,7 @@ core 定为 0.21.0。给人看的文字改为文字对象，由出口按读者�
 
 - api-approval 的 `ApprovalAttendance` 加必须实现的 `present()`：这份接入此刻还算不算在场，由审批服务按它的在场规则判（审批服务不在时为假）。
 - api-approval 的 `ApprovalAttendance` 加必须实现的 `undelivered(approvalId)`：推给它的某一张没送到它那里时调，只这一张对它算没收到、它不因这一张算在场，变为在场时补推，推给它的别的审批照旧；`presence(false)` 只表示离开。自己实现审批服务的提供者要实现这个方法（破坏性）。
-- plugin-chat-approval（还没发布过）的群窗口接入：每个（群窗口，发言者）一份，他在这个群里亲手说话即在场（没点名、被触发器吞掉的也算），审批服务说他已不在场时撤掉（默认实现：10 分钟内没说话、推给他的都已结），再说话时重建。这个群发起的参与者审批（连同它的子会话里的），群里有能批的人在场时由这个群的机器人账号在群里发一条审批消息，同一张只发一条：先列工具与参数（照审批服务给出的原样显示，不打码；子会话里的在工具那一行之后另有一行「子任务：…」），再写「这一轮里有人自己做不了这件事」，末行写自己就能做这件事的人怎么回复，不写来源一行。群里的人引用它回应答词即算他本人的应答（回复开头 QQ 客户端自动插的对她的 @ 不算正文）：能批的批准或拒绝（拒绝的说明原样转给模型），做不了的回「应答没有生效：应答人不能批这一张」，已结的回「这张已经处理过」；不引用的「同意」、引用了但不是应答词的、带 source 的都当普通消息交给这一轮。只有 owner 能批的（要她确认的，与参与者审批合成的）不发进群，owner 自己在群里的接入也不收。群里那条确定没发出去时，拿着它的接入对这一张报没送到，没有别的在场面就按 30 秒宽限结算，宽限内能批的人再说话即重发；投递结果未知的按可能已经送达处理，不重发。
+- plugin-chat-approval 的群窗口接入：每个（群窗口，发言者）一份，他在这个群里亲手说话即在场（没点名、被触发器吞掉的也算），审批服务说他已不在场时撤掉（默认实现：10 分钟内没说话、推给他的都已结），再说话时重建。这个群发起的参与者审批（连同它的子会话里的），群里有能批的人在场时由这个群的机器人账号在群里发一条审批消息，同一张只发一条：先列工具与参数（照审批服务给出的原样显示，不打码；子会话里的在工具那一行之后另有一行「子任务：…」），再写「这一轮里有人自己做不了这件事」，末行写自己就能做这件事的人怎么回复，不写来源一行。群里的人引用它回应答词即算他本人的应答（回复开头 QQ 客户端自动插的对她的 @ 不算正文）：能批的批准或拒绝（拒绝的说明原样转给模型），做不了的回「应答没有生效：应答人不能批这一张」，已结的回「这张已经处理过」；不引用的「同意」、引用了但不是应答词的、带 source 的都当普通消息交给这一轮。只有 owner 能批的（要她确认的，与参与者审批合成的）不发进群，owner 自己在群里的接入也不收。群里那条确定没发出去时，拿着它的接入对这一张报没送到，没有别的在场面就按 30 秒宽限结算，宽限内能批的人再说话即重发；投递结果未知的按可能已经送达处理，不重发。
 
 ### 子任务的审批上浮（@aalis/api-approval、@aalis/api-session-protocol、@aalis/api-authority、@aalis/plugin-authority、@aalis/plugin-session-server、@aalis/plugin-webui-client、@aalis/plugin-cli、@aalis/plugin-chat-approval）
 
