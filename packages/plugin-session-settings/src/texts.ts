@@ -1,5 +1,5 @@
 // 本插件自己的原文字典：写入被拒的原因、指令的说明与回执、取值写成的文字
-import { defineTexts } from '@aalis/schema-i18n';
+import { defineTexts, type TextRef } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
 const SOURCE = {
@@ -7,12 +7,13 @@ const SOURCE = {
   // 写入被拒（协议与指令共用）
   notRegistered: '没有这一项：{item}（提供它的插件没装或没启用）',
   notSessionField: '{item} 不能按会话设',
-  invalidValue: '{item} 的值不合法：{reason}',
+  invalidValue: '{item}的值不合法：{reason}',
   noSession: '会话不存在：{id}',
   noPlace: '场所不存在：{key}',
-  placeOnly: '{item} 只能设到场所为止，不能设在单个会话上',
-  notApplicable: '{item} 不适用于{kind, select, owner {owner 的会话} room {房间} task {子会话} other {这类会话}}',
-  notForRooms: '{item} 不适用于房间，平台类型档不收它',
+  placeOnly: '{item}只能设到场所为止，不能设在单个会话上',
+  notApplicable: '{item}不适用于{kind, select, owner { owner 的会话} room {房间} task {子会话} other {这类会话}}',
+  notForRooms: '{item}不适用于房间，平台类型档不收它',
+  itemNamed: '{label}（{item}）',
   badLayerName: '层的标识不合法：{name}（非空、不含 :、不是 *）',
   unknownLayer: '不认识这一层：{layer}',
   noHostConfig: '宿主没有提供配置文档，全局层与平台档、平台类型档无处保存',
@@ -79,3 +80,6 @@ export const t = defineTexts({
   source: SOURCE,
   locales: { en },
 });
+
+/** 写入被拒的原因里点名一项：行上的称呼加键（「<称呼>（<键>）」），界面与指令同一句 */
+export const itemName = (label: string | TextRef, item: string): TextRef => t('itemNamed', { label, item });

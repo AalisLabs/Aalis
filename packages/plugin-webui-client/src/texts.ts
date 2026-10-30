@@ -660,6 +660,7 @@ const SOURCE = {
   dependencyNoLevel: '当前{dependency}没有这一档，按默认',
   dependencyNoLevelFallback: '当前{dependency}没有这一档，按默认（{fallback}）',
   resetInherit: '恢复继承',
+  invalidHere: '这一层存的值不合法，生效的是{layer}的值',
   advanced: '高级',
   pluginNamesFailedGroup: '插件的显示名没取到（{error}），按插件实例 id 分组',
   settingsAppearance: '外观',

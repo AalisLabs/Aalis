@@ -47,7 +47,7 @@ import { textOf, toSource } from '@aalis/schema-i18n';
 import type { Caps } from './caps.js';
 import { SettingsEditor } from './commands.js';
 import { type DocLayers, isLayerName, isRecord, putDocValue, readDoc, type Values } from './doc.js';
-import { t } from './texts.js';
+import { itemName, t } from './texts.js';
 
 /** 会话与场所记录 metadata 里本插件的键 */
 const KEY = 'session-settings';
@@ -469,7 +469,9 @@ export class SessionSettingsProvider implements SessionSettingsService {
     let stored: unknown = null;
     if (value !== null) {
       const read = readFieldValue(field, value);
-      if ('invalid' in read) throw sessionSettingsError(t('invalidValue', { item: key, reason: read.invalid }));
+      if ('invalid' in read) {
+        throw sessionSettingsError(t('invalidValue', { item: itemName(field.label, key), reason: read.invalid }));
+      }
       stored = read.value ?? null;
     }
     const result = await ('sessionId' in target
@@ -491,9 +493,10 @@ export class SessionSettingsProvider implements SessionSettingsService {
     const { session, kind } = this.contextOf(sessionId);
     if (!session) throw sessionSettingsError(t('noSession', { id: sessionId }));
     if (stored !== null) {
-      if (field.session.narrowest === 'place') throw sessionSettingsError(t('placeOnly', { item: key }));
+      if (field.session.narrowest === 'place')
+        throw sessionSettingsError(t('placeOnly', { item: itemName(field.label, key) }));
       if (kind !== undefined && !appliesIn(field.session, kind)) {
-        throw sessionSettingsError(t('notApplicable', { item: key, kind }));
+        throw sessionSettingsError(t('notApplicable', { item: itemName(field.label, key), kind }));
       }
     }
     const values = this.written(session.metadata, `会话 ${sessionId}`, plugin, key, stored);
@@ -514,7 +517,9 @@ export class SessionSettingsProvider implements SessionSettingsService {
       if (!isLayerName(name)) throw sessionSettingsError(t('badLayerName', { name: String(name) }));
     };
     const assertRooms = () => {
-      if (stored !== null && !forRooms(field)) throw sessionSettingsError(t('notForRooms', { item: key }));
+      if (stored !== null && !forRooms(field)) {
+        throw sessionSettingsError(t('notForRooms', { item: itemName(field.label, key) }));
+      }
     };
     switch (layer.scope) {
       case 'global':
@@ -532,7 +537,7 @@ export class SessionSettingsProvider implements SessionSettingsService {
         if (!record) throw sessionSettingsError(t('noPlace', { key: String(layer.key) }));
         const kind = placeKind(record);
         if (stored !== null && !appliesIn(field.session, kind)) {
-          throw sessionSettingsError(t('notApplicable', { item: key, kind }));
+          throw sessionSettingsError(t('notApplicable', { item: itemName(field.label, key), kind }));
         }
         const values = this.written(record.metadata, `场所 ${layer.key}`, plugin, key, stored);
         await this.sm.updatePlace(layer.key, { metadata: { [KEY]: { values } } });

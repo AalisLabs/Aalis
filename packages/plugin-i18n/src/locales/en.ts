@@ -30,7 +30,7 @@ export default defineLocale<Source>()({
   badLanguage: '{tag} is not a valid language tag',
   languagesProvided: 'Every language in the language list is provided by a plugin',
   languageUnprovided: '{language} in the language list is not provided by any plugin; {used} is used instead',
-  layerLanguageUnprovided: '{language} in {layer} is not provided by any plugin; {used} is used instead',
+  layerLanguageUnprovided: '{layer}: {language} is not provided by any plugin; {used} is used instead',
   layerPlatform: '{layer} “{platform}”',
   layerPlatformType: '{layer} “{platform} · {type}”',
   layerPlace: '{layer} “{place}”',
