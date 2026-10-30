@@ -6,7 +6,7 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
-import { isStorageUri } from '@aalis/api-storage';
+import { isStorageUri, isWebUrl } from '@aalis/api-storage';
 import { detectMediaFormat, FILE_HEAD_BYTES, isAnimatedImage } from '@aalis/util-file-signature';
 import { getMediaRuntime } from './runtime.js';
 import { safeFetchBuffer } from './safe-fetch.js';
@@ -25,7 +25,7 @@ export async function readSourceBytes(data: string, signal?: AbortSignal): Promi
     const dataUri = data.match(/^data:[^;]+;base64,(.+)$/);
     if (dataUri) return Buffer.from(dataUri[1], 'base64');
     if (data.startsWith('file://')) return await getMediaRuntime().proc.readExternalFile(data);
-    if (/^https?:\/\//i.test(data)) return await safeFetchBuffer(data, { signal });
+    if (isWebUrl(data)) return await safeFetchBuffer(data, { signal });
     if (isStorageUri(data)) return (await getMediaRuntime().storage.readFile(data)) as Uint8Array;
     return null;
   } catch {
@@ -207,7 +207,7 @@ export async function materializeAttachment(
       return { path: data.slice('file://'.length), cleanup: async () => {} };
     }
     // 网址：受保护的下载（SSRF 防护、20 MiB 上限、15 秒超时）读进内存再落临时文件
-    if (data.startsWith('http://') || data.startsWith('https://')) {
+    if (isWebUrl(data)) {
       return await materializeBytes(await safeFetchBuffer(data));
     }
     // storage URI（如 data:/images/...）→ 解析到本地路径。

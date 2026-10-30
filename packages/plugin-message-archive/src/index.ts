@@ -4,7 +4,7 @@ import { memory } from '@aalis/api-memory';
 import type { ArchiveNoticeOptions, MessageArchiveService } from '@aalis/api-message-archive';
 import { messageArchive, outboundAddress, speakerOf, unaddressedText } from '@aalis/api-message-archive';
 import { sessionManager } from '@aalis/api-session-manager';
-import { isStorageUri, parseUriRoot, storage } from '@aalis/api-storage';
+import { isStorageUri, isWebUrl, parseUriRoot, storage } from '@aalis/api-storage';
 import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { isTextRef, type TextRef, textOf, toSource, truncateParams } from '@aalis/schema-i18n';
@@ -29,8 +29,6 @@ const configSchema = defineConfig({
     description: t('debugLogsDescription'),
   },
 });
-
-const isWebUrl = (value: string) => /^https?:\/\//i.test(value);
 
 /**
  * 能当地址的写法：网址，以及根在存储服务根表里的存储地址。预处理器换上的私有引用（形似存储地址、根不存在）与相对路径

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { isStorageUri, parseUriRoot, resolveAgainstCwd, toStorageUri } from '../../packages/api-storage/src/index.js';
+import {
+  isStorageUri,
+  isWebUrl,
+  parseUriRoot,
+  resolveAgainstCwd,
+  toStorageUri,
+} from '../../packages/api-storage/src/index.js';
 import { resolveText, type TextRef, textOf } from '../../packages/schema-i18n/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -35,6 +41,28 @@ describe('isStorageUri', () => {
     expect(isStorageUri('data:image/png')).toBe(false); // 无 :/ 也无 base64
     expect(isStorageUri('justtext')).toBe(false);
     expect(isStorageUri('')).toBe(false);
+  });
+});
+
+describe('isWebUrl', () => {
+  it('http://、https:// 开头的是网址，协议名不分大小写', () => {
+    for (const url of ['http://h/x', 'https://gchat.qpic.cn/x.jpg', 'HTTPS://h/x', 'Http://h/x']) {
+      expect(isWebUrl(url), url).toBe(true);
+    }
+  });
+
+  it('存储地址、data URI、file://、别的协议与带前导空白的不是', () => {
+    for (const s of [
+      'data:/images/x.jpg',
+      'data:image/png;base64,QQ==',
+      'file:///x',
+      'ftp://h/x',
+      'http:/h',
+      ' https://h/x',
+      '',
+    ]) {
+      expect(isWebUrl(s), s).toBe(false);
+    }
   });
 });
 

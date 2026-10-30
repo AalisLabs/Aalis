@@ -13,7 +13,7 @@
 
 import type { AuthorityService, InboundTurn, UserIdentity, Verdict } from '@aalis/api-authority';
 import { roomClass, rootSessionOf, type SessionManagerService, takeFrom } from '@aalis/api-session-manager';
-import { isHostAbsolutePath, isStorageUri, parseStorageUri } from '@aalis/api-storage';
+import { isHostAbsolutePath, isStorageUri, isWebUrl, parseStorageUri } from '@aalis/api-storage';
 import type { ServiceSelection } from '@aalis/core';
 import { type ArchivedAttachment, type Message, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { MEDIA_KIND_DIRS, sessionDirName } from './session-media.js';
@@ -61,13 +61,13 @@ const SESSION_MEDIA_DIRS: ReadonlySet<string> = new Set([...Object.values(MEDIA_
 const fold = (name: string) => name.toUpperCase().toLowerCase();
 
 /**
- * 媒体地址规整成可比的形态：网址（协议名小写的 http、https，与适配器下载附件时认的一样）原样；存储地址规整（消 `.`、
+ * 媒体地址规整成可比的形态：网址（api-storage 的 isWebUrl：http、https，协议名不分大小写）原样；存储地址规整（消 `.`、
  * `..`）；其余不是网址也不是存储地址的（相对路径、本机路径含盘符路径、`file://`、data URI，以及带反斜杠的：有的系统按
  * 目录分隔解析它）没有。`base64://…` 按根名 base64 的存储地址交出，算本机文件，没有这个根，读不出
  */
 export function mediaRef(input: string): string | undefined {
   const s = input.trim();
-  if (/^https?:\/\//.test(s)) return s;
+  if (isWebUrl(s)) return s;
   if (s.includes('\\') || isHostAbsolutePath(s) || !isStorageUri(s)) return undefined;
   const { root, segments } = parseStorageUri(s);
   return `${root}:/${segments.join('/')}`;

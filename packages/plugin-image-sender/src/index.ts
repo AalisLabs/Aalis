@@ -24,7 +24,7 @@ import { hooks } from '@aalis/api-hooks';
 import { historyMediaRefs, type MediaScopeCall, media, mediaRef, mediaScopeOf } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import { sessionManager } from '@aalis/api-session-manager';
-import { isStorageNotFound, isStorageUri, storage } from '@aalis/api-storage';
+import { isStorageNotFound, isStorageUri, isWebUrl, storage } from '@aalis/api-storage';
 import { actingIdentity, tools } from '@aalis/api-tools';
 import { type BoundOf, definePlugin, events, logger, optional } from '@aalis/core';
 import { toSource } from '@aalis/schema-i18n';
@@ -166,7 +166,7 @@ function registerImageSender(caps: Caps): void {
         const results: Array<Record<string, unknown>> = [];
         for (let index = 0; index < urls.length; index++) {
           const trimmed = urls[index].trim();
-          if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+          if (!isWebUrl(trimmed)) {
             results.push({ index, url: trimmed, ok: false, error: 'url 必须是 http/https' });
             continue;
           }
@@ -248,7 +248,7 @@ function registerImageSender(caps: Caps): void {
       let via: 'url' | 'storage_uri' | 'history_ref' = 'url';
       try {
         if (url) {
-          if (!url.startsWith('http://') && !url.startsWith('https://')) {
+          if (!isWebUrl(url)) {
             return JSON.stringify({ error: 'url 必须是 http/https 开头' });
           }
           data = url;

@@ -91,16 +91,21 @@ const RESERVED_URI_SCHEMES = new Set(['http', 'https', 'file']);
 storage / safeFetch / readExternalFile / data-URI 解码不同分支。
 
 ```ts
-import { isStorageUri } from '@aalis/api-storage';
+import { isStorageUri, isWebUrl } from '@aalis/api-storage';
 
 if (isStorageUri(data)) {
   const buf = await caps.storage.use.readFile(data); // storage 路径
-} else if (data.startsWith('http://') || data.startsWith('https://')) {
+} else if (isWebUrl(data)) {
   const res = await safeFetch(data);                 // SSRF 守卫出网
 } else if (data.startsWith('data:')) {
   // base64 data-URI，自行解码
 }
 ```
+
+### `isWebUrl(s: string): boolean` — 网址
+
+`index.ts`。`http://`、`https://` 开头的是网址，协议名按 URL 规范不分大小写（`HTTPS://…` 也是）。分流时与
+`isStorageUri` 配对用，不各写 `startsWith('http://')`：只认小写的写法会把大写协议名的网址当成别的形态。
 
 ### `parseUriRoot(uri: string): string` — 取根名
 
@@ -211,7 +216,7 @@ const cwd = await caps.storage.use.resolveLocalPath('workspace:/proj', 'read');
 
 ## 常见错误与边界情形
 
-1. **勿各自重写正则**。`isStorageUri`/`parseUriRoot`/`toStorageUri` 是权威文法，全体消费者复用。
+1. **勿各自重写正则**。`isStorageUri`/`isWebUrl`/`parseUriRoot`/`toStorageUri` 是权威文法，全体消费者复用。
    自行用 `s.includes(':')` 之类判别，会把 `data:image/...;base64,` 误判成 storage URI（漏了 `:/`），
    或让 `http://` 漏过保留 scheme 检查。
 

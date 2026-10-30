@@ -308,13 +308,13 @@ describe('本机文件判法（localFileInScope）', () => {
 });
 
 describe('地址规整（mediaRef）', () => {
-  it('小写协议名的网址原样，存储地址规整（消 `.`、`..`）', () => {
+  it('网址（协议名不分大小写）原样，存储地址规整（消 `.`、`..`）', () => {
     expect(mediaRef('https://example.invalid/a.png')).toBe('https://example.invalid/a.png');
+    expect(mediaRef('HTTP://example.invalid/a.png')).toBe('HTTP://example.invalid/a.png');
     expect(mediaRef(`data:/images/${GROUP_DIR}/./x/../a.png`)).toBe(`data:/images/${GROUP_DIR}/a.png`);
   });
 
   it.each([
-    ['协议名大写的网址（适配器不当网址下载）', 'HTTP://example.invalid/a.png'],
     ['盘符路径（与单字母根名冲突时按盘符认）', 'C:/pics/a.png'],
     ['反斜杠分隔', 'C:\\pics\\a.png'],
     ['本机绝对路径', '/pics/a.png'],

@@ -12,6 +12,7 @@ import type {
   TranscribeInput,
   TranscribeResult,
 } from '@aalis/api-media';
+import { isWebUrl } from '@aalis/api-storage';
 import type { Logger, ProviderEntry, ServiceSelection } from '@aalis/core';
 import { toSource } from '@aalis/schema-i18n';
 import type { Message } from '@aalis/schema-message';
@@ -175,7 +176,7 @@ const DIRECT_AUDIO: ReadonlySet<MediaFormatName> = new Set(['MP3', 'WAV', 'OGG',
  */
 export async function imageToBase64DataUrl(data: string, mimeType?: string): Promise<string> {
   if (/^data:image\/[^;]+;base64,/.test(data)) return data;
-  if (/^https?:\/\//i.test(data)) return data;
+  if (isWebUrl(data)) return data;
   const mat = await materializeAttachment(data);
   if (!mat) throw new Error(`无法物化图片附件: ${data.slice(0, 80)}`);
   try {

@@ -17,7 +17,7 @@ import {
   type TranscribeOptions,
 } from '@aalis/api-media';
 import type { MemoryService } from '@aalis/api-memory';
-import { isStorageUri } from '@aalis/api-storage';
+import { isStorageUri, isWebUrl } from '@aalis/api-storage';
 import type { Logger, ServiceSelection } from '@aalis/core';
 import type { IncomingMessage, MessageAttachment } from '@aalis/schema-message';
 import {
@@ -339,7 +339,7 @@ export class MediaServiceImpl implements MediaService {
   private async cacheImageRef(att: MessageAttachment, sessionId: string): Promise<string | null> {
     const data = att.data;
     if (typeof data !== 'string' || !data) return null;
-    if (data.startsWith('http://') || data.startsWith('https://') || isStorageUri(data)) return data;
+    if (isWebUrl(data) || isStorageUri(data)) return data;
     // base64 data URI（WebUI 上传的原始图片）
     const m = data.match(/^data:([^;]+);base64,(.*)$/);
     if (!m) return null;

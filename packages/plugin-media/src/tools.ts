@@ -11,7 +11,7 @@ import type { AuthorityService } from '@aalis/api-authority';
 import { mediaRef, mediaScopeOf } from '@aalis/api-media';
 import type { MemoryService } from '@aalis/api-memory';
 import type { SessionManagerService } from '@aalis/api-session-manager';
-import { isHostAbsolutePath, isStorageNotFound, isStorageUri } from '@aalis/api-storage';
+import { isHostAbsolutePath, isStorageNotFound, isStorageUri, isWebUrl } from '@aalis/api-storage';
 import type { BoundTools } from '@aalis/api-tools';
 import type { Events, ServiceSelection } from '@aalis/core';
 import { AttachmentRefKind, buildAttachmentRefMatcher, formatAttachmentRef, type Message } from '@aalis/schema-message';
@@ -158,11 +158,7 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
         // 不按首段补成别的根；本机路径不收。存储里的图先判后读，整读一次、按文件头认格式与 mime
         const ref = imageRefOf(imageInput);
         let imageUrl: string;
-        if (
-          ref.startsWith('http://') ||
-          ref.startsWith('https://') ||
-          (ref.startsWith('data:') && !isStorageUri(ref))
-        ) {
+        if (isWebUrl(ref) || (ref.startsWith('data:') && !isStorageUri(ref))) {
           imageUrl = ref;
         } else {
           const relative = !ref.includes(':/') && !isHostAbsolutePath(ref);
@@ -192,7 +188,7 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
         if (callCtx.acceptsImages && svc.resolveDelivery(true) === 'passthrough') {
           // 先在工具层读到字节、按文件头认是图片（data URI 写的类型不看）：原样交给主请求的话，链接失效 / 不是图片会变成
           // 整轮 400，模型没有机会纠正；读不到或不是图片留在工具层返回错误，模型可换路。网址经受保护的下载读进内存，不落临时文件
-          const web = /^https?:\/\//i.test(imageUrl);
+          const web = isWebUrl(imageUrl);
           const bytes = await readSourceBytes(imageUrl, callCtx.signal);
           const format = bytes && detectMediaFormat(bytes.subarray(0, FILE_HEAD_BYTES));
           if (!bytes || format?.kind !== 'image') {

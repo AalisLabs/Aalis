@@ -1411,6 +1411,13 @@ describe('onebot 出站：send_attachment 投递结果', () => {
     expect(t.imageNotes()).toHaveLength(1);
   });
 
+  it.each(['url', 'history_ref'])('%s 写协议名大写的网址：照网址下载、内联发出', async key => {
+    const t = await boot({ imageSender: true });
+    const url = `${httpBase.replace('http://', 'HTTP://')}/ok.png`;
+    expect(await t.sendAttachment({ kind: 'image', [key]: url })).toMatchObject({ ok: true });
+    expect(imageOnWire(t.sent()).map(s => decode(s.data.file))).toEqual([PNG]);
+  });
+
   it('等待 ACK 时回合中止：工具立即返回未确认，不报告成功也不报未发送', async () => {
     const t = await boot({ imageSender: true, replyToSend: 'hold' });
     const turn = new AbortController();

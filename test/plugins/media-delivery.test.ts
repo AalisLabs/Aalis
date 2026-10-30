@@ -204,12 +204,14 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     expect(result.images).toEqual([`data:image/png;base64,${png}`]);
   });
 
-  it('passthrough + 远端 http 图片：工具层先下载并按文件头认是图片，转成 data URL 随结果交出，不落临时文件', async () => {
+  it.each([
+    'https://example.invalid/pic',
+    'HTTPS://example.invalid/pic',
+  ])('passthrough + 远端图片 %s：工具层先下载并按文件头认是图片，转成 data URL 随结果交出，不落临时文件', async url => {
     const png = Buffer.concat([PNG_HEAD, Buffer.alloc(8)]);
     download.next = png;
     // 不落临时文件：物化链与存储一样都碰不到
     setMediaRuntime({ proc: {} as never, storage: {} as never });
-    const url = 'https://example.invalid/pic';
     const { result, calls } = await withTool({ delivery: 'passthrough' }, true, url);
     expect(download.seen.at(-1)).toBe(url);
     expect(calls).toHaveLength(0);
