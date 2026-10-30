@@ -43,6 +43,7 @@ import {
   type SchemaField,
   type SessionFieldSpec,
 } from '@aalis/schema-config';
+import { textOf, toSource } from '@aalis/schema-i18n';
 import type { Caps } from './caps.js';
 import { SettingsEditor } from './commands.js';
 import { type DocLayers, isLayerName, isRecord, putDocValue, readDoc, type Values } from './doc.js';
@@ -122,6 +123,16 @@ export class SessionSettingsProvider implements SessionSettingsService {
     this.warned.add(message);
     this.caps.logger.use.warn(message);
   };
+
+  /** 调声明字段的插件给的 actual 或 fromText：抛错时只这一项当没给出值，同一个错告警一次 */
+  private guarded<T>(entry: Entry, key: string, what: 'actual' | 'fromText', call: () => T): T | undefined {
+    try {
+      return call();
+    } catch (err) {
+      this.warnOnce(`${entry.plugin} 的设置项 ${key} 调 ${what} 出错，这一项按没给出值处理：${toSource(textOf(err))}`);
+      return undefined;
+    }
+  }
 
   /** 宿主文档以外的设置变了 */
   changed(): void {
@@ -319,7 +330,8 @@ export class SessionSettingsProvider implements SessionSettingsService {
       const service = field.session.preference;
       if (service === undefined) continue;
       const contextId = this.caps.services.use.preferred(service, { for: entry.plugin });
-      const value = contextId === undefined ? undefined : field.fromText?.(contextId);
+      const value =
+        contextId === undefined ? undefined : this.guarded(entry, key, 'fromText', () => field.fromText?.(contextId));
       if (value !== undefined) global[key] = value;
     }
     return global;
@@ -422,7 +434,10 @@ export class SessionSettingsProvider implements SessionSettingsService {
           effective: values[key],
           source: sources[key],
         };
-        const actual = values[key] === undefined ? entry.actual[key]?.(sessionId, at) : undefined;
+        const actual =
+          values[key] === undefined
+            ? this.guarded(entry, key, 'actual', () => entry.actual[key]?.(sessionId, at))
+            : undefined;
         if (actual) row.actual = actual;
         rows.push(row);
       }
@@ -614,7 +629,7 @@ export class SessionSettingsProvider implements SessionSettingsService {
           values.push({ plugin: entry.plugin, key, value: resolved[key] });
           continue;
         }
-        const actual = entry.actual[key]?.(parentId, at);
+        const actual = this.guarded(entry, key, 'actual', () => entry.actual[key]?.(parentId, at));
         const read = actual && readFieldValue(field, actual.value);
         if (read && !('invalid' in read) && read.value !== undefined) {
           values.push({ plugin: entry.plugin, key, value: read.value });
