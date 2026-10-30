@@ -318,6 +318,13 @@ describe('initHome', () => {
     });
   });
 
+  it('两个平台档读回是各自的映射：改一个平台档，另一个不跟着变', () => {
+    const paths = derivePaths(join(tmp(), 'h'), '/app');
+    initHome(paths);
+    const { cli, webui } = parseYaml(readFileSync(paths.config, 'utf-8')).sessionConfig.platforms;
+    expect(cli).not.toBe(webui);
+  });
+
   it('给了语言列表时按给的顺序写进 plugin-i18n 的插件段', () => {
     const paths = derivePaths(join(tmp(), 'h'), '/app');
     initHome(paths, ['auto', 'en', 'zh-CN']);
