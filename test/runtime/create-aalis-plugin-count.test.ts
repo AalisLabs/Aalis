@@ -43,6 +43,6 @@ describe('create-aalis 插件计数', () => {
       '@aalis/plugin-webui-client',
       '@aalis/plugin-package-manager',
     ]);
-    expect(renderReadme('demo', enabled)).toContain('启用集：2 个插件');
+    expect(renderReadme('demo', enabled, 'zh-CN')).toContain('启用集：2 个插件');
   });
 });

@@ -893,6 +893,10 @@ importers:
         version: 5.9.3
 
   packages/create-aalis:
+    dependencies:
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-i18n
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

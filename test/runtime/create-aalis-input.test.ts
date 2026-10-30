@@ -5,6 +5,7 @@ import {
   renderIndexTs,
   validateNpmName as validatePluginName,
 } from '../../packages/create-aalis-plugin/src/cli.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // create-aalis / create-aalis-plugin — 交互输入校验（纯函数）
@@ -35,7 +36,7 @@ describe('parseIndexSelection（序号选择，兼容逗号/空格）', () => {
   it('越界 → 报错并指出范围', () => {
     const r = parseIndexSelection('1,100', 3, 'multi');
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toContain('1-3');
+    if (!r.ok) expect(toSource(r.error)).toBe('序号 100 超出范围（应在 1-3）。');
     expect(parseIndexSelection('0', 3, 'multi').ok).toBe(false);
   });
 
@@ -118,6 +119,10 @@ describe('positionalArgs（flag 取值不当位置参数）', () => {
     expect(positionalArgs(['--yes', 'my-bot'])).toEqual(['my-bot']);
     expect(positionalArgs(['my-bot', '--force', '--no-install'])).toEqual(['my-bot']);
     expect(positionalArgs(['-y', 'my-bot', '--tier', 'minimal'])).toEqual(['my-bot']);
+  });
+
+  it('`--lang en my-bot` 的位置参数只有 my-bot', () => {
+    expect(positionalArgs(['--lang', 'en', 'my-bot'])).toEqual(['my-bot']);
   });
 
   it('`--tier=full` 写法不影响位置参数；纯 flag 时无位置参数', () => {

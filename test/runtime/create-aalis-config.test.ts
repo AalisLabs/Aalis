@@ -16,7 +16,7 @@ import { fieldsPlugin, startSettings } from '../fixtures/session-settings.js';
 const CLI = '@aalis/plugin-cli';
 
 const configOf = (enabled: Set<string>, keys = {}, ollama?: string) =>
-  parse(renderConfig(pluginSettings(enabled, keys, ollama)));
+  parse(renderConfig(pluginSettings(enabled, keys, ollama), 'zh-CN'));
 const TOOLS = { '@aalis/plugin-tools': { enabledToolGroups: ['*'] } };
 const OWNER_PROFILES = { platforms: { cli: TOOLS, webui: TOOLS } };
 
@@ -49,6 +49,17 @@ describe('create-aalis renderConfig', () => {
       // 没粘贴的照旧留空，等用户填
       expect(cfg.plugins['@aalis/plugin-embedding-openai']).toEqual({ apiKey: '' });
     }
+  });
+
+  it('给了语言列表时写进 plugin-i18n 的插件段（按给的顺序），与别的插件段并列；没给时不写这一段', () => {
+    const settings = pluginSettings(new Set([CLI, '@aalis/plugin-llm-deepseek']), {});
+    const cfg = parse(renderConfig(settings, 'zh-CN', ['auto', 'zh-CN', 'en']));
+    expect(cfg.plugins['@aalis/plugin-i18n']).toEqual({ language: ['auto', 'zh-CN', 'en'] });
+    expect(cfg.plugins['@aalis/plugin-llm-deepseek']).toEqual({ apiKey: '' });
+    expect(parse(renderConfig(pluginSettings(new Set(), {}), 'en', ['en'])).plugins).toEqual({
+      '@aalis/plugin-i18n': { language: ['en'] },
+    });
+    expect(configOf(new Set([CLI])).plugins['@aalis/plugin-i18n']).toBeUndefined();
   });
 
   it('设了 OLLAMA_HOST 时写进已装的 Ollama 插件的 baseUrl，别的插件不带', () => {
