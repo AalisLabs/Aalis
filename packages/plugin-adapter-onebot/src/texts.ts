@@ -153,7 +153,6 @@ const SOURCE = {
   protocolNotReady: '协议未初始化',
   v12NoFile: 'OneBot v12 连接不支持文件附件',
   typeNoFile: '会话类型 {type} 不支持文件附件',
-  andThen: '{head}; {tail}',
   notSentFrom: '从第 {from} 条起没发出',
   unconfirmedMessage: '消息（第 {n} 条）',
   unconfirmedFile: '文件 {name}',

@@ -344,16 +344,6 @@ function who(nick: string | undefined, id: string | undefined, fallback: TextRef
 }
 
 /**
- * 确定没发出的各条原因以「; 」相连成一句（同改前的分隔）。两两二分着嵌套，层数随条数按对数增长：附件多时依次相连会超过
- * 渲染的嵌套上限（同 schema-i18n 的 textClauses）
- */
-function joinReasons(reasons: readonly (string | TextRef)[]): string | TextRef {
-  if (reasons.length === 1) return reasons[0];
-  const half = Math.ceil(reasons.length / 2);
-  return t('andThen', { head: joinReasons(reasons.slice(0, half)), tail: joinReasons(reasons.slice(half)) });
-}
-
-/**
  * 撤回通知文案（纯函数，供单测）。
  *
  * 能反查到归档原文时，附「发送时间 + 内容摘录」——LLM 由此知道被撤回的**是哪句话**，
@@ -2476,9 +2466,9 @@ function runAdapter(caps: Caps): void {
       });
     }
     if (reasons.length || unconfirmed.length) {
-      // 投递结果的原因：确定没发出的各条以「; 」相连成一句，与结果未知的一句并列相连
+      // 投递结果的原因：确定没发出的各条连成一句，与结果未知的一句并列相连（textClauses：原文以「；」，英文以「; 」）
       const problems: (string | TextRef)[] = [];
-      if (reasons.length) problems.push(joinReasons(reasons));
+      if (reasons.length) problems.push(textClauses(reasons));
       if (unconfirmed.length) problems.push(t('unconfirmed', { items: unconfirmed }));
       const result = {
         ok: false as const,
