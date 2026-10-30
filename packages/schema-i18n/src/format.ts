@@ -113,7 +113,7 @@ function duration(ms: number, o: FormatOptions): string {
 
 const SIZE_UNITS = ['byte', 'kilobyte', 'megabyte', 'gigabyte'];
 
-/** 字节数：B、KB、MB、GB，按 1024 进位，B 以上留一位小数；按显示精度舍入后到了 1024 就升一级 */
+/** 字节数：B、kB、MB、GB（Intl 单位的 narrow 写法），按 1024 进位，B 以上至多一位小数、整数不带小数；按显示精度舍入后到了 1024 就升一级 */
 function size(bytes: number, o: FormatOptions): string {
   let value = Math.abs(bytes);
   let index = 0;

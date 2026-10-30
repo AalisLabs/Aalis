@@ -367,7 +367,7 @@ export default defineLocale<Source>()({
 
 选了 command 时追加 `import { commands } from '@aalis/api-commands'`、`uses` 里 `commands: optional(commands)`，以及 `commands.use.command('hello', t('commandDescription')).action(async () => t('commandReply'))`。选了 webui 时追加 `webuiServer` 与一段 `webui.use.definePage`：一个键值组件，数据源直接写在声明里（页面与动作一次给出，不是静态字段），页面出现在插件详情里。描述符来自各自的 `*-api` 包，**不**来自 core。各扩展点一览见 [第三方插件开发者指南](./third-party-plugin.md) 第 5 节。
 
-脚手架同时生成 README，其中写明构建命令、装进 Aalis 项目的三种办法、「多语言」一节（字典与译文在哪、改了跑 `npm test`），以及入口与 `src/index.ts` 一致的 `uses`。
+脚手架同时生成 README，其中写明构建命令、装进 Aalis 项目的三种办法、「多语言」一节（字典与译文在哪、改了跑 `npm test`、文档站上[多语言指南](./i18n.md)的地址），以及入口与 `src/index.ts` 一致的 `uses`。
 
 ### 可按会话设的配置项
 

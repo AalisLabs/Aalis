@@ -203,6 +203,7 @@ apply({ lifecycle }) {
 | 自定义 WebUI 页面与提示 | `uses: { webui: optional(webuiServer) }`，`webui.use.definePage` / `notify`（`@aalis/api-webui`）。页面默认声明式，需要自绘时用插件前端；能放在哪见 [插件作者指南](../plugin-author-guide.md#ui-placement) |
 | 注册 agent 输入预处理器 | `uses: { agent }`，`agent.use.registerPreprocessor(...)`（`@aalis/api-agent`） |
 | 监听核心事件 | `uses: { events }`，`events.use.on('service:changed', …)` |
+| 给人看的文字按读者语言显示 | 写 `src/texts.ts`（`@aalis/schema-i18n` 的 `defineTexts`），声明里用 `t()`，见 [多语言：给人看的文字](./i18n.md) |
 
 这些登记方法内部已处理「服务晚上线或换人时重挂」，登记不用先看 `present`。插件加载采用单遍式，无需关心依赖顺序；若还要在方法里 **读** hub（如 `tools.use.execute`），或希望激活闸清晰，把对应描述符写成 required（不要 `optional()`）；optional 依赖调读方法前先看 `present`。
 
@@ -340,6 +341,7 @@ pnpm 可以直接引用根依赖的范围：
 - [脚手架上手指南](./scaffolding.md)：用 `create-aalis-plugin` 生成本文所述的包结构
 - [插件作者指南「发布到插件市场」](../plugin-author-guide.md#发布到插件市场)：发布前的清单
 - [插件作者指南「报错与故障说明」](../plugin-author-guide.md#_9-5-报错与故障说明)：用户看得到的报错怎么写
+- [多语言「读别的插件交来的文字」](./i18n.md#读别的插件交来的文字)：别的插件与契约交来的文字对象怎么读
 - [架构总览](../architecture.md)
 - [api 包设计](../design/api-packages.md)
 - [枢纽服务：第三方能力的登记契约](../design/hub-services.md)

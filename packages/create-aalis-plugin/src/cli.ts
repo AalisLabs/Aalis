@@ -778,6 +778,9 @@ render().catch(show);
 
 // ── 生成的文件里按原文语言写的文字 ──────────────────────────────────
 
+/** 文档站上的多语言指南，README「多语言」一节指向它 */
+const I18N_GUIDE_URL = 'https://aalis.acenyan.com/guide/i18n';
+
 /**
  * 生成的文件里按原文语言写的说明、注释、给模型的工具说明与结果、日志、示例数据与配置默认值（普通字符串，不经字典：生成的
  * 文件没有读者语言一说）。注释里的多行已带好缩进
@@ -915,6 +918,7 @@ ${
 
 给人看的文字在 \`src/texts.ts\`，另一种语言的译文在 \`src/locales/${other}.ts\`。
 改了原文或加了键就跑 \`npm test\`（\`checkTexts\` 自检字典）。
+完整写法见文档站的[多语言指南](${I18N_GUIDE_URL})。
 
 ## 扩展点
 
@@ -1058,6 +1062,7 @@ the reader only takes the values in the plugin configuration.
 
 Text shown to people is in \`src/texts.ts\`; the translation into the other language is in \`src/locales/${other}.ts\`.
 After changing the source text or adding keys, run \`npm test\` (\`checkTexts\` checks the dictionary).
+See the [languages guide](${I18N_GUIDE_URL}) on the documentation site for the full picture.
 
 ## Extension points
 

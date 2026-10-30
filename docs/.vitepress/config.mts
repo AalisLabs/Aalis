@@ -59,6 +59,7 @@ const SUBGROUPS: Record<string, { text: string; files: string[] }[]> = {
     { text: '存储与媒体', files: ['plugin-storage-local', 'plugin-checkpoint', 'plugin-media', 'plugin-draw'] },
     { text: '权限与确认', files: ['plugin-authority', 'plugin-reach', 'plugin-chat-approval'] },
     { text: '调度、网关与运维', files: ['plugin-scheduler', 'plugin-workflow', 'plugin-gateway', 'plugin-flow-control', 'plugin-commands', 'plugin-cli'] },
+    { text: '多语言', files: ['plugin-i18n'] },
     { text: '前端 WebUI', files: ['plugin-webui-server', 'plugin-webui-client'] },
   ],
 }
