@@ -27,10 +27,12 @@
 import { Buffer } from 'node:buffer';
 import { isStorageUri, type StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
+import { TextError } from '@aalis/schema-i18n';
 import type { MessageAttachment } from '@aalis/schema-message';
 import { detectMediaFormat, FILE_HEAD_BYTES, type MediaKind } from '@aalis/util-file-signature';
 import { safeFetch } from '@aalis/util-network-guard';
 import { readBodyCapped } from './attachment-cache.js';
+import { t } from './texts.js';
 import type { OutgoingPiece, ParsedSegment } from './types.js';
 
 /** base64 内联上限（10 MiB）。超过则降级为 URL/file:// 并记 warn。 */
@@ -52,7 +54,7 @@ const INLINE_FORMATS: Record<MediaKind, ReadonlySet<string>> = {
  */
 function routeByHead(kind: MediaKind, head: Uint8Array): string | undefined {
   const media = detectMediaFormat(head);
-  if (!media) throw new Error(`内容不是可发送的 ${kind} 格式（文件头不符），已拒发`);
+  if (!media) throw new TextError(t('notMedia', { kind }));
   if (media.kind === kind && INLINE_FORMATS[kind].has(media.format)) return undefined;
   return media.format.toLowerCase();
 }
@@ -63,7 +65,7 @@ function routeByHead(kind: MediaKind, head: Uint8Array): string | undefined {
  */
 async function readHead(storage: StorageService, uri: string): Promise<Buffer> {
   const head = await storage.readFileRange?.(uri, 0, FILE_HEAD_BYTES);
-  if (!head) throw new Error('读不出文件头，已拒发');
+  if (!head) throw new TextError(t('noHead'));
   return head;
 }
 
@@ -129,7 +131,7 @@ async function attachmentToOneBotFile(
       const uploadExt = att.kind === 'file' ? undefined : routeByHead(att.kind, await readHead(storage, data));
       // 上传只收 base64://，宿主路径容器里的 NapCat 读不到
       if (att.kind === 'file' || uploadExt !== undefined) {
-        throw new Error(`${size}B 超过内联上限，不能以文件上传`);
+        throw new TextError(t('tooLargeToUpload', { size }));
       }
       logger?.warn?.(
         `OneBot storage 附件 ${size}B 超过内联上限，改交 file:// 宿主路径（daemon 与 Aalis 不共享文件系统时读不到，如 NapCat 在容器里）`,
@@ -199,7 +201,7 @@ export async function materializeAttachments(
         continue;
       }
       if (!file.startsWith('base64://')) {
-        throw new Error('文件上传只收 base64://（超过内联上限或来源是宿主路径、原链接时 NapCat 读不到）');
+        throw new TextError(t('uploadBase64Only'));
       }
       const name = (att.name ?? '').replace(/[/\\]/g, '');
       uploads.push({ file, name: name || (uploadExt ? `${att.kind}.${uploadExt}` : 'file'), attachment: att });
@@ -232,10 +234,10 @@ export async function inlineMarkupMedia(
     try {
       // 按网址解析得出 http、https 的才下载：不计首尾空白、不分大小写
       const url = URL.canParse(address) ? new URL(address) : undefined;
-      if (!url || !/^https?:$/.test(url.protocol)) throw new Error('地址不是网址，不交给实现端，已拒发');
+      if (!url || !/^https?:$/.test(url.protocol)) throw new TextError(t('notUrl'));
       const { file, uploadExt } = await attachmentToOneBotFile({ kind: type, data: url.href }, storage, logger);
-      if (uploadExt !== undefined) throw new Error(`${uploadExt} 格式不能内联，已拒发`);
-      if (!file.startsWith('base64://')) throw new Error('超过内联上限，不交给实现端去拉，已拒发');
+      if (uploadExt !== undefined) throw new TextError(t('cannotInline', { format: uploadExt }));
+      if (!file.startsWith('base64://')) throw new TextError(t('tooLargeToInline'));
       return { type, data: { url: file } };
     } catch (err) {
       logger?.warn?.(`OneBot 正文里的${LABELS[type]}标记未发出: ${err instanceof Error ? err.message : err}`);

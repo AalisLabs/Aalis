@@ -14,75 +14,75 @@ import { tools, withToolGroups } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { toSource } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 
 // ===== 插件元数据 =====
 
 const configSchema = defineConfig({
   groupManagement: {
-    label: '群管理工具',
+    label: t('groupManagementLabel'),
     fields: {
       enabled: {
         type: 'boolean',
-        label: '启用群管理工具',
+        label: t('groupManagementEnabledLabel'),
         default: true,
-        description: '禁言、踢人、设置群名片、撤回消息等',
+        description: t('groupManagementEnabledDescription'),
       },
     },
   },
   groupInfo: {
-    label: '群信息查询',
+    label: t('groupInfoLabel'),
     fields: {
       enabled: {
         type: 'boolean',
-        label: '启用群信息查询',
+        label: t('groupInfoEnabledLabel'),
         default: true,
-        description: '查询群/成员信息',
+        description: t('groupInfoEnabledDescription'),
       },
     },
   },
   account: {
-    label: '账号与好友',
+    label: t('accountLabel'),
     fields: {
       enabled: {
         type: 'boolean',
-        label: '启用账号与好友查询',
+        label: t('accountEnabledLabel'),
         default: true,
-        description: '群列表、好友列表等',
+        description: t('accountEnabledDescription'),
       },
     },
   },
   interaction: {
-    label: '特殊交互',
+    label: t('interactionLabel'),
     fields: {
       enabled: {
         type: 'boolean',
-        label: '启用特殊交互',
+        label: t('interactionEnabledLabel'),
         default: true,
-        description: '戳一戳、群打卡等',
+        description: t('interactionEnabledDescription'),
       },
     },
   },
   sessionHistory: {
-    label: '会话历史读取',
+    label: t('sessionHistoryLabel'),
     fields: {
       enabled: {
         type: 'boolean',
-        label: '启用 OneBot 专属历史工具',
+        label: t('sessionHistoryEnabledLabel'),
         default: true,
-        description:
-          '注册 onebot_resolve_session_id / onebot_get_session_history（按群号/QQ 号读取近期历史）。能读哪些会话按会话管理的跨会话规则。',
+        description: t('sessionHistoryEnabledDescription'),
       },
       maxLimit: {
         type: 'number',
-        label: '单次最多读取条数上限',
+        label: t('maxLimitLabel'),
         default: 100,
-        description: 'agent 传入的 limit 参数会被截断到该上限。',
+        description: t('maxLimitDescription'),
       },
       defaultLimit: {
         type: 'number',
-        label: '默认读取条数（agent 不传 limit 时）',
+        label: t('defaultLimitLabel'),
         default: 20,
-        description: '不能超过 maxLimit。',
+        description: t('defaultLimitDescription'),
       },
     },
   },
@@ -548,7 +548,7 @@ interface OneBotToolBundle {
 
 export default definePlugin({
   name: '@aalis/plugin-tool-onebot',
-  displayName: 'OneBot 工具',
+  displayName: t('displayName'),
   subsystem: 'tools',
   configSchema,
   uses,
@@ -579,17 +579,20 @@ export default definePlugin({
       // 注册工具分组：按职责语义切分，彼此不重叠
       tools.use.registerGroup({
         name: 'onebot-daily',
-        label: 'OneBot 只读与日常',
+        label: t('dailyGroup'),
+        summary: t('dailyGroupSummary'),
         description: '只读查询（群信息/成员/好友列表/历史/登录信息）+ 日常低风险互动（戳一戳、好友赞）',
       });
       tools.use.registerGroup({
         name: 'onebot-group',
-        label: 'OneBot 群务',
+        label: t('groupGroup'),
+        summary: t('groupGroupSummary'),
         description: '群务管理：禁言/全员禁言/踢人/撤回消息/设置群名片/改群名/设管理员/群打卡/审批加群申请 等',
       });
       tools.use.registerGroup({
         name: 'onebot-personal',
-        label: 'OneBot 个人/私聊',
+        label: t('personalGroup'),
+        summary: t('personalGroupSummary'),
         description: '影响 bot 账号本身的人际关系：退群、删好友、处理好友申请、接受/拒绝入群邀请',
       });
 

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { platform } from '../../packages/api-platform/src/index.js';
 import { processService } from '../../packages/api-process/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
@@ -18,6 +19,7 @@ import todoListPlugin from '../../packages/plugin-todo-list/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
 import codeRunnerPlugin from '../../packages/plugin-tool-code-runner/src/index.js';
 import mathPlugin from '../../packages/plugin-tool-math/src/index.js';
+import toolOnebotPlugin from '../../packages/plugin-tool-onebot/src/index.js';
 import sessionToolPlugin from '../../packages/plugin-tool-session/src/index.js';
 import toolSystemPlugin from '../../packages/plugin-tool-system/src/index.js';
 import websearchPlugin from '../../packages/plugin-websearch-serper/src/index.js';
@@ -32,6 +34,7 @@ import { makeToolRegistry } from '../fixtures/tool-registry.js';
 // 工具插件登记的每个分组都带给人看的一句概述（summary），是文字对象：WebUI 设置里分组选项按读者的语言显示它，description 照旧
 // 只给模型。每个插件单独起在一个 App 里，存储是内存替身、进程服务是空替身（只为让要它们的插件激活），WebUI 是测试台，另有真的
 // cron-engine（定时与编排要它），要凭据的插件给占位凭据。OKX 的概述按模拟盘与实盘分两句；mcp-client 按服务器桥接的分组也有，服务器是一启动就退出的 node 进程。
+// tool-onebot 只在出现 OneBot 平台时登记，激活之后另登记一个 OneBot 平台的替身。
 // ════════════════════════════════════════════════════════════
 
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
@@ -44,7 +47,18 @@ afterEach(async () => {
 
 const OKX = { apiKey: 'zz-key', secretKey: 'zz-secret', passphrase: 'zz-pass' };
 
-const CASES: [string, PluginDefinition, string[], Record<string, unknown>?][] = [
+/** 激活之后登记一个 OneBot 平台的替身，等 tool-onebot 跟上 */
+async function onebotOnline(app: App): Promise<void> {
+  app.bind({ provide }).provide.use(platform, {
+    adapterName: 'onebot',
+    platform: 'onebot',
+    getConnections: () => [],
+    sendMessage: async () => {},
+  });
+  await new Promise(resolve => setTimeout(resolve, 0));
+}
+
+const CASES: [string, PluginDefinition, string[], Record<string, unknown>?, ((app: App) => Promise<void>)?][] = [
   ['tool-system', toolSystemPlugin, ['system']],
   ['tool-code-runner', codeRunnerPlugin, ['code-runner']],
   ['tool-browser', browserPlugin, ['browser']],
@@ -67,10 +81,15 @@ const CASES: [string, PluginDefinition, string[], Record<string, unknown>?][] = 
   ['subtask', subtaskPlugin, ['subtask']],
   ['scheduler', schedulerPlugin, ['scheduler']],
   ['workflow', workflowPlugin, ['workflow']],
+  ['tool-onebot', toolOnebotPlugin, ['onebot-daily', 'onebot-group', 'onebot-personal'], {}, onebotOnline],
 ];
 
-/** 只起这一个插件，交出它登记的分组 */
-async function groupsOf(definition: PluginDefinition, config: Record<string, unknown> = {}) {
+/** 只起这一个插件（激活之后先跑 after），交出它登记的分组 */
+async function groupsOf(
+  definition: PluginDefinition,
+  config: Record<string, unknown> = {},
+  after?: (app: App) => Promise<void>,
+) {
   const app = new App({ name: 'T', logger: silent });
   apps.push(app);
   await registerHubs(app);
@@ -86,12 +105,13 @@ async function groupsOf(definition: PluginDefinition, config: Record<string, unk
   await app.plugin(definition, config);
   await app.plugins.idle();
   expect(app.plugins.getPlugin(definition.name)?.state).toBe('active');
+  await after?.(app);
   return registry.getGroups().filter(group => group.pluginName === definition.name);
 }
 
 describe('工具插件的分组带文字对象的概述', () => {
-  it.each(CASES)('%s', async (_, definition, groups, config) => {
-    const mine = await groupsOf(definition, config);
+  it.each(CASES)('%s', async (_, definition, groups, config, after) => {
+    const mine = await groupsOf(definition, config, after);
     expect(mine.map(group => [group.name, isTextRef(group.summary)])).toEqual(groups.map(name => [name, true]));
   });
 

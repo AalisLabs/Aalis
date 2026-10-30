@@ -15,6 +15,7 @@ import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
@@ -282,7 +283,7 @@ describe('onebot：markup 正文里地址不是网址的媒体标记去掉', () 
     const delivery = await t.send({ sessionId: GROUP, content: `一${marker}二`, source: 'agent', markup: true });
     expect(t.mediaFiles()).toEqual([]);
     expect(t.sent().map(text).join('')).toBe('一二');
-    expect(delivery).toMatchObject({ ok: false, error: expect.stringContaining('不是网址') });
+    expect(delivery?.ok === false && toSource(delivery.error)).toContain('不是网址');
   });
 });
 
@@ -300,7 +301,7 @@ describe('onebot：她回复里媒体标记的网址先经 safeFetch 取下来',
     const delivery = await t.send({ sessionId: GROUP, content: `看这个${marker}`, source: 'agent', markup: true });
     expect(t.mediaFiles()).toEqual([]);
     expect(t.sent().map(text)).toEqual(['看这个']);
-    expect(delivery).toMatchObject({ ok: false, error: expect.stringContaining('拒绝访问') });
+    expect(delivery?.ok === false && toSource(delivery.error)).toContain('拒绝访问');
     expect(fetched).toEqual([]);
   });
 
@@ -310,7 +311,7 @@ describe('onebot：她回复里媒体标记的网址先经 safeFetch 取下来',
     const delivery = await t.send({ sessionId: GROUP, content, source: 'agent', markup: true });
     expect(t.mediaFiles()).toEqual([]);
     expect(t.sent().map(text)).toEqual(['看这个<image url="http://10.0.0.1/x', '"/>']);
-    expect(delivery).toMatchObject({ ok: false, error: expect.stringContaining('拒绝访问') });
+    expect(delivery?.ok === false && toSource(delivery.error)).toContain('拒绝访问');
     expect(fetched).toEqual([]);
   });
 
@@ -342,7 +343,7 @@ describe('onebot：她回复里媒体标记的网址先经 safeFetch 取下来',
       expect(fetched).toEqual(['/note.png']);
       expect(t.mediaFiles()).toEqual([]);
       expect(t.sent().map(text)).toEqual(['看这个']);
-      expect(delivery).toMatchObject({ ok: false, error: expect.stringContaining('文件头不符') });
+      expect(delivery?.ok === false && toSource(delivery.error)).toContain('文件头不符');
     });
 
     it('超过内联上限：网址不交给实现端，标记去掉，文字照发，投递报失败', async () => {
@@ -355,7 +356,7 @@ describe('onebot：她回复里媒体标记的网址先经 safeFetch 取下来',
       });
       expect(t.mediaFiles()).toEqual([]);
       expect(t.sent().map(text)).toEqual(['看这个']);
-      expect(delivery).toMatchObject({ ok: false, error: expect.stringContaining('超过内联上限') });
+      expect(delivery?.ok === false && toSource(delivery.error)).toContain('超过内联上限');
     });
 
     it('几个网址同时下载，按原来的顺序拼回', async () => {

@@ -12,7 +12,7 @@ import { processService } from '@aalis/api-process';
 import { storage } from '@aalis/api-storage';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
-import { type TextRef, textOf, toSource } from '@aalis/schema-i18n';
+import { TextError, type TextRef, textClauses, textOf, toSource, truncateParams } from '@aalis/schema-i18n';
 import {
   ATTACHMENT_REF_KINDS,
   type ForwardedChat,
@@ -80,31 +80,31 @@ const configSchema = defineConfig({
   connections: {
     type: 'array',
     onInvalid: 'error',
-    label: '连接列表',
-    description: '配置一个或多个 OneBot WebSocket 连接',
+    label: t('connectionsLabel'),
+    description: t('connectionsDescription'),
     items: {
       url: {
         type: 'string',
-        label: 'WebSocket 地址',
+        label: t('urlLabel'),
         required: true,
         onInvalid: 'error',
-        description: '如 ws://127.0.0.1:8080',
+        description: t('urlDescription'),
       },
       accessToken: {
         type: 'string',
-        label: '鉴权 Token',
+        label: t('accessTokenLabel'),
         secret: true,
         onInvalid: 'error',
-        description: '可选，与 OneBot 实现端一致',
+        description: t('accessTokenDescription'),
       },
-      selfId: { type: 'string', label: '机器人 ID', description: '可选，连接后自动获取' },
+      selfId: { type: 'string', label: t('selfIdLabel'), description: t('selfIdDescription') },
       protocol: {
         type: 'select',
-        label: '协议版本',
-        description: '选择 OneBot 协议版本：v11、v12 或 auto（自动检测）',
+        label: t('protocolLabel'),
+        description: t('protocolDescription'),
         default: 'auto',
         options: [
-          { label: '自动检测', value: 'auto' },
+          { label: t('protocolAuto'), value: 'auto' },
           { label: 'OneBot v11', value: 'v11' },
           { label: 'OneBot v12', value: 'v12' },
         ],
@@ -113,146 +113,137 @@ const configSchema = defineConfig({
     default: [],
   },
   splitMessage: {
-    label: '消息分条发送',
-    description: '启用后，文本将按选中的符号自动拆分为多条消息发送，模拟真人发送习惯',
+    label: t('splitLabel'),
+    description: t('splitDescription'),
     fields: {
-      enabled: { type: 'boolean', label: '启用', description: '是否启用消息分条发送', default: false },
+      enabled: { type: 'boolean', label: t('enable'), description: t('splitEnabledDescription'), default: false },
       delayPerChar: {
         type: 'number',
-        label: '每字延迟 (ms)',
-        description: '按下一条消息的字数计算延迟，单位毫秒/字',
+        label: t('delayPerCharLabel'),
+        description: t('delayPerCharDescription'),
         default: 50,
       },
       maxDelay: {
         type: 'number',
-        label: '最大延迟 (ms)',
-        description: '分条消息之间的最大延迟上限（毫秒）',
+        label: t('maxDelayLabel'),
+        description: t('maxDelayDescription'),
         default: 3000,
       },
       patterns: {
         type: 'multiselect',
-        label: '切割模式',
-        description:
-          '在匹配到这些字符串的位置之后进行切割。每一项是一个完整的字符串：单字符（如 。）就在该字符后切；多字符（如 ". "、".\\n"）则要整段匹配到才切。支持转义：\\n=换行，\\t=制表符，\\r=回车，\\\\=反斜杠。',
+        label: t('patternsLabel'),
+        description: t('patternsDescription'),
         allowCustom: true,
         onInvalid: 'error',
         options: [
-          { label: '。 中文句号', value: '。' },
-          { label: '！ 中文感叹号', value: '！' },
-          { label: '？ 中文问号', value: '？' },
-          { label: '； 中文分号', value: '；' },
-          { label: '， 中文逗号', value: '，' },
-          { label: '、 顿号', value: '、' },
-          { label: '. 英文句号', value: '.' },
-          { label: '. ␣ 英文句号+空格（避免小数点误拆）', value: '. ' },
-          { label: '! 英文感叹号', value: '!' },
-          { label: '? 英文问号', value: '?' },
-          { label: '; 英文分号', value: ';' },
-          { label: ', 英文逗号', value: ',' },
-          { label: ', ␣ 英文逗号+空格（避免 1,000 误拆）', value: ', ' },
-          { label: '↵ 换行 (\\n)', value: '\\n' },
-          { label: '⇥ 制表符 (\\t)', value: '\\t' },
-          { label: '␣ 空格', value: ' ' },
+          { label: t('patternFullStop'), value: '。' },
+          { label: t('patternExclamation'), value: '！' },
+          { label: t('patternQuestion'), value: '？' },
+          { label: t('patternSemicolon'), value: '；' },
+          { label: t('patternComma'), value: '，' },
+          { label: t('patternEnumComma'), value: '、' },
+          { label: t('patternPeriod'), value: '.' },
+          { label: t('patternPeriodSpace'), value: '. ' },
+          { label: t('patternBang'), value: '!' },
+          { label: t('patternQuery'), value: '?' },
+          { label: t('patternAsciiSemicolon'), value: ';' },
+          { label: t('patternAsciiComma'), value: ',' },
+          { label: t('patternAsciiCommaSpace'), value: ', ' },
+          { label: t('patternNewline'), value: '\\n' },
+          { label: t('patternTab'), value: '\\t' },
+          { label: t('patternSpace'), value: ' ' },
         ],
         default: ['。', '！', '？', '.', '!', '?', '\\n'],
       },
     },
   },
   forward: {
-    label: '合并转发处理',
-    description: '收到 <forward> 消息时如何展开、是否调用图像识别、是否调用 LLM 生成摘要',
+    label: t('forwardLabel'),
+    description: t('forwardDescription'),
     fields: {
       enabled: {
         type: 'boolean',
-        label: '启用自动展开',
+        label: t('forwardEnabledLabel'),
         default: true,
-        description: '关闭后保留原始占位符，由 LLM 自行决定是否调工具读取。',
+        description: t('forwardEnabledDescription'),
       },
       maxDepth: {
         type: 'number',
-        label: '嵌套深度上限',
+        label: t('forwardMaxDepthLabel'),
         default: 3,
-        description: '递归展开嵌套合并转发的最大层数（顶层=1）。',
+        description: t('forwardMaxDepthDescription'),
       },
       maxNodesPerLevel: {
         type: 'number',
-        label: '单层节点上限',
+        label: t('maxNodesLabel'),
         default: 30,
-        description: '每层最多展开多少条节点。超过部分会被截断。',
+        description: t('maxNodesDescription'),
       },
       imageRecognition: {
         type: 'boolean',
-        label: '识别内部图片',
+        label: t('imageRecognitionLabel'),
         default: true,
-        description: '把转发内的图片送入 media 服务转写为文字描述。需要该服务可用。',
+        description: t('imageRecognitionDescription'),
       },
       imageRecognitionConcurrency: {
         type: 'number',
-        label: '媒体识别并发上限',
+        label: t('concurrencyLabel'),
         default: 8,
-        description:
-          '单条消息的转发展开内允许同时进行的媒体识别（图片/语音/视频）任务数。' +
-          '本地模型部署建议设 1-2：转发批量识别是后台工作，低并发能减少对实时入站识别的挤占' +
-          '（注意这是统计性缓解，不是优先级调度——多条消息各有各的并发额度，模型侧也无插队机制）。',
+        description: t('concurrencyDescription'),
       },
       recognitionMaxItems: {
         type: 'number',
-        label: '单条转发媒体识别上限',
+        label: t('recognitionMaxLabel'),
         default: 32,
-        description:
-          '单条合并转发内最多识别多少个媒体（图片/语音/视频合计）；超出的以 [图片] 等占位符保留，不再消耗模型算力。设为 0 表示不限。',
+        description: t('recognitionMaxDescription'),
       },
       summarize: {
         type: 'boolean',
-        label: '生成摘要',
+        label: t('summarizeLabel'),
         default: true,
-        description:
-          '展开后调用 LLM 生成一段摘要，代替原文写进给模型的转发展开，随存档正文进入对话、记忆与向量库；原文保留在缓存。',
+        description: t('summarizeDescription'),
       },
       summaryMaxChars: {
         type: 'number',
-        label: '摘要最大字数',
+        label: t('summaryMaxCharsLabel'),
         default: 600,
-        description:
-          '提示给摘要模型的目标长度上限。模型被允许超出 10% 以保留多人互动结构。输出上限只防失控，取本值的 3 倍、不少于 2048 token；模型在上限处停下时摘要末尾标出截断。',
+        description: t('summaryMaxCharsDescription'),
       },
       summaryInputLimit: {
         type: 'number',
-        label: '摘要原文输入上限（字符）',
+        label: t('summaryInputLimitLabel'),
         default: 8000,
-        description:
-          '喂给摘要模型的原文输入上限；原文超过则前段截断。设为 0 表示不截断（注意超长文本会增加摘要成本）。',
+        description: t('summaryInputLimitDescription'),
       },
       summaryPrompt: {
         type: 'textarea',
-        label: '摘要 system prompt（高级，留空使用内置）',
+        label: t('summaryPromptLabel'),
         default: '',
-        description: `留空使用内置默认 prompt（专为保留多人互动结构调优过）。填入非空内容则完全覆盖默认 prompt。\n\n内置默认 prompt 如下（<输出语言> 取全局默认的语言列表的第一项），可作为撰写参考：\n\n${defaultForwardSummaryPrompt('<输出语言>')}`,
+        description: t('summaryPromptDescription', { prompt: defaultForwardSummaryPrompt('<输出语言>') }),
       },
     },
   },
   reply: {
-    label: '引用消息处理',
-    description: '收到引用回复时如何展开被引用消息链',
+    label: t('replyLabel'),
+    description: t('replyDescription'),
     fields: {
       maxDepth: {
         type: 'number',
-        label: '引用链深度上限',
+        label: t('replyMaxDepthLabel'),
         default: 5,
-        description: '递归获取被引用消息的最大层数。1 = 只读取直接引用；2 = 继续读取直接引用所引用的消息，依此类推。',
+        description: t('replyMaxDepthDescription'),
       },
     },
   },
   attachmentCache: {
-    label: '附件本地缓存',
-    description:
-      '入站 / 出站的 image / audio / video / file 统一缓存到 data:/{kind}s/{会话目录}/onebot/，便于人工归档与多轮工具复用；/clear 与删除会话时由本适配器清理',
+    label: t('cacheLabel'),
+    description: t('cacheDescription'),
     fields: {
       maxBytes: {
         type: 'number',
-        label: '单文件大小上限 (Byte)',
+        label: t('cacheMaxBytesLabel'),
         default: 10 * 1024 * 1024,
-        description: '超过此尺寸的附件不落盘，保留原 URL（典型场景：长视频）。默认 10 MiB。',
+        description: t('cacheMaxBytesDescription'),
       },
     },
   },
@@ -294,14 +285,18 @@ class ActionUnconfirmedError extends Error {
 
 /**
  * action 的三种结局之一：实现端回了失败，确定没执行。retcode 是实现端的返回码；unsupported 表示实现端不支持这个动作（返回码
- * 由协议对象的 unsupportedRetcode 给），调用方只在这时才可以改用别的动作名
+ * 由协议对象的 unsupportedRetcode 给），调用方只在这时才可以改用别的动作名。带文字对象（投递失败的原因给人看），实现端的原话
+ * 原样作参数；message 是它的原文（工具结果取它）
  */
 class OneBotActionError extends Error {
+  readonly text: TextRef;
   readonly action: string;
   readonly retcode: number;
   readonly unsupported: boolean;
   constructor(action: string, retcode: number, unsupported: boolean, detail: string | undefined) {
-    super(`OneBot action ${action} 失败（retcode=${retcode}）${detail ? `：${detail}` : ''}`);
+    const text = detail ? t('actionFailedDetail', { action, retcode, detail }) : t('actionFailed', { action, retcode });
+    super(text.source);
+    this.text = text;
     this.action = action;
     this.retcode = retcode;
     this.unsupported = unsupported;
@@ -341,6 +336,16 @@ function formatRecallClock(ts: number, now: number): string {
 /** 通知里的人：查到昵称写「昵称(id)」，没有写 id，都没有写 fallback（给模型的正文取它的原文） */
 function who(nick: string | undefined, id: string | undefined, fallback: TextRef): string | TextRef {
   return nick ? `${nick}(${id})` : (id ?? fallback);
+}
+
+/**
+ * 确定没发出的各条原因以「; 」相连成一句（同改前的分隔）。两两二分着嵌套，层数随条数按对数增长：附件多时依次相连会超过
+ * 渲染的嵌套上限（同 schema-i18n 的 textClauses）
+ */
+function joinReasons(reasons: readonly (string | TextRef)[]): string | TextRef {
+  if (reasons.length === 1) return reasons[0];
+  const half = Math.ceil(reasons.length / 2);
+  return t('andThen', { head: joinReasons(reasons.slice(0, half)), tail: joinReasons(reasons.slice(half)) });
 }
 
 /**
@@ -625,7 +630,7 @@ function runAdapter(caps: Caps): void {
   const connections: OneBotConnectionConfig[] = cfg.connections;
   for (const conn of connections) {
     if (!URL.canParse(conn.url) || !['ws:', 'wss:'].includes(new URL(conn.url).protocol)) {
-      throw configError('connections.url 必须是 ws 或 wss URL');
+      throw configError(t('badUrl'));
     }
   }
 
@@ -1031,10 +1036,9 @@ function runAdapter(caps: Caps): void {
     if (data.scope === 'all' && wants('context')) {
       try {
         const removed = await forwardExpander.clearAll();
-        report({ source: 'onebot-forward', success: true, message: `合并转发原文已清空（${removed} 条）` });
+        report({ source: 'onebot-forward', success: true, message: t('forwardCleared', { count: removed }) });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        report({ source: 'onebot-forward', success: false, message: `合并转发原文清空失败: ${msg}` });
+        report({ source: 'onebot-forward', success: false, message: t('forwardFailed', { error: textOf(err) }) });
       }
     }
     const sessionId = data.scope === 'all' ? undefined : data.sessionId;
@@ -1059,7 +1063,7 @@ function runAdapter(caps: Caps): void {
   function sendAction(state: ConnectionState, action: string, params: Record<string, unknown>): Promise<unknown> {
     return new Promise((resolve, reject) => {
       if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
-        reject(new Error('WebSocket 未连接'));
+        reject(new TextError(t('wsNotConnected')));
         return;
       }
 
@@ -1102,21 +1106,19 @@ function runAdapter(caps: Caps): void {
     replyTo?: string,
   ): Promise<{ messageIds: string[]; sent: number; failure?: unknown }> {
     const parsed = parseSessionId(sessionId);
-    if (!parsed) {
-      throw new Error(`无法解析 sessionId: ${sessionId}`);
-    }
+    if (!parsed) throw new TextError(t('badSessionId', { sessionId }));
 
     const state = findStateBySelfId(parsed.selfId);
     if (!state || state.status !== 'online' || !state.ws || !state.protocol) {
       // 经路由与出站认领到这里的账号都是本实例的；认不出的账号由路由处报错并列出各实例的已知账号
       const reason = !state
-        ? '未找到对应连接'
+        ? t('noConnection')
         : state.status !== 'online'
-          ? `状态=${state.status}`
+          ? t('connectionStatus', { status: state.status })
           : !state.ws
-            ? 'ws 为空'
-            : '协议未初始化';
-      throw new Error(`OneBot 连接不可用: selfId=${parsed.selfId} (${reason})`);
+            ? t('wsEmpty')
+            : t('protocolNotReady');
+      throw new TextError(t('connectionDownBecause', { selfId: parsed.selfId, reason }));
     }
 
     const messageIds: string[] = [];
@@ -1301,19 +1303,19 @@ function runAdapter(caps: Caps): void {
      */
     async uploadFile(sessionId: string, file: string, name: string): Promise<void> {
       const parsed = parseSessionId(sessionId);
-      if (!parsed) throw new Error(`无法解析 sessionId: ${sessionId}`);
+      if (!parsed) throw new TextError(t('badSessionId', { sessionId }));
       const state = findStateBySelfId(parsed.selfId);
       if (!state || state.status !== 'online' || !state.ws || !state.protocol) {
-        throw new Error(`OneBot 连接不可用: selfId=${parsed.selfId}`);
+        throw new TextError(t('connectionDown', { selfId: parsed.selfId }));
       }
-      if (state.protocol.version !== 'v11') throw new Error('OneBot v12 连接不支持文件附件');
+      if (state.protocol.version !== 'v11') throw new TextError(t('v12NoFile'));
       const targetId = Number(parsed.targetId) || parsed.targetId;
       if (parsed.detailType === 'group') {
         await sendAction(state, 'upload_group_file', { group_id: targetId, file, name });
       } else if (parsed.detailType === 'private') {
         await sendAction(state, 'upload_private_file', { user_id: targetId, file, name });
       } else {
-        throw new Error(`会话类型 ${parsed.detailType} 不支持文件附件`);
+        throw new TextError(t('typeNoFile', { type: parsed.detailType }));
       }
     },
 
@@ -2289,10 +2291,10 @@ function runAdapter(caps: Caps): void {
    */
   function reportUndelivered(
     msg: OutgoingMessage,
-    result: { error: string; sentPieces?: number },
+    result: { error: TextRef; sentPieces?: number },
     failed: boolean,
     resendFrom: number | undefined,
-    unconfirmed: string[],
+    unconfirmed: readonly TextRef[],
   ): void {
     if (msg.source !== 'agent') return;
     let content = '[投递回报] ';
@@ -2308,8 +2310,9 @@ function runAdapter(caps: Caps): void {
         : '你刚才发送的内容(可能包含图片、媒体或文件)未能送达对方。' +
           '如确有必要可稍后重发或改用文字说明;不必反复道歉或刷屏。';
     }
-    if (unconfirmed.length) {
-      content += `这些已发出但没等到确认，结果未知，可能已经送达；不要重发，以免出现两份：${unconfirmed.join('、')}。`;
+    const pending = unconfirmed.map(toSource);
+    if (pending.length) {
+      content += `这些已发出但没等到确认，结果未知，可能已经送达；不要重发，以免出现两份：${pending.join('、')}。`;
     }
     const note: Message = {
       role: 'system',
@@ -2318,9 +2321,9 @@ function runAdapter(caps: Caps): void {
       timestamp: Date.now(),
       metadata: {
         [WellKnownMetadataKeys.Source]: 'adapter-onebot',
-        [WellKnownMetadataKeys.DeliveryError]: result.error,
+        [WellKnownMetadataKeys.DeliveryError]: truncateParams(result.error, 200),
         ...(result.sentPieces ? { [WellKnownMetadataKeys.SentPieces]: result.sentPieces } : {}),
-        [WellKnownMetadataKeys.Unconfirmed]: unconfirmed,
+        [WellKnownMetadataKeys.Unconfirmed]: pending,
         ...(msg.turnId ? { [WellKnownMetadataKeys.TurnId]: msg.turnId } : {}),
         ...(msg.callId ? { [WellKnownMetadataKeys.CallId]: msg.callId } : {}),
       },
@@ -2340,7 +2343,7 @@ function runAdapter(caps: Caps): void {
   async function deliverOutbound(msg: OutgoingMessage): Promise<OutboundDeliveryResult> {
     const errors: unknown[] = [];
     /** 已经发出、没等到确认的各项（消息按条、文件按名）：实现端可能已经收下，只能报「结果未知」，不能劝重发 */
-    const unconfirmed: string[] = [];
+    const unconfirmed: TextRef[] = [];
     const delivered: MessageAttachment[] = [];
     let textSent = false;
     /** 正文各条的平台消息 id */
@@ -2420,7 +2423,7 @@ function runAdapter(caps: Caps): void {
           delivered.push(attachment);
         } catch (err) {
           logger.use.warn(`OneBot 上传文件失败 [${name}]: ${err}`);
-          if (err instanceof ActionUnconfirmedError) unconfirmed.push(`文件 ${name}`);
+          if (err instanceof ActionUnconfirmedError) unconfirmed.push(t('unconfirmedFile', { name }));
           else errors.push(err);
         }
       }
@@ -2435,15 +2438,16 @@ function runAdapter(caps: Caps): void {
     let resendFrom: number | undefined;
     if (stopped !== undefined) {
       const from = sentPieces + (unknown ? 2 : 1);
-      if (unknown) unconfirmed.unshift(`消息（第 ${sentPieces + 1} 条）`);
+      if (unknown) unconfirmed.unshift(t('unconfirmedMessage', { n: sentPieces + 1 }));
       if (!sentPieces && !unknown) errors.push(stopped);
       else if (from <= total) resendFrom = from;
     }
     // 回报另说的确定失败：停在中途时只算停下那几条之外的（附件、正文里的媒体、上传的文件）
     const failed = errors.length > 0;
-    // 停下那一条之后的没发出：已发出的条数随 sentPieces 交出，原因只写停下那一条的原话；那一条结果未知时它在名单里，这里写从
-    // 第几条起没发出
-    if (resendFrom !== undefined) errors.push(unknown ? `从第 ${resendFrom} 条起没发出` : stopped);
+    // 确定没发出的各条原因：接住的报错逐条取文字对象或原话。停下那一条之后的没发出：已发出的条数随 sentPieces 交出，原因只写
+    // 停下那一条的原话；那一条结果未知时它在名单里，这里写从第几条起没发出
+    const reasons = errors.map(textOf);
+    if (resendFrom !== undefined) reasons.push(unknown ? t('notSentFrom', { from: resendFrom }) : textOf(stopped));
 
     if (textSent || delivered.length) {
       // 存档据此把送达的部分记进会话历史：只交成功附件的快照，失败的图片不能写成“已发送”历史。
@@ -2454,15 +2458,14 @@ function runAdapter(caps: Caps): void {
         attachments: delivered.map(att => ({ ...att })),
       });
     }
-    if (errors.length || unconfirmed.length) {
-      const problems: string[] = [];
-      if (errors.length) problems.push(errors.map(String).join('; '));
-      if (unconfirmed.length) {
-        problems.push(`已发出但没等到确认，结果未知，可能已经送达，不要重发：${unconfirmed.join('、')}`);
-      }
+    if (reasons.length || unconfirmed.length) {
+      // 投递结果的原因：确定没发出的各条以「; 」相连成一句，与结果未知的一句并列相连
+      const problems: (string | TextRef)[] = [];
+      if (reasons.length) problems.push(joinReasons(reasons));
+      if (unconfirmed.length) problems.push(t('unconfirmed', { items: unconfirmed }));
       const result = {
         ok: false as const,
-        error: problems.join('；'),
+        error: textClauses(problems),
         ...(stopped !== undefined && sentPieces ? { sentPieces } : {}),
         // 有结果未知的部分就带，不论另有没有确定没发出的：那几项可能已经送达，发起方不得整条重发
         ...(unconfirmed.length ? { unconfirmed: true as const } : {}),
@@ -2470,7 +2473,7 @@ function runAdapter(caps: Caps): void {
       reportUndelivered(msg, result, failed, resendFrom, unconfirmed);
       return result;
     }
-    if (!textSent && !delivered.length) return { ok: false, error: '没有可发送的内容' };
+    if (!textSent && !delivered.length) return { ok: false, error: t('nothingToSend') };
     return messageIds.length ? { ok: true, messageIds } : { ok: true };
   }
 
@@ -2517,7 +2520,7 @@ function runAdapter(caps: Caps): void {
 
 export default definePlugin({
   name: '@aalis/plugin-adapter-onebot',
-  displayName: 'OneBot 适配器',
+  displayName: t('displayName'),
   subsystem: 'platform',
   configSchema,
   reusable: true,

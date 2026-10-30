@@ -8,7 +8,9 @@ import type { StorageService } from '../../packages/api-storage/src/index.js';
 import { App, type Logger, type ServiceSelection } from '../../packages/core/src/index.js';
 import { type ExpandedForward, forwardedChat } from '../../packages/plugin-adapter-onebot/src/forward.js';
 import { createForwardExpander, type ForwardConfig } from '../../packages/plugin-adapter-onebot/src/forward-expand.js';
+import onebotPlugin from '../../packages/plugin-adapter-onebot/src/index.js';
 import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { withForwards } from '../../packages/schema-message/src/index.js';
 import { provideHostLanguage } from '../fixtures/host-language.js';
 import { fixedRef } from '../fixtures/service-ref.js';
@@ -139,6 +141,13 @@ async function expand(
 }
 
 describe('合并转发摘要在长度上限处停下', () => {
+  it('配置项 summaryMaxChars 叫「摘要最大字符数」（上限按字符数算）', () => {
+    const { forward } = onebotPlugin.configSchema as unknown as {
+      forward: { fields: { summaryMaxChars: { label: unknown } } };
+    };
+    expect(toSource(forward.fields.summaryMaxChars.label)).toBe('摘要最大字符数');
+  });
+
   it('报 length：信封与缓存里的摘要末尾带标记，请求的输出上限是 2048', async () => {
     const { envelope, requests, cached } = await expand('length', fixedRef<I18nService>(undefined));
     expect(envelope).toContain('甲和乙在打招呼（已在长度上限处截断）\n</forward>');
