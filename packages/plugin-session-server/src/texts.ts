@@ -6,7 +6,7 @@ const SOURCE = {
   displayName: '会话服务',
   protocolLabel: '会话协议',
   approvalsLabel: '审批',
-  majorMismatch: '协议主版本不同：客户端 {client}，服务端 {server}',
+  versionMismatch: '协议版本不兼容：客户端 {client}，服务端 {server}',
   noSession: '会话不存在：{id}',
   badCursor: 'cursor 无效：{cursor}',
   historyCursorExpired: '历史游标已失效：{before}',

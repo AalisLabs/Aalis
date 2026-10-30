@@ -5,7 +5,7 @@ export default defineLocale<Source>()({
   displayName: 'Session service',
   protocolLabel: 'Session protocol',
   approvalsLabel: 'Approvals',
-  majorMismatch: 'Protocol major versions differ: client {client}, server {server}',
+  versionMismatch: 'Incompatible protocol versions: client {client}, server {server}',
   noSession: 'Session {id} does not exist',
   badCursor: 'Invalid cursor: {cursor}',
   historyCursorExpired: 'The history cursor has expired: {before}',

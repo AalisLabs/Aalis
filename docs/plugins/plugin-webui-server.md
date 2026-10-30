@@ -217,7 +217,7 @@ WebSocket 与 HTTP 同端口，两个端点：`/session` 是会话协议，`/adm
 
 | 码 | 原因 | 客户端怎么办 |
 |---|---|---|
-| 1000 | 会话服务断开这条连接，原因由它给出：握手时主版本不合（之前已回 `unsupported` 错误帧），或「会话服务已停止」（停用、重载） | 主版本不合时不重连；其余稍后重连，接到新的提供者 |
+| 1000 | 会话服务断开这条连接，原因由它给出：握手时协议版本不兼容（之前已回 `unsupported` 错误帧），或「会话服务已停止」（停用、重载） | 版本不兼容时不重连；其余稍后重连，接到新的提供者 |
 | 1001 | `webui 正在卸载` | 稍后重连 |
 | 1008 | `认不出身份`：连接建立时认不出调用者 | 重连；token 不对时握手回 401 |
 | 1013 | `会话服务不在`：会话服务没装、停用或没激活成功 | 稍后重连 |
@@ -233,7 +233,7 @@ socket.onopen = () =>
     jsonrpc: '2.0',
     id: 1,
     method: 'initialize',
-    params: { protocolVersion: '2.0', client: { name: 'my-client', version: '0.1.0' } },
+    params: { protocolVersion: '0.2.0', client: { name: 'my-client', version: '0.1.0' } },
   }));
 socket.onmessage = event => {
   const frame = JSON.parse(event.data); // 带 id 的是回应，不带 id 的是推送

@@ -10,7 +10,8 @@
  * 本包只有 schema、协议版本与服务描述符 `sessionProtocol`；实现由提供 `sessionProtocol` 的插件给出，
  * 传输（WebSocket 等）由宿主插件接到 `sessionProtocol.connect`。
  *
- * 标 experimental。不兼容的修改升主版本，只做加法升次版本；对象 schema 不拒多余的键，旧客户端读到新加的字段照常解析。
+ * 标 experimental。协议号只跟协议自己的变化走，不跟包版本：没到 1.0 写成 0.x 三段，不兼容的修改升第二位，只做加法升第三位，
+ * 握手比前两段；1.0 以后不兼容的修改升第一位，握手比第一段。对象 schema 不拒多余的键，旧客户端读到新加的字段照常解析。
  *
  * 给人看的文字字段写成产出方的形状：服务端交出字符串或文字对象（@aalis/schema-i18n 的 TextRef），发出前按全局层的
  * 语言（读者是 owner 自己）渲染成字符串，日期与时间按服务进程的时区，线上一律是字符串；读线上的一方（客户端）按
@@ -24,8 +25,8 @@ import type { SessionFieldSpec, WireSchemaField } from '@aalis/schema-config';
 import { asText, isTextRef, type TextRef } from '@aalis/schema-i18n';
 import { z } from 'zod';
 
-/** 协议版本 `<主>.<次>`：握手时主版本不同即断开 */
-export const SESSION_PROTOCOL_VERSION = '2.0';
+/** 协议版本（0.x 三段，见文件头）：握手时比的部分不同即断开。0.20 那一代报两段的 1.0 */
+export const SESSION_PROTOCOL_VERSION = '0.2.0';
 
 /** 给人看的文字：服务端交出字符串或文字对象，发出前按全局层的语言渲染成字符串 */
 const TextSchema = z.union([z.string(), z.custom<TextRef>(isTextRef)]);
@@ -115,7 +116,8 @@ export const IdentitySchema = z.object({ platform: z.string(), userId: z.string(
 export type Identity = z.infer<typeof IdentitySchema>;
 
 export const InitializeParamsSchema = z.object({
-  protocolVersion: z.string().regex(/^\d+\.\d+$/),
+  // 两段的是 0.20 那一代（1.0）：收下好回写明两边版本的拒绝，不当参数不合
+  protocolVersion: z.string().regex(/^\d+\.\d+(\.\d+)?$/),
   client: z.object({ name: z.string(), version: z.string() }),
 });
 
