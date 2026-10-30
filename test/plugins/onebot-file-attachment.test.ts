@@ -49,7 +49,7 @@ import { storedRoom } from '../fixtures/rooms.js';
 // 带 markup 的正文（她的回复）里存储地址的媒体标记经网关派发时由 image-sender 转成附件：按回复所在那一轮的授权身份过媒体
 // 判据（不是回合里的不带授权身份），都核文件头。它只摘掉转成了附件的标记，没转成的与别的写法留在正文里：网址的由适配器下载
 // 内联，其余由适配器去掉、投递报失败（会话表、取用规则与 owner 判定是替身：私聊的对端与 WebUI 的 console 是 owner，取用规则
-// 一律不放行）。入站的引用与撤回按存档反查原文时，按归档时记下的标签去掉发送者前缀。
+// 一律不放行）。一条回复里的媒体（网址的标记与转成的附件合计）最多发 10 个，附件同时最多读 4 个。入站的引用与撤回按存档反查原文时，按归档时记下的标签去掉发送者前缀。
 // 发送不重试：没等到回执（超时、回执前断线）的记结果未知；逐条发出时一条没发成就停，投递结果与回报写明前几条已发出。实现端回
 // 失败时报错带返回码，「不支持该动作」另标出来；合并转发只按 id 拉，缓存命中时带截断标志与收到它的会话。
 // 本地起一个假的 OneBot 实现端（WebSocket 服务）记录适配器发出的 action。
@@ -155,9 +155,9 @@ async function until(cond: () => boolean, ms = 8000): Promise<void> {
 
 /**
  * 内存 storage：data 根可写（出站附件落盘用），aalis 根只读（占位的配置文件所在）；别的根抛 storage-local 的「未知存储根」
- * （它的字典里同一句，TextError）
+ * （它的字典里同一句，TextError）。reads 记整份读取的在途数与峰值，每次读等 delayMs
  */
-function memStorage(files: Map<string, Buffer>) {
+function memStorage(files: Map<string, Buffer>, reads: { delayMs: number; inFlight: number; peak: number }) {
   const root = (name: string, writable: boolean) => ({
     name,
     label: name,
@@ -182,7 +182,13 @@ function memStorage(files: Map<string, Buffer>) {
       return { size: get(uri).byteLength, isDirectory: false };
     },
     async readFile(uri: string) {
-      return get(uri);
+      reads.peak = Math.max(reads.peak, ++reads.inFlight);
+      try {
+        if (reads.delayMs) await new Promise(r => setTimeout(r, reads.delayMs));
+        return get(uri);
+      } finally {
+        reads.inFlight--;
+      }
     },
     async readFileRange(uri: string, start: number, end: number) {
       return get(uri).subarray(start, end);
@@ -223,6 +229,8 @@ async function boot(
     failActions?: Record<string, { retcode: number; message: string }>;
     config?: Record<string, unknown>;
     media?: { rememberDescriptionAlias(source: string, landedRef: string): void };
+    /** 每次整份读取存储文件等多久（毫秒） */
+    readDelayMs?: number;
   } = {},
 ) {
   const protocol = opts.protocol ?? 'v11';
@@ -281,7 +289,8 @@ async function boot(
   await registerHubs(app);
   const host = app.bind({ provide, events, platform });
   const files = new Map<string, Buffer>(Object.entries(opts.files ?? {}));
-  host.provide.use(storage, memStorage(files) as never);
+  const reads = { delayMs: opts.readDelayMs ?? 0, inFlight: 0, peak: 0 };
+  host.provide.use(storage, memStorage(files, reads) as never);
   if (opts.media) host.provide.use(media, opts.media as never);
   // 转码一律失败：语音附件保留原数据，直接走内联前的文件头核对
   host.provide.use(processService, {
@@ -401,6 +410,7 @@ async function boot(
   return {
     actions,
     files,
+    reads,
     sent,
     send,
     post,
@@ -1285,6 +1295,43 @@ describe('onebot 出站：她回复里的媒体标记', () => {
     await t.flush();
     const images = segmentsOf(t.sent(), 'send_group_msg').filter(s => s.type === 'image');
     expect(images.map(s => decode(s.data.file))).toEqual([PNG, PNG]);
+  });
+
+  it('群里：一条回复里存储地址的标记转成的附件也计入最多 10 个媒体，多出的不读、去掉，投递报多出的个数；附件同时最多读 4 个', async () => {
+    const t = await boot({
+      imageSender: true,
+      gateway: true,
+      readDelayMs: 20,
+      files: { [`data:/images/${GROUP_DIR}/a.png`]: PNG },
+    });
+    const message: OutgoingMessage = {
+      sessionId: GROUP,
+      source: 'agent',
+      markup: true,
+      content: `看${`<image url="data:/images/${GROUP_DIR}/a.png"/>`.repeat(24)}`,
+    };
+    await t.dispatch(message);
+    const delivery = await message.delivery;
+    await t.flush();
+    expect(segmentsOf(t.sent(), 'send_group_msg').filter(s => s.type === 'image')).toHaveLength(10);
+    expect(t.reads.peak).toBeLessThanOrEqual(4);
+    expect(delivery?.ok === false && toSource(delivery.error)).toBe('一条回复最多发 10 个媒体，多出的 14 个已拒发');
+  });
+
+  it('群里：网址的标记与存储地址的标记合计最多 10 个，按发出的先后数（正文在前，转成的附件接在后面）', async () => {
+    const t = await boot({ imageSender: true, gateway: true, files: { [`data:/images/${GROUP_DIR}/a.png`]: PNG } });
+    const pair = `<image url="${httpBase}/ok.png"/><image url="data:/images/${GROUP_DIR}/a.png"/>`;
+    const message: OutgoingMessage = {
+      sessionId: GROUP,
+      source: 'agent',
+      markup: true,
+      content: `看${pair.repeat(6)}`,
+    };
+    await t.dispatch(message);
+    const delivery = await message.delivery;
+    await t.flush();
+    expect(segmentsOf(t.sent(), 'send_group_msg').filter(s => s.type === 'image')).toHaveLength(10);
+    expect(delivery?.ok === false && toSource(delivery.error)).toBe('一条回复最多发 10 个媒体，多出的 2 个已拒发');
   });
 
   it.each([

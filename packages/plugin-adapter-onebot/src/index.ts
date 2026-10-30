@@ -30,8 +30,13 @@ import {
 import { truncateChars } from '@aalis/util-text-normalize';
 import WebSocket from 'ws';
 import { cacheOneAttachment, MEDIA_WRITER } from './attachment-cache.js';
-import { inlineMarkupMedia, materializeAttachments } from './attachments.js';
-import { createForwardExpander, defaultForwardSummaryPrompt, type ForwardConfig } from './forward-expand.js';
+import { capReplyMedia, inlineMarkupMedia, MEDIA_FETCH_CONCURRENCY, materializeAttachments } from './attachments.js';
+import {
+  createConcurrencyLimited,
+  createForwardExpander,
+  defaultForwardSummaryPrompt,
+  type ForwardConfig,
+} from './forward-expand.js';
 import { lookupDescriptionByUrl, rememberLandedAlias } from './media-alias.js';
 import { extractSentMessageId, SentMessageTracker } from './sent-messages.js';
 import { t } from './texts.js';
@@ -2357,24 +2362,25 @@ function runAdapter(caps: Caps): void {
     let sentPieces = 0;
     let stopped: unknown;
     try {
+      // 她的回复：正文里的媒体段与附件里的媒体（image-sender 把存储地址的标记转成的）合计有上限，多出的不读、不下载
       const plain = toPieces(msg.content ?? '', msg.markup);
+      const reply = msg.markup ? capReplyMedia(plain, msg.attachments ?? [], logger.use) : undefined;
+      const attachments = reply?.attachments ?? msg.attachments ?? [];
       let attachmentPieces: OutgoingPiece[] = [];
       let inlineAttachments: MessageAttachment[] = [];
       const uploads: Array<{ file: string; name: string; attachment: MessageAttachment }> = [];
-      if (msg.attachments?.length) {
-        // 缓存与发送仍经 storage 和受保护下载；落盘的副本只用来发，原来的地址留在 ref 上，送达之后记进历史的是它。
+      if (attachments.length) {
+        // 缓存与发送仍经 storage 和受保护下载；落盘的副本只用来发，原来的地址留在 ref 上，送达之后记进历史的是它。读取与下载
+        // 同时最多 MEDIA_FETCH_CONCURRENCY 个，按附件的先后排队
+        const cache = createConcurrencyLimited(
+          (att: MessageAttachment) =>
+            cacheOneAttachment(storage, proc, att.kind, att.data, msg.sessionId, attachmentMaxBytes, logger.use),
+          MEDIA_FETCH_CONCURRENCY,
+        );
         await Promise.all(
-          msg.attachments.map(async att => {
+          attachments.map(async att => {
             try {
-              const local = await cacheOneAttachment(
-                storage,
-                proc,
-                att.kind,
-                att.data,
-                msg.sessionId,
-                attachmentMaxBytes,
-                logger.use,
-              );
+              const local = await cache(att);
               if (local) {
                 rememberLandedAlias(media.present ? media.use : undefined, att.kind, att.data, local);
                 const address = outboundAddress(att);
@@ -2387,14 +2393,14 @@ function runAdapter(caps: Caps): void {
             }
           }),
         );
-        const materialized = await materializeAttachments(msg.attachments, storage, logger.use);
+        const materialized = await materializeAttachments(attachments, storage, logger.use);
         attachmentPieces = materialized.segments.map(segment => ({ text: '', segments: [segment] }));
         inlineAttachments = materialized.inlineAttachments;
         uploads.push(...materialized.uploads);
         errors.push(...materialized.errors);
       }
       // 她回复里的媒体段在后台按先后下载，正文逐条等、等到一条发一条：前面的文字不等后面的下载
-      const inlined = msg.markup ? inlineMarkupMedia(plain, storage, logger.use) : undefined;
+      const inlined = reply ? inlineMarkupMedia(reply.pieces, storage, logger.use) : undefined;
       const pieces = inlined?.pieces ?? plain;
 
       // 正文按 markup 发；附件物化出的消息段接在后面各自单独成一条，不拼成标记、不经正文媒体段的那道过滤。逐条发，一条没发成
@@ -2410,6 +2416,7 @@ function runAdapter(caps: Caps): void {
         textSent = stopped === undefined && body.sent > 0;
       }
       // 停在中途时后面的条可能还在下载：都落定了才数得出共几条、收齐去掉的原因
+      if (reply?.error) errors.push(reply.error);
       if (inlined) errors.push(...(await inlined.errors));
       total = (await Promise.all(pieces)).filter(piece => piece !== undefined).length + attachmentPieces.length;
       if (attachmentPieces.length && stopped === undefined) {
