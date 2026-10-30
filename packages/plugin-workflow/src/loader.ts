@@ -8,7 +8,7 @@ import type { UserIdentity } from '@aalis/api-authority';
 import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
 import type { WorkflowDef } from '@aalis/api-workflow';
 import type { Logger } from '@aalis/core';
-import { TextError, textOf, toSource } from '@aalis/schema-i18n';
+import { TextError, type TextRef, textOf, toSource } from '@aalis/schema-i18n';
 import { parse, stringify } from 'yaml';
 
 import { validateGraph } from './engine.js';
@@ -32,6 +32,14 @@ export function normalizeDef(raw: unknown, fallbackId: string): WorkflowDef | nu
     enabled: r.enabled !== false,
   };
   return def;
+}
+
+/**
+ * 编排 id 是定义文件的文件名（`<id>.yaml`，拼进定义目录的路径）：只收英文字母、数字、下划线与连字符，带 `/` 或 `..` 的会把读写删
+ * 引到定义目录之外。不合规时给原因
+ */
+export function validateId(id: string): TextRef | null {
+  return /^[A-Za-z0-9_-]+$/.test(id) ? null : t('badId', { id });
 }
 
 async function sha256(text: string): Promise<string> {
@@ -97,7 +105,7 @@ export class WorkflowLoader {
           this.logger.warn(`workflow 文件格式不合法: ${e.name}`);
           continue;
         }
-        const err = validateGraph(def);
+        const err = validateId(def.id) ?? validateGraph(def);
         if (err) {
           this.logger.warn(`workflow "${def.id}" 校验失败: ${toSource(err)}`);
           continue;
@@ -122,10 +130,10 @@ export class WorkflowLoader {
   }
 
   /**
-   * 从存储与内存删除。确认有文件的定义删不掉文件（不是「不存在」）时抛错、内存不动——否则重启后定义又被载入；
-   * 只在内存里的定义与不存在的 id 删文件失败（如 storage 不在场、根不可删）只记 warn，照常从内存移除
+   * 从存储与内存删除已载入的定义（别的 id 不该走到这里，见 removeWorkflow）。确认有文件的定义删不掉文件（不是「不存在」）时抛错、
+   * 内存不动——否则重启后定义又被载入；只在内存里的定义删文件失败（如 storage 不在场、根不可删）只记 warn，照常从内存移除
    */
-  async removeDef(id: string): Promise<boolean> {
+  async removeDef(id: string): Promise<void> {
     const uri = joinUri(this.dirUri, `${id}.yaml`);
     try {
       await this.storage.delete(uri);
@@ -139,7 +147,7 @@ export class WorkflowLoader {
     }
     this.onDisk.delete(id);
     this.definers.delete(id);
-    return this.loaded.delete(id);
+    this.loaded.delete(id);
   }
 
   /** 放入内存，定义者换成 definer（载入与定义都经它） */

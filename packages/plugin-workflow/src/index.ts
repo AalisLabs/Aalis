@@ -21,7 +21,7 @@ import { TextError, type TextRef, textClauses, textOf, toSource } from '@aalis/s
 import { parse, stringify } from 'yaml';
 
 import { errorReason, runDag, validateGraph } from './engine.js';
-import { normalizeDef, WorkflowLoader } from './loader.js';
+import { normalizeDef, validateId, WorkflowLoader } from './loader.js';
 import { RunStore } from './persistence.js';
 import { t } from './texts.js';
 import { BLOCKED_EVENT_TRIGGERS, TriggerManager } from './triggers.js';
@@ -556,11 +556,11 @@ async function run(caps: Caps): Promise<void> {
   }
 
   /**
-   * 定义或覆盖：定义者写进记录，连同写进文件的文本的哈希；只在内存里的定义，定义者也只在内存。event 触发器订阅不可作触发源的
-   * 事件的，报错、不保存
+   * 定义或覆盖：定义者写进记录，连同写进文件的文本的哈希；只在内存里的定义，定义者也只在内存。id 不合规（它是定义文件的文件名）、
+   * event 触发器订阅不可作触发源的事件的，报错、不保存
    */
   async function define(def: WorkflowDef, persist: boolean, definer: UserIdentity | undefined) {
-    const err = validateGraph(def);
+    const err = validateId(def.id) ?? validateGraph(def);
     if (err) throw new TextError(err);
     const { trigger } = def;
     if (trigger.type === 'event' && BLOCKED_EVENT_TRIGGERS.has(trigger.event)) {
@@ -588,12 +588,14 @@ async function run(caps: Caps): Promise<void> {
       return define(def, opts?.persist !== false, undefined);
     },
     async removeWorkflow(id) {
+      // 只动已载入的定义：id 拼进定义文件的路径，别的 id（借 ../ 指到定义目录之外的、载入失败的）不碰存储
+      if (!loader.get(id)) return false;
       // 先删文件，删不掉就抛错、触发器与 once 记录原样保留：先清掉记录的话，重启后定义被重新载入，过期 once 会重放
-      const had = await loader.removeDef(id);
+      await loader.removeDef(id);
       triggers.unregister(id);
       runStore.forget(id); // 定义没了，once 记录与定义者不留孤儿：同 id 重建算新工作流
       page.invalidate();
-      return had;
+      return true;
     },
     async runWorkflow(id, vars, source, caller) {
       return await runById(id, vars ?? {}, source ?? 'manual', caller);
