@@ -36,6 +36,14 @@ function hostnameOf(host: string): string | undefined {
 }
 
 /**
+ * 配置里的一项是不是主机名（allowedHosts 的写法）：可带端口，不带协议、用户名、路径、查询与片段，去掉首尾空白后解析得出。
+ * 带协议的照 Host 头的写法拼出来会把协议名当主机名（`https://x` 成了 `https`），真正要认的主机名照旧被拒
+ */
+export function isHostName(entry: string): boolean {
+  return !/[/\\?#@]/.test(entry) && hostnameOf(entry.trim()) !== undefined;
+}
+
+/**
  * 请求的 Host 能不能收：主机名是 IP 地址、localhost 或 names 里的一个（监听地址与 allowedHosts）。DNS 重绑定的网页把自己的
  * 域名解析到本机后，借 owner 的浏览器发来的请求 Origin 与 Host 都是那个域名，同源判定拦不住，靠这一关拦下；
  * IP 地址重绑定不了，局域网按 IP 访问照常。

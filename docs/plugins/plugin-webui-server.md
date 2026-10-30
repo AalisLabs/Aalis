@@ -51,7 +51,7 @@ export default definePlugin({
 |---|---|---|---|
 | `port` | number | `3000` | 端口：Web 管理界面的 HTTP 端口，0–65535 的整数 |
 | `host` | string | `'127.0.0.1'` | 监听地址：绑定的 IP 地址，0.0.0.0 可对外访问，不能为空。**改绑非回环地址前先读下文「登录身份与权限」**——持有 token 的人等同 owner |
-| `allowedHosts` | multiselect | `[]` | 主机白名单：经反向代理或域名访问时浏览器地址栏里的主机名，不带协议与端口。IP 地址、localhost 与监听地址总是认；其余主机名的请求回 421，挡住 DNS 重绑定的网页（见下文「主机名核对」） |
+| `allowedHosts` | multiselect | `[]` | 主机白名单：经反向代理或域名访问时浏览器地址栏里的主机名，不带协议与端口。IP 地址、localhost 与监听地址总是认；其余主机名的请求回 421，挡住 DNS 重绑定的网页（见下文「主机名核对」）。每一项要是主机名（写了端口也认，不看端口）：带协议、用户名、路径、查询或片段的配置校验报错、插件不激活 |
 | `autoOpen` | boolean | `true` | 每次应用启动后首次监听成功时打开默认浏览器；同一应用内沿用 token 的插件重载不重复打开，重新生成 token 时再次打开以便登录。SSH/headless 环境建议关闭 |
 | `tokenMode` | select | `'persist'` | Token 策略：ephemeral=每次启动随机；persist=token 写入 data:/webui/token，读取复用；fixed=使用 fixedToken 字段。所有模式都会写出便利文件 data:/webui/access.txt 含访问 URL。 |
 | `fixedToken` | string | `''` | 固定 Token（仅 tokenMode=fixed 生效）：至少 32 个字符的随机字符串（去掉首尾空白后计），短了插件不启动；留空按 persist 处理（secret，值存进 `secrets.yaml`，WebUI 不回显）。配置文件不支持环境变量插值，写 ${VAR} 会被当作字面量。 |

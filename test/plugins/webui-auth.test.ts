@@ -10,13 +10,14 @@ import {
 import { createRouteGate, type RouteGate } from '../../packages/plugin-webui-server/src/gate.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { createLocalizer } from '../../packages/plugin-webui-server/src/localize.js';
+import { validateConfig } from '../../packages/schema-config/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // webui-server auth — 单 token（单 owner）
 //
 // 认证挂到一个按登记先后分派的假 app 上（只认方法与完整路径），用最小 req/res mock 走登录/识别/注销流程、token 比较、
 // 主机名与来源判定、登录失败限速，不起 HTTP 服务器。没有 i18n：登录页与回应里的文字是原文（按读者语言的见 webui-i18n.test.ts）。
-// 固定 token 的长度校验在插件激活时做，那一组只激活插件、不启动应用，同样不监听端口。
+// 固定 token 的长度与主机白名单每一项的写法在插件激活时校验，那两组只激活插件、不启动应用，同样不监听端口。
 // ════════════════════════════════════════════════════════════
 
 // 定时安全比较的调用记下来，核对 token 比较走的是它、比的是等长的摘要；判定仍由原函数做
@@ -584,5 +585,50 @@ describe('固定 token 的长度', () => {
   it('够 32 个字符的照常激活；留空的仍按 persist 处理', async () => {
     expect((await activate('k'.repeat(32)))?.state).toBe('active');
     expect((await activate(''))?.state).toBe('active');
+  });
+});
+
+describe('主机白名单的每一项是主机名', () => {
+  const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
+  const apps: App[] = [];
+  afterEach(async () => {
+    for (const app of apps.splice(0)) await app.stop();
+  });
+
+  /** 只激活、不启动应用：webui-server 在应用就绪时才监听，这里不占端口 */
+  async function activate(allowedHosts: string[]) {
+    const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+    apps.push(app);
+    await app.plugin(webuiServer, { host: '127.0.0.1', autoOpen: false, allowedHosts });
+    await app.plugins.idle();
+    return app.plugins.getPlugin(webuiServer.name);
+  }
+
+  it('带协议、用户名、路径、查询或片段的项：配置校验报错写明哪一项，激活失败，不当成别的主机名', async () => {
+    for (const entry of [
+      'https://proxy.example.test',
+      'proxy.example.test/aalis',
+      'user@proxy.example.test',
+      'proxy.example.test?x=1',
+      'proxy.example.test#top',
+      'proxy.example.test:abc',
+      '',
+    ]) {
+      const reason = `${entry} 不是主机名：只写主机名（可带端口），不带协议、用户名与路径`;
+      const issues = validateConfig(webuiServer.configSchema, { allowedHosts: ['ok.example.test', entry] });
+      expect(
+        issues.map(issue => [issue.path, issue.message]),
+        entry,
+      ).toEqual([['allowedHosts', reason]]);
+      const plugin = await activate(['ok.example.test', entry]);
+      expect([entry, plugin?.state]).toEqual([entry, 'error']);
+      expect(plugin?.error).toContain(reason);
+    }
+  });
+
+  it('主机名照收：带端口、大写、IPv6、国际化域名', async () => {
+    const hosts = ['proxy.example.test', 'Aalis.Example.Test:8443', '[::1]:3000', '例子.测试'];
+    expect(validateConfig(webuiServer.configSchema, { allowedHosts: hosts })).toEqual([]);
+    expect((await activate(hosts))?.state).toBe('active');
   });
 });

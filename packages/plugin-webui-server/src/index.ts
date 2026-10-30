@@ -67,7 +67,7 @@ import express from 'express';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { ADMIN_PATH, createAdminChannel } from './admin-channel.js';
 import { blockedStatus, createAttention } from './attention.js';
-import { createAuthSystem, openBrowser, originAllowed } from './auth.js';
+import { createAuthSystem, isHostName, openBrowser, originAllowed } from './auth.js';
 import { collectLocalPackageDeps, type DiscoveryEnv, discoverClients, pickFreshClients } from './client-discovery.js';
 import { CLIENT_SWITCH_SCRIPT, CLIENT_SWITCH_TEXTS, renderClientSwitchPage } from './client-switch-page.js';
 import { createRouteGate } from './gate.js';
@@ -150,6 +150,10 @@ const configSchema = defineConfig({
     // 主机名由使用者填写，静态选项无法穷举。
     allowCustom: true,
     description: t('allowedHostsDescription'),
+    validate(value) {
+      const bad = (value as unknown[]).map(String).find(entry => !isHostName(entry));
+      return bad === undefined ? undefined : t('badAllowedHost', { entry: bad });
+    },
   },
   autoOpen: {
     type: 'boolean',
