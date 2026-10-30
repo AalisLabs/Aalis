@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { agent as agentService } from '../../packages/api-agent/src/index.js';
+import { type ApprovalSurface, approvals } from '../../packages/api-approval/src/index.js';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { checkpoint, type RollbackWithChatResult } from '../../packages/api-checkpoint/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
@@ -2697,5 +2698,136 @@ describe('接 agent 与网关', () => {
     );
     release.resolve();
     await Promise.all([notice, event, forwarded]);
+  });
+
+  /** 实时与刷新后逐条比对的：输入与她的话（正文与附件），工具卡的 id、状态、结果与审批结算 */
+  const sequence = (items: SessionItem[]) =>
+    items.flatMap(
+      (i): Array<Record<string, unknown>> =>
+        i.kind === 'tool-call'
+          ? [{ kind: i.kind, itemId: i.itemId, status: i.status, result: i.result, settled: i.settlement?.state }]
+          : i.kind === 'user-message' || i.kind === 'agent-message'
+            ? [{ kind: i.kind, text: i.text, attachments: i.attachments }]
+            : [],
+    );
+
+  it('等审批时 owner 又发的一句并入这一轮、这一轮以带时间线的回复收尾：刷新后的历史与实时逐条一致，前半段不重出，工具卡只一张、带着审批结算', async () => {
+    const started = await startAgent([callProbe, { content: '<收到>' }], async ctx => {
+      const outcome = await started.app.bind({ approvals }).approvals.use.request(
+        {
+          sessionId: ctx.sessionId,
+          turnId: ctx.turnId,
+          callId: ctx.callId,
+          origin: { kind: 'hand', participants: [{ platform: 'webui', userId: 'console' }] },
+          tool: PROBE,
+          args: { q: 1 },
+          rule: '<规则>',
+          canAnswer: () => true,
+          ownerOnly: true,
+        },
+        ctx.signal,
+      );
+      return outcome.approved ? '{"ok":true}' : 'denied';
+    });
+    const { app, host, s, c, sub, turnItems } = started;
+    const surfaces: Record<string, ApprovalSurface> = {};
+    await app.plugin(
+      definePlugin({
+        name: '@zz/timeline-surface',
+        uses: { approvals },
+        apply: ({ approvals }) => {
+          surfaces.webui = approvals.use.registerSurface('webui');
+        },
+      }),
+    );
+    await app.plugins.idle();
+    const owner = client(host.sessionProtocol.use, {
+      identity: { platform: 'webui', userId: 'console' },
+      surface: surfaces.webui as ApprovalSurface,
+    });
+    await owner.init();
+    await owner.call('presence/update', { active: true });
+
+    await c.call('turn/send', { sessionId: s.id, content: '<先跑一下>' });
+    await vi.waitFor(() => expect(owner.notifications('approval/requested')).toHaveLength(1));
+    const { approval } = owner.notifications('approval/requested')[0]!;
+    await c.call('turn/send', { sessionId: s.id, content: '<补一句>' });
+    await vi.waitFor(() => expect(queued(c.timeline(s.id, sub))?.entries).toHaveLength(1));
+    await owner.call('approval/respond', {
+      approvalId: approval.id,
+      decision: 'approve',
+      contentHash: approval.contentHash,
+    });
+    await vi.waitFor(() => expect(turnItems().at(-1)).toMatchObject({ outcome: 'replied' }));
+
+    const timeline = c.timeline(s.id, sub);
+    expect(timeline.flatMap(i => (i.kind === 'user-message' ? [i.entry] : []))).toEqual(['opened', 'joined']);
+    const live = sequence(timeline);
+    expect(live).toEqual([
+      { kind: 'user-message', text: '<先跑一下>', attachments: [] },
+      { kind: 'agent-message', text: '先查一下', attachments: [] },
+      { kind: 'tool-call', itemId: approval.callId, status: 'completed', result: '{"ok":true}', settled: 'approved' },
+      { kind: 'user-message', text: '<补一句>', attachments: [] },
+      { kind: 'agent-message', text: '<收到>', attachments: [] },
+    ]);
+    const fresh = client(host.sessionProtocol.use);
+    await fresh.init();
+    expect(sequence((await fresh.subscribe(s.id)).snapshot.items)).toEqual(live);
+  });
+
+  it('第二次工具调用发出的附件先于这一组记进存档、夹在两组工具调用之间：刷新后前半段不重出，工具卡各一张，与实时逐条一致', async () => {
+    const calls: ToolCallContext[] = [];
+    const picture = { kind: 'image' as const, data: 'https://example.invalid/cat.png' };
+    const started = await startAgent(
+      [
+        callProbe,
+        {
+          content: '再发图',
+          toolCalls: [{ id: 'model-id-2', type: 'function', function: { name: PROBE, arguments: '{"q":2}' } }],
+        },
+        { content: '好了' },
+      ],
+      async ctx => {
+        calls.push(ctx);
+        if (calls.length === 2) {
+          // 发图的工具：出站推给界面，送达之后记进存档（message-archive 在 outbound:delivered 上做的同一件事）
+          const out: OutgoingMessage = {
+            sessionId: ctx.sessionId,
+            platform: 'webui',
+            content: '',
+            source: 'agent',
+            turnId: ctx.turnId,
+            callId: ctx.callId,
+            attachments: [picture],
+          };
+          const bus = started.app.bind({ events, messageArchive });
+          await bus.events.use.emit('outbound:message', out);
+          await bus.messageArchive.use.recordOutbound(out);
+        }
+        return `{"call":${calls.length}}`;
+      },
+    );
+    const { host, s, c, sub, turnItems } = started;
+    await c.call('turn/send', { sessionId: s.id, content: '<找张图发来>' });
+    await vi.waitFor(() => expect(turnItems().at(-1)).toMatchObject({ outcome: 'replied' }));
+
+    const live = sequence(c.timeline(s.id, sub));
+    const fresh = client(host.sessionProtocol.use);
+    await fresh.init();
+    const history = sequence((await fresh.subscribe(s.id)).snapshot.items);
+    /** 发出的图（只有附件的那条）与其余各条分开比 */
+    const isSent = (i: Record<string, unknown>) => i.kind === 'agent-message' && i.text === '';
+    const sent = [{ kind: 'agent-message', text: '', attachments: [{ kind: 'image', src: picture.data }] }];
+    expect(live.filter(i => !isSent(i))).toEqual([
+      { kind: 'user-message', text: '<找张图发来>', attachments: [] },
+      { kind: 'agent-message', text: '先查一下', attachments: [] },
+      { kind: 'tool-call', itemId: calls[0]?.callId, status: 'completed', result: '{"call":1}', settled: undefined },
+      { kind: 'agent-message', text: '再发图', attachments: [] },
+      { kind: 'tool-call', itemId: calls[1]?.callId, status: 'completed', result: '{"call":2}', settled: undefined },
+      { kind: 'agent-message', text: '好了', attachments: [] },
+    ]);
+    expect(history.filter(i => !isSent(i))).toEqual(live.filter(i => !isSent(i)));
+    expect(live.filter(isSent)).toEqual(sent);
+    expect(history.filter(isSent)).toEqual(sent);
   });
 });
