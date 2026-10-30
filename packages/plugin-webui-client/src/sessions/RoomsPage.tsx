@@ -1,5 +1,5 @@
 import { MessagesSquare } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router';
 import { Button } from '../components/Button';
 import { ButtonLink } from '../components/ButtonLink';
@@ -25,7 +25,7 @@ import './RoomsPage.css';
 // 房间表：一组房间（一个适配器实例，或还没记下实例的一个平台）一次取全，筛选、排序、搜索与分页都在客户端。
 // 类型与状态的筛选写进地址；类型是平台自定的类型名，按本组出现过的原样列出。批量动作只有归档与删除。
 // 每行的「场所设置」在页内打开这一行所在窗口的设置（与「会话默认」同一套行）；统一设置一个平台或一种类型在设置的
-// 「会话默认」，表格下面一句话指过去。会话设置服务不在（功能位 settings 为假）时这两处都没有
+// 「会话默认」，表格下面一句话指过去。会话设置服务不在（功能位 settings 为假）时这两处都没有，开着的「场所设置」随之关掉
 
 const statusField = () => ({
   key: 'status',
@@ -67,6 +67,9 @@ function RoomTable({ query }: { query: RoomGroupAddress }) {
   const { settings } = useFeatures();
   /** 打开着「场所设置」的那一行 */
   const [opened, setOpened] = useState<SessionSummary>();
+  useEffect(() => {
+    if (!settings) setOpened(undefined);
+  }, [settings]);
   const layers = useLayers();
   const filterFields = [typeField(list.sessions ?? []), statusField()];
   const group = list.groups.find(g => inGroup(g, query));
