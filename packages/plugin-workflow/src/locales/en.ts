@@ -39,6 +39,8 @@ export default defineLocale<Source>()({
   badDefinition: 'Invalid definition: trigger or nodes is missing',
   badId:
     'A workflow id may only use letters, digits, underscores and hyphens (it is the file name of the definition): {id}',
+  fileTaken:
+    'The definition file {file} is already used by workflow {other}; give workflow {id} another id (on a file system that ignores case or character forms, ids that look different can land on the same file)',
   definitions: 'Definitions',
   stateEnabled: 'Enabled',
   stateDisabled: 'Disabled',

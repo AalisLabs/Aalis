@@ -1,8 +1,8 @@
 // 本插件自己的原文字典：显示名（同为工作流页标题与工具分组名）与分组概述、配置项与配置报错，工作流页的文字、触发一列、动作
 // 回执与报错（删不掉定义文件的报错与 workflow_remove 共用，工具取原文），运行的错误原因（节点失败与各节点自己的原因）、定义
-// 校验不过的原因（与 workflow_define 共用，工具取原文）、运行的状态、「立即运行」没有成功的报错，保存与启停的回执和 once 记账读
-// 不出时的附注（附注与 workflow_define 共用，工具取原文），定义的 event 触发器订阅不可作触发源的事件时的报错，定义表的定义者
-// 一列，运行表的「取消运行」、它的确认与回执，以及进程退出时中断的运行的错误原因
+// 校验不过的原因与新定义要写的文件被另一条定义占用的报错（与 workflow_define 共用，工具取原文）、运行的状态、「立即运行」没有
+// 成功的报错，保存与启停的回执和 once 记账读不出时的附注（附注与 workflow_define 共用，工具取原文），定义的 event 触发器订阅
+// 不可作触发源的事件时的报错，定义表的定义者一列，运行表的「取消运行」、它的确认与回执，以及进程退出时中断的运行的错误原因
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
@@ -41,6 +41,8 @@ const SOURCE = {
   yamlFailed: 'YAML 解析失败：{error}',
   badDefinition: '定义不合法：缺少 trigger 或 nodes',
   badId: '工作流 id 只能用字母、数字、下划线与连字符（它是定义文件的文件名）：{id}',
+  fileTaken:
+    '定义文件 {file} 已被工作流 {other} 占用，工作流 {id} 换一个 id（文件系统不分大小写或字形时，看着不同的 id 也会落到同一个文件）',
   definitions: '定义',
   stateEnabled: '启用',
   stateDisabled: '停用',

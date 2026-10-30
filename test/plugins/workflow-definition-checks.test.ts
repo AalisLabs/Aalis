@@ -18,8 +18,11 @@ import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 编排定义的当场校验。
-// 一、id 是定义文件的文件名（<id>.yaml），只收字母、数字、下划线与连字符：带 ../ 的 id 把写与删引到定义目录之外（workspace
-//    根默认可删）。定义时不合规的报错、不保存；定义目录里不合规的不载入；删除只对已载入的定义动存储，别的 id 回 false、不碰文件。
+// 一、新定义的 id 是新定义文件的文件名（<id>.yaml），只收各种文字的字母（含组合符号）、数字、下划线与连字符，不收看不见的
+//    韩文填充字母：带 ../ 的 id 把写与删引到定义目录之外（workspace 根默认可删）。新定义不合规的报错、不保存；要写的 <id>.yaml
+//    已经存在、存的是另一个 id 的定义（另一条定义的文件，或不分大小写与字形的卷上另一个 id 的文件）的同样拒收。定义目录里的定义
+//    按文件载入，只拒空 id 与带 / \ NUL 的；改写与删除对的都是载入时的文件，不按 id 拼路径；删除只对已载入的定义动存储，
+//    别的 id 回 false、不碰文件。
 // 二、触发器写错的当场拒收、不保存：cron 交 cron-engine 校验；interval 的 seconds 要是大于 0、不超过上限（约 24.8 天）的数，
 //    超过的交给 setInterval 会溢出成每毫秒触发；once 的 runAt 要能解析。定义目录里超上限的 interval 照常载入，订阅不上、不触发。
 // 真 storage-local（workspace 根指向临时目录、可删）、真 tools 与 cron-engine；工具调用经放行一切的执行守卫。
@@ -35,6 +38,18 @@ nodes:
 `;
 const NODES: WorkflowDef['nodes'] = [{ id: 'w', type: 'wait', seconds: 0 }];
 const badId = (id: string) => `工作流 id 只能用字母、数字、下划线与连字符（它是定义文件的文件名）：${id}`;
+const fileTaken = (file: string, other: string, id: string) =>
+  `定义文件 ${file} 已被工作流 ${other} 占用，工作流 ${id} 换一个 id（文件系统不分大小写或字形时，看着不同的 id 也会落到同一个文件）`;
+/** 临时目录所在的卷不分大小写（macOS 默认的 APFS）：不同的 id 会落到同一个定义文件 */
+const caseInsensitive = (() => {
+  const dir = mkdtempSync(join(tmpdir(), 'aalis-wf-case-'));
+  try {
+    writeFileSync(join(dir, 'a'), '');
+    return existsSync(join(dir, 'A'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+})();
 const badInterval = (value: string) => `间隔须大于 0 且不超过 2,147,483 秒（约 24.8 天）：${value}`;
 
 let base: string;
@@ -135,6 +150,100 @@ describe('编排 id 只收字母、数字、下划线与连字符', () => {
     expect(existsSync(workspaceFile('notes.yaml'))).toBe(true);
     expect(existsSync(workspaceFile('project', 'docker-compose.yaml'))).toBe(true);
     expect(existsSync(join(defsDir(), 'zz-broken.yaml'))).toBe(true);
+  });
+
+  it('新定义：各种文字要用的组合符号照收；空格、点等仍不收，看不见的韩文填充字母不收', async () => {
+    const svc = await boot();
+    for (const id of ['สรุป', 'café'.normalize('NFD'), 'データ'.normalize('NFD')]) {
+      expect(await tool('workflow_define', { yaml: yamlOf(id) }), id).toMatchObject({ ok: true, id });
+    }
+    for (const id of ['每日 汇总.v2', '\u3164', 'a\u115Fb', 'x\u1160', '\uFFA0周报']) {
+      expect(await tool('workflow_define', { yaml: yamlOf(id) }), JSON.stringify(id)).toEqual({ error: badId(id) });
+    }
+    expect(svc.listWorkflows()).toHaveLength(3);
+    expect(readdirSync(defsDir())).toHaveLength(3);
+  });
+
+  it('定义目录里新定义收不下的 id（空格、点、全角括号、间隔号、泰文、NFD）照常载入，能停用、能删，对的是载入时的文件', async () => {
+    const ids = ['每日 汇总.v2', '日报（周一）', '周报·新', 'สรุป', 'データ'.normalize('NFD')];
+    for (const id of ids) writeFileSync(join(defsDir(), `${id}.yaml`), yamlOf(id));
+    const svc = await boot();
+    expect(
+      svc
+        .listWorkflows()
+        .map(def => def.id)
+        .sort(),
+    ).toEqual([...ids].sort());
+    for (const id of ids) {
+      expect(toSource(await pages.act('workflows', 'disableWorkflow', { rowKey: id })), id).toEqual({
+        status: 200,
+        body: { message: `已停用 ${id}` },
+      });
+      expect(readFileSync(join(defsDir(), `${id}.yaml`), 'utf-8'), id).toContain('enabled: false');
+      expect(await svc.removeWorkflow(id), id).toBe(true);
+    }
+    expect(readdirSync(defsDir())).toEqual([]);
+  });
+
+  it('文件名与 id 不同、.yml 的定义：改写与删除对载入时的文件，不碰恰好叫 <id>.yaml 的另一条', async () => {
+    writeFileSync(join(defsDir(), 'x.yml'), yamlOf('x'));
+    writeFileSync(join(defsDir(), 'a.yaml'), yamlOf('b'));
+    writeFileSync(join(defsDir(), 'b.yaml'), yamlOf('c'));
+    const svc = await boot();
+    expect(
+      svc
+        .listWorkflows()
+        .map(def => def.id)
+        .sort(),
+    ).toEqual(['b', 'c', 'x']);
+
+    expect(toSource(await pages.act('workflows', 'disableWorkflow', { rowKey: 'b' }))).toMatchObject({ status: 200 });
+    expect(readFileSync(join(defsDir(), 'a.yaml'), 'utf-8')).toContain('enabled: false');
+    expect(readFileSync(join(defsDir(), 'b.yaml'), 'utf-8')).toBe(yamlOf('c'));
+
+    expect(await svc.removeWorkflow('x')).toBe(true);
+    expect(await svc.removeWorkflow('b')).toBe(true);
+    expect(readdirSync(defsDir())).toEqual(['b.yaml']);
+    expect(readFileSync(join(defsDir(), 'b.yaml'), 'utf-8')).toBe(yamlOf('c'));
+    expect(svc.listWorkflows().map(def => def.id)).toEqual(['c']);
+  });
+
+  it('新定义要写的 <id>.yaml 存着另一个 id 的定义：拒收，写明被哪一条占用，文件不动', async () => {
+    writeFileSync(join(defsDir(), 'a.yaml'), yamlOf('b'));
+    const svc = await boot();
+    expect(await tool('workflow_define', { yaml: yamlOf('a') })).toEqual({ error: fileTaken('a.yaml', 'b', 'a') });
+    expect(readFileSync(join(defsDir(), 'a.yaml'), 'utf-8')).toBe(yamlOf('b'));
+    expect(svc.listWorkflows().map(def => def.id)).toEqual(['b']);
+  });
+
+  it('定义目录里载入不了的同 id 定义：新定义照常覆盖它（存的就是这个 id）', async () => {
+    writeFileSync(
+      join(defsDir(), 'zz-broken.yaml'),
+      'id: zz-broken\ntrigger:\n  type: manual\nnodes:\n  - id: a\n    type: wait\n    seconds: 0\n    deps: [nope]\n',
+    );
+    const svc = await boot();
+    expect(svc.listWorkflows()).toEqual([]);
+    expect(await tool('workflow_define', { yaml: yamlOf('zz-broken') })).toMatchObject({ ok: true });
+    expect(readFileSync(join(defsDir(), 'zz-broken.yaml'), 'utf-8')).not.toContain('nope');
+  });
+
+  // 只在不分大小写与字形的卷上成立（macOS 默认的 APFS）：分大小写的卷上这几对本来就是不同的文件
+  it.runIf(caseInsensitive)('不分大小写与字形的卷上，落到同一个文件的两个 id：后来的拒收，先来的文件不动', async () => {
+    const svc = await boot();
+    for (const [first, second] of [
+      ['daily', 'Daily'],
+      ['K', '\u212A'],
+      ['データ', 'データ'.normalize('NFD')],
+    ]) {
+      expect(await tool('workflow_define', { yaml: yamlOf(first) }), first).toMatchObject({ ok: true });
+      expect(await tool('workflow_define', { yaml: yamlOf(second) }), second).toEqual({
+        error: fileTaken(`${second}.yaml`, first, second),
+      });
+      expect(readFileSync(join(defsDir(), `${first}.yaml`), 'utf-8'), first).toContain(`id: ${first}\n`);
+      expect(await svc.removeWorkflow(first), first).toBe(true);
+    }
+    expect(svc.listWorkflows()).toEqual([]);
+    expect(readdirSync(defsDir())).toEqual([]);
   });
 
   it('定义目录里 id 不合规的定义不载入，删不到它指向的文件', async () => {
