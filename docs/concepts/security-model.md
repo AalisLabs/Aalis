@@ -7,7 +7,7 @@
 > LLM 拿着用户给的 URL 把内网元数据接口打穿。安全在 Aalis 不是某一个插件的功能，而是一组贯穿
 > 全栈的不变量——你的插件要么帮助维持这些不变量，要么就会成为破坏它们的那一环。
 
-相关概念：[权限两轴（authority）](../plugins/plugin-authority.md) · [存储不是沙箱](#5-存储不是沙箱storage-不-confine-子进程) ·
+相关概念：[权限两轴（authority）](../plugins/plugin-authority.md) · [存储不是沙箱](#_5-存储不是沙箱-storage-不-confine-子进程) ·
 forward-ref [services/authority](../services/authority.md)（裁决服务全量 API）。
 
 ---
@@ -138,7 +138,9 @@ Aalis 是**单 owner 的本地优先（local-first）个人 bot 框架**。整�
   要确认的照样推卡给她看具体内容，按等级走的读类工具直接放行。不另设限制，缓解同上。
 - **读出来的内容留在群里。** owner 在群里让她读出的内容进了群的历史，之后别人触发的回合、摘要与向量记忆都看得到，收不回。
   owner 在群里批准、转到后台的命令，同一群会话里任何人的回合都能用 `background_output` 取完整输出（后台任务工具按会话放行，
-  与等级无关）。这类事 owner 可以到私聊或 WebUI 里做。
+  与等级无关）。owner 在群里派的子任务读到的内容留在子任务的会话里：2 级起的人能用 `check_subtask`、`wait_subtasks` 看它交回
+  的结果；追问按发追问那一轮的参与者判，各轮身份可以不同，有 owner 在的一轮里她批过的 `send_to_subtask` 能让子任务照它的历史
+  把先前读到的内容再交回群里。这类事 owner 可以到私聊或 WebUI 里做。
 - **owner 这一轮的结算原因会进群。** owner 在群里发起的一轮被拦下时，她拒绝时写的说明与「没人在场」「等满时限」都交给模型，
   群里那一轮可能转述出去，也等于告诉群里她的审批面此刻在不在。群成员的回合只拿到「这一轮里没有 owner 的话，要 owner 确认
   的操作不能执行」。
@@ -158,7 +160,7 @@ Aalis 是**单 owner 的本地优先（local-first）个人 bot 框架**。整�
 - **同号身份（OneBot 多连接）。** owner 按（平台，账号）认，所有 OneBot 连接共用平台名 `onebot`。接了账号命名空间不同的
   实现端时，另一条连接上账号恰好与 owner 相同的人在各处的等级裁决上算 owner，也能产生并批准审批。`owners` 条目还不能绑定
   机器人账号，适配器也不按连接区分平台名。机器人账号本身登记成 owner（同号挂机）时，实现端上报的机器人自身消息的回显与
-  它自己上传群文件的通知都按 owner 亲手发来的算（聊天审批另核对对端就是发言者，不认这样的回显）；要避免就别把机器人账号
+  它自己上传群文件的通知都按 owner 亲手发来的算（owner 的 IM 私聊另核对对端就是发言者，不认这样的回显；群窗口不核）；要避免就别把机器人账号
   登记成 owner。
 
 ### 多人的一轮：逐动作审批
@@ -446,8 +448,8 @@ owner 与她的私聊、WebUI 与终端的会话都不带；她回复里的媒�
 2. **不是公网单播的地址**（`isPrivateAddress`）：
    IPv4 的私网、回环、链路本地（含 AWS / 云元数据 `169.254.169.254`）、CGNAT、基准测试段、协议段与文档段、组播与保留段；
    IPv6 在 `2000::/3` 之外的全部，以及其中的协议段、文档段与 6to4；IPv4 映射与 NAT64 写法按那个 IPv4 判。
-   域名同样会被检查：`dns.lookup(all)` 解析出的每条 A/AAAA 记录只要命中私网即拒，
-   以此堵住 DNS rebinding。`localhost`、`*.localhost`、`*.local` 主机名会被直接拦截。
+   域名同样会被检查：连接时由 `pinnedLookup` 用 `dns.lookup(all)` 解析，每条 A/AAAA 记录只要命中私网即拒，
+   判过的这次解析结果直接交给连接、不再解析第二次，以此堵住 DNS rebinding。`localhost`、`*.localhost`、`*.local` 主机名会被直接拦截。
 3. **逐跳重定向重校验**：30x 响应的 `Location` 解析成绝对 URL 后**再过一遍 `assertSafeUrl`**，
    杜绝「初始 host 受信，但 302 跳到 `http://169.254.169.254/` 内网」这类经典绕过。跳数上限为 5（`MAX_REDIRECTS`）。
    跟随时按 fetch 规范改写下一跳：跨源不带凭据头，301、302 的 POST 与 303 的非 GET、HEAD 改成不带正文的 GET。
@@ -465,8 +467,9 @@ import { safeFetch } from '@aalis/util-network-guard';
 const res = await safeFetch(url, { signal: AbortSignal.timeout(15_000) });
 ```
 
-> 若你还需要校验单个主机名（非 fetch 场景，例如流式代理自己管理连接），用 `assertSafeHost(hostname)`；
-> 只想校验 URL 并拿回 `URL` 对象，用 `assertSafeUrl(rawUrl)`。
+> 自己管理连接时（非 fetch 场景，例如流式代理），把 `pinnedLookup` 作为 `lookup` 传给 `net.connect` / `tls.connect`，
+> 判定与连接用同一次解析；目标是 IP 字面量时 Node 不调 `lookup`，先用 `assertAddressesSafe` 判，再按 `canonicalAddress`
+> 连接。`assertSafeHost(hostname)` 与 `assertSafeUrl(rawUrl)` 只是预检：之后按名字连接会再解析一次，挡不住 DNS rebinding。
 
 ### 重定向与凭据
 
@@ -670,9 +673,14 @@ ASR / ollama 探测本地文件等。现有消费者包括 onebot 适配器、as
 
 - `plugin-user-profile` 注入的发言者与其他参与者的事实：这些事实按人、跨会话，可能抽自私聊；
   保留它们是为了在群里认人。
+- `plugin-user-profile` 的 `user_profile_lookup`（不设等级）：按 `user_key` 或平台加账号查任何人的整份档案，不限在场的人。
+- `plugin-user-relation` 的人际关系与关注的事物（人与人、人与实体的边连同它们的说明，以及实体）：按人、跨会话，可能抽自私聊，
+  关系图范围是仅本会话时照样注入，也照样经工具取到。
 - `plugin-user-relation` 按节点 id 取单个节点的工具（如 `user_relation_node_score`）：给了别的会话的事件 id 时照样取到它。
 - `plugin-user-relation` 需 owner 授予的维护指令：`/relation event-duplicates` 列出的重复事件候选取自全图，带着别的会话的
   事件标题。
+- `plugin-adapter-onebot` 入站消息里的合并转发：平台推来的转发段算作这个会话收到的，按编号展开；别的会话展开过的复用缓存，
+  与按编号向实现端现取得到的内容相同，所以不另判。这个会话随之记为收到它的会话之一，之后 `onebot_get_forward_msg` 在这里取得到。
 
 这几项默认不收窄，也挡不住群友直接在群里向模型套话：模型在别的会话里知道的事，只要进了上述不覆盖的来源，
 仍可能出现在回复里或被写进交给远端的任务正文。受理时不会自动回显任务正文，但远端代理会收到它。
