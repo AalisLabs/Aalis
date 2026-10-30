@@ -396,6 +396,12 @@ function sameGroup(prev: Message, cur: Message): boolean {
   return a === undefined || b === undefined || a === b;
 }
 
+/** cur 与 prev 记着同一个回合 id：翻页不从一轮中间开始 */
+function sameTurn(prev: Message, cur: Message): boolean {
+  const turn = turnOf(cur);
+  return turn !== undefined && turnOf(prev) === turn;
+}
+
 type ToolSegment = Extract<ContentSegment, { type: 'tool_call' }>;
 
 /**
@@ -650,8 +656,9 @@ function wellFormed(message: Message): boolean {
 
 /**
  * 读一页历史：before 是上一页第一条存档消息的 id，缺省从最新的读起；读回的一段按 groupToolCalls 挪过次序之后取 limit 条归并。
- * 页的开头落在一组回复与工具调用中间，或落在组外的工具结果上（读的这一段把它的组切开了，调用在更早的存档里）时往前扩，免得一组
- * 拆在两页。skip 挑出不进历史的消息（在途回合落了库的那些），它们照样占位置，分页不受影响；字段不对的消息（{@link wellFormed}）
+ * 页的开头落在一组回复与工具调用中间、一轮中间（与前一条记着同一个回合 id，如插进来的输入），或落在组外的工具结果上（读的这一段
+ * 把它的组切开了，调用在更早的存档里）时往前扩，免得一组、一轮拆在两页：一轮最后那条回复的时间线带着这一轮全部的话与工具卡，
+ * 拆开的话前半轮在两页各出一遍。skip 挑出不进历史的消息（在途回合落了库的那些），它们照样占位置，分页不受影响；字段不对的消息（{@link wellFormed}）
  * 不进历史，也不占位置，读到了就记一条 warn。before 指向的消息已不在存档里（被回滚删掉）时回 not-found。
  */
 export async function readHistory(
@@ -679,7 +686,12 @@ export async function readHistory(
       continue;
     }
     let start = Math.max(0, end - page.limit);
-    while (start > 0 && (loose.has(raw[start]) || sameGroup(raw[start - 1] as Message, raw[start] as Message))) start--;
+    while (
+      start > 0 &&
+      (loose.has(raw[start]) || sameGroup(raw[start - 1], raw[start]) || sameTurn(raw[start - 1], raw[start]))
+    ) {
+      start--;
+    }
     if (start === 0 && !exhausted) continue;
     const dropped = stored.length - raw.length;
     if (dropped > 0) logger.warn(`会话 ${sessionId} 的存档里读到 ${dropped} 条字段不对的消息，没进历史`);
