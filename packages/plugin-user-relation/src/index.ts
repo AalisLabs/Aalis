@@ -487,9 +487,9 @@ function start(caps: Caps): void {
     extractor.start();
   }
 
-  // ─── 注入与工具 ─── 各受 agentInjection、toolsEnabled 控制；两者都关着时不登记关系图范围
-  if (cfg.agentInjection || cfg.toolsEnabled) {
-    // 关系图范围：注入与工具的会话作用域都不超过它。每次现读，改了下一轮即生效；不是「全部」的（含写坏了的）一律按仅本会话
+  // ─── 注入、工具与 /relation 指令 ─── 各受 agentInjection、toolsEnabled、commandsEnabled 控制；三者都关着时不登记关系图范围
+  if (cfg.agentInjection || cfg.toolsEnabled || cfg.commandsEnabled) {
+    // 关系图范围：注入、工具与指令的会话作用域都不超过它。每次现读，改了下一轮即生效；不是「全部」的（含写坏了的）一律按仅本会话
     const fields = caps.sessionFields.use.fields(configSchema, caps);
     const sessionOnly = (sessionId: string | undefined, platform: string | undefined) =>
       fields.get(sessionId, { platform }).recallScope !== 'all';
@@ -525,34 +525,40 @@ function start(caps: Caps): void {
         debug,
       });
     }
+
+    if (cfg.commandsEnabled) {
+      const ref = cfg.consolidationModel;
+      const consolidateModel = ref?.provider && ref.model ? { provider: ref.provider, model: ref.model } : undefined;
+      registerRelationCommands(
+        {
+          commands: caps.commands.use,
+          platform: caps.platform,
+          llm: caps.llm,
+          i18n: caps.i18n,
+          logger: caps.logger.use,
+          sessionOnly,
+        },
+        service,
+        {
+          ...(consolidateModel
+            ? {
+                consolidateLLM: {
+                  modelRef: consolidateModel,
+                  disableThinking: cfg.consolidationDisableThinking,
+                },
+              }
+            : {}),
+          eviction,
+          consolidateAutoLink: cfg.consolidationAutoLink,
+          consolidateSkipLowScorePairs: cfg.consolidationSkipLowScorePairs,
+          consolidateLowScoreThreshold: cfg.consolidationLowScoreThreshold,
+        },
+      );
+    }
   }
 
   // 关系图页与原始数据页
   registerRelationPages(caps.webui.use, service, caps.logger.use, cfg.graphSpacing);
-
-  // /relation 指令
-  if (cfg.commandsEnabled) {
-    const ref = cfg.consolidationModel;
-    const consolidateModel = ref?.provider && ref.model ? { provider: ref.provider, model: ref.model } : undefined;
-    registerRelationCommands(
-      { commands: caps.commands.use, platform: caps.platform, llm: caps.llm, i18n: caps.i18n, logger: caps.logger.use },
-      service,
-      {
-        ...(consolidateModel
-          ? {
-              consolidateLLM: {
-                modelRef: consolidateModel,
-                disableThinking: cfg.consolidationDisableThinking,
-              },
-            }
-          : {}),
-        eviction,
-        consolidateAutoLink: cfg.consolidationAutoLink,
-        consolidateSkipLowScorePairs: cfg.consolidationSkipLowScorePairs,
-        consolidateLowScoreThreshold: cfg.consolidationLowScoreThreshold,
-      },
-    );
-  }
 
   // ─── 参与统一的 memory:clear（与 plugin-user-profile 对称） ───
   // scope='all'：清空整个关系图；scope='session'：跨会话存储，不动，显式选了 user-relation 时回一行未清理。

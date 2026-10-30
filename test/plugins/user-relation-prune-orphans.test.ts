@@ -139,7 +139,14 @@ describe('plugin-user-relation: /relation orphans 与 pruneOrphans 同口径', (
     const { app, service } = await makeService();
     const cmd = captureCommands();
     registerRelationCommands(
-      { commands: cmd.commands, platform: {} as never, llm: {} as never, i18n: ref(), logger: app.logger },
+      {
+        commands: cmd.commands,
+        platform: {} as never,
+        llm: {} as never,
+        i18n: ref(),
+        logger: app.logger,
+        sessionOnly: () => false,
+      },
       service,
       {
         eviction: NO_EVICTION,
