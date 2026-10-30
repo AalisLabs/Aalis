@@ -89,7 +89,7 @@ describe('util-cron: 间隔的上限', () => {
   it('@every 超过上限不通过，原因是本包字典里的文字对象；上限本身照收', () => {
     const tooLong = validateCronExpr('@every 720h');
     if (tooLong.ok || typeof tooLong.text === 'string') throw new Error('@every 720h 应被拒，原因是文字对象');
-    expect(tooLong.text.source).toBe('间隔须大于 0 且不超过 2,147,483 秒（约 24.8 天）: @every 720h');
+    expect(tooLong.text.source).toBe('间隔须大于 0 且不超过 2,147,483 秒（约 24.8 天）：@every 720h');
     expect(resolveText(tooLong.text, ['en'])).toBe(
       'The interval must be greater than 0 and at most 2,147,483 seconds (about 24.8 days): @every 720h',
     );
@@ -107,8 +107,8 @@ describe('util-cron: 间隔的上限', () => {
     for (const bad of [0, -5, Number.NaN, Number.POSITIVE_INFINITY, 2147483.5, 2592000, 'abc', undefined]) {
       expect(validateIntervalSeconds(bad), String(bad)).not.toBeNull();
     }
-    expect(validateIntervalSeconds(2592000)?.source).toBe('间隔须大于 0 且不超过 2,147,483 秒（约 24.8 天）: 2592000');
-    expect(validateIntervalSeconds('abc')?.source).toBe('间隔须大于 0 且不超过 2,147,483 秒（约 24.8 天）: abc');
+    expect(validateIntervalSeconds(2592000)?.source).toBe('间隔须大于 0 且不超过 2,147,483 秒（约 24.8 天）：2592000');
+    expect(validateIntervalSeconds('abc')?.source).toBe('间隔须大于 0 且不超过 2,147,483 秒（约 24.8 天）：abc');
   });
 });
 

@@ -12,7 +12,7 @@
 
 定义存 `workspace:/workflows/*.yaml`（用户/AI 资产），运行实例存 `data:/workflow-runs.json`（同一文件里还记 `once` 触发器的 `firedAt` 与定义者账本，形状 `{ runs, onceFired, definers }`）。
 
-定义的 `id` 就是定义文件的文件名（`<id>.yaml`），只能用英文字母、数字、下划线与连字符：带 `/`、`..` 的会把写与删引到定义目录之外。定义时不合规的报错、不保存（`workflow_define` 回 `error`，工作流页「新建或覆盖」与编排服务的 `defineWorkflow` 报错）；`defsDir` 里不合规的不载入，记一条警告。删除（`workflow_remove`、工作流页「删除」、编排服务的 `removeWorkflow`）只对已载入的定义动文件，别的 id 回不存在、不碰存储。
+定义的 `id` 就是定义文件的文件名（`<id>.yaml`），只能用字母（中文等各种文字都行）、数字、下划线与连字符：带 `/`、`..` 的会把写与删引到定义目录之外。定义时不合规的报错、不保存（`workflow_define` 回 `error`，工作流页「新建或覆盖」与编排服务的 `defineWorkflow` 报错）；`defsDir` 里不合规的不载入，记一条警告。删除（`workflow_remove`、工作流页「删除」、编排服务的 `removeWorkflow`）只对已载入的定义动文件，别的 id 回不存在、不碰存储。
 
 ## 插件声明
 

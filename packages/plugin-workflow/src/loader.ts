@@ -35,11 +35,11 @@ export function normalizeDef(raw: unknown, fallbackId: string): WorkflowDef | nu
 }
 
 /**
- * 编排 id 是定义文件的文件名（`<id>.yaml`，拼进定义目录的路径）：只收英文字母、数字、下划线与连字符，带 `/` 或 `..` 的会把读写删
+ * 编排 id 是定义文件的文件名（`<id>.yaml`，拼进定义目录的路径）：只收各种文字的字母、数字、下划线与连字符，带 `/` 或 `..` 的会把读写删
  * 引到定义目录之外。不合规时给原因
  */
 export function validateId(id: string): TextRef | null {
-  return /^[A-Za-z0-9_-]+$/.test(id) ? null : t('badId', { id });
+  return /^[\p{L}\p{N}_-]+$/u.test(id) ? null : t('badId', { id });
 }
 
 async function sha256(text: string): Promise<string> {
