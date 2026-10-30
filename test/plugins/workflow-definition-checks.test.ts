@@ -261,7 +261,7 @@ describe('写错的触发器当场拒收', () => {
   it('cron、interval、once 写错：workflow_define、工作流页与服务的 defineWorkflow 都报原因，不保存；写对的照收', async () => {
     const svc = await boot();
     const bad: Array<[string, string, string]> = [
-      ['cron 字段越界', '  type: cron\n  expr: "61 * * * *"', 'cron 第 1 字段非法（解析为空）: "61"'],
+      ['cron 字段越界', '  type: cron\n  expr: "61 * * * *"', 'cron 第 1 字段非法（解析为空）："61"'],
       ['cron 没写表达式', '  type: cron', '表达式为空'],
       ['interval 写成字符串', '  type: interval\n  seconds: abc', badInterval('abc')],
       ['interval 是负数', '  type: interval\n  seconds: -5', badInterval('-5')],

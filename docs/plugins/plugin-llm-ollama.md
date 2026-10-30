@@ -38,9 +38,9 @@ export default definePlugin({
 | `baseUrl` | string | `'http://localhost:11434'` | Ollama 地址：本地 Ollama 服务的 HTTP 地址 |
 | `customModels` | textarea | `''` | 自定义模型：手动添加的模型名称（每行一个或逗号分隔）。用于补充自动发现列表中未出现的模型。与自动发现重复时会提示去重。 |
 | `discoverModels` | boolean | `true` | 自动发现模型：启动时请求 /api/tags 发现已安装的模型，WebUI 可刷新模型列表。服务不提供 /api/tags 时关闭：不发发现请求，只注册 customModels（此时必填），也不支持刷新。 |
-| `modelCapabilities` | textarea | `''` | 单模型能力覆盖：强制覆盖某模型的能力(优先级最高,高于 /api/show 自动探测与家族表),与 adapter 默认能力取并集。 格式：`&lt;modelId&gt;: &lt;cap1&gt;,&lt;cap2&gt;,...`，每行一条。如：nemotron3:33b: chat,vision,tool_calling |
-| `providerCapabilities` | string | `''` | 适配器默认能力（逗号分隔）：兜底默认能力:仅当某模型既无法从 Ollama /api/show 探测、又不在内置家族表时才使用。能力现已自动探测,通常留空即可（填了反而可能给不支持的模型乱标能力）。例：chat,tool_calling,streaming |
-| `timeout` | number | `120` | 停顿超时 (秒)：多久收不到新的生成内容算超时（秒）。一直在输出（含思考内容）不算超时；工具调用要等 Ollama 生成完整才一次给出，生成期间不算输出；不流式的请求（含带音频的请求）要在这段时间内收到整份回复。大模型或长上下文出第一段内容慢、工具参数很长时，建议适当调大。0 = 不限制。 |
+| `modelCapabilities` | textarea | `''` | 单模型能力覆盖：强制覆盖某模型的能力（优先级最高，高于 /api/show 自动探测与家族表），与 adapter 默认能力取并集。 格式：`&lt;modelId&gt;: &lt;cap1&gt;,&lt;cap2&gt;,...`，每行一条。如：nemotron3:33b: chat,vision,tool_calling |
+| `providerCapabilities` | string | `''` | 适配器默认能力（逗号分隔）：兜底默认能力：仅当某模型既无法从 Ollama /api/show 探测、又不在内置家族表时才使用。能力现已自动探测，通常留空即可（填了反而可能给不支持的模型乱标能力）。例：chat,tool_calling,streaming |
+| `timeout` | number | `120` | 停顿超时（秒）：多久收不到新的生成内容算超时（秒）。一直在输出（含思考内容）不算超时；工具调用要等 Ollama 生成完整才一次给出，生成期间不算输出；不流式的请求（含带音频的请求）要在这段时间内收到整份回复。大模型或长上下文出第一段内容慢、工具参数很长时，建议适当调大。0 = 不限制。 |
 | `temperature` | number | `0.7` | 温度：0-2，越高越随机 |
 | `maxTokens` | number | `4096` | 最大 Token：单次回复最大生成 token 数（num_predict），须为正整数，否则实例转为出错 |
 | `contextLength` | number | `8192` | 上下文长度：模型上下文窗口大小（num_ctx） |

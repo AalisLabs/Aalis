@@ -704,7 +704,7 @@ describe('webui-server 自己的文字按全局层的语言', () => {
 
   it.each([
     ['en', '# Aalis WebUI access credentials (generated)', 'One-click sign-in: '],
-    ['zh-CN', '# Aalis WebUI 访问凭据（自动生成）', '一键登录: '],
+    ['zh-CN', '# Aalis WebUI 访问凭据（自动生成）', '一键登录：'],
   ])('access.txt 的说明行按全局层的语言写（%s）', async (language, title, login) => {
     const written = new Map<string, string>();
     const { port } = await setup({ language: [language], written });

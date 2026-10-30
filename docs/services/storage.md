@@ -92,7 +92,7 @@ export interface BoundStorage extends StorageMethods {
 
 ### 提供者（参考实现）
 
-`@aalis/plugin-storage-local`——把 `config.roots` 里声明的用户根（缺省只有 `workspace`），以及按家目录布局派生的内部根（`data`、`pluginData`、`tmp`、`cache`、`logs`、`personas`、`skills`、`workflows`、`paper`、`public`）注册为命名根。全部根就绪之后整体登记**一个**提供者，根在它内部按 URI 根名路由；根名不认识时抛「未知存储根: x（已注册根: …）」。
+`@aalis/plugin-storage-local`——把 `config.roots` 里声明的用户根（缺省只有 `workspace`），以及按家目录布局派生的内部根（`data`、`pluginData`、`tmp`、`cache`、`logs`、`personas`、`skills`、`workflows`、`paper`、`public`）注册为命名根。全部根就绪之后整体登记**一个**提供者，根在它内部按 URI 根名路由；根名不认识时抛「未知存储根：x（已注册根：…）」。
 
 ### 典型消费点
 

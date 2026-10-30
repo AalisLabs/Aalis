@@ -1024,10 +1024,10 @@ describe('plugin-trigger-laya：诊断项', () => {
         'HTTP 500 internal; circuit open, retrying in 30s); judging falls back to replying only when mentioned',
     );
     expect((await diagnose()).message).toBe(
-      'Laya 触发判定生效中：判定不可用（侧车连续 3 次失败，最近一次: HTTP 500 internal；熔断 30s 后重试），判定按兜底只回点名',
+      'Laya 触发判定生效中：判定不可用（侧车连续 3 次失败，最近一次：HTTP 500 internal；熔断 30s 后重试），判定按兜底只回点名',
     );
     expect(byLevel(logs, 'error')).toEqual([
-      '[laya] 判定不可用（侧车连续 3 次失败，最近一次: HTTP 500 internal；熔断 30s 后重试），' +
+      '[laya] 判定不可用（侧车连续 3 次失败，最近一次：HTTP 500 internal；熔断 30s 后重试），' +
         '已转为只回点名（按 triggerOnAt / triggerOnPoke / 名字识别），其余消息吞掉并归档',
     ]);
   });
@@ -1057,7 +1057,7 @@ describe('plugin-trigger-laya：诊断项', () => {
     const expired = await diagnose();
     expect(expired.level).toBe('warn');
     expect(expired.message).toBe(
-      'Laya 触发判定生效中：侧车在线（版本 v-test）；上次判定不可用（侧车连续 3 次失败，最近一次: HTTP 500 internal；' +
+      'Laya 触发判定生效中：侧车在线（版本 v-test）；上次判定不可用（侧车连续 3 次失败，最近一次：HTTP 500 internal；' +
         '熔断 30s 后重试），尚未经请求确认恢复',
     );
 
@@ -1511,14 +1511,14 @@ describe('plugin-trigger-laya：托管侧车', () => {
     });
     await app.start();
     expect(byLevel(logs, 'error')).toEqual([
-      '[laya] 不托管侧车：sidecarDir 须为绝对路径（当前: models/listener-sidecar）',
+      '[laya] 不托管侧车：sidecarDir 须为绝对路径（当前：models/listener-sidecar）',
     ]);
     expect((await send(groupMsg('随便聊聊'))).reached).toBe(true);
     expect(proc.children).toHaveLength(0);
     expect(await diagnose()).toMatchObject({
       level: 'warn',
       message:
-        'Laya 触发判定生效中：侧车在线（版本 v-test）；不托管侧车：sidecarDir 须为绝对路径（当前: models/listener-sidecar）',
+        'Laya 触发判定生效中：侧车在线（版本 v-test）；不托管侧车：sidecarDir 须为绝对路径（当前：models/listener-sidecar）',
     });
 
     const other = await setup({ laya: { sidecarDir: DIR, endpoint: 'http://localhost:1' }, process: proc.service });

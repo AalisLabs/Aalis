@@ -38,7 +38,7 @@ const SOURCE = {
   providerCapabilitiesLabel: '适配器默认能力（逗号分隔）',
   providerCapabilitiesDescription:
     '为本适配器下所有模型额外补充的能力。最终某模型的能力 = 此处能力 ∪ 模型级别能力。例：chat,tool_calling,streaming',
-  timeoutLabel: '停顿超时 (秒)',
+  timeoutLabel: '停顿超时（秒）',
   timeoutDescription:
     '多久收不到新的生成内容算超时（秒）。一直在输出不算超时；不流式的请求要在这段时间内收到整份回复。模型思考时不发出思考内容（如 OpenAI 官方的推理模型）或输入很长时，建议适当调大。0 = 不限制。',
   temperatureLabel: '温度',
@@ -57,7 +57,7 @@ const SOURCE = {
   unreachable: 'LLM 连不上服务：检查 baseUrl 与网络，详情见日志',
   notJson: 'LLM 应答不是 JSON ({status})；详情见日志',
   discoveryNotJson: '响应不是 JSON: {excerpt}',
-  discoveryNotList: '响应不是模型列表（需要 data 数组，每项带字符串 id）: {excerpt}',
+  discoveryNotList: '响应不是模型列表（需要 data 数组，每项带字符串 id）：{excerpt}',
   discoveryFailed: '模型发现失败 {url}: {error}',
   emptyChoices: 'LLM 返回了空的 choices',
   emptyBody: 'LLM API 返回了空的响应体，无法进行流式读取',

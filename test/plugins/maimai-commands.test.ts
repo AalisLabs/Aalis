@@ -123,7 +123,7 @@ describe('/maimai 的失败回复', () => {
       );
       const run = await setup();
       expect(await run('/maimai info 123')).toBe(
-        `查询失败: 查分器不认开发者凭据：检查配置项 developerToken（HTTP ${status}：invalid token）`,
+        `查询失败：查分器不认开发者凭据：检查配置项 developerToken（HTTP ${status}：invalid token）`,
       );
     }
   });
@@ -134,7 +134,7 @@ describe('/maimai 的失败回复', () => {
     }) as unknown as typeof fetch);
     const run = await setup();
     expect(await run('/maimai b50 123')).toBe(
-      '查询失败: 查分器暂时连不上，稍后再试（connect ECONNREFUSED 127.0.0.1:9）',
+      '查询失败：查分器暂时连不上，稍后再试（connect ECONNREFUSED 127.0.0.1:9）',
     );
   });
 
@@ -147,7 +147,7 @@ describe('/maimai 的失败回复', () => {
         })) as unknown as typeof fetch,
     );
     const run = await setup();
-    expect(await run('/maimai recent 123')).toBe('查询失败: 查分器回复：玩家不存在');
+    expect(await run('/maimai recent 123')).toBe('查询失败：查分器回复：玩家不存在');
   });
 
   it('没有记忆后端：绑定与解绑写明要启用一个记忆后端', async () => {
@@ -231,7 +231,7 @@ describe('/maimai 与工具共用处理函数：指令交出文字对象，工�
     vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ success: true, data: player }), { status: 200 }));
     const { tool, command } = await setupBoth();
     expect(await tool('maimai_get_player_info', { friend_code: '456' })).toBe(
-      ['p  (DX Rating: 12345)', '好友码: 456', '称号: zz [Gold]', '搭档觉醒: 3'].join('\n'),
+      ['p  (DX Rating: 12345)', '好友码：456', '称号：zz [Gold]', '搭档觉醒：3'].join('\n'),
     );
     expect(await command('maimai.info', ['456'], ['en'])).toBe(
       ['p  (DX Rating: 12345)', 'Friend code: 456', 'Title: zz [Gold]', 'Awakening: 3'].join('\n'),
@@ -249,10 +249,15 @@ describe('/maimai 与工具共用处理函数：指令交出文字对象，工�
       return new Response(JSON.stringify({ success: true, data }), { status: 200 });
     });
     const { tool, command } = await setupBoth();
-    const player = ['p  (DX Rating: 1)', '好友码: undefined'].join('\n');
+    const player = ['p  (DX Rating: 1)', '好友码：undefined'].join('\n');
     expect(await tool('maimai_get_player_info', { qq: '123' })).toBe(player);
     expect(await command('maimai.info', ['qq:123'], ['zh-CN'])).toBe(player);
-    const songs = ['共 1 条匹配 (关键词: 星4)', '', '#14 《星4》  by undefined', '  分类: X | BPM: null | 版本: 21000'];
+    const songs = [
+      '共 1 条匹配（关键词：星4）',
+      '',
+      '#14 《星4》  by undefined',
+      '  分类：X | BPM: null | 版本：21000',
+    ];
     expect(await tool('maimai_search_song', { keyword: '星4' })).toBe(songs.join('\n'));
     expect(await command('maimai.song', ['星4'], ['zh-CN'])).toBe(songs.join('\n'));
   });

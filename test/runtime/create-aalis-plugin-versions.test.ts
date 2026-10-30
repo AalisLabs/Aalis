@@ -390,7 +390,7 @@ describe('create-aalis-plugin 查依赖版本', () => {
     );
     expect(failure?.code).toBe(1);
     // 子进程的 cwd 是解析过符号链接的路径（macOS 的临时目录在 /private 下），只核结尾
-    expect(failure?.stderr?.trim()).toMatch(/^目录已存在: \/.*\/zz-demo：换一个插件名，或先移走这个目录$/);
+    expect(failure?.stderr?.trim()).toMatch(/^目录已存在：\/.*\/zz-demo：换一个插件名，或先移走这个目录$/);
     expect(await readdir(join(dir, 'zz-demo'))).toEqual(['keep.txt']);
   });
 });

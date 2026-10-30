@@ -143,11 +143,11 @@ describe('commands v2 — 链式 builder', () => {
     });
     r.command('profile.clear.nuke', '清空所有').action(async () => 'nuked');
     expect(await r.execute('profile', input(['clear', 'nuk']))).toBe(
-      '未知子指令或多余参数: nuk。输入 /help profile clear 查看用法。',
+      '未知子指令或多余参数：nuk。输入 /help profile clear 查看用法。',
     );
     r.prefix = '#';
     expect(await r.execute('profile', input(['clear', 'me']))).toBe(
-      '未知子指令或多余参数: me。输入 #help profile clear 查看用法。',
+      '未知子指令或多余参数：me。输入 #help profile clear 查看用法。',
     );
     expect(ran).toEqual([]);
   });

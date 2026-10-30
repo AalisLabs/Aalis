@@ -30,7 +30,7 @@ const SOURCE = {
   defaultTimeoutDescription: 'http_request 的默认超时；http_download 不另设超时，等多久由工具执行器的让出时限管',
   maxResponseSizeLabel: '最大响应字节',
   toolsDescription: '列出所有已注册的机器交互工具',
-  toolsHeading: '机器交互工具:',
+  toolsHeading: '机器交互工具：',
 } as const;
 export type Source = typeof SOURCE;
 

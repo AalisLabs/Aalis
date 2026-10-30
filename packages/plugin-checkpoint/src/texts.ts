@@ -19,18 +19,18 @@ const SOURCE = {
   coverageOff: '不记',
   coverageOwnerOnly: '按受众（只有你时记）',
   coverageAll: '记',
-  rootDirNotUri: 'plugin-checkpoint 配置错误: rootDir 不是 storage URI，请写成 <根名>:/<路径>',
+  rootDirNotUri: 'plugin-checkpoint 配置错误：rootDir 不是 storage URI，请写成 <根名>:/<路径>',
   clearType: '检查点（对话回滚存档）',
   clearedAll: '所有 checkpoint 已清空（{count, number} 个 session）',
   clearedSession: '当前会话 checkpoint 已清空（{count, number} 个 turn）',
   noneInSession: '当前会话无 checkpoint',
-  clearFailed: 'checkpoint 清空失败: {error}',
+  clearFailed: 'checkpoint 清空失败：{error}',
   notSnapshotUnreadable: '未快照（原文件读取失败，不可回滚）',
   notSnapshotDirectory: '未快照（目录或读取失败）',
   tooLarge: '文件过大 ({size} > {max})',
   noCheckpoint: 'checkpoint 不存在',
   noDeleteByTimestamps: '当前 memory 后端不支持 deleteMessagesByTimestamps',
-  deleteMessagesFailed: '删除消息失败: {error}',
+  deleteMessagesFailed: '删除消息失败：{error}',
 } as const;
 export type Source = typeof SOURCE;
 

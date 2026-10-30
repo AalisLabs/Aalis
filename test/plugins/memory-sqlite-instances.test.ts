@@ -223,8 +223,8 @@ describe('plugin-memory-sqlite 多实例的数据库位置', () => {
 describe('plugin-memory-sqlite 开库之后的失败', () => {
   it.each([
     ['取文件身份失败', { stat: new Error('ENOENT: no such file or directory') }, 'ENOENT: no such file or directory'],
-    ['设 WAL 失败', { pragma: new Error('file is not a database') }, 'SQLite 打开失败: file is not a database'],
-    ['建表失败', { exec: new Error('disk I/O error') }, 'SQLite 打开失败: disk I/O error'],
+    ['设 WAL 失败', { pragma: new Error('file is not a database') }, 'SQLite 打开失败：file is not a database'],
+    ['建表失败', { exec: new Error('disk I/O error') }, 'SQLite 打开失败：disk I/O error'],
   ])('%s：先关掉刚开的库，再以激活失败报出', async (_step, fail, message) => {
     native.fail = fail;
     const { state } = await start([[NAME, {}]]);

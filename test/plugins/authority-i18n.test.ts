@@ -40,7 +40,7 @@ const USER = 'zz-user';
 const OWNER = 'zz-owner';
 /** 预置在会话表里的房间：经网关的原生入站会跑完整条相位链，不经它收录 */
 const ROOMS = [1, 2, 3, 4, 5, 6].map(n => `${CHAT}:bot:group:${n}`);
-const DENIED = '权限不足: "command:zz-admin" 需等级 2（当前 0）';
+const DENIED = '权限不足："command:zz-admin" 需等级 2（当前 0）';
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
 
 const apps: App[] = [];
@@ -138,10 +138,10 @@ describe('/authority 与 /level 的回复', () => {
       'zz-chat:zz-owner (owner, level ∞, all permissions)',
     ],
     'zh-CN': [
-      '已设 zz-chat:zz-user 等级: 1',
+      '已设 zz-chat:zz-user 等级：1',
       '等级必须是整数',
-      '您 等级: 1',
-      'zz-chat:zz-other 等级: 0',
+      '您的等级：1',
+      'zz-chat:zz-other 等级：0',
       '您（owner，等级 ∞，拥有全部权限）',
       'zz-chat:zz-owner（owner，等级 ∞，拥有全部权限）',
     ],

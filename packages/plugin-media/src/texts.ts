@@ -81,12 +81,12 @@ const SOURCE = {
   clearTypeImage: '图片缓存',
   clearTypeVideo: '视频缓存',
   uploadsCleared: '上传的图片已清空（{count, number} 个）',
-  uploadsFailed: '上传的图片清空失败: {error}',
+  uploadsFailed: '上传的图片清空失败：{error}',
   kindImage: '图片',
   kindVideo: '视频',
   descriptionsClearedAll: '所有{kind}描述缓存已清空（{count, number} 条）',
   descriptionsClearedSession: '当前会话{kind}描述缓存已清空（{count, number} 条）',
-  descriptionsFailed: '{kind}描述缓存清空失败: {error}',
+  descriptionsFailed: '{kind}描述缓存清空失败：{error}',
   cutOff: '{text}（已在长度上限处截断）',
 } as const;
 export type Source = typeof SOURCE;

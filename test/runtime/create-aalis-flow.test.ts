@@ -246,7 +246,7 @@ describe('终端提问', () => {
     const kept = t.prompter.order('语言列表', languages);
     await t.type('');
     expect(await kept).toEqual(['zh-CN', 'en', 'ja']);
-    expect(t.shown()).toContain('按优先顺序输入序号，没输入的照原顺序接在后面（回车 = 照原顺序）: ');
+    expect(t.shown()).toContain('按优先顺序输入序号，没输入的照原顺序接在后面（回车 = 照原顺序）：');
     const moved = t.prompter.order('语言列表', languages);
     await t.type('3,3');
     expect(t.shown()).toContain('  注意：序号 3 重复了。');

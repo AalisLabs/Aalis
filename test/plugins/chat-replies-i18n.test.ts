@@ -137,7 +137,7 @@ describe('/doctor 的报告按会话的语言', () => {
     expect(english[0]).toMatch(/^\*\*System diagnostics — .+\*\*$/);
     expect(english[1]).toMatch(/^Summary: passed \d+ {2}warnings \d+ {2}errors \d+$/);
     expect(english).toContain('__Passed__');
-    const chinese = /^汇总: 通过 \d+　警告 \d+　错误 \d+$/;
+    const chinese = /^汇总：通过 \d+　警告 \d+　错误 \d+$/;
     const zh = await s.ask((await s.session(['zh-CN'])).id, '/doctor');
     expect([zh[0].startsWith('**系统诊断 — '), zh[1]]).toEqual([true, expect.stringMatching(chinese)]);
     expect(zh).toContain('__通过__');
@@ -214,11 +214,11 @@ describe('/model 与 /persona 的分页回复按会话的语言', () => {
       ['(No available personas)', 1, '(No available personas)'],
     ],
     'zh-CN': [
-      ['可用模型（共 21 · 第 1/2 页）:', 22, '—— 翻页: /model -p 2　搜索: /model <关键词>'],
-      ['可用模型（共 21 · 第 2/2 页）:', 3, '—— 翻页: /model -p 1　搜索: /model <关键词>'],
-      ['可用模型（含"zz" 共 21 · 第 1/2 页）:', 22, '—— 翻页: /model zz -p 2'],
+      ['可用模型（共 21 · 第 1/2 页）：', 22, '—— 翻页：/model -p 2　搜索：/model <关键词>'],
+      ['可用模型（共 21 · 第 2/2 页）：', 3, '—— 翻页：/model -p 1　搜索：/model <关键词>'],
+      ['可用模型（含"zz" 共 21 · 第 1/2 页）：', 22, '—— 翻页：/model zz -p 2'],
       ['无匹配 "zz-none" 的可用模型', 1, '无匹配 "zz-none" 的可用模型'],
-      ['(无可用人设)', 1, '(无可用人设)'],
+      ['（无可用人设）', 1, '（无可用人设）'],
     ],
   };
 

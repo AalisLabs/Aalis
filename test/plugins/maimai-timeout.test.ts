@@ -66,9 +66,9 @@ describe('plugin-maimai: 查分器请求必须带超时', () => {
       new Promise<string>(r => setTimeout(() => r('still-hanging'), 2500)),
     ]);
     expect(outcome, '没有 signal 就会一直挂着').not.toBe('still-hanging');
-    // handler 把异常包成「查询失败: <message>」纯文本回给模型，不是 JSON error 键
+    // handler 把异常包成「查询失败：<message>」纯文本回给模型，不是 JSON error 键
     expect(outcome, '超时应作为工具错误结果返回').toMatch(
-      /^result:查询失败: 查分器暂时连不上，稍后再试（.*timeout.*）$/i,
+      /^result:查询失败：查分器暂时连不上，稍后再试（.*timeout.*）$/i,
     );
   });
 
@@ -80,7 +80,7 @@ describe('plugin-maimai: 查分器请求必须带超时', () => {
       { friend_code: '123' },
       toolRequest({ sessionId: 's1' }),
     );
-    expect(r.content).toMatch(/^查询失败: 查分器暂时连不上，稍后再试（.*timeout.*）$/i);
+    expect(r.content).toMatch(/^查询失败：查分器暂时连不上，稍后再试（.*timeout.*）$/i);
   });
 
   it('正常对端照常返回', async () => {

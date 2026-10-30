@@ -211,7 +211,7 @@ describe('托管侧车：退出与重启', () => {
     await settle();
     expect(h.exits).toEqual([
       [
-        '侧车退出（退出码 4，自愈退出：推理连续失败；标准错误最后一行: {"event": "self_heal_exit", "failures": 3, "code": 4}），' +
+        '侧车退出（退出码 4，自愈退出：推理连续失败；标准错误最后一行：{"event": "self_heal_exit", "failures": 3, "code": 4}），' +
           '1s 后重启',
         true,
       ],
@@ -422,7 +422,7 @@ describe('托管的目标', () => {
     expect(sidecarTarget(DIR, 'http://127.0.0.1:17878')).toEqual({ dir: DIR, port: 17878 });
     expect(sidecarTarget(DIR, 'http://127.0.0.1:17878/')).toEqual({ dir: DIR, port: 17878 });
     expect(toSource(sidecarTarget('models/listener-sidecar', 'http://127.0.0.1:17878'))).toEqual({
-      problem: 'sidecarDir 须为绝对路径（当前: models/listener-sidecar）',
+      problem: 'sidecarDir 须为绝对路径（当前：models/listener-sidecar）',
     });
     for (const endpoint of [
       'http://localhost:17878',
@@ -433,7 +433,7 @@ describe('托管的目标', () => {
       'not a url',
     ]) {
       expect(toSource(sidecarTarget(DIR, endpoint)), endpoint).toEqual({
-        problem: `托管侧车时侧车地址须为 http://127.0.0.1:<端口>（不带路径），侧车只监听本机、端口取自这里（当前: ${endpoint}）`,
+        problem: `托管侧车时侧车地址须为 http://127.0.0.1:<端口>（不带路径），侧车只监听本机、端口取自这里（当前：${endpoint}）`,
       });
     }
   });

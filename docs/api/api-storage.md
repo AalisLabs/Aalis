@@ -111,7 +111,7 @@ export default definePlugin({
 
 ## 实现者
 
-- `@aalis/plugin-storage-local` — 本地文件系统；`apply` 里先建好全部根（`roots[]` 里的用户根与按家目录布局派生的内部根），再整体登记一个提供者 `provide.use(storage, new LocalStorage(scoped), { label })`。根在它内部按 URI 根名路由，根名不认识时抛「未知存储根: x（已注册根: …）」。
+- `@aalis/plugin-storage-local` — 本地文件系统；`apply` 里先建好全部根（`roots[]` 里的用户根与按家目录布局派生的内部根），再整体登记一个提供者 `provide.use(storage, new LocalStorage(scoped), { label })`。根在它内部按 URI 根名路由，根名不认识时抛「未知存储根：x（已注册根：…）」。
 
 ## Helper
 

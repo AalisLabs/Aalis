@@ -59,7 +59,7 @@ export default definePlugin({
 
 纯判定逻辑见 `packages/plugin-authority/src/authority-model.ts`（`resolveMinLevel` / `resolveAccess`，纯函数、无副作用）。能力串形如 `command:<name>` / `tool:<name>`。
 
-拒绝时 `authorize` 返回可直接展示的原因：硬禁命中返回 `已被系统禁用: <cap>`；等级不足（所属组也不覆盖）返回 `权限不足: "<cap>" 需等级 N（当前 M）`。
+拒绝时 `authorize` 返回可直接展示的原因：硬禁命中返回 `已被系统禁用：<cap>`；等级不足（所属组也不覆盖）返回 `权限不足："<cap>" 需等级 N（当前 M）`。
 
 > 没有命名档位（受信 / 管理员 等），没有能力委托树，没有按人禁用的清单。按人放行用权限组（见下节），它只加放行。
 

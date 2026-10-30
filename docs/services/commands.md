@@ -134,7 +134,7 @@ option syntax 速查：
 - 有子指令、自身不执行的父指令只登记描述、不写 `action`：裸敲它回的就是 `/help <它>`，不要手写一份帮助。
 - 帮助只列调用者能用的指令，判据与执行同一份，见 [plugin-commands](../plugins/plugin-commands.md) 的「帮助」一节。帮助按各平台通用的纯文本输出，`usage` 写的整段帮助也应如此。
 
-**错误边界**：handler 抛错会被 `execute` 捕获，转成 `指令执行失败: <msg>`。
+**错误边界**：handler 抛错会被 `execute` 捕获，转成 `指令执行失败：<msg>`。
 
 ---
 

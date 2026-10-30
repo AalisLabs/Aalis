@@ -22,7 +22,7 @@ const SOURCE = {
   databaseTooLong: 'MongoDB 库名 {database} 超过 63 字节的上限：请给 {instance} 另配一个短些的 database',
   databaseInUse:
     'MongoDB 库 {database} 已被实例 {holder} 使用（同一连接串），两个实例不能共用一个库：请给 {instance} 另配 database',
-  connectFailed: 'MongoDB 连接失败（确认 MongoDB 在运行、配置项 uri 写对）: {error}',
+  connectFailed: 'MongoDB 连接失败（确认 MongoDB 在运行、配置项 uri 写对）：{error}',
   unownedData:
     'MongoDB 库 {database} 里已有数据，但没有记录它归哪个家目录。若这就是本家目录的数据，在 {instance} 的配置里写 claimFrom: unowned 后重启认领；否则给它另配 database',
   ownerRecordBroken:

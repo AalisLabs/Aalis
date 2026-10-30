@@ -11,14 +11,14 @@ const SOURCE = {
   rangeQueryLimitDescription: '区间消息查询（向量召回的上下文窗口扩展等）单次返回的最大条数。命中上限会静默截断',
   crossSessionMaxLimitLabel: '跨会话查询返回上限',
   crossSessionMaxLimitDescription: '跨会话最近消息查询允许的最大条数；调用方请求超过此值会被收窄到此上限',
-  pathUnresolvable: '无法解析数据库路径 {uri}（检查配置项 path）: {error}',
+  pathUnresolvable: '无法解析数据库路径 {uri}（检查配置项 path）：{error}',
   nodeTooOld:
-    'SQLite 打开失败: 当前 Node（{version}）版本过低，需要 Node 24.15.0 起；升级方法见 https://aalis.acenyan.com/guide/first-run#upgrade-node',
-  openFailedDir: 'SQLite 打开失败（检查目录 {dir} 存在且可写，或在配置项 path 换个位置）: {error}',
+    'SQLite 打开失败：当前 Node（{version}）版本过低，需要 Node 24.15.0 起；升级方法见 https://aalis.acenyan.com/guide/first-run#upgrade-node',
+  openFailedDir: 'SQLite 打开失败（检查目录 {dir} 存在且可写，或在配置项 path 换个位置）：{error}',
   sharedDb: '数据库文件 {path} 已被实例 {holder} 使用，两个实例不能共用一个库：请给 {instance} 另配 path',
   sharedDbVia:
     '数据库文件 {path} 已被实例 {holder} 使用（经路径 {via} 打开），两个实例不能共用一个库：请给 {instance} 另配 path',
-  openFailed: 'SQLite 打开失败: {error}',
+  openFailed: 'SQLite 打开失败：{error}',
 } as const;
 export type Source = typeof SOURCE;
 

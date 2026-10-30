@@ -4,8 +4,8 @@ import en from './locales/en.js';
 
 const SOURCE = {
   displayName: 'OKX 交易',
-  groupSummaryDemo: 'OKX 虚拟币交易工具集 (模拟盘)，提供行情查询、账户管理、下单交易等功能',
-  groupSummaryLive: 'OKX 虚拟币交易工具集 (实盘)，提供行情查询、账户管理、下单交易等功能',
+  groupSummaryDemo: 'OKX 虚拟币交易工具集（模拟盘），提供行情查询、账户管理、下单交易等功能',
+  groupSummaryLive: 'OKX 虚拟币交易工具集（实盘），提供行情查询、账户管理、下单交易等功能',
   apiKeyDescription: '在 OKX 设置中创建的 API Key',
   passphraseDescription: '创建 API 时设定的口令',
   baseUrlLabel: 'API 地址',
@@ -14,7 +14,7 @@ const SOURCE = {
   demoDescription: '启用后将使用模拟交易环境，强烈建议先在模拟盘测试',
   confirmRealMoneyLabel: '确认实盘风险',
   confirmRealMoneyDescription:
-    '仅当关闭模拟盘(demo:false)、用真实资金时，须显式设为 true 以确认风险；否则不暴露下单/撤单/策略/划转/提币等交易工具，仅保留查询。',
+    '仅当关闭模拟盘（demo:false）、用真实资金时，须显式设为 true 以确认风险；否则不暴露下单/撤单/策略/划转/提币等交易工具，仅保留查询。',
   timeoutMsLabel: '请求超时 (ms)',
   enableTradingLabel: '启用交易工具',
   enableTradingDescription: '关闭后仅保留查询类工具，不暴露下单/撤单操作',

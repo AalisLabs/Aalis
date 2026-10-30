@@ -14,7 +14,7 @@ import memorySqlite from '../../packages/plugin-memory-sqlite/src/index.js';
 // ════════════════════════════════════════════════════════════
 
 const TOO_OLD =
-  `SQLite 打开失败: 当前 Node（${process.version}）版本过低，需要 Node 24.15.0 起；` +
+  `SQLite 打开失败：当前 Node（${process.version}）版本过低，需要 Node 24.15.0 起；` +
   '升级方法见 https://aalis.acenyan.com/guide/first-run#upgrade-node';
 
 let dir: string;
@@ -108,7 +108,7 @@ describe('plugin-memory-sqlite 开库失败', () => {
     const { entry, thrown } = await activate(undefined, original);
 
     expect(entry?.state).toBe('error');
-    expect(entry?.error).toBe('无法解析数据库路径 data:/aalis.db（检查配置项 path）: 根 data 不可写');
+    expect(entry?.error).toBe('无法解析数据库路径 data:/aalis.db（检查配置项 path）：根 data 不可写');
     expect(thrown?.cause).toBe(original);
   });
 
@@ -129,7 +129,7 @@ describe('plugin-memory-sqlite 开库失败', () => {
 
     expect(entry?.state).toBe('error');
     expect(entry?.error).toBe(
-      `SQLite 打开失败（检查目录 ${join(dir, 'missing')} 存在且可写，或在配置项 path 换个位置）: unable to open database file`,
+      `SQLite 打开失败（检查目录 ${join(dir, 'missing')} 存在且可写，或在配置项 path 换个位置）：unable to open database file`,
     );
     expect((thrown?.cause as NodeJS.ErrnoException | undefined)?.code).toBe('ERR_SQLITE_ERROR');
   });

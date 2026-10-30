@@ -394,7 +394,7 @@ describe('/perm 与 /authority', () => {
     expect(manager.listUsers().find(u => u.userId === '2')).toBeUndefined();
     expect(await runCommand('perm', 'onebot:2', '<x>')).toBe('没有这些权限组：<x>；已有的组：search、ops');
     expect(await runCommand('perm', 'onebot:2', 'ops zz')).toBe('没有这些权限组：zz；已有的组：search、ops');
-    expect(await runCommand('perm', 'nobody', 'ops')).toBe('目标格式: <platform:userId>');
+    expect(await runCommand('perm', 'nobody', 'ops')).toBe('目标格式：<platform:userId>');
   });
 
   it('/authority 的输出带上所属组，未定义的组标出来；没有组的不多这一行', async () => {
@@ -402,9 +402,9 @@ describe('/perm 与 /authority', () => {
     manager.setUserGroups({ platform: 'onebot', userId: '1' }, ['ops', 'search']);
     manager.setUserLevel({ platform: 'onebot', userId: '2' }, 1);
     config.set('authorityGroups', { ops: GROUPS.authorityGroups.ops });
-    expect(await runAs('onebot:1', 'authority')).toBe('您 等级: 0\n所属权限组：ops、search（未定义）');
-    expect(await runCommand('authority', 'onebot:1')).toBe('onebot:1 等级: 0\n所属权限组：ops、search（未定义）');
-    expect(await runCommand('authority', 'onebot:2')).toBe('onebot:2 等级: 1');
+    expect(await runAs('onebot:1', 'authority')).toBe('您的等级：0\n所属权限组：ops、search（未定义）');
+    expect(await runCommand('authority', 'onebot:1')).toBe('onebot:1 等级：0\n所属权限组：ops、search（未定义）');
+    expect(await runCommand('authority', 'onebot:2')).toBe('onebot:2 等级：1');
   });
 });
 
@@ -611,13 +611,13 @@ describe('未落盘时的等级管理回执', () => {
     expect(await act('deleteUser', { rowKey: 'onebot:777' })).toContain(SAVE_NOTE);
 
     failing = false;
-    expect(await runCommand('level', 'onebot:777', -3)).toBe('已设 onebot:777 等级: -3');
+    expect(await runCommand('level', 'onebot:777', -3)).toBe('已设 onebot:777 等级：-3');
   });
 
   it('users.json 正常：回执不带该附注', async () => {
     const { act, runCommand } = await boot();
 
-    expect(await runCommand('level', 'onebot:777', -1)).toBe('已设 onebot:777 等级: -1');
+    expect(await runCommand('level', 'onebot:777', -1)).toBe('已设 onebot:777 等级：-1');
     expect(await act('setUserLevel', { rowKey: 'onebot:777', input: { level: -1 } })).not.toContain(NOTE);
     expect(await act('deleteUser', { rowKey: 'onebot:777' })).not.toContain(NOTE);
   });
@@ -642,7 +642,7 @@ describe('users.json 读不出来时的提示', () => {
 
     expect(toSource(pages.notices())).toEqual([NOTICE]);
     expect(await runCommand('level', 'onebot:777', -1)).toBe(
-      '已设 onebot:777 等级: -1；仅本次运行生效，未写入 users.json：它读不出来，修好家目录里的 state/users.json 后重启',
+      '已设 onebot:777 等级：-1；仅本次运行生效，未写入 users.json：它读不出来，修好家目录里的 state/users.json 后重启',
     );
 
     // 排在前面的 storage 提供者上线：follow 换人即重读

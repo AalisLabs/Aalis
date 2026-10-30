@@ -210,7 +210,7 @@ describe('/clear 按层清理', () => {
     await app.plugins.disable(memoryVector.name);
     await app.plugins.idle();
     const out = await run('clear', ['vector']);
-    expect(out).toMatch(/^未知清理类型: vector。可用类型: all, [^。]+。说明见 \/help clear$/);
+    expect(out).toMatch(/^未知清理类型：vector。可用类型：all, [^。]+。说明见 \/help clear$/);
     expect(out.split('。')[1].split(', ')).not.toContain('vector');
   });
 
@@ -225,7 +225,7 @@ describe('/clear 按层清理', () => {
   it('会话级逐个指定 context、summary、vector：各行标注了类型，回执不报「没有插件处理」', async () => {
     const { run } = await world();
     const out = await run('clear', ['context', 'summary', 'vector']);
-    for (const text of ['当前会话消息历史已清空', '当前会话摘要已清空', '向量记忆已清空 (0 条)'])
+    for (const text of ['当前会话消息历史已清空', '当前会话摘要已清空', '向量记忆已清空（0 条）'])
       expect(out).toContain(text);
     expect(out).not.toContain('没有已启用的插件处理');
   });
@@ -236,7 +236,7 @@ describe('/clear 按层清理', () => {
       throw new Error('后端故障');
     };
     const out = await run('clear', ['context']);
-    expect(out).toContain('清空失败: 后端故障');
+    expect(out).toContain('清空失败：后端故障');
     expect(out).not.toContain('没有已启用的插件处理');
   });
 
@@ -250,10 +250,10 @@ describe('/clear 按层清理', () => {
     store.clear = broken;
     const all = await run('clear.all', ['summary', 'vector', 'user-profile', 'user-relation']);
     for (const text of [
-      '摘要清空失败: 后端故障',
-      '向量清空失败: 后端故障',
-      '用户档案清空失败: 后端故障',
-      '关系图清空失败: 后端故障',
+      '摘要清空失败：后端故障',
+      '向量清空失败：后端故障',
+      '用户档案清空失败：后端故障',
+      '关系图清空失败：后端故障',
     ])
       expect(all).toContain(text);
     expect(all).not.toContain('没有已启用的插件处理');
@@ -288,8 +288,8 @@ describe('/clear 按层清理', () => {
       'sessions/s-other',
     ]);
     for (const text of [
-      '用户档案已清空 (2 条)',
-      '关系图已清空 (2 条)',
+      '用户档案已清空（2 条）',
+      '关系图已清空（2 条）',
       '所有会话待办已清空（3 个会话）',
       '合并转发原文已清空（2 条）',
       '所有会话摘要已清空',

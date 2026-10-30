@@ -42,9 +42,9 @@ const SOURCE = {
   modePlatform: '同平台（仅相同平台的会话）',
   modeAll: '全部打通（所有平台所有会话）',
   clearedAll: '所有向量记忆已清空',
-  clearedSession: '向量记忆已清空 ({count, number} 条)',
+  clearedSession: '向量记忆已清空（{count, number} 条）',
   clearUnsupported: '当前向量存储不支持会话级清空，向量记忆未清除（可改用 /clear.all 或换支持按条件删除的后端）',
-  clearFailed: '向量清空失败: {error}',
+  clearFailed: '向量清空失败：{error}',
 } as const;
 export type Source = typeof SOURCE;
 
