@@ -1,10 +1,89 @@
-// 本插件自己的原文字典：平台通知、请求事件合成的入站与戳一戳、群文件上传转成的入站给人看的那句（写给模型的正文另带
-// [notice/…]、处理办法与工具用法），三个平台类型的显示名，/clear 的附件类型显示名、清理收发附件的回执，与摘要模型在长度
-// 上限处停下时合并转发摘要末尾的标记
+// 本插件自己的原文字典：显示名与配置项，平台通知、请求事件合成的入站与戳一戳、群文件上传转成的入站给人看的那句（写给模型的
+// 正文另带 [notice/…]、处理办法与工具用法），三个平台类型的显示名，/clear 的附件类型显示名、清理收发附件与转发原文的回执，
+// 摘要模型在长度上限处停下时合并转发摘要末尾的标记，与投递失败的原因（两用：时间线与历史按读者的语言，白纸与发附件的工具
+// 取原文给模型）
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
 const SOURCE = {
+  displayName: 'OneBot 适配器',
+  connectionsLabel: '连接列表',
+  connectionsDescription: '配置一个或多个 OneBot WebSocket 连接',
+  urlLabel: 'WebSocket 地址',
+  urlDescription: '如 ws://127.0.0.1:8080',
+  accessTokenLabel: '鉴权 Token',
+  accessTokenDescription: '可选，与 OneBot 实现端一致',
+  selfIdLabel: '机器人 ID',
+  selfIdDescription: '可选，连接后自动获取',
+  protocolLabel: '协议版本',
+  protocolDescription: '选择 OneBot 协议版本：v11、v12 或 auto（自动检测）',
+  protocolAuto: '自动检测',
+  splitLabel: '消息分条发送',
+  splitDescription: '启用后，文本将按选中的符号自动拆分为多条消息发送，模拟真人发送习惯',
+  enable: '启用',
+  splitEnabledDescription: '是否启用消息分条发送',
+  delayPerCharLabel: '每字延迟 (ms)',
+  delayPerCharDescription: '按下一条消息的字数计算延迟，单位毫秒/字',
+  maxDelayLabel: '最大延迟 (ms)',
+  maxDelayDescription: '分条消息之间的最大延迟上限（毫秒）',
+  patternsLabel: '切割模式',
+  patternsDescription:
+    '在匹配到这些字符串的位置之后进行切割。每一项是一个完整的字符串：单字符（如 。）就在该字符后切；多字符（如 ". "、".\\n"）则要整段匹配到才切。支持转义：\\n=换行，\\t=制表符，\\r=回车，\\\\=反斜杠。',
+  patternFullStop: '。 中文句号',
+  patternExclamation: '！ 中文感叹号',
+  patternQuestion: '？ 中文问号',
+  patternSemicolon: '； 中文分号',
+  patternComma: '， 中文逗号',
+  patternEnumComma: '、 顿号',
+  patternPeriod: '. 英文句号',
+  patternPeriodSpace: '. ␣ 英文句号+空格（避免小数点误拆）',
+  patternBang: '! 英文感叹号',
+  patternQuery: '? 英文问号',
+  patternAsciiSemicolon: '; 英文分号',
+  patternAsciiComma: ', 英文逗号',
+  patternAsciiCommaSpace: ', ␣ 英文逗号+空格（避免 1,000 误拆）',
+  patternNewline: '↵ 换行 (\\n)',
+  patternTab: '⇥ 制表符 (\\t)',
+  patternSpace: '␣ 空格',
+  forwardLabel: '合并转发处理',
+  forwardDescription: '收到 <forward> 消息时如何展开、是否调用图像识别、是否调用 LLM 生成摘要',
+  forwardEnabledLabel: '启用自动展开',
+  forwardEnabledDescription: '关闭后保留原始占位符，由 LLM 自行决定是否调工具读取。',
+  forwardMaxDepthLabel: '嵌套深度上限',
+  forwardMaxDepthDescription: '递归展开嵌套合并转发的最大层数（顶层=1）。',
+  maxNodesLabel: '单层节点上限',
+  maxNodesDescription: '每层最多展开多少条节点。超过部分会被截断。',
+  imageRecognitionLabel: '识别内部图片',
+  imageRecognitionDescription: '把转发内的图片送入 media 服务转写为文字描述。需要该服务可用。',
+  concurrencyLabel: '媒体识别并发上限',
+  concurrencyDescription:
+    '单条消息的转发展开内允许同时进行的媒体识别（图片/语音/视频）任务数。本地模型部署建议设 1-2：转发批量识别是后台工作，低并发能减少对实时入站识别的挤占（注意这是统计性缓解，不是优先级调度——多条消息各有各的并发额度，模型侧也无插队机制）。',
+  recognitionMaxLabel: '单条转发媒体识别上限',
+  recognitionMaxDescription:
+    '单条合并转发内最多识别多少个媒体（图片/语音/视频合计）；超出的以 [图片] 等占位符保留，不再消耗模型算力。设为 0 表示不限。',
+  summarizeLabel: '生成摘要',
+  summarizeDescription:
+    '展开后调用 LLM 生成一段摘要，代替原文写进给模型的转发展开，随存档正文进入对话、记忆与向量库；原文保留在缓存。',
+  summaryMaxCharsLabel: '摘要最大字符数',
+  summaryMaxCharsDescription:
+    '提示给摘要模型的目标长度上限。模型被允许超出 10% 以保留多人互动结构。输出上限只防失控，取本值的 3 倍、不少于 2048 token；模型在上限处停下时摘要末尾标出截断。',
+  summaryInputLimitLabel: '摘要原文输入上限（字符）',
+  summaryInputLimitDescription:
+    '喂给摘要模型的原文输入上限；原文超过则前段截断。设为 0 表示不截断（注意超长文本会增加摘要成本）。',
+  summaryPromptLabel: '摘要 system prompt（高级，留空使用内置）',
+  summaryPromptDescription:
+    '留空使用内置默认 prompt（专为保留多人互动结构调优过）。填入非空内容则完全覆盖默认 prompt。\n\n内置默认 prompt 如下（<输出语言> 取全局默认的语言列表的第一项），可作为撰写参考：\n\n{prompt}',
+  replyLabel: '引用消息处理',
+  replyDescription: '收到引用回复时如何展开被引用消息链',
+  replyMaxDepthLabel: '引用链深度上限',
+  replyMaxDepthDescription:
+    '递归获取被引用消息的最大层数。1 = 只读取直接引用；2 = 继续读取直接引用所引用的消息，依此类推。',
+  cacheLabel: '附件本地缓存',
+  cacheDescription:
+    "入站 / 出站的 image / audio / video / file 统一缓存到 data:/'{kind}'s/'{会话目录}'/onebot/，便于人工归档与多轮工具复用；/clear 与删除会话时由本适配器清理",
+  cacheMaxBytesLabel: '单文件大小上限 (Byte)',
+  cacheMaxBytesDescription: '超过此尺寸的附件不落盘，保留原 URL（典型场景：长视频）。默认 10 MiB。',
+  badUrl: 'connections.url 必须是 ws 或 wss URL',
   // 称呼：在句首作主语的用 …Subject（英文首字母大写），其余位置用前三个
   self: '我',
   someone: '某人',
@@ -51,6 +130,34 @@ const SOURCE = {
   mediaCleared: 'OneBot 收发的{kind}已清空（{count, number} 个）',
   mediaFailed: 'OneBot 收发的{kind}清空失败: {error}',
   summaryCutOff: '{summary}（已在长度上限处截断）',
+  forwardCleared: '合并转发原文已清空（{count, number} 条）',
+  forwardFailed: '合并转发原文清空失败: {error}',
+  // 投递失败的原因：附件拒发、发送路径的报错、实现端回的失败，与投递结果拼成的整句
+  notMedia: '内容不是可发送的 {kind} 格式（文件头不符），已拒发',
+  noHead: '读不出文件头，已拒发',
+  tooLargeToUpload: '{size}B 超过内联上限，不能以文件上传',
+  uploadBase64Only: '文件上传只收 base64://（超过内联上限或来源是宿主路径、原链接时 NapCat 读不到）',
+  notUrl: '地址不是网址，不交给实现端，已拒发',
+  cannotInline: '{format} 格式不能内联，已拒发',
+  tooLargeToInline: '超过内联上限，不交给实现端去拉，已拒发',
+  wsNotConnected: 'WebSocket 未连接',
+  actionFailed: 'OneBot action {action} 失败（retcode={retcode}）',
+  actionFailedDetail: 'OneBot action {action} 失败（retcode={retcode}）：{detail}',
+  badSessionId: '无法解析 sessionId: {sessionId}',
+  connectionDown: 'OneBot 连接不可用: selfId={selfId}',
+  connectionDownBecause: 'OneBot 连接不可用: selfId={selfId} ({reason})',
+  noConnection: '未找到对应连接',
+  connectionStatus: '状态={status}',
+  wsEmpty: 'ws 为空',
+  protocolNotReady: '协议未初始化',
+  v12NoFile: 'OneBot v12 连接不支持文件附件',
+  typeNoFile: '会话类型 {type} 不支持文件附件',
+  andThen: '{head}; {tail}',
+  notSentFrom: '从第 {from} 条起没发出',
+  unconfirmedMessage: '消息（第 {n} 条）',
+  unconfirmedFile: '文件 {name}',
+  unconfirmed: '已发出但没等到确认，结果未知，可能已经送达，不要重发：{items, list}',
+  nothingToSend: '没有可发送的内容',
 } as const;
 export type Source = typeof SOURCE;
 

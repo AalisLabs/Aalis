@@ -21,16 +21,19 @@ import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import { type MergeContext, notAccepted, readHistory } from '../../packages/plugin-session-server/src/history.js';
-import { toSource } from '../../packages/schema-i18n/src/index.js';
+import { t as storageTexts } from '../../packages/plugin-storage-local/src/texts.js';
+import { isTextRef, TextError, toSource } from '../../packages/schema-i18n/src/index.js';
 import {
   type IncomingMessage,
   type Message,
   type MessageAttachment,
+  type OutboundDeliveryResult,
   type OutgoingMessage,
   WellKnownKinds,
   WellKnownMetadataKeys,
 } from '../../packages/schema-message/src/index.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
+import { renderIn } from '../fixtures/host-language.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { storedRoom } from '../fixtures/rooms.js';
 
@@ -149,7 +152,10 @@ async function until(cond: () => boolean, ms = 8000): Promise<void> {
   }
 }
 
-/** 内存 storage：data 根可写（出站附件落盘用），aalis 根只读（占位的配置文件所在）；别的根同 storage-local 抛「未知存储根」 */
+/**
+ * 内存 storage：data 根可写（出站附件落盘用），aalis 根只读（占位的配置文件所在）；别的根抛 storage-local 的「未知存储根」
+ * （它的字典里同一句，TextError）
+ */
 function memStorage(files: Map<string, Buffer>) {
   const root = (name: string, writable: boolean) => ({
     name,
@@ -162,7 +168,9 @@ function memStorage(files: Map<string, Buffer>) {
   });
   const get = (uri: string) => {
     const name = uri.slice(0, uri.indexOf(':/'));
-    if (name !== 'data' && name !== 'aalis') throw new Error(`未知存储根: ${name}`);
+    if (name !== 'data' && name !== 'aalis') {
+      throw new TextError(storageTexts('unknownRoot', { root: name, roots: 'data, aalis' }));
+    }
     const f = files.get(uri);
     if (!f) throw Object.assign(new Error(`ENOENT: ${uri}`), { code: 'ENOENT' });
     return f;
@@ -413,6 +421,9 @@ async function boot(
 }
 
 const decode = (file: unknown) => Buffer.from(String(file).slice('base64://'.length), 'base64');
+/** 投递结果没成时的原因的原文（给模型的读者取的就是它）；成了或没有结果为 undefined */
+const reasonOf = (result: OutboundDeliveryResult | undefined) =>
+  result?.ok === false ? toSource(result.error) : undefined;
 
 describe('onebot 出站：文件附件', () => {
   it('群会话：文字与消息段先发，文件随后经 upload_group_file 以 base64:// 上传，不进消息段', async () => {
@@ -622,9 +633,7 @@ describe('onebot 出站：文件附件', () => {
       await vi.advanceTimersByTimeAsync(30_000);
       const result = await msg.delivery;
       expect(result, '只有上传超时：结构化地标为结果未知').toMatchObject({ ok: false, unconfirmed: true });
-      expect(result?.ok === false && result.error).toBe(
-        '已发出但没等到确认，结果未知，可能已经送达，不要重发：文件 a.html',
-      );
+      expect(reasonOf(result)).toBe('已发出但没等到确认，结果未知，可能已经送达，不要重发：文件 a.html');
       await until(() => t.failureNotes().length > 0);
       const note = String(t.failureNotes()[0].message.content);
       expect(note).toContain('可能已经送达');
@@ -656,9 +665,7 @@ describe('onebot 出站：文件附件', () => {
       await vi.advanceTimersByTimeAsync(30_000);
       const result = await msg.delivery;
       expect(result).toMatchObject({ ok: false, unconfirmed: true });
-      expect(result?.ok === false && result.error).toContain(
-        '已发出但没等到确认，结果未知，可能已经送达，不要重发：文件 a.html',
-      );
+      expect(reasonOf(result)).toContain('已发出但没等到确认，结果未知，可能已经送达，不要重发：文件 a.html');
     } finally {
       vi.useRealTimers();
     }
@@ -753,14 +760,16 @@ describe('onebot 出站：发送不重试，停在没发成的那一条', () => 
     const result = await msg.delivery;
     expect(textSends(t), '第三条不再发').toHaveLength(2);
     expect(result).toMatchObject({ ok: false, sentPieces: 1 });
-    const error = result?.ok === false ? String(result.error) : '';
-    expect(error).toContain('fake send failure');
+    expect(reasonOf(result)).toContain('fake send failure');
     await until(() => t.failureNotes().length > 0);
     const [note] = t.failureNotes();
     expect(note.message.content).toContain('前 1 条已经发出，从第 2 条起没有送达');
     expect(note.message.content).not.toContain('未能送达对方');
     expect(note.message.content).not.toContain('稍后重发');
-    expect(note.message.metadata).toMatchObject({ [WellKnownMetadataKeys.SentPieces]: 1, error });
+    expect(note.message.metadata).toMatchObject({
+      [WellKnownMetadataKeys.SentPieces]: 1,
+      error: result?.ok === false && result.error,
+    });
   });
 
   it('正文分两条、第一条没等到回执：第二条不发，投递结果标结果未知，时间线与刷新后的历史都写「可能已经发出」', async () => {
@@ -812,8 +821,11 @@ describe('onebot 出站：发送不重试，停在没发成的那一条', () => 
       const result = await msg.delivery;
       expect(textSends(t), '第三条不再发').toHaveLength(2);
       expect(result).toMatchObject({ ok: false, sentPieces: 1, unconfirmed: true });
-      expect(result?.ok === false && result.error).toBe(
+      expect(reasonOf(result)).toBe(
         '从第 3 条起没发出；已发出但没等到确认，结果未知，可能已经送达，不要重发：消息（第 2 条）',
+      );
+      expect(result?.ok === false && renderIn(result.error, 'en')).toBe(
+        'Not sent from message 3 onward; Sent but not confirmed (the result is unknown and it may already have been delivered, so do not resend): message 2',
       );
       const { live, history } = await undeliveredReasons(t, msg);
       expect(live).toMatch(/^只发出了前 1 条：/);
@@ -1122,7 +1134,7 @@ describe('onebot 出站：她回复里的媒体标记', () => {
     await t.dispatch(message);
     expect(message.content, '派发前的转换不动这个标记').toBe(content);
     expect(message.attachments ?? []).toEqual([]);
-    expect(await message.delivery).toMatchObject({ ok: false, error: expect.stringContaining('不是网址') });
+    expect(reasonOf(await message.delivery)).toContain('不是网址');
     await t.flush(sessionId);
     expect(segmentsOf(t.sent(), sendAction(sessionId)).filter(s => s.type !== 'text')).toEqual([]);
     expect(JSON.stringify(t.actions)).not.toContain(url);
@@ -1139,7 +1151,7 @@ describe('onebot 出站：她回复里的媒体标记', () => {
     await t.dispatchInTurn(message, { content: '<占位>', sessionId, platform: 'onebot', userId: '30001' });
     expect(message.content).toBe(content);
     expect(message.attachments ?? []).toEqual([]);
-    expect(await message.delivery).toMatchObject({ ok: false, error: expect.stringContaining('不是网址') });
+    expect(reasonOf(await message.delivery)).toContain('不是网址');
     await t.flush(sessionId);
     expect(JSON.stringify(t.actions)).not.toContain(CONFIG.toString('base64'));
     expect([...t.files.keys()]).toEqual([uri]);
@@ -1205,7 +1217,7 @@ describe('onebot 出站：她回复里的媒体标记', () => {
     };
     await t.dispatch(message);
     expect(message.content).toBe(`一二<image url="${OTHER}"/>三`);
-    expect(await message.delivery).toMatchObject({ ok: false, error: expect.stringContaining('不是网址') });
+    expect(reasonOf(await message.delivery)).toContain('不是网址');
     await t.flush();
     const images = segmentsOf(t.sent(), 'send_group_msg').filter(s => s.type === 'image');
     expect(images.map(s => decode(s.data.file))).toEqual([PNG]);
@@ -1290,7 +1302,7 @@ describe('onebot 出站：她回复里的媒体标记', () => {
     };
     await t.dispatch(message);
     expect(message.content).toBe(`一<image url="${url}"/>二`);
-    expect(await message.delivery).toMatchObject({ ok: false, error: expect.stringContaining('不是网址') });
+    expect(reasonOf(await message.delivery)).toContain('不是网址');
     await t.flush();
     const images = segmentsOf(t.sent(), 'send_group_msg').filter(s => s.type !== 'text');
     expect(images.map(s => decode(s.data.file))).toEqual([PNG]);
@@ -1329,7 +1341,7 @@ describe('onebot 出站：她回复里的媒体标记', () => {
     };
     await t.dispatchInTurn(message, { content: '<占位>', sessionId: PRIVATE, platform: 'onebot', userId: '30001' });
     expect(message.content).toBe(`一<image url="${other}"/>二`);
-    expect(await message.delivery).toMatchObject({ ok: false, error: expect.stringContaining('不是网址') });
+    expect(reasonOf(await message.delivery)).toContain('不是网址');
     await t.flush(PRIVATE);
     const images = segmentsOf(t.sent(), 'send_private_msg').filter(s => s.type === 'image');
     expect(images.map(s => decode(s.data.file))).toEqual([JPEG]);
@@ -1349,7 +1361,7 @@ describe('onebot 出站：她回复里的媒体标记', () => {
     const message: OutgoingMessage = { sessionId: PRIVATE, source: 'agent', markup: true, content };
     await t.dispatch(message);
     expect(message.content).toBe(content);
-    expect(await message.delivery).toMatchObject({ ok: false, error: expect.stringContaining('不是网址') });
+    expect(reasonOf(await message.delivery)).toContain('不是网址');
     await t.flush(PRIVATE);
     expect(segmentsOf(t.sent(), 'send_private_msg').filter(s => s.type !== 'text')).toEqual([]);
     expect(textOf(t.sent(), PRIVATE)).toEqual(['一', '二', '哨兵']);
@@ -1550,19 +1562,53 @@ describe('onebot 出站：安全', () => {
     expect(t.warns.filter(w => w.includes('文件头')).length).toBe(3);
   });
 
-  it('agent 发出的非媒体附件拒发之后留投递失败记录，不当作已发出', async () => {
+  it('agent 发出的非媒体附件与指向没登记的存储根的附件都拒发：留投递失败记录，不当作已发出；原因是文字对象，时间线按读者的语言写出两条，给模型的是原文，都不带 Error: 前缀', async () => {
     const t = await boot({ files: { 'aalis:/aalis.config.yaml': CONFIG } });
-    await t.send({
+    const message: OutgoingMessage = {
       sessionId: GROUP,
       content: '',
-      attachments: [{ kind: 'image', data: 'aalis:/aalis.config.yaml' }],
+      attachments: [
+        { kind: 'image', data: 'aalis:/aalis.config.yaml' },
+        { kind: 'file', data: 'zz:/a.html', name: 'a.html' },
+      ],
       source: 'agent',
-    });
+    };
+    await t.send(message);
     await until(() => t.failureNotes().length > 0);
     await t.flush();
     expect(JSON.stringify(t.actions)).not.toContain(CONFIG.toString('base64'));
     expect(t.sent().some(a => a.action.startsWith('upload_'))).toBe(false);
     expect(t.failureNotes().map(n => n.sessionId)).toEqual([GROUP]);
+    expect(isTextRef(t.failureNotes()[0].message.metadata?.[WellKnownMetadataKeys.DeliveryError])).toBe(true);
+    const result = await message.delivery;
+    if (result?.ok !== false) throw new Error('应当投递失败');
+    const shown = notAccepted(result.error, result);
+    expect([renderIn(shown, 'en'), renderIn(shown, 'zh-CN'), toSource(result.error)]).toEqual([
+      'Not sent: the platform did not accept it (The content is not a sendable image format (the file header does not match), so it was not sent; Unknown storage root: zz (registered roots: data, aalis))',
+      '没有发出：平台没收下（内容不是可发送的 image 格式（文件头不符），已拒发; 未知存储根: zz（已注册根: data, aalis））',
+      '内容不是可发送的 image 格式（文件头不符），已拒发; 未知存储根: zz（已注册根: data, aalis）',
+    ]);
+  });
+
+  it('拒发的附件多到超过渲染的嵌套上限（40 件）：各条原因照样按读者的语言以「; 」相连', async () => {
+    const t = await boot();
+    const message: OutgoingMessage = {
+      sessionId: GROUP,
+      content: '',
+      attachments: Array.from({ length: 40 }, (_, i) => ({
+        kind: 'file' as const,
+        data: `zz:/${i}.html`,
+        name: `${i}.html`,
+      })),
+      source: 'agent',
+    };
+    await t.send(message);
+    const result = await message.delivery;
+    if (result?.ok !== false) throw new Error('应当投递失败');
+    expect([renderIn(result.error, 'en'), toSource(result.error)]).toEqual([
+      Array(40).fill('Unknown storage root: zz (registered roots: data, aalis)').join('; '),
+      Array(40).fill('未知存储根: zz（已注册根: data, aalis）').join('; '),
+    ]);
   });
 
   it('超过内联上限的 storage 文件退回宿主路径之前也核对文件头：不是对应格式的不发，真的图片照旧交宿主路径', async () => {

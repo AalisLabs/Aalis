@@ -10,13 +10,14 @@ import { App, type Logger, provide, services } from '../../packages/core/src/ind
 import { createForwardExpander, type ForwardConfig } from '../../packages/plugin-adapter-onebot/src/forward-expand.js';
 import onebot from '../../packages/plugin-adapter-onebot/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
+import { renderIn } from '../fixtures/host-language.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { fixedRef } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 合并转发原文（持久化命名空间 onebot:forward 与进程内缓存）是聊天内容，归入 context：
 // 全局清理且类型为空或含 context 时清掉。条目没有会话维度，会话级清理不动它（靠 7 天回收）。
-// 多实例共用同一命名空间、各有一份内存缓存：每个实例都清，回显合并成一条。
+// 多实例共用同一命名空间、各有一份内存缓存：每个实例都清，回显合并成一条。回显是文字对象，按读者的语言显示。
 // ════════════════════════════════════════════════════════════
 
 const NS = 'onebot:forward';
@@ -53,8 +54,8 @@ async function inMemory(): Promise<{ app: App; mem: MemoryService }> {
   return { app, mem };
 }
 
-async function seed(mem: MemoryService): Promise<void> {
-  for (const id of ['F1', 'F2']) await mem.saveMetadata(NS, id, entry(id));
+async function seed(mem: MemoryService, ids = ['F1', 'F2']): Promise<void> {
+  for (const id of ids) await mem.saveMetadata(NS, id, entry(id));
   await mem.saveMetadata('user:profile', 'onebot:u1', { facts: [] });
 }
 
@@ -96,11 +97,14 @@ describe('plugin-adapter-onebot: 参与 memory:clear', () => {
     await app.plugin(onebot, { connections: [] }, `${onebot.name}:b`);
     await app.plugins.idle();
     for (const id of [onebot.name, `${onebot.name}:b`]) expect(app.plugins.getPlugin(id)?.state, id).toBe('active');
-    async function clear(scope: 'session' | 'all', types?: string[]) {
-      await seed(mem);
+    /** 先存入 ids 这几条转发原文再清；回显按 language 渲染 */
+    async function clear(scope: 'session' | 'all', types?: string[], { ids = ['F1', 'F2'], language = 'zh-CN' } = {}) {
+      await seed(mem, ids);
       const data: HookContextMap['memory:clear'] = { scope, types, sessionId: 'onebot:1:group:2', results: [] };
       await host.hooks.use.run('memory:clear', data, async () => {});
-      return data.results.filter(r => r.source === 'onebot-forward');
+      return data.results
+        .filter(r => r.source === 'onebot-forward')
+        .map(r => ({ ...r, message: renderIn(r.message, language) }));
     }
     return { mem, clear };
   }
@@ -135,6 +139,21 @@ describe('plugin-adapter-onebot: 参与 memory:clear', () => {
     vi.spyOn(mem, 'commitMetadata').mockRejectedValue(new Error('后端故障'));
     expect(await clear('all')).toEqual([
       { source: 'onebot-forward', success: false, message: '合并转发原文清空失败: 后端故障' },
+    ]);
+  });
+
+  it('回显按读者的语言：清空 1 条、2 条与清空失败', async () => {
+    const { mem, clear } = await world();
+    const lines: unknown[] = [];
+    for (const ids of [['F1'], ['F1', 'F2']]) {
+      lines.push(...(await clear('all', undefined, { ids, language: 'en' })).map(r => r.message));
+    }
+    vi.spyOn(mem, 'commitMetadata').mockRejectedValue(new Error('后端故障'));
+    lines.push(...(await clear('all', undefined, { language: 'en' })).map(r => r.message));
+    expect(lines).toEqual([
+      'Cleared the original text of merged forwards (1 entry)',
+      'Cleared the original text of merged forwards (2 entries)',
+      'Failed to clear the original text of merged forwards: 后端故障',
     ]);
   });
 
