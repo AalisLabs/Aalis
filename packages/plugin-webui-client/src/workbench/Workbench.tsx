@@ -107,7 +107,7 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
   const sessions = useProvider(SESSION_PROTOCOL);
   const live = useLiveSession(sessionId);
   const settings = useSettingRows(
-    useMemo(() => (features.settings ? { sessionId } : undefined), [features, sessionId]),
+    useMemo(() => (features.settings ? { sessionId } : undefined), [features.settings, sessionId]),
   );
   const composer = useRef<ComposerHandle>(null);
   const fold = useFold();
