@@ -7,8 +7,8 @@
 // 限定了群窗口的覆盖根会话是这个窗口的（连同它的子会话）、不是只有 owner 能批的；IM 私聊只覆盖只有 owner 能批的、这一轮的
 // 参与者里有它、审批所在会话的根会话经这个机器人账号的。最近一次活动在 10 分钟内、或推给它的卡还没结的算在场；上报离开时推给
 // 它、还没结的卡对它算没收到，变为在场时补推。发起时没人在场直接拒绝。同一会话的审批排队，一次只推出一张卡，等待从推出那一刻
-// 算起；频率上限按根会话连同它的子会话合计。子会话里的审批对象带来源链（根会话以下的各级子会话）。等满 300 秒、覆盖它的在场
-// 客户端都离开且 30 秒内没有回来、回合结束或中止、服务停止时结算。
+// 算起；频率上限按根会话连同它的子会话合计，只有 owner 能批的与参与者审批各算各的。子会话里的审批对象带来源链（根会话以下的
+// 各级子会话）。等满 300 秒、覆盖它的在场客户端都离开且 30 秒内没有回来、回合结束或中止、服务停止时结算。
 // 应答先答先得：已结算的一律回已结算；还在等的，id 由本服务签发、归这个接入覆盖（否则不认识），应答人能批这一张，内容哈希一致。
 // 请求与决定成对追加到家目录的 state/audit/approvals.jsonl，不进模型上下文；每个结算另记一行 info 日志（会话、工具、结局、原因）。
 // ════════════════════════════════════════════════════════════
@@ -51,7 +51,7 @@ const PRESENCE_WINDOW_MS = 10 * 60_000;
  * 桌面上切一下标签页，都会让连接挂起或页面转为不可见，回来时重连、重报在场，卡片照常等着。不延长总的等待时限
  */
 const ABSENCE_GRACE_MS = 30_000;
-/** 频率上限：同一会话树（根会话连同各级子会话）在 RATE_WINDOW_MS 内最多 RATE_LIMIT 张卡 */
+/** 频率上限：同一会话树（根会话连同各级子会话）的同一种审批在 RATE_WINDOW_MS 内最多 RATE_LIMIT 张卡 */
 const RATE_WINDOW_MS = 10 * 60_000;
 const RATE_LIMIT = 10;
 /** 记住最近结算的这么多个 id：后到的应答回 approval-settled，更早的按不认识的 id 处理 */
@@ -176,7 +176,7 @@ export function createApprovals(deps: ApprovalDeps) {
   const surfaces = new Set<SurfaceRecord>();
   /** 每个会话的审批队列：队首推出了就有 approval，其余排着 */
   const queues = new Map<string, Pending[]>();
-  /** 每个会话树（按根会话 id）最近排进队的时刻，算频率上限：发起时就结算的不算，排着没推出就结算的退还 */
+  /** 每份频率额度（见 rateKey）最近排进队的时刻：发起时就结算的不算，排着没推出就结算的退还 */
   const cards = new Map<string, number[]>();
   /** 最近结算的审批 id */
   const settledIds = createBoundedMap<string, true>({ max: SETTLED_MEMORY });
@@ -380,8 +380,11 @@ export function createApprovals(deps: ApprovalDeps) {
     recheck();
   }
 
-  /** 频率额度记在哪：所在会话的根会话，根会话不在会话表里时退回会话自己 */
-  const rateKey = (pending: Pending) => pending.root?.id ?? pending.req.sessionId;
+  /**
+   * 频率额度记在哪：所在会话的根会话（根会话不在会话表里时退回会话自己），只有 owner 能批的与参与者审批各一份：群里别人的
+   * 参与者审批用满了，owner 在这里要她确认的照常推出
+   */
+  const rateKey = ({ root, req }: Pending) => `${req.ownerOnly ? 'owner' : 'participant'}:${root?.id ?? req.sessionId}`;
   const recentCards = (key: string, at: number) => (cards.get(key) ?? []).filter(t => at - t < RATE_WINDOW_MS);
 
   /** 发起时就结算的：服务已停、回合已中止、发起者不能产生审批、没人在场、超过频率上限 */

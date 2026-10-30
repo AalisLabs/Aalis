@@ -745,6 +745,25 @@ describe('排队与频率上限', () => {
     await flush();
     expect(pushed(c)).toHaveLength(12);
   });
+
+  it('参与者审批与只有 owner 能批的各占一份额度：参与者审批用满 10 张，第 11 张参与者审批拒，只有 owner 能批的照常推出', async () => {
+    const { mine, connect, request, flush } = await setup();
+    const c = await connect();
+    const participant = { origin: { kind: 'hand' as const, participants: [OWNER, MEMBER] }, ownerOnly: false };
+    for (let i = 0; i < 10; i++) {
+      request(mine, participant);
+      await flush();
+      await approve(c, pushed(c)[i]);
+      await flush();
+    }
+    const over = request(mine, participant);
+    await flush();
+    expect(over.outcome).toMatchObject({ approved: false, source: 'rate-limit' });
+    const owner = request(mine);
+    await flush();
+    expect(owner.outcome).toBeUndefined();
+    expect(pushed(c)).toHaveLength(11);
+  });
 });
 
 describe('子会话里的审批：按会话树', () => {
