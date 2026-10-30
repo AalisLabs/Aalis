@@ -8,7 +8,8 @@
 //
 // 由于 NapCat / go-cqhttp 经常跑在 Docker / 远端机器，file:// 不一定可达。
 // 默认策略：把 storage URI / data:/http 都转成 base64:// 让数据走 WS 隧道，
-// 最稳。超过 MAX_INLINE_BYTES 的附件回退到原始 URL/file:// + warn。
+// 最稳。超过 MAX_INLINE_BYTES 的 storage 文件回退到 file:// + warn；超过的网址拒发，不交给 daemon 去拉
+// （它再拉一次不经 SSRF 判定）。
 //
 // image、audio、video 按文件头分流（格式签名见 @aalis/util-file-signature）：NapCat 能内联的格式走消息段；
 // 认得出、但不能内联的媒体（如 BMP、HEIC 图片，MKV、AVI 视频）改经文件上传；不是媒体的拒发——发送工具在 owner
@@ -35,7 +36,7 @@ import { readBodyCapped } from './attachment-cache.js';
 import { t } from './texts.js';
 import type { OutgoingPiece, ParsedSegment } from './types.js';
 
-/** base64 内联上限（10 MiB）。超过则降级为 URL/file:// 并记 warn。 */
+/** base64 内联上限（10 MiB）。超过的 storage 文件降级为 file:// 并记 warn，超过的网址拒发。 */
 const MAX_INLINE_BYTES = 10 * 1024 * 1024;
 
 /**
@@ -71,7 +72,7 @@ async function readHead(storage: StorageService, uri: string): Promise<Buffer> {
 
 /**
  * 物化结果：`file` 是消息段或上传接口的 file 字段；`uploadExt` 有值时这个媒介附件改经文件上传，值是扩展名。
- * 超限的 http 链接与原样透传的 file:// 不读内容，没有这个字段。
+ * 原样透传的 file:// 不读内容，没有这个字段。
  */
 interface OneBotFile {
   file: string;
@@ -115,10 +116,7 @@ async function attachmentToOneBotFile(
     if (!res.ok) throw new Error(`download failed (${res.status}): ${data}`);
     // 流式限额读取：不先全量 arrayBuffer 再判大小（避免无 Content-Length 时撑爆内存，与入站对称）。
     const capped = await readBodyCapped(res, MAX_INLINE_BYTES);
-    if (!capped) {
-      logger?.warn?.('OneBot 远程附件超过内联上限，回退到 URL（依赖 daemon 直拉）');
-      return { file: data };
-    }
+    if (!capped) throw new TextError(t('tooLargeToInline'));
     return fromBytes(capped);
   }
 
@@ -162,7 +160,7 @@ const LABELS: Record<MessageAttachment['kind'], string> = { image: '图片', aud
 /** 出站附件的物化结果 */
 interface OneBotOutgoingAttachments {
   /**
-   * 能走消息段的媒介附件物化出的段（地址是 `base64://…`，超过内联上限的是原网址或宿主路径），不拼成标记再解析：
+   * 能走消息段的媒介附件物化出的段（地址是 `base64://…`，超过内联上限的 storage 文件是宿主路径），不拼成标记再解析：
    * 附件自带的地址原样留在一个段里，拆不出别的段
    */
   segments: ParsedSegment[];
@@ -177,9 +175,10 @@ interface OneBotOutgoingAttachments {
 /**
  * 把出站附件分成消息段与上传文件：
  * - image / audio / video：按文件头分流。能内联的物化为 base64://（走 WS 隧道，Docker 部署最稳）的消息段，超过内联
- *   上限的退回 URL 或 file:// 宿主路径，daemon 读不到时发不出；认得出但不能内联的改经文件上传；不是媒体的拒发
- * - file 与改走上传的媒体经群文件、私聊文件上传，内容只收 `base64://`：超过内联上限的文件、原样返回的超限
- *   http 链接与透传的 `file://` 路径，容器里的 NapCat 都读不到，一律拒发。`name` 是群文件里显示的文件名，
+ *   上限的 storage 文件退回 file:// 宿主路径，daemon 读不到时发不出，超过内联上限的网址拒发；认得出但不能内联的改经文件
+ *   上传；不是媒体的拒发
+ * - file 与改走上传的媒体经群文件、私聊文件上传，内容只收 `base64://`：超过内联上限的文件与透传的 `file://` 路径，
+ *   容器里的 NapCat 都读不到，一律拒发。`name` 是群文件里显示的文件名，
  *   去掉路径分隔符；缺省时 file 附件叫 `file`，改走上传的媒体按类型与格式命名（如 `image.bmp`）
  * - 没发出去的附件 warn 后跳过，原因收进 `errors`
  */
@@ -237,7 +236,6 @@ export async function inlineMarkupMedia(
       if (!url || !/^https?:$/.test(url.protocol)) throw new TextError(t('notUrl'));
       const { file, uploadExt } = await attachmentToOneBotFile({ kind: type, data: url.href }, storage, logger);
       if (uploadExt !== undefined) throw new TextError(t('cannotInline', { format: uploadExt }));
-      if (!file.startsWith('base64://')) throw new TextError(t('tooLargeToInline'));
       return { type, data: { url: file } };
     } catch (err) {
       logger?.warn?.(`OneBot 正文里的${LABELS[type]}标记未发出: ${err instanceof Error ? err.message : err}`);
