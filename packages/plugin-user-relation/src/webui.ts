@@ -9,78 +9,107 @@
 
 import type { BoundWebui, GraphData, InfoItem, TableRow } from '@aalis/api-webui';
 import type { Logger } from '@aalis/core';
+import { TextError, type TextRef } from '@aalis/schema-i18n';
 import type { RelationService } from './service.js';
-import type { EntityNode, EventNode, PersonNode, RelationEdge } from './types.js';
+import { t } from './texts.js';
+import type { EntityKind, EntityNode, EventCategory, EventNode, PersonNode, RelationEdge } from './types.js';
 import { edgeEndpoints } from './utils.js';
 
-/** 关系类型 → 中文显示（不影响存储里的英文 key） */
-const RELATION_LABEL_ZH: Record<string, string> = {
+/** 关系名：存储里的英文键 → 字典里的显示名；推荐词表之外自创的关系原样显示 */
+const RELATION_NAMES: Record<string, string | TextRef> = {
   // person-event role
-  initiator: '发起者',
-  participant: '参与者',
-  witness: '旁观者',
-  target: '被指向',
-  reporter: '转述者',
+  initiator: t('relationInitiator'),
+  participant: t('relationParticipant'),
+  witness: t('relationWitness'),
+  target: t('relationTarget'),
+  reporter: t('relationReporter'),
   // person-entity role
-  enthusiast: '爱好者',
-  owner: '拥有者',
-  creator: '创作者',
-  critic: '批评者',
-  visitor: '访客',
-  mentioned: '仅提及',
+  enthusiast: t('relationEnthusiast'),
+  owner: t('relationOwner'),
+  creator: t('relationCreator'),
+  critic: t('relationCritic'),
+  visitor: t('relationVisitor'),
+  mentioned: t('relationMentioned'),
   // person-person relation
-  friend: '朋友',
+  friend: t('relationFriend'),
   cp: 'CP',
-  rival: '对手',
-  mentor: '师徒',
-  colleague: '同事',
-  familiar: '熟人',
-  antagonist: '对头',
-  admirer: '仰慕者',
+  rival: t('relationRival'),
+  mentor: t('relationMentor'),
+  colleague: t('relationColleague'),
+  familiar: t('relationFamiliar'),
+  antagonist: t('relationAntagonist'),
+  admirer: t('relationAdmirer'),
   // event-event relation
-  'caused-by': '因→果',
-  follows: '随后',
-  'part-of': '属于',
-  related: '相关',
+  'caused-by': t('relationCausedBy'),
+  follows: t('relationFollows'),
+  'part-of': t('relationPartOf'),
+  related: t('relationRelated'),
   // event-entity relation
-  about: '关于',
-  uses: '使用',
-  'located-at': '位于',
-  produced: '产出',
+  about: t('relationAbout'),
+  uses: t('relationUses'),
+  'located-at': t('relationLocatedAt'),
+  produced: t('relationProduced'),
   // entity-entity relation
-  contains: '包含',
-  'variant-of': '变体',
-  opposite: '对立',
+  contains: t('relationContains'),
+  'variant-of': t('relationVariantOf'),
+  opposite: t('relationOpposite'),
 };
 
-const labelZh = (raw: string) => RELATION_LABEL_ZH[raw] ?? raw;
+/** 落盘值的显示名：表里有的取字典里的名字，表里没有的（第一方之外写进的值、词表之外的关系词）原样显示 */
+export const nameIn = (names: Readonly<Record<string, string | TextRef>>, value: string): string | TextRef =>
+  Object.hasOwn(names, value) ? names[value] : value;
 
 /** 边上的关系：人物对事件、实体是角色，其余是关系类型 */
 const edgeLabel = (edge: RelationEdge) =>
-  labelZh(edge.kind === 'person-event' || edge.kind === 'person-entity' ? edge.role : edge.relationType);
+  nameIn(RELATION_NAMES, edge.kind === 'person-event' || edge.kind === 'person-entity' ? edge.role : edge.relationType);
 
-function previewEvidence(item: RelationEdge | EventNode | EntityNode): string {
+/** 实体类型的显示名（存储里的值照旧）；/relation orphans 同用 */
+export const ENTITY_KIND_NAMES: Record<EntityKind, TextRef> = {
+  topic: t('entityTopic'),
+  place: t('entityPlace'),
+  thing: t('entityThing'),
+  work: t('entityWork'),
+};
+
+/** 事件类别的显示名（存储里的值照旧） */
+const EVENT_CATEGORY_NAMES: Record<EventCategory, TextRef> = {
+  discussion: t('categoryDiscussion'),
+  conflict: t('categoryConflict'),
+  collaboration: t('categoryCollaboration'),
+  incident: t('categoryIncident'),
+  milestone: t('categoryMilestone'),
+  other: t('categoryOther'),
+};
+
+function previewEvidence(item: RelationEdge | EventNode | EntityNode): string | TextRef {
   if (item.evidence.length === 0) return '';
   const recent = [...item.evidence].sort((a, b) => b.extractedAt - a.extractedAt)[0];
-  return recent.quote ?? `${recent.messageIds.length} 条证据`;
+  return recent.quote ?? t('evidenceCount', { count: recent.messageIds.length });
 }
 
 const truncate = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text);
 const personLabel = (person: PersonNode) => person.displayName?.trim() || person.userId;
 
 const NODE_KINDS = [
-  { kind: 'person', label: '人物', tone: 1 },
-  { kind: 'event', label: '事件', tone: 2 },
-  { kind: 'entity', label: '实体', tone: 3 },
+  { kind: 'person', label: t('persons'), tone: 1 },
+  { kind: 'event', label: t('events'), tone: 2 },
+  { kind: 'entity', label: t('entities'), tone: 3 },
 ] as const;
 const EDGE_KINDS = [
-  { kind: 'person-person', label: '人物之间', tone: 1 },
-  { kind: 'person-event', label: '人物与事件', tone: 2 },
-  { kind: 'person-entity', label: '人物与实体', tone: 3 },
-  { kind: 'event-event', label: '事件之间', tone: 4 },
-  { kind: 'event-entity', label: '事件与实体', tone: 5 },
-  { kind: 'entity-entity', label: '实体之间', tone: 6 },
+  { kind: 'person-person', label: t('personPerson'), tone: 1 },
+  { kind: 'person-event', label: t('personEvent'), tone: 2 },
+  { kind: 'person-entity', label: t('personEntity'), tone: 3 },
+  { kind: 'event-event', label: t('eventEvent'), tone: 4 },
+  { kind: 'event-entity', label: t('eventEntity'), tone: 5 },
+  { kind: 'entity-entity', label: t('entityEntity'), tone: 6 },
 ] as const;
+
+/** 删除动作核对的种类：扑空时的报错 */
+const NO_SUCH: Record<'person' | 'event' | 'entity', TextRef> = {
+  person: t('noSuchPerson'),
+  event: t('noSuchEvent'),
+  entity: t('noSuchEntity'),
+};
 
 /** 关系图页与原始数据页；spacing 是关系图布局的理想边长（像素） */
 export function registerRelationPages(webui: BoundWebui, service: RelationService, logger: Logger, spacing: number) {
@@ -114,7 +143,7 @@ export function registerRelationPages(webui: BoundWebui, service: RelationServic
     const snap = await service.loadAll();
     const node =
       snap.persons.find(p => p.id === id) ?? snap.events.find(e => e.id === id) ?? snap.entities.find(e => e.id === id);
-    if (!node) throw new Error(`关系图里没有节点 ${id}`);
+    if (!node) throw new TextError(t('noNode', { id }));
     const labels = new Map<string, string>([
       ...snap.persons.map(p => [p.id, personLabel(p)] as const),
       ...snap.events.map(e => [e.id, e.title] as const),
@@ -126,48 +155,48 @@ export function registerRelationPages(webui: BoundWebui, service: RelationServic
   function nodeInfo(node: PersonNode | EventNode | EntityNode): InfoItem[] {
     if ('userId' in node) {
       return [
-        { label: '种类', value: '人物' },
-        { label: '显示名', value: node.displayName ?? '' },
-        { label: '平台', value: node.platform },
-        { label: '用户 ID', value: node.userId, kind: 'code' },
-        { label: '首次出现', value: node.firstSeenAt, kind: 'time' },
-        { label: '最近活跃', value: node.lastSeenAt, kind: 'time' },
-        { label: '被提及次数', value: node.mentionCount },
+        { label: t('infoKind'), value: t('person') },
+        { label: t('columnDisplayName'), value: node.displayName ?? '' },
+        { label: t('columnPlatform'), value: node.platform },
+        { label: t('columnUserId'), value: node.userId, kind: 'code' },
+        { label: t('columnFirstSeen'), value: node.firstSeenAt, kind: 'time' },
+        { label: t('columnLastSeen'), value: node.lastSeenAt, kind: 'time' },
+        { label: t('infoMentions'), value: node.mentionCount },
       ];
     }
     const common: InfoItem[] = [
-      { label: '摘要', value: node.summary ?? '', kind: 'long-text' },
-      { label: '证据数', value: node.evidence.length },
-      { label: '最近强化', value: node.lastReinforcedAt, kind: 'time' },
+      { label: t('columnSummary'), value: node.summary ?? '', kind: 'long-text' },
+      { label: t('columnEvidenceCount'), value: node.evidence.length },
+      { label: t('columnLastReinforced'), value: node.lastReinforcedAt, kind: 'time' },
     ];
     if ('title' in node) {
       return [
-        { label: '种类', value: '事件' },
-        { label: '标题', value: node.title },
-        { label: '类别', value: node.category ?? '' },
-        { label: '会话', value: node.sessionScope },
+        { label: t('infoKind'), value: t('event') },
+        { label: t('columnTitle'), value: node.title },
+        { label: t('columnCategory'), value: node.category ? nameIn(EVENT_CATEGORY_NAMES, node.category) : '' },
+        { label: t('columnSession'), value: node.sessionScope },
         ...common,
       ];
     }
     return [
-      { label: '种类', value: '实体' },
-      { label: '名称', value: node.name },
-      { label: '类型', value: node.entityKind },
-      { label: '别名', value: (node.aliases ?? []).join('、') },
+      { label: t('infoKind'), value: t('entity') },
+      { label: t('columnName'), value: node.name },
+      { label: t('columnType'), value: nameIn(ENTITY_KIND_NAMES, node.entityKind) },
+      { label: t('columnAliases'), value: t('aliasList', { aliases: node.aliases ?? [] }) },
       ...common,
     ];
   }
 
   const graphPage = webui.definePage({
     key: 'user-relation',
-    title: '人物关系图',
+    title: t('displayName'),
     icon: 'share-2',
     content: [
       {
         type: 'graph',
         id: 'graph',
-        description: '点一个节点看它的属性与关系；原始数据与删除在「关系图原始数据」页。',
-        empty: '关系图还是空的',
+        description: t('graphDescription'),
+        empty: t('graphEmpty'),
         nodeKinds: [...NODE_KINDS],
         edgeKinds: [...EDGE_KINDS],
         spacing,
@@ -177,15 +206,15 @@ export function registerRelationPages(webui: BoundWebui, service: RelationServic
           {
             type: 'table',
             id: 'relations',
-            label: '关系',
+            label: t('relations'),
             rowKey: 'id',
-            empty: '没有连着它的关系',
+            empty: t('relationsEmpty'),
             columns: [
-              { key: 'other', label: '对端', primary: true },
-              { key: 'relation', label: '关系', primary: true },
-              { key: 'weight', label: '权重' },
-              { key: 'lastReinforcedAt', label: '最近强化', kind: 'time' },
-              { key: 'evidence', label: '最新证据', kind: 'long-text' },
+              { key: 'other', label: t('columnOther'), primary: true },
+              { key: 'relation', label: t('columnRelation'), primary: true },
+              { key: 'weight', label: t('columnWeight') },
+              { key: 'lastReinforcedAt', label: t('columnLastReinforced'), kind: 'time' },
+              { key: 'evidence', label: t('columnLatestEvidence'), kind: 'long-text' },
             ],
             async data({ rowKey }) {
               const { labels, edges } = await nodeDetail(rowKey);
@@ -211,23 +240,23 @@ export function registerRelationPages(webui: BoundWebui, service: RelationServic
   /** 删除前先核节点在且种类对：删除本身对不存在的节点什么也不做，不核就会把扑空当成成功 */
   async function removeNode(id: string, kind: 'person' | 'event' | 'entity', remove: () => Promise<unknown>) {
     const found = await service.findNodeById(id);
-    if (found?.kind !== kind) throw new Error(`没有这个${{ person: '人物', event: '事件', entity: '实体' }[kind]}`);
+    if (found?.kind !== kind) throw new TextError(NO_SUCH[kind]);
     await remove();
     rawPage.invalidate();
     graphPage.invalidate();
-    return `已删除 ${found.name} 及其相关的边`;
+    return t('nodeRemoved', { name: found.name });
   }
 
   const byRecent = <T extends { lastReinforcedAt: number }>(a: T, b: T) => b.lastReinforcedAt - a.lastReinforcedAt;
   const rawPage = webui.definePage({
     key: 'user-relation-raw',
-    title: '关系图原始数据',
+    title: t('rawTitle'),
     icon: 'table',
     actions: {
       deletePerson: {
-        label: '删除',
+        label: t('deleteLabel'),
         effect: 'destructive',
-        confirm: '删除这个人物及其所有相关的边？',
+        confirm: t('deletePersonConfirm'),
         row: true,
         handler({ rowKey }) {
           const sep = rowKey.indexOf(':');
@@ -235,16 +264,16 @@ export function registerRelationPages(webui: BoundWebui, service: RelationServic
         },
       },
       deleteEvent: {
-        label: '删除',
+        label: t('deleteLabel'),
         effect: 'destructive',
-        confirm: '删除这个事件及其所有相关的边？',
+        confirm: t('deleteEventConfirm'),
         row: true,
         handler: ({ rowKey }) => removeNode(rowKey, 'event', () => service.deleteEvent(rowKey)),
       },
       deleteEntity: {
-        label: '删除',
+        label: t('deleteLabel'),
         effect: 'destructive',
-        confirm: '删除这个实体及其所有相关的边？',
+        confirm: t('deleteEntityConfirm'),
         row: true,
         handler: ({ rowKey }) => removeNode(rowKey, 'entity', () => service.deleteEntity(rowKey)),
       },
@@ -253,19 +282,19 @@ export function registerRelationPages(webui: BoundWebui, service: RelationServic
       tabs: [
         {
           key: 'persons',
-          title: '人物',
+          title: t('persons'),
           content: [
             {
               type: 'table',
               id: 'persons',
               rowKey: 'id',
-              empty: '还没有人物',
+              empty: t('personsEmpty'),
               columns: [
-                { key: 'displayName', label: '显示名', primary: true },
-                { key: 'platform', label: '平台' },
-                { key: 'userId', label: '用户 ID', kind: 'code' },
-                { key: 'firstSeenAt', label: '首次出现', kind: 'time' },
-                { key: 'lastSeenAt', label: '最近活跃', kind: 'time', primary: true },
+                { key: 'displayName', label: t('columnDisplayName'), primary: true },
+                { key: 'platform', label: t('columnPlatform') },
+                { key: 'userId', label: t('columnUserId'), kind: 'code' },
+                { key: 'firstSeenAt', label: t('columnFirstSeen'), kind: 'time' },
+                { key: 'lastSeenAt', label: t('columnLastSeen'), kind: 'time', primary: true },
               ],
               rowActions: [{ action: 'deletePerson' }],
               data: async (): Promise<TableRow[]> =>
@@ -284,28 +313,28 @@ export function registerRelationPages(webui: BoundWebui, service: RelationServic
         },
         {
           key: 'events',
-          title: '事件',
+          title: t('events'),
           content: [
             {
               type: 'table',
               id: 'events',
               rowKey: 'id',
-              empty: '还没有事件',
+              empty: t('eventsEmpty'),
               columns: [
-                { key: 'title', label: '标题', primary: true },
-                { key: 'category', label: '类别' },
-                { key: 'sessionScope', label: '会话' },
-                { key: 'summary', label: '摘要', kind: 'long-text' },
-                { key: 'evidence', label: '最新证据', kind: 'long-text' },
-                { key: 'evidenceCount', label: '证据数' },
-                { key: 'lastReinforcedAt', label: '最近强化', kind: 'time', primary: true },
+                { key: 'title', label: t('columnTitle'), primary: true },
+                { key: 'category', label: t('columnCategory') },
+                { key: 'sessionScope', label: t('columnSession') },
+                { key: 'summary', label: t('columnSummary'), kind: 'long-text' },
+                { key: 'evidence', label: t('columnLatestEvidence'), kind: 'long-text' },
+                { key: 'evidenceCount', label: t('columnEvidenceCount') },
+                { key: 'lastReinforcedAt', label: t('columnLastReinforced'), kind: 'time', primary: true },
               ],
               rowActions: [{ action: 'deleteEvent' }],
               data: async (): Promise<TableRow[]> =>
                 (await service.loadAll()).events.sort(byRecent).map(e => ({
                   id: e.id,
                   title: e.title,
-                  category: e.category ?? '',
+                  category: e.category ? nameIn(EVENT_CATEGORY_NAMES, e.category) : '',
                   sessionScope: e.sessionScope,
                   summary: e.summary ?? '',
                   evidence: previewEvidence(e),
@@ -317,28 +346,28 @@ export function registerRelationPages(webui: BoundWebui, service: RelationServic
         },
         {
           key: 'entities',
-          title: '实体',
+          title: t('entities'),
           content: [
             {
               type: 'table',
               id: 'entities',
               rowKey: 'id',
-              empty: '还没有实体',
+              empty: t('entitiesEmpty'),
               columns: [
-                { key: 'name', label: '名称', primary: true },
-                { key: 'entityKind', label: '类型' },
-                { key: 'aliases', label: '别名', kind: 'long-text' },
-                { key: 'summary', label: '摘要', kind: 'long-text' },
-                { key: 'evidenceCount', label: '证据数' },
-                { key: 'lastReinforcedAt', label: '最近强化', kind: 'time', primary: true },
+                { key: 'name', label: t('columnName'), primary: true },
+                { key: 'entityKind', label: t('columnType') },
+                { key: 'aliases', label: t('columnAliases'), kind: 'long-text' },
+                { key: 'summary', label: t('columnSummary'), kind: 'long-text' },
+                { key: 'evidenceCount', label: t('columnEvidenceCount') },
+                { key: 'lastReinforcedAt', label: t('columnLastReinforced'), kind: 'time', primary: true },
               ],
               rowActions: [{ action: 'deleteEntity' }],
               data: async (): Promise<TableRow[]> =>
                 (await service.loadAll()).entities.sort(byRecent).map(e => ({
                   id: e.id,
                   name: e.name,
-                  entityKind: e.entityKind,
-                  aliases: (e.aliases ?? []).join('、'),
+                  entityKind: nameIn(ENTITY_KIND_NAMES, e.entityKind),
+                  aliases: t('aliasList', { aliases: e.aliases ?? [] }),
                   summary: e.summary ?? '',
                   evidenceCount: e.evidence.length,
                   lastReinforcedAt: e.lastReinforcedAt,

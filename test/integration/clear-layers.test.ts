@@ -18,6 +18,7 @@ import todoList from '../../packages/plugin-todo-list/src/index.js';
 import userProfile from '../../packages/plugin-user-profile/src/index.js';
 import userRelation from '../../packages/plugin-user-relation/src/index.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';
+import { renderIn } from '../fixtures/host-language.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
@@ -111,14 +112,19 @@ async function world(backend?: { memory: MemoryService; logHub: LogHub }) {
     await mem.archiveSpan(s, { count: 2, keep: [] });
   }
 
-  async function run(name: 'clear' | 'clear.all' | 'profile.clear.nuke', types?: string[]): Promise<string> {
+  /** 回执按 language 渲染；不给时取原文 */
+  async function run(
+    name: 'clear' | 'clear.all' | 'profile.clear.nuke',
+    types?: string[],
+    language?: string,
+  ): Promise<string> {
     const cmd = host.commands.use.getAll().find(c => c.name === name);
     if (!cmd?.handler) throw new Error(`/${name} 未注册`);
     const out = await cmd.handler({
       session: { sessionId: 's-cur', platform: 'webui', userId: 'u1', sessionType: 'private', raw: `/${name}` },
       options: types ? { type: types } : {},
     });
-    return String(toSource(out));
+    return String(language ? renderIn(out, language) : toSource(out));
   }
 
   /** 各命名空间剩下的 key，与各会话剩下的消息条数（含归档） */
@@ -165,6 +171,16 @@ describe('/clear 按层清理', () => {
       messages: { 's-cur': 0, 's-other': 0 },
     });
     expect(vec).toEqual({ cleared: 1, deletedBy: [] });
+  });
+
+  it('关系图的结果行按读者的语言：清掉 1 条、2 条', async () => {
+    const { run, mem } = await world();
+    const lines = [await run('clear.all', ['user-relation'], 'en')];
+    for (const key of ['person:onebot:u1', 'person:onebot:u2']) {
+      await mem.saveMetadata('user-relation', key, { seeded: true });
+    }
+    lines.push(await run('clear.all', ['user-relation'], 'en'));
+    expect(lines).toEqual(['Cleared the relation graph (1 record)', 'Cleared the relation graph (2 records)']);
   });
 
   it('/clear（会话级）：只清本会话的消息、摘要、待办与向量，转发原文与长期层不动，不出档案与关系图的行', async () => {

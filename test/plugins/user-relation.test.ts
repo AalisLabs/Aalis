@@ -1317,14 +1317,15 @@ describe('plugin-user-relation: consolidate event-entity 去重', () => {
     expect(d.id).toBe(a.id);
   });
 
-  it('consolidate triggerSource 透传到 getLastConsolidateInfo', async () => {
+  it('consolidate triggerSource 透传到 getLastConsolidateInfo；没整理过时没有记录', async () => {
     const { service } = await makeService();
+    expect(service.getLastConsolidateInfo()).toBeUndefined();
     await service.consolidate({ triggerSource: 'manual' });
-    expect(service.getLastConsolidateInfo().trigger).toBe('manual');
+    expect(service.getLastConsolidateInfo()?.trigger).toBe('manual');
     await service.consolidate({ triggerSource: 'eviction' });
-    expect(service.getLastConsolidateInfo().trigger).toBe('eviction');
+    expect(service.getLastConsolidateInfo()?.trigger).toBe('eviction');
     await service.consolidate({});
-    expect(service.getLastConsolidateInfo().trigger).toBe('api');
+    expect(service.getLastConsolidateInfo()?.trigger).toBe('api');
   });
 });
 

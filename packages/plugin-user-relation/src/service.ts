@@ -36,6 +36,7 @@ import type {
   EventEventEdge,
   EventNode,
   EvidenceRef,
+  LastConsolidate,
   NodeNameAudit,
   PersonEntityEdge,
   PersonEventEdge,
@@ -95,12 +96,8 @@ import {
 } from './utils.js';
 
 export class RelationService {
-  /** 最近一次 consolidate() 完成的时间戳（ms）；未运行时为 undefined */
-  private _lastConsolidateAt?: number;
-  /** 最近一次 consolidate() 结果的简短摘要 */
-  private _lastConsolidateResultSummary?: string;
-  /** 最近一次 consolidate() 的触发来源：manual | eviction | api */
-  private _lastConsolidateTrigger?: 'manual' | 'eviction' | 'api';
+  /** 最近一次 consolidate()；本次运行以来没跑过为 undefined */
+  private _lastConsolidate?: LastConsolidate;
 
   constructor(
     private readonly store: RelationStore,
@@ -151,17 +148,9 @@ export class RelationService {
     return true;
   }
 
-  /** 查询最近一次 consolidation 运行时间、触发源与结果摘要 */
-  getLastConsolidateInfo(): {
-    lastRunAt?: number;
-    summary?: string;
-    trigger?: 'manual' | 'eviction' | 'api';
-  } {
-    return {
-      lastRunAt: this._lastConsolidateAt,
-      summary: this._lastConsolidateResultSummary,
-      trigger: this._lastConsolidateTrigger,
-    };
+  /** 最近一次 consolidation 的运行时间、触发源与各项计数；本次运行以来没跑过为 undefined */
+  getLastConsolidateInfo(): LastConsolidate | undefined {
+    return this._lastConsolidate;
   }
 
   static personId(platform: string, userId: string): string {
@@ -3290,20 +3279,25 @@ export class RelationService {
       eventDuplicatesMerged,
       ...(opts.llm ? { llmVerified, llmRejected, llmRejectCacheHits, summariesRewritten } : {}),
     };
-    this._lastConsolidateAt = Date.now();
-    this._lastConsolidateTrigger = opts.triggerSource ?? 'api';
-    this._lastConsolidateResultSummary =
-      `别名候选 ${aliasCandidates.length}，建别名边 ${aliasEdgesCreated}，` +
-      `事件边整理 ${eventEdgesNormalized}，实体层级候选 ${entityHierarchyCandidates}，层级边 ${entityHierarchyEdgesCreated}` +
-      `，侧向父候选 ${lateralParentCandidates}，新建父 ${lateralParentsCreated}，侧向边 ${lateralEdgesCreated}` +
-      (eventDuplicateCandidates > 0
-        ? `，event 重复候选 ${eventDuplicateCandidates}（合并 ${eventDuplicatesMerged}）`
-        : '') +
-      (opts.llm
-        ? `，LLM 通过 ${llmVerified} 否决 ${llmRejected}` +
-          (llmRejectCacheHits > 0 ? `（缓存命中 ${llmRejectCacheHits}）` : '') +
-          ` 摘要重写 ${summariesRewritten}`
-        : '');
+    this._lastConsolidate = {
+      at: Date.now(),
+      trigger: opts.triggerSource ?? 'api',
+      counts: {
+        aliasCandidates: aliasCandidates.length,
+        aliasEdgesCreated,
+        eventEdgesNormalized,
+        entityHierarchyCandidates,
+        entityHierarchyEdgesCreated,
+        lateralParentCandidates,
+        lateralParentsCreated,
+        lateralEdgesCreated,
+        eventDuplicateCandidates,
+        eventDuplicatesMerged,
+        ...(opts.llm
+          ? { llm: { verified: llmVerified, rejected: llmRejected, cacheHits: llmRejectCacheHits, summariesRewritten } }
+          : {}),
+      },
+    };
     return consolidateResult;
   }
 

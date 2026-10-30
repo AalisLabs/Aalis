@@ -6,7 +6,9 @@ import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import { type EvictionConfig, registerRelationCommands } from '../../packages/plugin-user-relation/src/commands.js';
 import type { EvidenceRef } from '../../packages/plugin-user-relation/src/index.js';
 import { RelationService, RelationStore } from '../../packages/plugin-user-relation/src/index.js';
-import { toSource } from '../../packages/schema-i18n/src/index.js';
+import type { TextRef } from '../../packages/schema-i18n/src/index.js';
+import { renderIn } from '../fixtures/host-language.js';
+import { ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // pruneOrphans 一趟收敛：删完悬空边后，"被引用"的统计必须只看存活边。
@@ -88,8 +90,8 @@ describe('plugin-user-relation: pruneOrphans 收敛性', () => {
 // 被列成孤儿，cleanup orphans 随即把它们连同边一起物理删除。
 // ════════════════════════════════════════════════════════════
 
-/** 捕获 /relation 指令的 action，按指令名直接调用 */
-function captureCommands(): { commands: BoundCommands; run(name: string): Promise<string | undefined> } {
+/** 捕获 /relation 指令的 action，按指令名直接调用，交回原样的回复 */
+function captureCommands(): { commands: BoundCommands; run(name: string): Promise<string | TextRef | undefined> } {
   const handlers = new Map<string, CommandHandler>();
   const commands = {
     command(name: string): CommandBuilder {
@@ -112,7 +114,7 @@ function captureCommands(): { commands: BoundCommands; run(name: string): Promis
     async run(name) {
       const handler = handlers.get(name);
       if (!handler) throw new Error(`指令未注册：${name}`);
-      return toSource(await handler({ session: { sessionId: 's', platform: 'test', raw: '' }, options: {} }));
+      return (await handler({ session: { sessionId: 's', platform: 'test', raw: '' }, options: {} })) ?? undefined;
     },
   };
 }
@@ -137,7 +139,7 @@ describe('plugin-user-relation: /relation orphans 与 pruneOrphans 同口径', (
     const { app, service } = await makeService();
     const cmd = captureCommands();
     registerRelationCommands(
-      { commands: cmd.commands, platform: {} as never, llm: {} as never, logger: app.logger },
+      { commands: cmd.commands, platform: {} as never, llm: {} as never, i18n: ref(), logger: app.logger },
       service,
       {
         eviction: NO_EVICTION,
@@ -174,18 +176,47 @@ describe('plugin-user-relation: /relation orphans 与 pruneOrphans 同口径', (
   }
 
   it('relation.orphans 只列出不被任何边引用的节点', async () => {
-    const { app, cmd, kept, orphan } = await makeGraph();
-    const out = (await cmd.run('relation.orphans')) ?? '';
-    expect(out).toContain(orphan.id);
-    for (const id of kept) expect(out, `被 event-entity / entity-entity 边引用的 ${id} 不是孤儿`).not.toContain(id);
+    const { app, cmd, orphan } = await makeGraph();
+    const reply = await cmd.run('relation.orphans');
+    // 只列出真孤儿；被 event-entity / entity-entity 边引用的不在列；实体类型显示名按读者的语言（中文界面显示中文名）
+    expect([renderIn(reply, 'en'), renderIn(reply, 'zh-CN')]).toEqual([
+      `# Isolated nodes\n## Entities (1)\n- ${orphan.id}  [Topic] 真孤儿`,
+      `# 孤立点\n## 实体 (1)\n- ${orphan.id}  [话题] 真孤儿`,
+    ]);
+    await app.stop();
+  });
+
+  it('relation.orphans：落盘的实体类型不在表里（第一方之外写进的值）时显示原值，id 与名字照旧', async () => {
+    const { app, service, cmd } = await makeGraph();
+    const foreign = await service.createEntity({ name: '外来实体', entityKind: 'zz-kind' as never, evidence: [] });
+    const reply = await cmd.run('relation.orphans');
+    for (const language of ['en', 'zh-CN']) {
+      expect(renderIn(reply, language)?.split('\n'), language).toContain(`- ${foreign.id}  [zz-kind] 外来实体`);
+    }
     await app.stop();
   });
 
   it('relation.cleanup.orphans 只删真孤儿，不误删挂 event-entity / entity-entity 边的节点', async () => {
     const { app, service, cmd, kept, orphan } = await makeGraph();
-    expect(await cmd.run('relation.cleanup.orphans')).toBe(
-      '已清理 1 个孤立点（人物 0 / 事件 0 / 实体 1），悬空边 0 条',
-    );
+    // 各项计数互不相同：孤立的人物 1、事件 2、实体 3（连同上面的真孤儿），悬空边 4（两端的节点都不存在）
+    await service.observePerson('onebot', 'zz-lonely');
+    for (const title of ['孤立事件甲', '孤立事件乙']) await service.createEvent({ title, evidence: [] });
+    for (const name of ['孤立实体甲', '孤立实体乙']) {
+      await service.createEntity({ name, entityKind: 'topic', evidence: [] });
+    }
+    for (const ghost of ['zz-ghost-1', 'zz-ghost-2', 'zz-ghost-3', 'zz-ghost-4']) {
+      await service.addPersonEventEdge({
+        fromPersonId: `onebot:${ghost}`,
+        toEventId: 'zz-ghost-event',
+        role: 'participant',
+        evidence: [ev()],
+      });
+    }
+    const reply = await cmd.run('relation.cleanup.orphans');
+    expect([renderIn(reply, 'en'), renderIn(reply, 'zh-CN')]).toEqual([
+      'Isolated nodes cleaned up: 6 (people 1 / events 2 / entities 3), dangling edges: 4',
+      '已清理 6 个孤立点（人物 1 / 事件 2 / 实体 3），悬空边 4 条',
+    ]);
     const snap = await service.loadAll();
     const alive = new Set([...snap.events.map(e => e.id), ...snap.entities.map(e => e.id)]);
     for (const id of kept) expect(alive.has(id), `${id} 被误删`).toBe(true);

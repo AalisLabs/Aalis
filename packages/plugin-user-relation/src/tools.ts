@@ -31,6 +31,7 @@
 import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
 import type { Logger } from '@aalis/core';
 import type { RelationService } from './service.js';
+import { t } from './texts.js';
 import type {
   EntityEntityEdge,
   EntityNode,
@@ -86,7 +87,8 @@ export function registerRelationTools(
 
   tools.registerGroup({
     name: groupName,
-    label: '人物关系图',
+    label: t('displayName'),
+    summary: t('groupSummary'),
     description: [
       '查询用户关系图：跨类节点解析 / BFS 子图 / 任意节点最短路径 / 多类型筛选边 / 节点时间线。',
       '',
