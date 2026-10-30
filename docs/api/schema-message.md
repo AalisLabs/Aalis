@@ -33,7 +33,7 @@ interface IncomingMessage {
   selfTitle?: string;                  // 群聊中机器人自己的专属头衔
   replyTo?: { messageId; content?; userId?; nickname? };
   forwards?: ForwardedChat[];          // 随这条消息转发来的聊天记录，按在正文里出现的先后，见下文
-  noticeType?: string;                 // 非消息事件，如 poke / group_upload
+  noticeType?: string;                 // 非消息事件，如 poke / group_upload；存档记成消息的 kind
   noticeTargetIsSelf?: boolean;        // poke 是否指向机器人；false 按未点名互动判断，省略沿用戳机器人的语义
   text?: TextRef;                      // 平台事件合成或转成的入站给人看的那句（如好友申请、戳一戳），不进模型，存档记成 Text
   triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
@@ -129,6 +129,7 @@ interface FromTurn {
 ```ts
 interface OutgoingMessage {
   content: string;
+  text?: TextRef;                     // 正文是要翻译的文字时，它的文字对象
   sessionId: string;
   platform?: string;
   hostNotice?: { kind: string; id?: string }; // 最终通知关联，工具中途发消息不带
@@ -148,6 +149,8 @@ interface OutgoingMessage {
 出站消息只带要发出去的正文与附件，不带思考与工具时间线：平台适配器只发正文；要展示思考与工具调用的客户端经会话协议拿（流式片段与 `reasoning` 条目），存档的 `Message` 照旧带 `reasoningContent` 与 `segments`。
 
 `source='agent'` 表示由 AI 发出（她的回复与她经工具发的附件），`system` 是宿主提示，`command` 是指令回复。
+
+`text` 是正文要翻译时它的文字对象：发起方同时写 `content`（`toSource(text)`，按原文渲染的整句）。经网关派发时，网关按这条消息所在会话（`{ sessionId, platform }`）的语言把它渲染进 `content`，i18n 缺席或渲染抛错时按原文；按连接显示的出口（会话协议的时间线、WebUI 会话的历史）另按各自的读者渲染它，其余照旧读 `content`。
 
 `markup` 表示正文含平台标记、要解析：有标记语法的适配器（OneBot 的 `<at>`、`<image|record|video url>`、`<reply>`）把它们解析成 @、媒体与引用，并可分条延迟发送以模拟自然节奏。不设的正文一律按纯文字原样整条发出，不解析、不分条，其中回显的参数、错误信息与作品标题不会变成 @、图片或引用。要发平台标记的出站自己设它，第一方只有 agent 的回复设。`attachments` 不受它影响，照常发出。媒体标记的地址不是网址的（`file://`、本机路径、存储地址、data URI、正文里写的 `base64://`），适配器不得自己读取，也不交给实现端，一律去掉并报投递失败：存储里的媒体由 plugin-image-sender 在派发前过媒体判据转成附件，留在正文里的存储地址是没转成的（过不了判据、读不出、不是对应媒体，或没装它）。正文里的媒体标记怎么发，见 [media 服务的「出站转换」](../services/media.md#媒体判据)。
 

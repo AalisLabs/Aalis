@@ -76,7 +76,7 @@ thinking        会思考（产出 reasoning_content）；能不能按请求调�
 能调深度思考的模型在 handle 上声明它允许的档位，不能调的不声明：
 
 ```ts
-interface ThinkingLevel { readonly id: string; readonly label: string }
+interface ThinkingLevel { readonly id: string; readonly label: string | TextRef }
 interface ThinkingLevels {
   readonly levels: readonly ThinkingLevel[]; // 由浅到深，至少两档；开关型就是「关、开」两档
   readonly default: string;                  // 请求没带档位时用的那一档，须是 levels 里的一个
@@ -87,7 +87,7 @@ export function lightestThinking(model): string | undefined;
 ```
 
 - 档位由各提供者按自己的协议定义（id 是它自己的写法），不做跨服务商的统一档位表。请求的 `think` 填其中一档的 id，没带时按模型的默认档；模型不能调时不带。
-- 提供者把档位翻成线上字段之前先过 `requestedThinking`：请求带了模型没有的档位（含模型不能调时带了档位）时它抛错，请求不发出去。
+- 提供者把档位翻成线上字段之前先过 `requestedThinking`：请求带了模型没有的档位（含模型不能调时带了档位）时它抛给人看的错（`TextError`），请求不发出去。
 - 摘要、标题、结构化提取这类机械任务要压低思考时，带 `lightestThinking(model)`（最浅的一档；模型不能调时为 `undefined`）。
 - 会话设置「深度思考」存的是档位 id，可选项按会话生效的模型现取（plugin-agent 的字段，见 [plugin-agent](../plugins/plugin-agent.md)）。
 

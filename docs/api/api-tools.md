@@ -138,6 +138,18 @@ interface ToolService {
 
 工具分组是 [plugin-tools](../plugins/plugin-tools.md) 的可按会话覆盖的字段 `enabledToolGroups`（全局层默认 `[]`），提供者经 `sessionGroups` 交出这个会话的生效值，第三方工具注册表要实现它。agent 按它填 `ToolCallContext.enabledGroups`。
 
+分组经 `registerGroup` 登记：
+
+```ts
+interface ToolGroupInfo {
+  name: string;                  // 分组标识，如 'system'、'onebot'
+  label: string | TextRef;       // 显示名
+  summary?: string | TextRef;    // 给人看的一句概述：WebUI 设置里分组选项下的说明，没有时不显示
+  description?: string;          // 只给模型（能力目录与工具搜索），不进界面
+  pluginName: string;            // 登记它的插件，由门面填
+}
+```
+
 ## 描述符与绑定门面
 
 ```ts
@@ -212,7 +224,7 @@ interface BackgroundTask {
   endedAt?: number;
   lastLine?: string;                 // 输出的最后一行
   lastOutputAt?: number;             // 最后一次有输出的时刻
-  reason?: string;                   // 失败或中断的一句原因：失败的取自结果里的 error
+  reason?: string | TextRef;         // 失败或中断的一句原因：失败的取自结果里的 error（原文），中断的是宿主写的文字对象
   exitCode?: number;                 // 命令的退出码：声明了 command 种类展示、结束时取得到才有（随登记落盘）
   result?: ToolExecutionResult;      // 结束的任务：工具的结果（不落盘）
 }

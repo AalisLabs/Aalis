@@ -18,6 +18,8 @@
 | `readFile(id, path)` / `readThumbnail(id)` | 只读记录中的公开文件，核对摘要；文件不符会撤下该作品并抛 `IntegrityError` |
 | `thumbnailUri(id)` | 已发布作品的缩略图在发布服务存储里的地址，没有缩略图时为 `undefined`。给管理界面经 `/api/media` 显示，不核对摘要；读内容要核对的用 `readThumbnail` |
 
+提名的 `refused`、`withdraw` 的 `degraded` 与 `refused`、展示面 `health()` 的 `reason` 与 `PublishSurfaceInfo.reason` 只写类别，类型是 `string | TextRef`，可以是文字对象：给人看的经出口渲染，交给模型的取 `toSource`（见[多语言指南「读别的插件交来的文字」](../guide/i18n.md#读别的插件交来的文字)）。
+
 `NominateInput` 包含 `origin`、`group`、`groupLabel`、`surfaces`、`title`、`summary`、`files` 与可选 `cover`。后台自动提名可提供 1–128 字符的 `submissionKey`（ASCII 字母、数字、点、下划线、冒号或连字符，以字母或数字开头）。键只在同一 `origin.producer` 内生效；重复提交相同来源、文字、目标和文件字节时返回原作品编号，不再占用配额。相同键对应的输入发生变化会被拒绝，终态也不会被重新提名。未提供键的人工提名保留每次新建作品的行为。调用方仍负责自己的用户授权；服务负责审核和发布边界。审核提供者默认让自动通过的作品继续发布，自动拒绝、拿不准或模型调用失败时转人工；`manualReview: true` 进一步要求每件作品人工批准。结构检查与净化失败不能由人工覆盖，提名方不能绕过审核规则。所选展示面暂未登记（例如正在重载）时返回带 `retryAfterMs` 的临时拒绝；未选择任何展示面属于永久拒绝。
 
 有提交键的作品在人工拒绝、超时、审核失败或撤回后，`get(id)` 仍返回对应终态，供后台提名方停止重试。`published` 只表示审核通过并进入本机发布记录；展示面完成部署和内容核对后，`live` 才会持久变为 `true`，与通知是否送达无关。多目标作品的某个展示面暂时缺席（重启、重载还没重新登记）时，沿用它上次核验过的地址，`live` 保持不变；展示面回来后报出的地址变了，才按新地址重新核验与通知。
@@ -36,6 +38,6 @@
 
 ## 公开文件边界
 
-公开路径按段验证，拒绝绝对路径、点段、控制字符、保留文件名及未支持的扩展名；HTML 入口只能为根目录的 `index.html`。同一作品的路径大小写折叠后不得重复。媒体、HTML、CSS、脚本、SVG、JSON 与字体类型表由本包统一维护。
+公开路径按段验证，拒绝绝对路径、点段、控制字符、保留文件名及未支持的扩展名；HTML 入口只能为根目录的 `index.html`。`publicPathProblem(path)` 做这项判定，回 `TextRef | undefined`：不能上站时是本包字典里的原因，只写类别、不带路径，审核按它收，展示面部署前再判一次。同一作品的路径大小写折叠后不得重复，由调用方对整组路径判定。媒体、HTML、CSS、脚本、SVG、JSON 与字体类型表由本包统一维护。
 
 `workHeaders`、`galleryHeaders` 与 `WORK_IFRAME_SANDBOX` 分别用于作品资源、宿主页面和作品 iframe。作品沙箱不含 `allow-same-origin`；公开作品资源允许匿名跨源读取，使沙箱内的模块脚本与字体可加载，仍禁止脚本发起网络请求和表单提交。完整边界与浏览器残余风险见[安全模型](../concepts/security-model.md)。

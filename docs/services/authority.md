@@ -59,10 +59,10 @@ export interface AuthorityService {
   // 这一轮的主体，定本地效果：hand（含随起它的那一轮的续做与子任务）且参与者都是 owner 的为 owner；其余 other
   principalOf(turn: OriginTurn): 'owner' | 'other';
 
-  // 统一权限闸（轴 A）。返回 null 放行；string 为拒绝原因（可直接展示）。
+  // 统一权限闸（轴 A）。返回 null 放行；否则为拒绝原因，可以是文字对象：给人看的经出口渲染，给模型的取 toSource。
   // 裁决：deniedCapabilities(全局硬禁) > owner(∞) > 封禁(level < 0) > level >= minLevel > 所属权限组覆盖
   authorize(identity: UserIdentity | { platform: string; userId?: string },
-            request: AuthorizeRequest): string | null;
+            request: AuthorizeRequest): string | TextRef | null;
 
   // 设 target 外部身份等级（覆盖式整数；level=0 且记录里没有备注等别的内容则清记录）。调用方自保仅 owner 可达。
   setUserLevel(target: UserIdentity, level: number): void;
@@ -211,9 +211,9 @@ class MyAuthority implements AuthorityService {
     // hand 且参与者都是 owner 为 owner（判据见 plugin-authority）
     return 'other';
   }
-  authorize(id: { platform: string; userId?: string }, req: AuthorizeRequest): string | null {
+  authorize(id: { platform: string; userId?: string }, req: AuthorizeRequest): string | TextRef | null {
     // 1) deniedCapabilities 硬禁（压过 owner） 2) owner 放行 3) level >= minLevel
-    return null; // null 放行 / string 拒绝原因
+    return null; // null 放行；字符串或文字对象是拒绝原因
   }
   setUserLevel(_t: UserIdentity, _l: number) {}
   removeUser(_p: string, _u: string) {}
@@ -294,8 +294,8 @@ auth.save();
 
 ### 5.3 错误边界
 
-- `authorize` 同步返回，`null` = 放行、`string` = 直接可展示的拒绝原因；不要把 string 当成功值。
-- 守卫返回 string 时，调用方（tools）会以 `{ error }` JSON 返回给 LLM（`tools.ts`），不抛异常。
+- `authorize` 同步返回，`null` = 放行，其余（字符串或文字对象）是拒绝原因，不要当成功值。读法见[多语言指南「读别的插件交来的文字」](../guide/i18n.md#读别的插件交来的文字)：给人看的经出口渲染，给模型的取 `toSource`。
+- 守卫拒绝（`{ ok: false, reason }`）时，工具执行器把 `toSource(reason)` 以 `{ error }` JSON 返回给 LLM（`tools.ts`），不抛异常。
 
 ## 6. 能力 / 风险 → 影响
 

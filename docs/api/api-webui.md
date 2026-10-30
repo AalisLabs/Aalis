@@ -65,6 +65,8 @@ interface NoticeHandle {
 
 ## 声明式页面
 
+下面写成 `string` 的给人看的字段都收文字对象（`string | TextRef`），交给前端之前按全局层的语言渲染成字符串；线上的形状是 `Localized<…>`，按路由读用 `WebuiRestResponse<K>`。
+
 ### 一个例子
 
 ```ts
@@ -462,8 +464,8 @@ interface Notice {
 
 ```ts
 type AttentionItem =
-  | { kind: 'approval'; id: string; sessionId: string; session?: string; tool: string } // session 是会话的标题
-  | ({ kind: 'plugin'; instance: string; state: 'error' | 'pending'; error?: string } & PluginBlockers)
+  | { kind: 'approval'; id: string; sessionId: string; session?: string | TextRef; tool: string } // session 是会话的标题
+  | ({ kind: 'plugin'; instance: string; state: 'error' | 'pending'; error?: string | TextRef } & PluginBlockers)
   | ({ kind: 'notice'; instance: string } & Notice);
 interface AttentionResponse { items: AttentionItem[] }
 
@@ -724,6 +726,8 @@ interface LogQuery extends LogFilter { limit?: number } // 默认 200，上限 5
 |---|---|---|
 | `GET /api/models/:service` | 查询参数 `dependency?` | `LLMModelsResponse`（`:service` 是 `llm`）或 `OptionsResponse`（其余） |
 | `POST /api/llm-providers/:contextId/refresh` | — | `{ ok: true, added, removed, total }` |
+| `GET /api/i18n/languages` | — | `{ languages, chain, timeZone }`：有文字可用的语言（`{ tag, name }`，标签与自称）、解析过跟随系统的全局层语言链、服务进程的时区；i18n 缺席时 `languages` 与 `chain` 为空 |
+| `GET /api/i18n/messages` | 查询参数 `ns`，逗号分隔 | `{ entries }`：语言包给这些 ns 补的译文（ns → 键 → 各包给的 `{ language, text, from }`），只留全局层语言链用得上的语言（与链里某种语言相同的，以及 en）；i18n 缺席时为空 |
 
 - 先找贡献点 `webui:options` 里同名的来源：插件经它交自己的可选项来源（`{ id, list(dependency?) }`，`id` 就是字段的 `dynamicOptions`），同名的有几家时取全局键最前的那家，`dependency` 原样交给它，回 `{ models, details }`。可选项（`OptionDetail`）带名字与说明，可以带成员 `members`（选上这一项会带上的成员的名字，界面在这一项下面写「包含 N 项」、点开列出）；插件的选项来源交得了 `members`、交不了 `others`。第一方的来源：plugin-i18n 的 `i18n-languages`、plugin-skills 的 `skills`、plugin-authority 的 `authority-operations` 与 `authority-groups`、两个向量化提供者的 `embedding-openai` 与 `embedding-ollama`。来源名按插件定，同一个插件开了几个实例时各实例的字段都取最前那家。
 - 没有贡献的来源由宿主回答：`llm`（模型列表，模型字段的可选项走它）；`toolGroups`（工具分组：已登记的分组与工具上出现过的分组的并集，`'*'` 是全部分组、总在最前，登记过的分组下面一行写它的说明；有工具的分组带组内工具的名字（`members`），不属于任何分组的工具另交 `others`，界面写在可选项末尾一行、点开列出）；`llm-thinking`（深度思考的档位：`dependency` 是条目 id `<提供者实例 id>/<模型 id>`，按那个模型声明的档位给，写法不对回 400；没带时回空的可选项，不替调用方挑模型；模型不能调时 `models` 与 `details` 为空）。
@@ -975,7 +979,7 @@ contributions.use.contribute('webui:theme', {
 function themeContrastIssues(theme: Theme): ContrastIssue[];
 
 interface ContrastIssue {
-  pair: string;    // 组合名，如「弱化字 / 侧栏里的选中行」
+  pair: TextRef;   // 组合名（本包字典里的文字对象），如「弱化字 / 侧栏里的选中行」
   ratio: number;   // 算出的对比度，保留两位小数
   minimum: number; // 要求
 }

@@ -24,8 +24,8 @@ export interface CheckResult {
   id: string;            // 结果 id，可与 spec.id 不同（一个 spec 可产出多条带不同 id 的结果）
   category: CheckCategory;
   level: CheckLevel;
-  message: string;       // 一行结论：出了什么事
-  detail?: string;       // 多行详情，\n 分隔；warn 与 error 在这里写怎么修
+  message: string | TextRef;  // 一行结论：出了什么事
+  detail?: string | TextRef;  // 多行详情，\n 分隔；warn 与 error 在这里写怎么修
 }
 
 export interface DoctorReport {
@@ -92,7 +92,7 @@ export interface BoundDoctor extends DoctorService {
 type PluginSnapshot = Pick<PluginStatusEntry, 'instanceId' | 'state' | 'provides' | 'uses' | 'error' | 'lingering'>;
 
 type UnmetRoot =
-  | { kind: 'error'; instance: string; error?: string } // 根插件激活失败，带它的失败说明
+  | { kind: 'error'; instance: string; error?: string | TextRef } // 根插件激活失败，带它的失败说明
   | { kind: 'disabled'; instance: string } // 根插件已停用
   | { kind: 'starting'; instance: string } // 根插件在启动：只是在等
   | { kind: 'lingering'; instance: string } // 根插件要的都在了，在等自己的旧实例停下：只是在等
@@ -114,7 +114,7 @@ interface UnmetDependencies {
 /** 每个 pending 插件没满足的 required 服务，按实例 id；available 是当前有提供者的服务名（services.use.names()） */
 function unmetDependencies(plugins: readonly PluginSnapshot[], available: Iterable<string>): Map<string, UnmetDependencies>;
 /** 写成一句（启动告警、诊断与回执用） */
-function describeUnmet(unmet: UnmetDependencies): string;
+function describeUnmet(unmet: UnmetDependencies): TextRef;
 ```
 
 - 只收普通数据：插件状态快照与当前有提供者的服务名。required 与 optional 按快照里 `uses` 每项的 `kind` 分。

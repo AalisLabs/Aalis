@@ -16,7 +16,7 @@
 ```ts
 export interface CommandService {
   prefix: string;
-  command(name: string, description?: string, meta?: InternalCommandMeta): CommandBuilder;
+  command(name: string, description?: string | TextRef, meta?: InternalCommandMeta): CommandBuilder;
   unregister(name: string, contextId?: string): void;
   execute(name: string, ctx: ExecutionInput): Promise<string | undefined>;
   parseCommand(input: string): { name: string; args: string[]; raw: string } | null;
@@ -29,7 +29,7 @@ export interface CommandService {
 }
 
 export interface BoundCommands extends CommandService {
-  command(name: string, description?: string, meta?: CommandMeta): CommandBuilder;
+  command(name: string, description?: string | TextRef, meta?: CommandMeta): CommandBuilder;
 }
 ```
 

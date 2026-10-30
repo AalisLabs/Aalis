@@ -158,7 +158,7 @@ export default definePlugin({
 
 **YAML 解析失败会点名告警，但不会阻止启动。** `tryLoadCardFromUri` 把「读不到文件」与「读到了但解析不出对象」分开：前者是候选路径探测的正常结果（静默），后者 warn 出 uri 与原因后跳过该卡。顶层不是对象（标量/数组）的卡按解析失败处理，不再被当成全空卡加载。启动时主角色卡解析失败则回退内置 default，日志说的是「存在但解析失败」而非「未找到」。运行中主角色卡被删或写坏时不回退：已载入的那份继续生效，直到它重新解析成功或重启。
 
-**启动时找不到主角色卡则回退到内置 default。** 此时 name 为 `Aalis`，不会报错。另外，`getPersonaName()` 在 `name` 为空时返回 `"<fileName>，未设置名字"`（按会话取的卡没写名字时是那张卡的文件名）。
+**启动时找不到主角色卡则回退到内置 default。** 此时 name 为 `Aalis`，不会报错。另外，卡没写名字时 `getPersonaName()` 返回空串，不给兜底的名字：点名检测跳过空串，要显示名字的一方自己兜底（终端的署名回退 `Aalis`、头部写「-」，关系图与档案的提取提示写「机器人」）。
 
 **`reply: true` 必须有且仅有一个。** `parseRawOutputFormat` 取最后一个 `reply:true` 的 key 作为 `replyField`。如果没有任何 reply 字段，整段 outputFormat 作废并返回 `undefined`。存在多个 reply 字段时不会报错，但只有最后一个生效。
 

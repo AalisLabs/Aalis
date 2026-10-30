@@ -55,6 +55,14 @@ interface SessionInfo {
 }
 ```
 
+**显示名**：会话的显示一律经
+
+```ts
+function sessionLabel(session: Pick<SessionInfo, 'name' | 'parentId' | 'createdAt'>): string | TextRef;
+```
+
+有 `name` 时就是它；没取名时根会话是「会话 <建档时间>」（简短的日期时间，带年份），子会话是「子任务 <建档时间>」（简短的时间）。默认名是本包字典里的文字对象，不落盘，显示时按读者的语言生成，时间按服务进程的时区；交给模型的取它的 `source`。标题另算，读者按「标题，没有时用 `sessionLabel`」取。场所同理经 `placeLabel`，没有名字的默认工作区显示「默认工作区」（见下文「场所与工作区」）。
+
 会话种类是会话列表的分区、会话设置字段的 `appliesTo` 与会话协议的 `SessionSummary.kind` 共同的来源。它与审批的发起类别是两回事：审批按这一轮的触发者，owner 在哪个会话里亲手发起的回合都能产生审批。
 
 会话之间的差别按字段判，不按会话 ID 的写法：

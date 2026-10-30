@@ -13,7 +13,7 @@
 ```ts
 interface PackageManagerService {
   install(npmPkg: string): Promise<InstallResult>;
-  uninstall(pluginName: string, options?: UninstallOptions): Promise<{ ok: boolean; message: string }>;
+  uninstall(pluginName: string, options?: UninstallOptions): Promise<{ ok: boolean; message: string | TextRef }>;
   serviceDependents(name: string): string[];
   registry(): Promise<string>;
   update(targets: UpdateTarget[]): Promise<UpdateResult>;
@@ -21,7 +21,7 @@ interface PackageManagerService {
 
 interface InstallResult {
   ok: boolean;
-  message: string;
+  message: string | TextRef;
   plugin?: string;
 }
 
@@ -36,8 +36,8 @@ interface UpdateTarget {
 
 interface UpdateResult {
   ok: boolean;
-  message: string;
-  conflicts?: string[];
+  message: string | TextRef;
+  conflicts?: Array<string | TextRef>;
   restarting?: boolean;
 }
 ```

@@ -21,7 +21,7 @@
 ```ts
 interface StorageRootInfo {
   name: string;
-  label?: string;
+  label?: string | TextRef;
   kind: 'workspace' | 'data' | 'tmp' | 'pluginData' | 'logs' | string;
   browsable: boolean;
   readable: boolean;

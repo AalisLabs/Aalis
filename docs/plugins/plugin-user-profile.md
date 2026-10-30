@@ -41,10 +41,10 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `extractEveryNMessages` | number | `5` | 每 N 条消息提取一次：同一用户每发 N 条消息触发一次事实提取。无论 Aalis 是否回复都会计数，群聊中每人独立计数。设为 1 表示每条消息都尝试提取（不推荐）；设为 0 或负数则禁用提取（仍会注入已有档案） |
+| `extractEveryNMessages` | number | `5` | 每 N 条消息提取一次：同一用户每发 N 条消息触发一次事实提取。无论是否回复都会计数，群聊中每人独立计数。设为 1 表示每条消息都尝试提取（不推荐）；设为 0 或负数则禁用提取（仍会注入已有档案） |
 | `historyForExtraction` | number | `8` | 提取参考历史条数：触发提取时，喂给 LLM 的最近消息条数 |
 | `maxFactsPerUser` | number | `30` | 单用户事实上限：超出后按 updatedAt 升序淘汰最久未更新的，旧事实自动淘汰。最小有效值为 5（写入时自动下限），不支持设为 0 来禁用提取；若要禁用提取请将 extractEveryNMessages 设为 0 |
-| `maxFactCharsPerItem` | number | `80` | 单条事实字数上限：超出会被裁断，避免 LLM 输出长段落代替事实 |
+| `maxFactCharsPerItem` | number | `80` | 单条事实字符数上限：超出会被裁断，避免 LLM 输出长段落代替事实 |
 | `maxOtherParticipants` | number | `3` | 群聊其他参与者档案上限：群聊中除当前发言者外，最多加载多少人的档案摘要注入 LLM。0 表示禁用群聊多用户注入 |
 | `maxFactsForOthers` | number | `5` | 其他参与者摘要条数上限：群聊背景参与者每人只显示最近更新的 N 条事实，避免 prompt 过长 |
 | `temporaryFactMaxAgeDays` | number | `90` | 临时事实保留天数：temporality=temporary 的事实超过该天数未更新后不再主动注入 prompt（仍保留在档案中，等待后续 update/remove）。0 表示不淡出 |
