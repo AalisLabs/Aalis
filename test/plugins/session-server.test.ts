@@ -45,7 +45,7 @@ import { deferred } from '../helpers/deferred.js';
 // ════════════════════════════════════════════════════════════
 
 const SEEN_URI = 'pluginData:/session-server/seen.json';
-const MAJOR = Number(SESSION_PROTOCOL_VERSION.split('.')[0]);
+const [MAJOR, MINOR] = SESSION_PROTOCOL_VERSION.split('.');
 
 const apps: App[] = [];
 /** 每个 App 一个临时家目录：会话服务的审批审计写在它下面 */
@@ -212,28 +212,31 @@ describe('握手', () => {
     expect((await client(host.sessionProtocol.use).init()).appName).toBe('Aalis');
   });
 
-  it('主版本不同：回 unsupported 并断开，原因写明两边的版本，之后的帧不再处理；只差次版本照常握手', async () => {
+  it('0.x 的协议号比前两段：前两段不同回 unsupported 并断开，原因写明两边的版本，之后的帧不再处理；只差第三段照常握手', async () => {
     const { server } = await setup();
     const c = client(server());
-    const err = await c.fail('initialize', { protocolVersion: `${MAJOR + 1}.0`, client: CLIENT });
+    const newer = `${MAJOR}.${Number(MINOR) + 1}.0`;
+    const err = await c.fail('initialize', { protocolVersion: newer, client: CLIENT });
     expect(err.data?.code).toBe('unsupported');
     expect(c.disconnects).toHaveLength(1);
-    expect(c.disconnects[0]).toContain(`${MAJOR + 1}.0`);
+    expect(c.disconnects[0]).toContain(newer);
     expect(c.disconnects[0]).toContain(SESSION_PROTOCOL_VERSION);
     expect(await c.raw({ jsonrpc: '2.0', id: 99, method: 'sessions/list' })).toEqual([]);
 
     const d = client(server());
-    expect((await d.call('initialize', { protocolVersion: `${MAJOR}.99`, client: CLIENT })).protocolVersion).toBe(
+    const patch = `${MAJOR}.${MINOR}.99`;
+    expect((await d.call('initialize', { protocolVersion: patch, client: CLIENT })).protocolVersion).toBe(
       SESSION_PROTOCOL_VERSION,
     );
     expect(d.disconnects).toEqual([]);
   });
 
-  it('协议 1.x 的客户端（0.20 的 WebUI 与终端）握手被拒：这一版的设置、审批与回合控制有不兼容的修改，升了主版本', async () => {
+  it('0.20 的 WebUI 与终端报 1.0：握手被拒，回的是写明两边版本的 unsupported，不是参数不合', async () => {
     const { server } = await setup();
     const c = client(server());
     expect((await c.fail('initialize', { protocolVersion: '1.0', client: CLIENT })).data?.code).toBe('unsupported');
     expect(c.disconnects).toHaveLength(1);
+    expect(c.disconnects[0]).toContain('1.0');
   });
 
   it('握手之前别的请求被拒，握手不能重复', async () => {

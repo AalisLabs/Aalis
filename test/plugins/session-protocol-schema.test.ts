@@ -7,6 +7,7 @@ import {
   type BackgroundTask,
   type BackgroundTaskSchema,
   ErrorFrameSchema,
+  InitializeParamsSchema,
   NotificationFrameSchema,
   RequestFrameSchema,
   ResultFrameSchema,
@@ -841,6 +842,15 @@ describe('会话协议 schema 往返', () => {
       false,
     );
     expect(NotificationFrameSchema.safeParse({ jsonrpc: '2.0', params: {} }).success).toBe(false);
+  });
+
+  it('协议号没到 1.0 写成 0.x 三段；握手参数收两段与三段的写法，0.20 报的 1.0 能走到带原因的拒绝', () => {
+    expect(SESSION_PROTOCOL_VERSION).toMatch(/^0\.\d+\.\d+$/);
+    const params = (protocolVersion: string) => ({ protocolVersion, client: { name: 'webui', version: '0.1.0' } });
+    expect(InitializeParamsSchema.safeParse(params('1.0')).success).toBe(true);
+    expect(InitializeParamsSchema.safeParse(params('0.2.0')).success).toBe(true);
+    expect(InitializeParamsSchema.safeParse(params('1')).success).toBe(false);
+    expect(InitializeParamsSchema.safeParse(params('0.2.0.1')).success).toBe(false);
   });
 
   it.each(Object.keys(methodSamples) as SessionMethod[])('%s：参数与结果往返一致，非法样例被拒', method => {

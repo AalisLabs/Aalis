@@ -102,7 +102,11 @@ type LiveConnection = ServerConnection & {
 
 const SERVER_NAME = '@aalis/plugin-session-server';
 
-const majorOf = (version: string) => version.split('.')[0];
+/** 握手比的部分：没到 1.0 的比前两段，1.0 以后比第一段 */
+const compatOf = (version: string): string => {
+  const [major, minor] = version.split('.');
+  return major === '0' ? `${major}.${minor}` : major;
+};
 
 /** 握手回应里随时会变的两项：当前的功能位与应用名 */
 type ServerState = () => Pick<SessionMethodResult<'initialize'>, 'features' | 'appName'>;
@@ -158,7 +162,7 @@ export function createSessionServer(
   function connect(peer: SessionPeer, send: (frame: string) => void): SessionConnection {
     let initialized = false;
     let closed = false;
-    /** 握手时主版本不合：回完错误帧再断开，断开的原因取它的原文 */
+    /** 握手时协议版本不兼容：回完错误帧再断开，断开的原因取它的原文 */
     let farewell: TextRef | undefined;
     const subscriptions = new Map<string, string[] | null>();
     // 审批推送只发给上报过在场的连接，在场上报要先握手：握手之前不会有推送
@@ -214,8 +218,8 @@ export function createSessionServer(
 
     const initialize = (params: SessionMethodParams<'initialize'>): SessionMethodResult<'initialize'> => {
       if (initialized) throw new ProtocolError(RPC_ERROR_CODES.invalidRequest, '这条连接已经握过手');
-      if (majorOf(params.protocolVersion) !== majorOf(SESSION_PROTOCOL_VERSION)) {
-        farewell = t('majorMismatch', { client: params.protocolVersion, server: SESSION_PROTOCOL_VERSION });
+      if (compatOf(params.protocolVersion) !== compatOf(SESSION_PROTOCOL_VERSION)) {
+        farewell = t('versionMismatch', { client: params.protocolVersion, server: SESSION_PROTOCOL_VERSION });
         throw failure('unsupported', farewell);
       }
       initialized = true;

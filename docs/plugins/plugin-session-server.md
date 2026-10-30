@@ -10,7 +10,7 @@ owner 的客户端经传输层（WebUI 的 WebSocket 端点 `/session`，见 [pl
 
 - **功能位**：握手回发送、回滚、压缩、设置四项，分别看对话（`agent`）、检查点（`checkpoint`）、压缩（`compression`）、会话设置（`session-settings`）服务在不在。这几个服务可能变了（核心的 `service:changed` 通知）、功能位变了时给每条连接推 `features/changed`；握手时现取，不用推过的那份。
 - **应用名**：握手另回宿主配置文档里的 `name`（`host-config` 服务），每次握手现读，改名之后新的连接就拿到新名字；没有宿主配置时是 `Aalis`。
-- **握手的主版本不合**：回 `unsupported` 的说明按读者的语言写，随后断开，断开的原因取它的原文。
+- **握手时协议版本不兼容**：回 `unsupported` 的说明按读者的语言写，随后断开，断开的原因取它的原文。
 - **出帧的文字**：读者与原样数据见 [api-session-protocol 的「文字与语言」](../api/api-session-protocol.md#握手)。全部出帧（回应、错误、推送与等快照时攒着的）经同一个渲染函数：一次推送只渲染一次，各连接共用这一份；每次推送现按全局层的语言渲染，全局语言改了之后的推送就是新的语言。i18n 渲染抛错时这一帧按原文发出，每个实例只告警一次。
 - **会话列表**：把会话表投影成摘要，按根会话的种类（`SessionInfo.kind`）分「我的」与房间两区，房间按接管它的适配器实例（`SessionInfo.originInstance`）分组，标出需要我处理（本会话或各级子会话有推出、还没结的审批）、出错、完成未读、运行中。缺省不列已归档的，`archived` 只列已归档的；`instance`、`platform` 只列一组房间。组名是实例的显示名：插件定义的 `displayName`（没有时用包名），非默认实例（`<包名>:<实例名>`）另带实例名，如「OneBot 适配器（work）」；插件已不在的用实例 id，没有实例的组用平台名。排序、搜索、分页与分组的规则见契约页。
 - **增量**：`sessions/watch` 之后，`session:created`、`session:updated`、`session:completed`、`session:deleted`、回合进出、审批的推出与结算、后台任务的开始、结束与删除各推一条 `sessions/changed`，带变了的会话连同各级父会话的摘要与最新的分组。

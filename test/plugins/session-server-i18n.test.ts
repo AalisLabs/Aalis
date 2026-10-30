@@ -676,12 +676,12 @@ describe('会话服务自己的报错按全局默认层的语言', () => {
     expect([...absent, ...present]).toEqual(expected);
   });
 
-  it('握手主版本不同：错误帧按全局默认层的语言，连接断开，disconnect 收到原文', async () => {
+  it('握手时协议版本不兼容：错误帧按全局层的语言，连接断开，disconnect 收到原文', async () => {
     const { open } = await setup({ language: ['en'] });
     const c = open();
     const error = await c.fail('initialize', { protocolVersion: '99.0', client: CLIENT });
-    expect(error.message).toBe(`Protocol major versions differ: client 99.0, server ${SESSION_PROTOCOL_VERSION}`);
-    expect(c.disconnects).toEqual([`协议主版本不同：客户端 99.0，服务端 ${SESSION_PROTOCOL_VERSION}`]);
+    expect(error.message).toBe(`Incompatible protocol versions: client 99.0, server ${SESSION_PROTOCOL_VERSION}`);
+    expect(c.disconnects).toEqual([`协议版本不兼容：客户端 99.0，服务端 ${SESSION_PROTOCOL_VERSION}`]);
   });
 
   it('删一个带子会话的会话、父子两处清理都抛错：session/delete 的错误帧与 session/batch 的 failed 按全局默认层的语言，错误仍是带两条 errors 的 AggregateError', async () => {
