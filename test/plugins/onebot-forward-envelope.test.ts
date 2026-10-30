@@ -28,6 +28,7 @@ const expanded = (fullText: string): ExpandedForward => ({
   fullText,
   truncatedDepth: false,
   truncatedNodes: false,
+  nested: [],
 });
 
 const SUFFIX = '\n…（已截断，原文保留在缓存中）';
@@ -195,7 +196,7 @@ describe('合并转发的摘要请求与什么也没展开出来的转发', () =
   it.each([
     ['数据为空', null, '拉取失败'],
     ['没有节点', { messages: [] }, '内容为空'],
-  ])('实现端回成功但%s：不带事实、不进缓存、不调摘要，信封写出那一行', async (_, reply, line) => {
+  ])('实现端回成功但%s：不带事实、缓存里只记收到它的会话（没有展开结果）、不调摘要，信封写出那一行', async (_, reply, line) => {
     const { forwards, requests, cached } = await expand('stop', fixedRef<I18nService>(undefined), {}, reply);
     expect(forwards).toEqual([
       {
@@ -203,7 +204,7 @@ describe('合并转发的摘要请求与什么也没展开出来的转发', () =
         content: `<forward id="F-stop" count=0 participants="">\n0. 系统: [嵌套合并转发 id=F-stop ${line}]\n</forward>`,
       },
     ]);
-    expect(cached).toBeUndefined();
+    expect(cached).toEqual({ sessionIds: ['s'] });
     expect(requests).toEqual([]);
   });
 });

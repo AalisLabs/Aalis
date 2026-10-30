@@ -31,15 +31,18 @@ export const defaultForwardSummaryPrompt = (language: string): string =>
   '- 不要寒暄、不要解释自己、不要使用 markdown 列表或标题；输出单段落纯文本；\n' +
   '- 控制在目标字数以内，优先保留互动细节与可引用发言，寒暄/重复信息略去。';
 
+/** 一条合并转发的展开结果（完整原文、元信息、两个截断标志与嵌套转发的 id）与摘要 */
+export type ForwardExpansion = Omit<ExpandedForward, 'id'> & { summary: string | null; expandedAt: number };
+
 /**
- * 合并转发原文缓存条目：展开结果（完整原文、元信息与两个截断标志）+ 摘要，与收到这条转发的会话（按收到的先后，同一会话只记
- * 一次）：工具取原文时按它们过取别的会话的规则。
+ * 收到过的一条合并转发：收到它的会话（按收到的先后，同一会话只记一次）。不论展开没展开、拉没拉到都记——关掉展开的、顶层拉不到
+ * 的、什么也没展开出来的、展开出错的与嵌套在里面的同样记；工具按 id 取原文（命中展开结果或向实现端现拉）时按它们过取别的会话的
+ * 规则，从没收到过的判不出。展开了的另带展开结果与摘要
  */
-export type ForwardEntry = Omit<ExpandedForward, 'id'> & {
-  summary: string | null;
-  expandedAt: number;
-  sessionIds: string[];
-};
+export type ForwardEntry = { sessionIds: string[] } & (
+  | ForwardExpansion
+  | { [K in keyof ForwardExpansion]?: undefined }
+);
 
 export interface ForwardConfig {
   enabled: boolean;
@@ -89,13 +92,13 @@ export interface ForwardExpanderDeps<TState> {
 }
 
 export interface ForwardExpander<TState> {
-  /** 取已展开的转发条目：先查内存缓存，落空再读持久化层并回填缓存 */
+  /** 取收到过的转发条目（展开了的带展开结果）：先查内存缓存，落空再读持久化层并回填缓存；没收到过的没有 */
   getOrLoadForward(id: string): Promise<ForwardEntry | undefined>;
   /** 按 OneBot v11 标准的参数名 id 调 get_forward_msg（NapCat 也收它），失败原样抛出 */
   fetchForward(state: TState, id: string): Promise<unknown>;
   /**
    * 展开消息段里的各段转发，按出现先后交出（同一 id 只交一次），各项是给模型的信封加给界面的事实；正文里它们的占位由归档文本
-   * 换回展开。没有 forward 段时交空数组
+   * 换回展开。各段（连同嵌套在里面的）都记下这个会话收到了它。没有 forward 段时交空数组
    */
   expandForwards(state: TState, segments: OneBotMessageSegment[], sessionId: string): Promise<ForwardedChat[]>;
   /**
@@ -167,6 +170,7 @@ export function createConcurrencyLimited<TArg, TRet>(
  *   1) LLM 在对话上下文里看到的是"信封 + 摘要"，不被超长原文淹没；
  *   2) 想看细节时调 onebot_get_forward_msg 工具直接命中缓存/持久化层；
  *   3) 展开随 inbound:message 的 forwards 交出，存档拼回正文里占位的位置，随历史归档进入向量库，被语义召回。
+ * 每个收到的转发 id（不论展开没展开）都在同一份缓存里记下收到它的会话，工具取原文时按它们过取用判定。
  *
  * 内存缓存 1h TTL；持久化由 memory metadata 兜底（如果实现支持）。
  */
@@ -195,8 +199,9 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     for (const [k, v] of forwardCache) if (v.expiresAt < now) forwardCache.delete(k);
     const store = memory.present ? memory.use : undefined;
     if (store) {
-      store
-        .saveMetadata(FORWARD_METADATA_NS, id, entry as unknown as Record<string, unknown>)
+      // 持久化失败（含同步抛出的）只记日志：内存里已经记下，展开与记会话照常
+      void Promise.resolve()
+        .then(() => store.saveMetadata(FORWARD_METADATA_NS, id, entry as unknown as Record<string, unknown>))
         .then(() => sweepPersisted())
         .catch((err: unknown) => logger.debug(`forward metadata 持久化失败 id=${id}: ${err}`));
     }
@@ -243,19 +248,23 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     return keys.length;
   }
 
-  /** 从持久化层加载（缓存未命中时尝试）。没记会话或记坏了的条目，会话按空的算：取用判定判不出 */
+  /**
+   * 从持久化层加载（缓存未命中时尝试）。展开过的条目没记会话或记坏了的，会话按空的算：取用判定判不出；没记嵌套的按没有。没展开
+   * 过的条目只有会话，会话为空的按没收到过
+   */
   async function loadPersistedForward(id: string): Promise<ForwardEntry | undefined> {
     if (!memory.present) return undefined;
     const store = memory.use;
+    const strings = (value: unknown) =>
+      Array.isArray(value) ? value.filter((s): s is string => typeof s === 'string') : [];
     try {
       const data = await store.getMetadata(FORWARD_METADATA_NS, id);
-      if (data && typeof data === 'object' && typeof (data as { fullText?: unknown }).fullText === 'string') {
-        const { sessionIds } = data as { sessionIds?: unknown };
-        return {
-          ...(data as unknown as ForwardEntry),
-          sessionIds: Array.isArray(sessionIds) ? sessionIds.filter((s): s is string => typeof s === 'string') : [],
-        };
+      if (!data || typeof data !== 'object') return undefined;
+      const { fullText, sessionIds, nested } = data as { fullText?: unknown; sessionIds?: unknown; nested?: unknown };
+      if (typeof fullText === 'string') {
+        return { ...(data as unknown as ForwardExpansion), nested: strings(nested), sessionIds: strings(sessionIds) };
       }
+      return strings(sessionIds).length ? { sessionIds: strings(sessionIds) } : undefined;
     } catch (err) {
       logger.debug(`forward metadata 读取失败 id=${id}: ${err}`);
     }
@@ -272,6 +281,15 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
 
   function fetchForward(state: TState, id: string): Promise<unknown> {
     return sendAction(state, 'get_forward_msg', { id });
+  }
+
+  /** 记下 sessionId 收到了这条转发，同一会话只记一次；给了 expansion 就换上它。没有变化的不写 */
+  async function remember(id: string, sessionId: string, expansion?: ForwardExpansion): Promise<void> {
+    const entry = await getOrLoadForward(id);
+    const known = entry?.sessionIds ?? [];
+    if (!expansion && known.includes(sessionId)) return;
+    const sessionIds = known.includes(sessionId) ? known : [...known, sessionId];
+    setCachedForward(id, expansion ? { ...expansion, sessionIds } : { ...entry, sessionIds });
   }
 
   const pickChatModel = chatModelPicker(llm, () => logger.warn('没有可用的对话模型，转发摘要跳过'));
@@ -407,8 +425,8 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
   }
 
   /**
-   * 完整原文写入 forwardCache 与 memory metadata。顶层拉取失败、什么也没展开出来与展开出错时不带事实、不进缓存，展开写明原因；
-   * 关掉展开时各项的展开就是占位本身（归档正文因此带占位）。
+   * 完整原文写入 forwardCache 与 memory metadata。顶层拉取失败、什么也没展开出来与展开出错时不带事实、条目里不带展开结果（只记
+   * 收到它的会话），展开写明原因；关掉展开时各项的展开就是占位本身（归档正文因此带占位），同样只记会话。
    *
    * 优先使用消息段里随帧带来的 inline content（部分 NapCat 版本会内嵌），
    * 这种情况下顶层无需走网络。
@@ -420,7 +438,11 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
   ): Promise<ForwardedChat[]> {
     const forwards = collectForwardSegments(segments);
     const expandIds = [...new Set(forwards.map(f => f.id))];
-    if (!forwardCfg.enabled) return expandIds.map(id => ({ id, content: forwardPlaceholder(id) }));
+    if (!forwardCfg.enabled) {
+      // 关掉展开：只记下收到它的会话，工具按 id 现拉时按它们判
+      await Promise.all(expandIds.map(id => remember(id, sessionId)));
+      return expandIds.map(id => ({ id, content: forwardPlaceholder(id) }));
+    }
     if (expandIds.length === 0) return [];
 
     const inlineMap = new Map<string, unknown[]>();
@@ -438,16 +460,16 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     return Promise.all(
       expandIds.map(async (id): Promise<ForwardedChat> => {
         const entry = await getOrLoadForward(id);
-        if (entry) {
-          // 别的会话又收到同一条转发：记下这个会话，工具在它那里也取得到
-          if (!entry.sessionIds.includes(sessionId)) {
-            setCachedForward(id, { ...entry, sessionIds: [...entry.sessionIds, sessionId] });
-          }
+        if (entry?.fullText !== undefined) {
+          // 别的会话又收到同一条转发：记下这个会话（连同嵌套在里面的），工具在它那里也取得到
+          await Promise.all([id, ...entry.nested].map(each => remember(each, sessionId)));
           return forwardedChat({ id, ...entry }, entry.summary);
         }
 
-        // 顶层拉不到时信封写拉取失败与实现端原话、不进缓存，之后的工具调用照常重新拉；嵌套的拉不到写「拉取失败」一行，原话进日志。
-        // 实现端回了成功却什么也没展开出来（数据为空或没有节点）的同一条规则：不带事实、不进缓存、不拿那一行去调摘要，信封照常写出那一行
+        // 没展开过的先记下收到它的会话：下面拉不到、什么也没展开出来、展开出错的，工具照常按 id 现拉，按它判。
+        // 顶层拉不到时信封写拉取失败与实现端原话、不带展开结果，之后的工具调用照常重新拉；嵌套的拉不到写「拉取失败」一行，原话进日志。
+        // 实现端回了成功却什么也没展开出来（数据为空或没有节点）的同一条规则：不带事实、不带展开结果、不拿那一行去调摘要，信封照常写出那一行
+        await remember(id, sessionId);
         let fetchFailure: unknown;
         try {
           const expanded = await expandForward(id, inlineMap.get(id) ?? null, {
@@ -472,7 +494,8 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
           const summary = await summarizeForward(expanded.fullText, expanded);
 
           const { id: _id, ...forward } = expanded;
-          setCachedForward(id, { ...forward, summary, expandedAt: Date.now(), sessionIds: [sessionId] });
+          await remember(id, sessionId, { ...forward, summary, expandedAt: Date.now() });
+          await Promise.all(expanded.nested.map(each => remember(each, sessionId)));
 
           const truncFlag = expanded.truncatedDepth || expanded.truncatedNodes ? ' [truncated]' : '';
           // 日志里输出完整摘要（或在无摘要时输出完整原文），便于排查 forward 实际入库内容；

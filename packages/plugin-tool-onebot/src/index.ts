@@ -96,7 +96,7 @@ const uses = {
   media: optional(media),
   sessionHistory: optional(sessionHistory),
   /**
-   * onebot_get_msg 取到的消息所在的会话、onebot_recall_self 的目标会话与 onebot_get_forward_msg 命中缓存的转发收到它的会话按它的
+   * onebot_get_msg 取到的消息所在的会话、onebot_recall_self 的目标会话与 onebot_get_forward_msg 取的转发收到它的会话按它的
    * 规则判（takeFrom）；不在时只能取当前会话里的
    */
   sessionManager: optional(sessionManager),
@@ -1049,18 +1049,34 @@ function registerGroupInfoTools(caps: GroupInfoCaps, bundle: OneBotToolBundle): 
       const forwardId = String(args.id);
       const limit = Math.max(1, Math.min(100, typeof args.limit === 'number' ? Math.floor(args.limit) : 30));
 
-      // 适配器的 callAction 维护了一份接收时即抓取并展开（含摘要与图像识别）的缓存。
+      const readFailed = (err: unknown) =>
+        new Error(`合并转发读取失败：${err instanceof Error ? err.message : String(err)}`);
+      // 适配器的 callAction 维护了一份接收时即抓取并展开（含摘要与图像识别）的缓存，每个收到的转发都记着收到它的会话。
       let data: unknown;
       try {
         data = await callAction(platform, selfId, 'get_forward_msg', { id: forwardId });
       } catch (err) {
-        throw new Error(`合并转发读取失败：${err instanceof Error ? err.message : String(err)}`);
+        throw readFailed(err);
       }
 
-      // 适配器在缓存命中时返回 ForwardEntry 形状（含 fullText / summary / 元信息、截断标志与收到它的会话）。
-      // 此时直接返回原文给 LLM，无需再做协议端结构解析。
-      if (data && typeof data === 'object' && (data as Record<string, unknown>).__aalisForwardEntry) {
-        const entry = data as {
+      // 适配器交回收到这条转发的会话：展开过的连同 ForwardEntry 形状（fullText / summary / 元信息与截断标志），没展开过的连同
+      // 按 id 现拉的办法。收到它的会话逐个参与者过会话管理的规则（同 onebot_get_msg），几处之一过得了就行，过了才拉；没记会话的
+      // （从没收到过的、别的适配器交回的原始数据）按判不出拒绝
+      const reply = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
+      const recorded = reply.__aalisForwardEntry === true || reply.__aalisForwardReceipt === true;
+      const sessionIds = recorded && Array.isArray(reply.sessionIds) ? reply.sessionIds.map(String) : [];
+      const verdict =
+        sessionIds.length === 0
+          ? { ok: false as const, reason: TAKE_UNKNOWN }
+          : await callCtx.approveFor(who => {
+              const verdicts = sessionIds.map(id => takeFrom(sessionManager, callCtx.sessionId, id, who));
+              return verdicts.find(v => v.ok) ?? verdicts[0];
+            });
+      if (!verdict.ok) throw new Error(toSource(verdict.reason));
+
+      // 展开过的直接返回原文给 LLM，无需再做协议端结构解析
+      if (reply.__aalisForwardEntry === true) {
+        const entry = reply as {
           fullText: string;
           summary: string | null;
           count: number;
@@ -1068,18 +1084,7 @@ function registerGroupInfoTools(caps: GroupInfoCaps, bundle: OneBotToolBundle): 
           unlisted?: number;
           truncatedDepth?: boolean;
           truncatedNodes?: boolean;
-          sessionIds?: unknown;
         };
-        // 收到它的会话逐个参与者过会话管理的规则（同 onebot_get_msg），几处之一过得了就行；没记会话的按判不出拒绝
-        const sessionIds = Array.isArray(entry.sessionIds) ? entry.sessionIds.map(String) : [];
-        const verdict =
-          sessionIds.length === 0
-            ? { ok: false as const, reason: TAKE_UNKNOWN }
-            : await callCtx.approveFor(who => {
-                const verdicts = sessionIds.map(id => takeFrom(sessionManager, callCtx.sessionId, id, who));
-                return verdicts.find(v => v.ok) ?? verdicts[0];
-              });
-        if (!verdict.ok) throw new Error(toSource(verdict.reason));
         const cut = [entry.truncatedDepth && '嵌套超深', entry.truncatedNodes && '节点超限'].filter(Boolean);
         // 参与人与入站信封同一写法：条目只列前 8 个，没列出的人数另记
         const participants = [...entry.participants, ...(entry.unlisted ? [`...(+${entry.unlisted} 人未列出)`] : [])];
@@ -1089,7 +1094,12 @@ function registerGroupInfoTools(caps: GroupInfoCaps, bundle: OneBotToolBundle): 
         const summaryLine = entry.summary ? `\n摘要：${entry.summary}\n` : '\n';
         return `${header}${summaryLine}\n原文：\n${entry.fullText}`;
       }
-
+      // 没展开过的：过了判定才按 id 现拉
+      try {
+        data = await (reply.fetch as () => Promise<unknown>)();
+      } catch (err) {
+        throw readFailed(err);
+      }
       const formatContext = await recognizeForwardImages(caps, selfId, data, limit);
       return formatForwardMessage(data, limit, formatContext);
     },

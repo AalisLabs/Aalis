@@ -20,7 +20,8 @@ import { toolContext } from '../fixtures/tool-call.js';
 // - 群管工具在机器人不够权限时报错，不发出动作；查目标成员与撤回失败时报错只带适配器的原话，不猜原因；查目标成员时实现端
 //   没给成员信息或没给角色的同样报错，不当普通成员；机器人自身没给角色的与取不到自身信息一样跳过检查。
 // - 合并转发命中适配器缓存时，截断标志与没列出的参与人数写在结果的头一行；没命中时节点为空回「内容为空」，返回格式认不出、拉取失败都报错，
-//   报错只带适配器的原话，不猜原因。入站展开时拉取失败的不进缓存，工具照常重新拉。
+//   报错只带适配器的原话，不猜原因。入站展开时拉取失败的不进缓存，工具照常重新拉。没展开过的（关掉展开、拉不到的）同样按收到它的
+//   会话过取用判定，过了才向实现端现拉；从没收到过的判不出、不拉（这里没有会话管理：只取得到当前会话里收到的）。
 // - 群会话里写明 self_id 时动作发给写明的账号，不被会话的账号盖掉。
 // - 两个群请求工具各认自己的申请类型：入群邀请不能用审批加群申请的工具批；没有这条申请时报错。
 // - 合并转发里的图经 get_image 换成存储地址时，读出来按文件头认：是图片才转成 data URI（类型取判定结果），不是的交原地址。
@@ -99,6 +100,9 @@ async function withStub(
   await app.plugins.idle();
   return { call, actions, targets };
 }
+
+/** 适配器对没展开过、在本群收到过的转发交回的形状：收到它的会话与按 id 现拉的办法，现拉得到 data */
+const unexpanded = (data: unknown) => ({ __aalisForwardReceipt: true, sessionIds: [GROUP], fetch: async () => data });
 
 /** 适配器的动作失败：超时（结果未知）与实现端回不支持该动作 */
 const timedOut = () => new Error('OneBot action 没等到回执（30 秒超时），结果未知，可能已经执行');
@@ -218,7 +222,7 @@ describe('失败抛错', () => {
 
   it('合并转发没命中缓存：节点为空回「内容为空」，返回格式认不出时报错', async () => {
     let data: unknown = { messages: [] };
-    const { call } = await withStub(async action => (action === 'get_forward_msg' ? data : {}));
+    const { call } = await withStub(async action => (action === 'get_forward_msg' ? unexpanded(data) : {}));
     expect(await call('onebot_get_forward_msg', { id: 'zz-forward' })).toBe('合并转发内容为空');
     data = { zz: 1 };
     await expect(call('onebot_get_forward_msg', { id: 'zz-forward' })).rejects.toThrow('返回格式认不出');
@@ -229,6 +233,16 @@ describe('失败抛错', () => {
       throw new Error('<占位原话>');
     });
     await expect(call('onebot_get_forward_msg', { id: 'zz-forward' })).rejects.toThrow(
+      /^合并转发读取失败：<占位原话>$/,
+    );
+    const pulling = await withStub(async () => ({
+      __aalisForwardReceipt: true,
+      sessionIds: [GROUP],
+      fetch: async () => {
+        throw new Error('<占位原话>');
+      },
+    }));
+    await expect(pulling.call('onebot_get_forward_msg', { id: 'zz-forward' })).rejects.toThrow(
       /^合并转发读取失败：<占位原话>$/,
     );
     await expect(call('onebot_get_msg', { message_id: '1' })).rejects.toThrow(/^获取消息失败：<占位原话>$/);
@@ -243,11 +257,11 @@ describe('合并转发里的图：get_image 给的地址原样交给识图', () 
       async action => {
         if (action === 'get_image') return { file: 'zz:/x.png' };
         if (action === 'get_forward_msg') {
-          return {
+          return unexpanded({
             messages: [
               { type: 'node', data: { nickname: '甲', content: [{ type: 'image', data: { file: 'zz-image-id' } }] } },
             ],
-          };
+          });
         }
         return {};
       },
@@ -286,9 +300,9 @@ describe('合并转发里的图：消息段里写的只有网址与 base64 的 d
       async action => {
         if (action === 'get_image') throw new Error('<占位原话>');
         if (action === 'get_forward_msg') {
-          return {
+          return unexpanded({
             messages: [{ type: 'node', data: { nickname: '甲', content: [{ type: 'image', data: { file } }] } }],
-          };
+          });
         }
         return {};
       },
@@ -336,10 +350,13 @@ const { WebSocketServer } = createRequire(
 )('ws') as { WebSocketServer: new (opts: { host: string; port: number }) => WsServer };
 
 /**
- * 真适配器连本地的假实现端（failing 里的动作回失败、带给定的原话，其余回成功），push 以这个账号推一个事件；inbound 是适配器
- * 发出的入站
+ * 真适配器连本地的假实现端（failing 里的动作回失败、带给定的原话，其余回成功，data 里有的动作回给定的数据），push 以这个账号推一个
+ * 事件；inbound 是适配器发出的入站。config 并进适配器的配置
  */
-async function withAdapter(failing: Record<string, string> = {}) {
+async function withAdapter(
+  failing: Record<string, string> = {},
+  opts: { config?: Record<string, unknown>; data?: Record<string, unknown> } = {},
+) {
   const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   await new Promise<void>(r => server.once('listening', r));
   cleanups.push(
@@ -361,7 +378,7 @@ async function withAdapter(failing: Record<string, string> = {}) {
       ws.send(
         JSON.stringify(
           failure === undefined
-            ? { status: 'ok', retcode: 0, data: { user_id: SELF }, echo: req.echo }
+            ? { status: 'ok', retcode: 0, data: opts.data?.[req.action] ?? { user_id: SELF }, echo: req.echo }
             : { status: 'failed', retcode: 100, message: failure, echo: req.echo },
         ),
       );
@@ -381,7 +398,10 @@ async function withAdapter(failing: Record<string, string> = {}) {
     { definition: memoryInMemory },
     {
       definition: onebotPlugin,
-      config: { connections: [{ url: `ws://127.0.0.1:${server.address().port}`, protocol: 'v11', selfId: SELF }] },
+      config: {
+        connections: [{ url: `ws://127.0.0.1:${server.address().port}`, protocol: 'v11', selfId: SELF }],
+        ...opts.config,
+      },
     },
     { definition: toolOnebot },
   ]);
@@ -469,5 +489,40 @@ describe('合并转发：入站展开时拉取失败的不进缓存', () => {
     expect(buildIncomingContent(inbound[0])).toContain('拉取失败');
     await expect(call('onebot_get_forward_msg', { id: 'zz-forward' })).rejects.toThrow('<占位原话>');
     expect(actions.filter(a => a.action === 'get_forward_msg')).toHaveLength(2);
+  });
+});
+
+describe('合并转发：没展开过的按收到它的会话过取用判定', () => {
+  it('关掉展开时只在私聊里收到过的：群里调工具被拒、不向实现端拉；在那个私聊里照常现拉；从没收到过的判不出、不拉', async () => {
+    const node = {
+      type: 'node',
+      data: { nickname: '甲', user_id: 30001, content: [{ type: 'text', data: { text: '<私聊转发里的话>' } }] },
+    };
+    const { call, actions, push, inbound } = await withAdapter(
+      {},
+      { config: { forward: { enabled: false } }, data: { get_forward_msg: { messages: [node] } } },
+    );
+    push({
+      post_type: 'message',
+      message_type: 'private',
+      sub_type: 'friend',
+      message_id: 803,
+      user_id: 30001,
+      sender: { user_id: 30001, nickname: '甲' },
+      message: [{ type: 'forward', data: { id: 'zz-forward' } }],
+    });
+    await until(() => inbound.length > 0);
+    const fetched = () => actions.filter(a => a.action === 'get_forward_msg').length;
+    const refused = (id: string, sessionId: string) =>
+      Promise.resolve(call('onebot_get_forward_msg', { id }, sessionId)).then(
+        () => '',
+        (err: Error) => err.message,
+      );
+    expect(await refused('zz-forward', GROUP)).toContain('判不出');
+    expect(fetched()).toBe(0);
+    expect(String(await call('onebot_get_forward_msg', { id: 'zz-forward' }, PRIVATE))).toContain('<私聊转发里的话>');
+    expect(fetched()).toBe(1);
+    expect(await refused('zz-unknown', PRIVATE)).toContain('判不出');
+    expect(fetched()).toBe(1);
   });
 });

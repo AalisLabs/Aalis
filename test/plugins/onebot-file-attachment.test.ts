@@ -51,7 +51,8 @@ import { storedRoom } from '../fixtures/rooms.js';
 // 内联，其余由适配器去掉、投递报失败（会话表、取用规则与 owner 判定是替身：私聊的对端与 WebUI 的 console 是 owner，取用规则
 // 一律不放行）。一条回复里的媒体（网址的标记与转成的附件合计）最多发 10 个，附件同时最多读 4 个。入站的引用与撤回按存档反查原文时，按归档时记下的标签去掉发送者前缀。
 // 发送不重试：没等到回执（超时、回执前断线）的记结果未知；逐条发出时一条没发成就停，投递结果与回报写明前几条已发出。实现端回
-// 失败时报错带返回码，「不支持该动作」另标出来；合并转发只按 id 拉，缓存命中时带截断标志与收到它的会话。
+// 失败时报错带返回码，「不支持该动作」另标出来；合并转发只按 id 拉，缓存命中时带截断标志与收到它的会话，没展开过的交回收到它的
+// 会话与现拉的办法、不先拉。
 // 本地起一个假的 OneBot 实现端（WebSocket 服务）记录适配器发出的 action。
 // ════════════════════════════════════════════════════════════
 
@@ -955,11 +956,31 @@ describe('onebot 动作：失败带返回码，合并转发只按 id 拉', () =>
     expect(String((refused as Error).message)).toContain('<占位原话>');
   });
 
-  it('get_forward_msg 拉不到：只按 id 拉一次，抛出实现端原话', async () => {
+  it('收到时没拉到的转发：get_forward_msg 交回收到它的会话与现拉的办法、不先拉；现拉只按 id 拉，拉不到抛出实现端原话；从没收到过的会话为空', async () => {
     const t = await boot({ failActions: { get_forward_msg: { retcode: 100, message: '<占位原话>' } } });
-    const err = await t.callAction('get_forward_msg', { id: 'zz-forward' }).catch((e: unknown) => e);
-    expect(String((err as Error).message)).toContain('<占位原话>');
-    expect(t.actions.filter(a => a.action === 'get_forward_msg').map(a => a.params)).toEqual([{ id: 'zz-forward' }]);
+    t.post({
+      post_type: 'message',
+      message_type: 'group',
+      sub_type: 'normal',
+      message_id: 803,
+      group_id: 20001,
+      user_id: 30002,
+      sender: { user_id: 30002, nickname: '甲' },
+      message: [{ type: 'forward', data: { id: 'zz-forward' } }],
+    });
+    await until(() => t.inbound.length > 0);
+    const pulls = () => t.actions.filter(a => a.action === 'get_forward_msg').map(a => a.params);
+    expect(pulls()).toEqual([{ id: 'zz-forward' }]);
+    const receipt = (await t.callAction('get_forward_msg', { id: 'zz-forward' })) as {
+      sessionIds: string[];
+      fetch: () => Promise<unknown>;
+    };
+    expect(receipt).toMatchObject({ __aalisForwardReceipt: true, sessionIds: [GROUP] });
+    expect(pulls()).toHaveLength(1);
+    await expect(receipt.fetch()).rejects.toThrow('<占位原话>');
+    expect(pulls()).toEqual([{ id: 'zz-forward' }, { id: 'zz-forward' }]);
+    expect(await t.callAction('get_forward_msg', { id: 'zz-unknown' })).toMatchObject({ sessionIds: [] });
+    expect(pulls()).toHaveLength(2);
   });
 
   it('入站展开过的转发：get_forward_msg 命中缓存时带截断标志与收到它的会话', async () => {

@@ -28,7 +28,8 @@ import { toolContext } from '../fixtures/tool-call.js';
 //   照交，onebot_get_session_history 报错
 // - onebot_get_msg 取到的消息按它所在的窗口拼出会话 id 过规则；判不出对端的（她自己发的私聊消息）按判不出拒绝，不放行时报错
 // - onebot_recall_self 指定的目标会话过规则，不放行时在读发出记录之前报错：报错里没有她在那里说的话，也不撤回
-// - onebot_get_forward_msg 命中适配器缓存的转发按收到它的会话过规则，有一个过得了就行；没记会话的按判不出拒绝
+// - onebot_get_forward_msg 取的转发按收到它的会话过规则，有一个过得了就行：命中适配器缓存的与没展开过、要按 id 现拉的一样，
+//   现拉的过了才拉；没记会话的（从没收到过的、别的适配器交回的原始数据）按判不出拒绝
 // - 跨会话历史：被动注入不是谁要的，不传授权身份；recent_messages 带这次调用的授权身份。查询超取后逐条过规则，
 //   被拒的再多也不占名额
 // ════════════════════════════════════════════════════════════
@@ -196,7 +197,7 @@ describe('onebot_recall_self 过规则', () => {
   });
 });
 
-describe('onebot_get_forward_msg 命中缓存时过规则', () => {
+describe('onebot_get_forward_msg 过规则', () => {
   /** 适配器缓存里的转发：收到它的会话与原文 */
   const entry = (sessionIds: string[], fullText: string) => ({
     __aalisForwardEntry: true,
@@ -206,12 +207,26 @@ describe('onebot_get_forward_msg 命中缓存时过规则', () => {
     participants: ['甲(30002)'],
     sessionIds,
   });
+  /** 没展开过的转发：收到它的会话与按 id 现拉的办法，现拉的记下 id */
+  const pulled: string[] = [];
+  const receipt = (id: string, sessionIds: string[], text: string) => ({
+    __aalisForwardReceipt: true,
+    sessionIds,
+    fetch: async () => {
+      pulled.push(id);
+      return { messages: [{ type: 'node', data: { nickname: '甲', content: text } }] };
+    },
+  });
   const FORWARDS: Record<string, unknown> = {
     'F-g2': entry([G2], '<别的群收到的>'),
     'F-a': entry([PA], '<A 私聊里收到的>'),
     'F-b': entry([PB], '<B 私聊里收到的>'),
     'F-both': entry([PB, G2], '<两处都收到的>'),
     'F-none': entry([], '<没记会话的>'),
+    'R-a': receipt('R-a', [PA], '<A 私聊里现拉的>'),
+    'R-b': receipt('R-b', [PB], '<B 私聊里现拉的>'),
+    'R-none': receipt('R-none', [], '<没收到过的>'),
+    raw: { messages: [{ type: 'node', data: { nickname: '甲', content: '<原始数据>' } }] },
   };
 
   async function setup() {
@@ -255,6 +270,23 @@ describe('onebot_get_forward_msg 命中缓存时过规则', () => {
     const none = await refused('F-none');
     expect(none).toContain('判不出');
     expect(none).not.toContain('<没记会话的>');
+  });
+
+  it('没展开过、要按 id 现拉的：A 自己私聊里收到的过了才拉；只在 B 私聊里收到的回原因、不拉；没收到过的与原始数据判不出', async () => {
+    const get = await setup();
+    pulled.length = 0;
+    expect(await get('R-a')).toContain('<A 私聊里现拉的>');
+    const refused = (id: string) =>
+      get(id).then(
+        () => '',
+        (err: Error) => err.message,
+      );
+    expect(await refused('R-b')).toContain('别人的私聊');
+    expect(await refused('R-none')).toContain('判不出');
+    const raw = await refused('raw');
+    expect(raw).toContain('判不出');
+    expect(raw).not.toContain('<原始数据>');
+    expect(pulled).toEqual(['R-a']);
   });
 });
 
