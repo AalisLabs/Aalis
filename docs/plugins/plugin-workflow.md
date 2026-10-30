@@ -122,7 +122,7 @@ nodes:
 
 ## 定义者与运行身份
 
-每个编排记下定义者：经 `workflow_define` 定义的取调用者的授权身份（api-tools 的 `actingIdentity`；它要 owner 审批，批过的是批的人；参与者都是 owner、免了这道确认时不问，取那位 owner，见下文「注册工具」），经工作流页「新建或覆盖」保存的取登录的 owner；覆盖即换成覆盖者，启用与停用沿用原来的。定义者不写进定义文件，也不从定义文件读：它连同写进文件的那份文本的哈希记在 `runsFile` 里，载入时文本对得上才带上定义者。下面几种没有定义者：
+每个编排记下定义者：经 `workflow_define` 定义的取调用者的授权身份（api-tools 的 `actingIdentity`；它要 owner 确认，批过的是批的人；参与者都是 owner、免了这道确认时不问，取那位 owner，见下文「注册工具」），经工作流页「新建或覆盖」保存的取登录的 owner；覆盖即换成覆盖者，启用与停用沿用原来的。定义者不写进定义文件，也不从定义文件读：它连同写进文件的那份文本的哈希记在 `runsFile` 里，载入时文本对得上才带上定义者。下面几种没有定义者：
 
 - 经编排服务的 `defineWorkflow` 定义或覆盖的（别的插件调用的）：服务认不出调用方是谁；
 - 手写进 `defsDir`、没经工作流页或 `workflow_define` 存过的定义；
@@ -135,7 +135,8 @@ nodes:
 
 | 入口 | 调用者 |
 |---|---|
-| `workflow_run` | 调用者的授权身份（`actingIdentity`：几个人都能做、没经审批的一轮按匿名；批过的是批的人） |
+| `workflow_run` | 调用者的授权身份（`actingIdentity`）：它要 owner 确认，批过的是批的 owner，免了确认的是那位 owner，所以总是 owner |
+| 编排服务的 `runWorkflow` | 调用方传的 `caller`（不传即匿名）：别的插件经它调起时，调用者不是 owner 的按调用者执行 |
 | 工作流页「立即运行」 | 登录的 owner |
 | `cron`、`interval`、`once`、`event` 触发与 `trigger:fired` | 定义者 |
 
@@ -147,15 +148,15 @@ nodes:
 
 | 工具 | 说明 |
 |---|---|
-| `workflow_define` | 定义/覆盖工作流（完整 YAML）；要 owner 审批，审批卡上是 YAML 原文（见下文） |
+| `workflow_define` | 定义/覆盖工作流（完整 YAML）；要 owner 确认，审批卡上是 YAML 原文（见下文） |
 | `workflow_run` | 手动触发一次运行，等它跑完回结果；所在的一轮被停下（停止键、`/stop`、禁言、`/clear`）时只是不再等，回 `error`「回合已中止，不再等」，运行照跑；要停这次运行，到工作流页「最近运行」里取消 |
 | `workflow_list` | 列出全部定义 |
 | `workflow_get_runs` | 查询最近运行历史 |
 | `workflow_remove` | 删除定义（含磁盘文件） |
 
-以上工具均属 `workflow` 工具组。`workflow_list` 为 `public`；`workflow_get_runs` 为 `sensitive`（运行的出错原因带会话 id，私聊会话的 id 带对方账号，与 plugin-scheduler 的 `scheduler_list_jobs` 同一档）；`workflow_define`、`workflow_run`、`workflow_remove` 为 `sensitive`。
+以上工具均属 `workflow` 工具组。`workflow_define`、`workflow_run`、`workflow_remove` 声明 `risk: 'dangerous'`（2 级加确认）：编排存下来以后按定义者的身份自己运行，节点能往任意会话发消息、开一轮，与子任务、定时任务、停后台任务同一规则。`workflow_list` 与 `workflow_get_runs` 只看不改，2 级、不确认（`visibility: 'restricted'`；运行的出错原因带会话 id，私聊会话的 id 带对方账号，与 plugin-scheduler 的 `scheduler_list_jobs` 同一档）。
 
-`workflow_define` 声明 `confirm: 'session'`，与 plugin-scheduler 的 `scheduler_create_job` 和别的要确认的操作同一规则：定义出的编排此后按定义者的身份运行，审批卡上是原文。参与者都是 owner 的回合里免了确认时（在免确认白名单 `restrictedPolicy` 里，或 `confirmOverrides` 把 `tool:workflow_define` 设为 `off`），定义不经审批，原文没经 owner 过目。不能产生审批的回合（定时任务、编排节点、mcp-server、空闲触发与主动发言等）里，要审批的定义一律被拒。工作流页「新建或覆盖」是 owner 亲手保存，不问。
+确认怎么判：别人单独发起的一轮没人能批，拒绝；有 owner 在的一轮出审批卡给她批，批过的调用按她执行（定义者、调用者随之是她），`workflow_define` 的审批卡上是 YAML 原文；参与者都是 owner 的回合里，这一项在免确认白名单（`restrictedPolicy`）里或 `confirmOverrides` 把它设为 `off` 时不问，定义因此不经审批，原文没经 owner 过目。不能产生审批的回合（定时任务、编排节点、mcp-server、空闲触发与主动发言等）里，要确认的一律被拒。批了 `workflow_run` 只是让这次运行起来，运行里的步骤照上文按运行身份过权限闸，要确认的照样看免确认白名单，不因为批了启动就放行。工作流页的「新建或覆盖」「立即运行」「删除」是 owner 亲手操作，不走审批。
 
 ## 工作流页
 

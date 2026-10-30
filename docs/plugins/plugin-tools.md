@@ -33,7 +33,6 @@ export default definePlugin({
 - `lifecycle`：停用时把在跑的后台任务落成 `aborted` 并写盘。
 - 可选 `sessionFields`、`document`：按会话读「工具分组」（`sessionGroups`）；会话设置缺席时只取插件配置里的值。
 - 可选 `storage`：后台任务登记写进插件数据 `pluginData:/tools/background-tasks.json`；没有时只记在内存里。存储可能晚于本插件上线，有了插件数据根时读回一次。
-- 可选 `authority`：停后台任务时按 `isOwner` 判这一轮里有没有 owner；不在时没有人是 owner。
 
 权限钩子由消费方通过 `setExecutionGuard()` 注入。
 
@@ -89,9 +88,9 @@ export default definePlugin({
 | `background_list` | 列出本会话的任务：id、工具、状态、开始与结束时间、最后一行、最后输出时间、原因、命令的退出码 |
 | `background_output` | 取一个任务的输出，带 `after` 只取新增的；结束的带工具的结果（调用方能看图时带上结果里的图） |
 | `background_wait` | 等列出的任务都结束，最多等 `waitSeconds`（默认 30，上限同 `background.maxWaitSeconds`），回合中止即返回 |
-| `background_stop` | 停一个任务（门槛见下），等它落定（宽限 3 秒）再如实回报；被停的不通知 |
+| `background_stop` | 停一个任务（2 级加确认，见下），等它落定（宽限 3 秒）再如实回报；被停的不通知 |
 
-按会话放行：本会话里的任务谁都能查，不论是谁起的；别的会话里的一律回「不存在」。停与 [plugin-agent](plugin-agent.md#指令) 的 `/stop` 停一轮同一条规则，不看等级：调它的这一轮的参与者（不算无主体；物理发言者不算，子任务会话里它是父会话的标记）里有起这个任务的人（起它那次调用审批之前的参与者，经审批放行的再加上批的人；登记时记下，不落盘），或有 owner，否则回「只有起这个任务的人或 owner 在的一轮能停它」。不设 `restricted` 与 `risk`，取输出也不另设等级闸：任务的输出与结果本来就在这个会话里，与前台调用的结果一样，谁在场谁看得到。结束通知开的那一轮仍按起它的人的身份运行。
+按会话放行：本会话里的任务谁都能查，不论是谁起的；别的会话里的一律回「不存在」。列出、取输出与等待不设 `restricted` 与 `risk`，也不另设等级闸：任务的输出与结果本来就在这个会话里，与前台调用的结果一样，谁在场谁看得到。`background_stop` 声明 `risk: 'dangerous'`（2 级加确认），与子任务、编排、定时任务那些替 owner 在后台继续做、存下来以后自己生效的工具同一规则，不另判是谁起的：别人单独发起的一轮没人能批，拒绝；有 owner 在的一轮出审批卡给她批；她一个人的回合在免确认白名单（`restrictedPolicy`）里不问，不在就出卡。结束通知开的那一轮仍按起它的人的身份运行。
 
 ## 抓取外部内容的工具：套不可信数据边界
 

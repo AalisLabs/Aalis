@@ -315,7 +315,6 @@ export class ToolRegistry implements ToolService {
         tool: toolName,
         args,
         ctx: request,
-        startedBy: verdict.by ? [...callCtx.participants, verdict.by] : callCtx.participants,
         display: tool.display,
         approve: (ctx, check, asks) => this.approveFor(tool, toolArgs, ctx, check, asks),
         invoke: ctx => this.invoke(tool, toolArgs, ctx),

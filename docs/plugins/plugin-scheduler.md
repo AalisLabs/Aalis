@@ -50,7 +50,7 @@ export default definePlugin({
 | `scheduler_pause_job` | 暂停任务 |
 | `scheduler_resume_job` | 恢复已暂停的任务 |
 
-以上工具均属 `scheduler` 工具组。创建、删除、暂停、恢复为 `dangerous` 级且每次需确认，列表为 `sensitive` 级。
+以上工具均属 `scheduler` 工具组。创建、删除、暂停、恢复为 `dangerous` 级（2 级加确认），与子任务、编排、停后台任务同一规则：别人单独发起的一轮没人能批，拒绝；有 owner 在的一轮出审批卡给她批；她一个人的回合在免确认白名单（`restrictedPolicy`）里不问。列表只看不改，2 级、不确认（`visibility: 'restricted'`）。
 
 在子会话里调 `scheduler_create_job` 不传 `sessionId` 时报错，要写明目标：子会话没有窗口，删掉后发往它的任务会静默丢失。报错里给出根会话的 id 作候选，照传即发回根会话。子会话按会话记录的 `parentId` 认：编排的 `agent` 节点省略 `sessionId` 时用的一次性会话（`workflow::<运行 id>::<节点 id>`）没有 `parentId`，不在这条规则里，在那里不传 `sessionId` 照旧发往这个一次性会话。
 

@@ -26,8 +26,9 @@ import { type PageHost, pageHost } from '../fixtures/page-host.js';
 // 账本读不出的没有定义者，按匿名。
 // 权限服务不在时判不出 owner，调用者与定义者不是同一身份的按匿名。
 // 真 storage-local、真工具注册表与权限插件：zz_whoami 记下每次执行时的授权身份；zz_confirm 声明需要确认，确认覆盖设为
-// off（只对 owner 免），没有审批服务，不免的一律拒。workflow_define 要确认（与别的要确认的操作同一规则），确认覆盖设为 off：owner 定义不问。
-// 要审批的用例另装审批替身：记下请求，一律由 OWNER 批准。
+// off（只对 owner 免），没有审批服务，不免的一律拒。workflow_define、workflow_run、workflow_remove 2 级加确认（与别的要确认的
+// 操作同一规则），确认覆盖设为 off：owner 一个人定义、调起与删除不问；别人要做都得 owner 批，经工具调起的调用者因此总是 owner，
+// 调用者不是 owner 的只有经编排服务 runWorkflow 调起的。要审批的用例另装审批替身：记下请求，一律由 OWNER 批准。
 // ════════════════════════════════════════════════════════════
 
 const OWNER = { platform: 'onebot', userId: '99999' };
@@ -93,15 +94,20 @@ interface Boot {
 async function boot({
   owners = [OWNER],
   approvals: requests,
-  confirmOverrides = { 'tool:zz_confirm': 'off', 'tool:workflow_define': 'off' },
+  confirmOverrides = {
+    'tool:zz_confirm': 'off',
+    'tool:workflow_define': 'off',
+    'tool:workflow_run': 'off',
+    'tool:workflow_remove': 'off',
+  },
   restrictedPolicy,
 }: Boot = {}) {
   const { app } = hostedApp({
     owners,
     confirmOverrides,
     restrictedPolicy,
-    // 成员不另登记等级也能定义与调起编排
-    authorityOverrides: { 'tool:workflow_define': 0, 'tool:workflow_run': 0 },
+    // 成员不另登记等级也能定义编排（交 owner 审批）
+    authorityOverrides: { 'tool:workflow_define': 0 },
   });
   apps.push(app);
   await registerHubs(app);
@@ -203,21 +209,25 @@ describe('编排的运行身份：定义者与调用者里不是 owner 的一方
     expect(confirmed, '他的回合不免确认').toBe(1);
   });
 
-  it('成员调起 owner 定义的编排按成员执行，不传调用者的按匿名：借不到定义者的身份', async () => {
+  it('经编排服务调起 owner 定义的编排：调用者是成员的按成员执行，不传调用者的按匿名，借不到定义者的身份', async () => {
     const s = await boot();
     await s.tool('workflow_define', { yaml: MANUAL }, OWNER);
-    await s.tool('workflow_run', { id: ID }, MEMBER);
+    await s.svc.runWorkflow(ID, {}, 'manual', MEMBER);
     await s.svc.runWorkflow(ID);
     expect(actors).toEqual([MEMBER, undefined]);
     expect(confirmed).toBe(0);
   });
 
-  it('几个人的一轮调起：没有单一的调用者，按匿名执行', async () => {
-    const s = await boot();
+  it('几个人的一轮调起：要 owner 批，批过的按 owner 调起、按定义者执行', async () => {
+    const requests: ApprovalRequest[] = [];
+    const s = await boot({ approvals: requests });
     await s.tool('workflow_define', { yaml: MANUAL }, OWNER);
     await s.tool('workflow_run', { id: ID }, OWNER, [OWNER, MEMBER]);
-    expect(actors).toEqual([undefined]);
-    expect(confirmed).toBe(0);
+    expect(requests.map(({ tool, ownerOnly }) => ({ tool, ownerOnly }))).toEqual([
+      { tool: 'workflow_run', ownerOnly: true },
+    ]);
+    expect(actors).toEqual([OWNER]);
+    expect(confirmed).toBe(1);
   });
 
   it('经服务的 defineWorkflow 覆盖：没有定义者，账本里原来的定义者也清掉，重启后照旧按匿名', async () => {
@@ -374,13 +384,13 @@ describe('定义编排要 owner 审批', () => {
 });
 
 // 运行的出错原因带会话 id（agent 节点的几句都写「会话=…」，私聊会话的 id 带对方的账号）：交给模型的运行历史与定时任务列表
-// 同一档，0 级的群友让她列不出来
-describe('运行历史要 1 级', () => {
+// 同一档，只看不改的 2 级，低于 2 级的群友让她列不出来
+describe('运行历史要 2 级', () => {
   it('0 级的成员调 workflow_get_runs 被拒，owner 照常', async () => {
     const s = await boot();
     await s.tool('workflow_define', { yaml: MANUAL }, OWNER);
     await s.tool('workflow_run', { id: ID }, OWNER);
-    expect((await s.tool('workflow_get_runs', {}, MEMBER)).error).toContain('"tool:workflow_get_runs" 需等级 1');
+    expect((await s.tool('workflow_get_runs', {}, MEMBER)).error).toContain('"tool:workflow_get_runs" 需等级 2');
     expect((await s.tool('workflow_get_runs', {}, OWNER)).runs).toHaveLength(1);
   });
 });

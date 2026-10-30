@@ -675,11 +675,10 @@ function registerTools(
   });
 
   tools.register({
-    // 编排定义/触发/删除：可定义向任意 sessionId 发消息/跑 agent 的工作流，挡住不受信任访客经 LLM 驱动，三个都是 sensitive(L1)；
-    // 只读的 list 保持 public，get_runs 见它自己的注释。定义另加确认：定义出的编排此后按定义者的身份长期运行，与建定时任务、别的要确认的操作同一
-    // 规则，审批卡上是原文；参与者都是 owner 且在免确认白名单里（或确认覆盖设为 off）时免，批过的调用按批的人执行、定义者随之是他
-    risk: 'sensitive',
-    confirm: 'session',
+    // 定义、跑、删编排：编排存下来以后按定义者的身份自己运行，节点能往任意会话发消息、开一轮。与子任务、定时任务、停后台任务
+    // 同一规则，2 级加确认，审批卡上是原文；别人单独发起的没人能批即拒，参与者都是 owner 且在免确认白名单里（或确认覆盖设为
+    // off）时免，批过的调用按批的人执行、定义者随之是他。列与看运行记录只看不改：2 级、不确认
+    risk: 'dangerous',
     groups: ['workflow'],
     definition: {
       type: 'function',
@@ -731,6 +730,7 @@ function registerTools(
   });
 
   tools.register({
+    visibility: 'restricted',
     groups: ['workflow'],
     definition: {
       type: 'function',
@@ -754,7 +754,7 @@ function registerTools(
   });
 
   tools.register({
-    risk: 'sensitive',
+    risk: 'dangerous',
     groups: ['workflow'],
     definition: {
       type: 'function',
@@ -776,9 +776,9 @@ function registerTools(
       const aborted = JSON.stringify({ error: '回合已中止，不再等' });
       if (signal?.aborted) return aborted;
       try {
-        // 透传调用者的授权身份（几个人的一轮没有单一的调用者，按匿名）；运行身份按它与定义者定（见 execute）。调起这次运行的
-        // 会话也带上：这一轮在等这次运行，指向它的 agent 节点立即失败。调用被中止（这一轮被停止键、禁言、/clear 等停下）时不再
-        // 等这次运行，这一轮才落定得了；运行不取消
+        // 透传调用者的授权身份（这一项要 owner 确认：批过的是批的人，免了的是那位 owner）；运行身份按它与定义者定（见 execute）。
+        // 调起这次运行的会话也带上：这一轮在等这次运行，指向它的 agent 节点立即失败。调用被中止（这一轮被停止键、禁言、/clear
+        // 等停下）时不再等这次运行，这一轮才落定得了；运行不取消
         const run = await new Promise<WorkflowRun | undefined>((resolve, reject) => {
           const stop = () => resolve(undefined);
           signal?.addEventListener('abort', stop, { once: true });
@@ -806,9 +806,8 @@ function registerTools(
   });
 
   tools.register({
-    // 读类：运行的出错原因带会话 id（agent 节点的几句都写目标会话，私聊会话的 id 带对方账号），与 scheduler_list_jobs 同为信息
-    // 暴露向量；不弹确认
-    risk: 'sensitive',
+    // 只看不改：运行的出错原因带会话 id（agent 节点的几句都写目标会话，私聊会话的 id 带对方账号），与 scheduler_list_jobs 同档
+    visibility: 'restricted',
     groups: ['workflow'],
     definition: {
       type: 'function',
@@ -845,7 +844,7 @@ function registerTools(
   });
 
   tools.register({
-    risk: 'sensitive',
+    risk: 'dangerous',
     groups: ['workflow'],
     definition: {
       type: 'function',
