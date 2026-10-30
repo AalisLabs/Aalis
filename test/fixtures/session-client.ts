@@ -27,6 +27,7 @@ export const DETACHED_SURFACE: ApprovalSurface = {
   name: 'webui',
   attend: () => ({
     presence() {},
+    undelivered() {},
     present: () => false,
     respond: () => ({ ok: false, refusal: 'unavailable', message: '审批服务不在' }),
     leave() {},

@@ -172,9 +172,14 @@ export type ApprovalResponse = { ok: true } | { ok: false; refusal: ApprovalRefu
 export interface ApprovalAttendance {
   /**
    * 在场上报。true 表示刚有活动（WebUI 另要页面可见），最近一次这样的上报在时限内即算在场；推给它、还没结的审批也让它一直
-   * 算在场。false 表示离开（页面转到后台、IM 私聊推不到），即刻不在场：推给它、还没结的审批对它算没收到，它变为在场时补推
+   * 算在场。false 表示离开（页面转到后台），即刻不在场：推给它、还没结的审批对它算没收到，它变为在场时补推
    */
   presence(active: boolean): void;
+  /**
+   * 推给它的这一张没送到它那里（如 IM 里这条消息发不出去）：只这一张对它算没收到，它不因这一张算在场，变为在场时补推；推给它的
+   * 别的审批照旧。不是推给它、还没结的不起作用
+   */
+  undelivered(approvalId: string): void;
   /**
    * 它此刻还算不算在场（按上面同一条规则，由审批服务判）：审批面据它撤掉不在场的接入，不自己另记时限。撤掉（leave）的接入
    * 收不到推给过它、还没结的卡的结算，还要等结算的先别撤。审批服务不在时不在场
@@ -274,6 +279,7 @@ export const approvals = defineService<ApprovalService, BoundApprovals>('approva
     bound();
     return {
       presence: active => bound()?.presence(active),
+      undelivered: approvalId => bound()?.undelivered(approvalId),
       present: () => bound()?.present() ?? false,
       respond: answer => bound()?.respond(answer) ?? { ok: false, refusal: 'unavailable', message: t('serviceAbsent') },
       leave() {
