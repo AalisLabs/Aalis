@@ -105,7 +105,7 @@ interface ResolveOptions {
   2. 链里逐项找语言相同、文字不同的：zh-TW 读者遇到只有简体时用简体；
   3. 找 en；
   4. 都没有时 `undefined`，由调用方用原文。
-- **`resolveText(text, chain, options?)`**：纯函数。可用语言是原文语言、字典自带译文的语言与语言包补的语言（只按这个键算；语言包只补缺，原文指纹相符才算）；解析失败、参数与原文不兼容的译文不算。按 `pickLanguage` 选，命中原文语言或选不出时用原文。`ns` 不在目录、键不存在、原文解析失败、选中的那条渲染失败时用 `text.source`。参数里的文字对象用同一条链递归：一次渲染里至多渲染 1024 个、嵌套 32 层，超出的用那一个的 `source`，伪造的重复参数不放大、环不挂死。`escape: 'markdown'` 把字符串参数按 Markdown 转义（字典里写的 Markdown 原样），Markdown 正文一类出口用；这时回落的 `text.source` 整句转义。
+- **`resolveText(text, chain, options?)`**：纯函数。可用语言是原文语言、字典自带译文的语言与语言包补的语言（只按这个键算；语言包只补字典没有的语言标签，地区变体也算另一种，原文指纹相符才算）；解析失败、参数与原文不兼容的译文不算。按 `pickLanguage` 选，命中原文语言或选不出时用原文。`ns` 不在目录、键不存在、原文解析失败、选中的那条渲染失败时用 `text.source`。参数里的文字对象用同一条链递归：一次渲染里至多渲染 1024 个、嵌套 32 层，超出的用那一个的 `source`，伪造的重复参数不放大、环不挂死。`escape: 'markdown'` 把字符串参数按 Markdown 转义（字典里写的 Markdown 原样），Markdown 正文一类出口用；这时回落的 `text.source` 整句转义。
 - **`resolveSource(text, options?)`**：只按原文语言渲染，出口在 i18n 服务缺席时用。时区与转义同 `resolveText`，参数里的文字对象同样取各自的原文，回落规则同上。
 - **`localize(value, render, skip?)`**：把值里的文字对象换成 `render(text)`，其余原样。只进普通对象与数组（类实例原样）；没有文字对象的子树原样返回、不复制，有改动时只复制通往文字对象的那一路。`skip(key, parent)` 为真的属性不进：出口用它避开原样数据（工具参数与结果、审批的逐字参数、用户消息正文），那里形如文字对象的值可能是伪造的。
 - **`toSource(value)`**、**`toSourceReplacer`**：把值里的文字对象换成 `source`，后者是给 `JSON.stringify` 的 replacer。只给日志与交给模型的文字用；给人看的经出口渲染。
