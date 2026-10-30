@@ -57,7 +57,7 @@ describe('诊断项 paper.config', () => {
         'Paper zz-paper is halted (HALT-旧说明); waiting for the owner to resume it in the WebUI',
         'The account of remote agent “zz-remote-a” has an untracked agent bc-foreign; papers using it are halted until the owner verifies it in the WebUI and marks it as read',
         'The config of paper zz-broken is wrong (the egress limit is not one of the options) and it is disabled: rooms using it have no paper, and later entries with the same name do not take effect until it is fixed',
-        'remoteAgentTypes (zz-remote-a, zz-remote-b) is set in “Platform profile onebot”, so every room with paper enabled that this layer covers inherits it; set it per window in the room’s place settings instead',
+        'remoteAgentTypes (zz-remote-a, zz-remote-b) is set in Platform profile “onebot”, so every room with paper enabled that this layer covers inherits it; set it per window in the room’s place settings instead',
         `Paper zz-paper is shared by several rooms (${ROOM}, ${ROOM2}): the long-lived agent’s conversation and workspace are visible to all of them`,
         'Remote agent “zz-remote-gone” referenced by paper zz-ghost is not present',
         'globalDailyCents is 0, so remote tasks will not start',
@@ -70,7 +70,7 @@ describe('诊断项 paper.config', () => {
         '白纸 zz-paper 已停开（HALT-旧说明），等 owner 在 WebUI 恢复',
         '远端代理「zz-remote-a」的账号下有账本外的代理 bc-foreign，用它的白纸停开，等 owner 在 WebUI 核实并标为已读',
         '白纸 zz-broken 的配置有误（出网上限不是可选值），已停用：用它的房间没有白纸，改对之前同名的后续条目也不生效',
-        'remoteAgentTypes（zz-remote-a、zz-remote-b）写在平台档 onebot，这一层覆盖的开了白纸的房间都会继承；按窗口写在房间的场所设置里即可',
+        'remoteAgentTypes（zz-remote-a、zz-remote-b）写在平台档「onebot」，这一层覆盖的开了白纸的房间都会继承；按窗口写在房间的场所设置里即可',
         `白纸 zz-paper 被多个房间共用（${ROOM}、${ROOM2}）：长期代理的对话与工作区对所有这些房间可见`,
         '白纸 zz-ghost 引用的远端代理「zz-remote-gone」不在场',
         'globalDailyCents 为 0，远端任务不会开',
@@ -228,11 +228,11 @@ describe('诊断项 paper.config', () => {
   it('平台类型档写了 remoteAgentTypes 时 warn（不必先有这个类型的房间登记），写明平台与类型名', async () => {
     const group = await check({ platformTypes: { 'onebot/group': { remoteAgentTypes: [REMOTE] } } });
     expect(group.level).toBe('warn');
-    expect(group.message).toContain('写在平台类型档 onebot · group');
+    expect(group.message).toContain('写在平台类型档「onebot · group」');
 
     const priv = await check({ platformTypes: { 'onebot/private': { remoteAgentTypes: [REMOTE] } } });
     expect(priv.level).toBe('warn');
-    expect(priv.message).toContain('写在平台类型档 onebot · private');
+    expect(priv.message).toContain('写在平台类型档「onebot · private」');
   });
 
   it('对照：平台类型档的 remoteAgentTypes 为空数组时不报；平台档写了只报平台档；窗口的场所写了不报（按窗口设是正常写法）', async () => {
@@ -243,7 +243,7 @@ describe('诊断项 paper.config', () => {
     expect(empty.level).toBe('ok');
 
     const base = await check({ listed: [ROOM], platforms: { onebot: { remoteAgentTypes: [REMOTE] } } });
-    expect(base.message).toContain('写在平台档 onebot');
+    expect(base.message).toContain('写在平台档「onebot」');
     expect(base.message).not.toContain('平台类型档');
 
     const window = await check({ listed: [ROOM], places: { [WINDOW]: { remoteAgentTypes: [REMOTE] } } });
@@ -266,7 +266,7 @@ describe('诊断项 paper.config', () => {
     });
     expect(result.level).toBe('warn');
     expect(result.message).toContain(ROOM);
-    expect(result.message).toContain('平台类型档 onebot · group 的全部房间');
+    expect(result.message).toContain('平台类型档「onebot · group」的全部房间');
     expect(result.message).toContain('可见');
   });
 
@@ -277,7 +277,7 @@ describe('诊断项 paper.config', () => {
       places: { [WINDOW]: { paperName: 'zz-paper-own' } },
     });
     expect(result.level).toBe('warn');
-    expect(result.message).toContain('平台类型档 onebot · group 的全部房间');
+    expect(result.message).toContain('平台类型档「onebot · group」的全部房间');
     expect(result.message).not.toContain(ROOM);
   });
 

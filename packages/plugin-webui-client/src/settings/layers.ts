@@ -27,7 +27,7 @@ export function useLayers(wanted = true) {
 export const labelOf = (order: LayerOrder, name: string) => order.find(entry => entry.name === name)?.label ?? name;
 
 /**
- * 一层的标题：层表里的称呼，后面写这一层取的是哪一份（规则同 {@link sourceTitle}），如「平台档 onebot」「平台类型档 onebot · 群」
+ * 一层的标题：层表里的称呼，后面写这一层取的是哪一份（规则同 {@link sourceTitle}），如「平台档「onebot」」「平台类型档「onebot · 群」」
  * 「群「读书会」（场所）」。label 是层的列表给这一层的称呼（类型的显示名、场所的称呼），没有时写类型名、场所键
  */
 export function layerTitle(order: LayerOrder, layer: SettingLayer, label?: string): string {

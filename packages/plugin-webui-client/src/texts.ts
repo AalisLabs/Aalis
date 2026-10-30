@@ -607,7 +607,7 @@ const SOURCE = {
   switchOff: '关',
   optionsMalformed: '可选项的回应不是预期的形状',
   modelWithProvider: '{model}（{provider}）',
-  layerDetail: '{layer} {detail}',
+  layerDetail: '{layer}「{detail}」',
   servicesMalformed: '服务列表的回应不是预期的形状',
   selectNone: '不选',
   selectPlaceholder: '请选择',

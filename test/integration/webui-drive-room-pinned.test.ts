@@ -152,12 +152,12 @@ describe('WebUI 驱动 IM 房间按出生平台选档', () => {
     ).toBe(true);
   });
 
-  it('/session 从 WebUI 入口对群房间执行：来源为平台档 onebot，不按入口的 webui 档；本会话这一层设了时来源写本会话', async () => {
+  it('/session 从 WebUI 入口对群房间执行：来源为平台档「onebot」，不按入口的 webui 档；本会话这一层设了时来源写本会话', async () => {
     const { admin, commands } = await loadStack();
     const input = { sessionId: GROUP, platform: 'webui', userId: 'console', args: [], raw: '' };
     const show = async () => textOf(await commands.execute('session', input));
 
-    expect(await show()).toContain('人设（persona）：<群人设> — 来自 平台档 onebot');
+    expect(await show()).toContain('人设（persona）：<群人设> — 来自 平台档「onebot」');
     expect(await show()).not.toContain('webui 人设');
 
     await admin.update({ sessionId: GROUP }, { plugin: PERSONA, key: 'persona', value: '<房间人设>' });
@@ -169,7 +169,7 @@ describe('WebUI 驱动 IM 房间按出生平台选档', () => {
     const input = { sessionId: PRIVATE, platform: 'webui', userId: 'console', args: [], raw: '' };
     const show = async () => textOf(await commands.execute('session', input));
 
-    expect(await show()).toContain('人设（persona）：<私聊人设> — 来自 平台类型档 onebot · private');
+    expect(await show()).toContain('人设（persona）：<私聊人设> — 来自 平台类型档「onebot · private」');
 
     const place = { scope: 'place', key: sm.placeOf(PRIVATE).key } as const;
     await admin.update({ layer: place }, { plugin: PERSONA, key: 'persona', value: '<窗口人设>' });

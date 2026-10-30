@@ -280,11 +280,11 @@ describe('可按会话设置的项', () => {
     fireEvent.click(toggle);
     const places = within(rowOf('最大工具迭代').getByRole('list', { name: '另有 3 处设置' }));
     expect(places.getAllByRole('listitem').map(item => item.textContent)).toEqual([
-      '平台类型档 onebot · 群15',
+      '平台类型档「onebot · 群」15',
       '群「读书会」（场所）10',
       '子会话「<子>」（父会话「<父>」）5',
     ]);
-    expect(places.getByRole('link', { name: '平台类型档 onebot · 群' }).getAttribute('href')).toBe(
+    expect(places.getByRole('link', { name: '平台类型档「onebot · 群」' }).getAttribute('href')).toBe(
       '/settings/session-defaults?layer=platformType%3Aonebot%3Agroup',
     );
     expect(places.getByRole('link', { name: '子会话「<子>」（父会话「<父>」）' }).getAttribute('href')).toBe(

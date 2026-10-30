@@ -95,7 +95,7 @@ export function layersWith<K extends 'paperName' | 'remoteAgentTypes'>(
   return found;
 }
 
-/** 覆盖一类房间的一层的称呼：层表里的称呼加选的是哪一份，如「全局（插件配置）」「平台类型档 onebot · group」 */
+/** 覆盖一类房间的一层的称呼：层表里的称呼加选的是哪一份，如「全局（插件配置）」「平台类型档「onebot · group」」 */
 export function layerName(layer: ProfileLayer): TextRef {
   const label = layerLabel(layer.scope);
   if (layer.scope === 'platform') return t('profilePlatform', { layer: label, platform: layer.platform });
@@ -105,19 +105,15 @@ export function layerName(layer: ProfileLayer): TextRef {
   return label;
 }
 
-/**
- * 一层覆盖的全部房间的称呼，如「全局（插件配置）的全部房间」「平台档 onebot 的全部房间」「平台类型档 onebot · group 的全部
- * 房间」（以平台名或类型名收尾的称呼与汉字隔一个空格）
- */
-const allRoomsOf = (layer: ProfileLayer) =>
-  t(layer.scope === 'global' ? 'allRoomsGlobal' : 'allRoomsNamed', { layer: layerName(layer) });
+/** 一层覆盖的全部房间的称呼，如「全局（插件配置）的全部房间」「平台档「onebot」的全部房间」「平台类型档「onebot · group」的全部房间」 */
+const allRoomsOf = (layer: ProfileLayer) => t('allRooms', { layer: layerName(layer) });
 
 /**
  * 共用一块白纸的房间：已登记的 IM 房间里，从全局层、平台档、平台类型档或所在窗口的场所取到了这个白纸名的；写了它的全局层、
  * 平台档与平台类型档（覆盖一类房间，包括还没登记的）；以及账本里还没结束、或在上次清空之后才结束的任务所在的
  * 房间（它们的原文还在代理的对话与工作区里；清空时白纸上没有在跑的任务，之前结束的随代理一起删了）。不写名字的白纸只有账本里的
- * 房间。labels 是显示用的称呼（房间会话 id；覆盖一类房间的层写成「全局（插件配置）的全部房间」「平台档 X 的全部房间」
- * 「平台类型档 X · T 的全部房间」）；shared：多于一个房间，或有覆盖一类房间的层写了它。
+ * 房间。labels 是显示用的称呼（房间会话 id；覆盖一类房间的层写成「全局（插件配置）的全部房间」「平台档「X」的全部房间」
+ * 「平台类型档「X · T」的全部房间」）；shared：多于一个房间，或有覆盖一类房间的层写了它。
  */
 export function sharingRooms(
   sm: SessionManagerService,

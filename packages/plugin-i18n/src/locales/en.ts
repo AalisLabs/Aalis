@@ -31,8 +31,8 @@ export default defineLocale<Source>()({
   languagesProvided: 'Every language in the language list is provided by a plugin',
   languageUnprovided: '{language} in the language list is not provided by any plugin; {used} is used instead',
   layerLanguageUnprovided: '{language} in {layer} is not provided by any plugin; {used} is used instead',
-  layerPlatform: '{layer} {platform}',
-  layerPlatformType: '{layer} {platform} · {type}',
+  layerPlatform: '{layer} “{platform}”',
+  layerPlatformType: '{layer} “{platform} · {type}”',
   layerPlace: '{layer} “{place}”',
   installPack:
     'Install a language pack that provides it (search the plugin market or npm for the keyword {keywords, list, or}), or adjust the “Language” list in the session settings for {layer}',

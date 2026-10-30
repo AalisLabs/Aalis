@@ -320,9 +320,9 @@ describe('平台类型档的称呼', () => {
   it('回执与 /session 的来源写适配器声明的类型显示名，没声明时写类型名', async () => {
     const { run } = await setup();
     expect(await run(OWNER, GROUP, 'session.set --at platformType persona <群人设>')).toContain(
-      '平台类型档 onebot · 群',
+      '平台类型档「onebot · 群」',
     );
-    expect(await run(OWNER, GROUP, 'session')).toContain('来自 平台类型档 onebot · 群');
+    expect(await run(OWNER, GROUP, 'session')).toContain('来自 平台类型档「onebot · 群」');
   });
 });
 

@@ -79,7 +79,7 @@ describe('诊断 i18n.languages', () => {
       '语言列表里的 日本語 (日本) 没有插件提供，实际用 中文（中国）',
     );
     expect(svc.render(first.detail, { host: true })).toBe(
-      '装上提供这种语言的语言包（在插件市场或 npm 按关键词 aalis-lang-ja-jp或aalis-lang-ja 找），或在设置「会话默认」里调整全局（插件配置）层的「语言」一行',
+      '装上提供这种语言的语言包（在插件市场或 npm 搜索关键词 aalis-lang-ja-jp、aalis-lang-ja 之一），或在设置「会话默认」里调整全局（插件配置）层的「语言」一行',
     );
 
     await setGlobal(['ja', 'en']);
@@ -124,19 +124,19 @@ describe('诊断 i18n.languages', () => {
     expect(results.map(({ level }) => level)).toEqual(['warn', 'warn', 'warn']);
     expect(results.map(({ message, detail }) => svc.render({ message, detail }, { host: true }))).toEqual([
       {
-        message: '平台档 onebot里的 日本語 没有插件提供，实际用 English',
+        message: '平台档「onebot」里的 日本語 没有插件提供，实际用 English',
         detail:
-          '装上提供这种语言的语言包（在插件市场或 npm 按关键词 aalis-lang-ja 找），或在会话设置的平台档 onebot里调整「语言」列表',
+          '装上提供这种语言的语言包（在插件市场或 npm 搜索关键词 aalis-lang-ja），或在会话设置的平台档「onebot」里调整「语言」列表',
       },
       {
-        message: '平台类型档 onebot · group里的 日本語 (日本) 没有插件提供，实际用 English',
+        message: '平台类型档「onebot · group」里的 日本語 (日本) 没有插件提供，实际用 English',
         detail:
-          '装上提供这种语言的语言包（在插件市场或 npm 按关键词 aalis-lang-ja-jp或aalis-lang-ja 找），或在会话设置的平台类型档 onebot · group里调整「语言」列表',
+          '装上提供这种语言的语言包（在插件市场或 npm 搜索关键词 aalis-lang-ja-jp、aalis-lang-ja 之一），或在会话设置的平台类型档「onebot · group」里调整「语言」列表',
       },
       {
         message: '场所「<群名>」里的 français 没有插件提供，实际用 English',
         detail:
-          '装上提供这种语言的语言包（在插件市场或 npm 按关键词 aalis-lang-fr 找），或在会话设置的场所「<群名>」里调整「语言」列表',
+          '装上提供这种语言的语言包（在插件市场或 npm 搜索关键词 aalis-lang-fr），或在会话设置的场所「<群名>」里调整「语言」列表',
       },
     ]);
   });

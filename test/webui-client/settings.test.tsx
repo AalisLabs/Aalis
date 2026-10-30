@@ -302,7 +302,7 @@ describe('会话默认', () => {
     fireEvent.click(layerList().getByRole('link', { name: 'onebot · 群' }));
     expect(app.where()).toBe('/settings/session-defaults?layer=platformType%3Aonebot%3Agroup');
     await vi.waitFor(() => expect(requests('session/config/layer/get')).toEqual([{ layer: ONEBOT_GROUP }]));
-    expect(section().getByRole('heading', { name: '平台类型档 onebot · 群' })).toBeTruthy();
+    expect(section().getByRole('heading', { name: '平台类型档「onebot · 群」' })).toBeTruthy();
     expect(layerList().getByRole('link', { name: 'onebot · 群' }).getAttribute('aria-current')).toBe('page');
     await section().findByRole('group', { name: '人设' });
     expect(settingRow('人设').getByText('<群人设>')).toBeTruthy();
@@ -326,7 +326,7 @@ describe('会话默认', () => {
 
   it('地址带着层打开就是那一层；场所的标题写场所的称呼与层名、不带平台；地址里的层不在了时回到选层', async () => {
     app = await renderApp('/settings/session-defaults?layer=platformType%3Aonebot%3Agroup', handlers(), settingsRest());
-    expect(await section().findByRole('heading', { name: '平台类型档 onebot · 群' })).toBeTruthy();
+    expect(await section().findByRole('heading', { name: '平台类型档「onebot · 群」' })).toBeTruthy();
     await vi.waitFor(() => expect(requests('session/config/layer/get')).toEqual([{ layer: ONEBOT_GROUP }]));
     app.close();
 
@@ -349,7 +349,7 @@ describe('会话默认', () => {
       handlers(),
       settingsRest(),
     );
-    expect(await settingRow('人设').findByText('来自：平台类型档 onebot · 群')).toBeTruthy();
+    expect(await settingRow('人设').findByText('来自：平台类型档「onebot · 群」')).toBeTruthy();
   });
 
   it('搜索：按层的称呼、平台名、类型名与类型的显示名、场所名与场所键过滤', async () => {
@@ -407,12 +407,12 @@ describe('会话默认', () => {
     stubViewport(390);
     app = await renderApp('/settings/session-defaults', handlers(), settingsRest());
     fireEvent.click(await layerList().findByRole('link', { name: 'onebot · 群' }));
-    expect(await section().findByRole('heading', { name: '平台类型档 onebot · 群' })).toBeTruthy();
+    expect(await section().findByRole('heading', { name: '平台类型档「onebot · 群」' })).toBeTruthy();
     expect(section().queryByRole('navigation', { name: '会话设置的层' })).toBeNull();
     fireEvent.click(section().getByRole('link', { name: '换一层' }));
     await vi.waitFor(() => expect(app?.where()).toBe('/settings/session-defaults'));
     expect(await layerList().findByRole('link', { name: 'onebot · 群' })).toBeTruthy();
-    expect(section().queryByRole('heading', { name: '平台类型档 onebot · 群' })).toBeNull();
+    expect(section().queryByRole('heading', { name: '平台类型档「onebot · 群」' })).toBeNull();
   });
 
   it('英文界面：层的称呼与先后说明按英文', async () => {

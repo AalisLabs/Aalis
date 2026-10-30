@@ -622,7 +622,7 @@ export default defineLocale<Source>()({
   switchOff: 'Off',
   optionsMalformed: 'The options response is not in the expected shape',
   modelWithProvider: '{model} ({provider})',
-  layerDetail: '{layer} {detail}',
+  layerDetail: '{layer} “{detail}”',
   servicesMalformed: 'The service list response is not in the expected shape',
   selectNone: 'None',
   selectPlaceholder: 'Select…',

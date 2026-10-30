@@ -164,6 +164,7 @@ function checkLanguages(layers: readonly LayerSetting[], available: readonly str
     const used = selfName(available[pickLanguage(chain, available)!]);
     return missing.map((tag): CheckResult => {
       const language = selfName(tag);
+      const keywords = packKeywords(tag);
       return {
         ...base,
         level: 'warn',
@@ -172,7 +173,8 @@ function checkLanguages(layers: readonly LayerSetting[], available: readonly str
             ? t('languageUnprovided', { language, used })
             : t('layerLanguageUnprovided', { layer: name, language, used }),
         detail: t(layer.scope === 'global' ? 'installPackGlobal' : 'installPack', {
-          keywords: packKeywords(tag),
+          keywords,
+          count: keywords.length,
           layer: name,
         }),
       };
@@ -193,7 +195,7 @@ function layerSettings(caps: Caps, fields: Fields): LayerSetting[] {
   });
 }
 
-/** 层的称呼：层表里的称呼，平台档、平台类型档与场所另写是哪一份（「平台档 onebot」「平台类型档 onebot · group」「场所「…」」） */
+/** 层的称呼：层表里的称呼，平台档、平台类型档与场所另写是哪一份（「平台档「onebot」」「平台类型档「onebot · group」」「场所「…」」） */
 function layerName(caps: Caps, layer: SessionSettingsLayer): TextRef {
   const label = layerLabel(layer.scope);
   if (layer.scope === 'platform') return t('layerPlatform', { layer: label, platform: layer.platform });
