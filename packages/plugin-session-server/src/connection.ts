@@ -107,6 +107,10 @@ const majorOf = (version: string) => version.split('.')[0];
 /** 握手回应里随时会变的两项：当前的功能位与应用名 */
 type ServerState = () => Pick<SessionMethodResult<'initialize'>, 'features' | 'appName'>;
 
+/** 设置行的 actual：只有取值与可选的称呼 */
+const isActual = (parent: Readonly<Record<string, unknown>>) =>
+  Object.keys(parent).every(key => key === 'value' || key === 'label');
+
 /** 原样数据：不渲染的属性，按键与所在的对象认 */
 export const raw: LocalizeSkip = (key, parent) => {
   switch (key) {
@@ -119,10 +123,10 @@ export const raw: LocalizeSkip = (key, parent) => {
     // 审批的逐字参数，宿主通知给界面的事实
     case 'facts':
       return true;
-    // 设置项一行里本层的值、生效值与服务实际用的那一个
+    // 设置项的取值：一行里本层的值与生效值，此刻实际在用的值（actual 的称呼照常渲染），写过的各处的条目（带 target）
     case 'value':
+      return 'prominence' in parent || 'target' in parent || isActual(parent);
     case 'effective':
-    case 'resolved':
       return 'prominence' in parent;
     // 设置项字段（schema-config）的默认值
     case 'default':

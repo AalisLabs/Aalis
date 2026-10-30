@@ -58,7 +58,7 @@ owner 的客户端（WebUI，以后还有终端）与守护进程之间的线上
 
 主版本不同时回 `unsupported`，错误信息写明两边的版本，随即断开；只差次版本照常握手。握手之前的其它请求回 `invalidRequest`。
 
-**文字与语言**：读者是 owner 自己。帧里给人看的字段在服务端是字符串或文字对象，发出前按全局层的语言（[api-i18n](./api-i18n.md) 的读者 `{ host: true }`）渲染成字符串，时间按服务进程的时区；每条连接的读者相同，全局层的语言改了之后发出的帧按新的语言。原样数据不渲染：`tool-call` 的 `args`、`output` 与 `result`，任何位置的 `facts`（审批、宿主通知与 `user-message` 随附转发的），`user-message` 的文字，设置行的 `value`、`effective`、`resolved` 与字段的 `default`。读线上形状按 schema-i18n 的 `Localized<…>`。
+**文字与语言**：读者是 owner 自己。帧里给人看的字段在服务端是字符串或文字对象，发出前按全局层的语言（[api-i18n](./api-i18n.md) 的读者 `{ host: true }`）渲染成字符串，时间按服务进程的时区；每条连接的读者相同，全局层的语言改了之后发出的帧按新的语言。原样数据不渲染：`tool-call` 的 `args`、`output` 与 `result`，任何位置的 `facts`（审批、宿主通知与 `user-message` 随附转发的），`user-message` 的文字，设置行的 `value`、`effective` 与 `actual.value`（`actual.label` 照常渲染），`session/config/overrides` 各处的 `value`，与字段的 `default`。读线上形状按 schema-i18n 的 `Localized<…>`。
 
 **功能位**：发送、回滚、压缩、设置四项，分别看对话服务（agent）、检查点服务、压缩服务（api-memory 的 `compression`）、会话设置服务（api-session-settings）在不在，界面据此决定输入框能不能用、回滚与压缩的入口与会话设置的各处出不出现。这几个服务上线或下线、功能位变了时，服务端给每条连接推 `features/changed { features }`。计划、审批、用量不在功能位里，按数据出现：有计划条目才有计划，有用量条目才有用量。
 
