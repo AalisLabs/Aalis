@@ -786,9 +786,9 @@ describe('固定间隔的上下限', () => {
           ['stored'],
         );
         expect(toSource(pages.notices()).map(n => [n.id, n.detail])).toEqual([
-          ['unscheduled:static', `在配置文件里改正这个任务的 cron 或 timeZone，保存后生效。原因：${tooShort}`],
-          ['unscheduled:static-every', `在配置文件里改正这个任务的 cron 或 timeZone，保存后生效。原因：${tooShort}`],
-          ['unscheduled:stored', `在计划任务页编辑这个任务，改正它的 cron 后保存。原因：${tooShort}`],
+          ['unscheduled:static', `在配置文件里改正这个任务的调度方式或 timeZone，保存后生效。原因：${tooShort}`],
+          ['unscheduled:static-every', `在配置文件里改正这个任务的调度方式或 timeZone，保存后生效。原因：${tooShort}`],
+          ['unscheduled:stored', `在计划任务页编辑这个任务，改正它的调度方式后保存。原因：${tooShort}`],
         ]);
         expect(jobs().map(j => [j.name, j.nextRun])).toEqual([
           ['static', 0],
