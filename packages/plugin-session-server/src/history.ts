@@ -472,16 +472,23 @@ function recordedApproval(metadata: Record<string, unknown> | undefined) {
 
 /**
  * 一组归并成条目。工具卡以 callId 为 id（与实时推送相同），旧存档没有 callId 时按这一组第一条消息的 id 加序号；
- * 参数不是对象的（旧存档里模型给出的 null、数组等）按空参数显示。房间里以回复收尾的一组，最后一次工具调用之后的最后一条
- * 是回复，failures 里有这一轮的就标平台没收下；其余她说的话标未发出
+ * 参数不是对象的（旧存档里模型给出的 null、数组等）按空参数显示。带时间线的回复记着整轮：这一轮被并入的输入或先落库的
+ * 附件把它隔成了几组时，前几组已出过的工具卡在 shownCalls 里，从最后一张出过的之后接着出。房间里以回复收尾的一组，
+ * 最后一次工具调用之后的最后一条是回复，failures 里有这一轮的就标平台没收下；其余她说的话标未发出
  */
-function mergeGroup(group: Message[], context: MergeContext, failures: ReadonlyMap<string, TextRef>): SessionItem[] {
+function mergeGroup(
+  group: Message[],
+  context: MergeContext,
+  failures: ReadonlyMap<string, TextRef>,
+  shownCalls: ReadonlySet<string>,
+): SessionItem[] {
   const { ordered, lastAt, model, results, replied } = groupTimeline(group);
   const base = archivedItemId(group[0] as Message);
   const turnId = group.map(turnOf).find(id => id !== undefined);
   const items: SessionItem[] = [];
   const id = () => `${base}/${items.length}`;
-  for (const segment of ordered) {
+  const earlier = ordered.map(s => s.type === 'tool_call' && s.callId !== undefined && shownCalls.has(s.callId));
+  for (const segment of ordered.slice(earlier.lastIndexOf(true) + 1)) {
     const last = items.at(-1);
     if (segment.type === 'tool_call') {
       const { result, startTime, endTime, callId } = segment;
@@ -567,8 +574,8 @@ function replyFailures(raw: readonly Message[]): Map<string, TextRef> {
 }
 
 /**
- * 一段存档消息（按 groupToolCalls 挪过的次序）归并成条目，顺序同它；记着回合记录的那条之后接这一轮的回合条目。failures 见
- * replyFailures
+ * 一段存档消息（按 groupToolCalls 挪过的次序）归并成条目，顺序同它；记着回合记录的那条之后接这一轮的回合条目。一张工具卡只出
+ * 一次（见 mergeGroup）。failures 见 replyFailures
  */
 export function mergeArchive(
   raw: readonly Message[],
@@ -576,12 +583,16 @@ export function mergeArchive(
   failures: ReadonlyMap<string, TextRef>,
 ): SessionItem[] {
   const items: SessionItem[] = [];
+  const shownCalls = new Set<string>();
   for (let i = 0; i < raw.length; ) {
     const message = raw[i] as Message;
     let end = i + 1;
     if (message.role === 'assistant' && inGroup(message)) {
       while (end < raw.length && sameGroup(raw[end - 1] as Message, raw[end] as Message)) end++;
-      items.push(...mergeGroup(raw.slice(i, end), context, failures));
+      for (const item of mergeGroup(raw.slice(i, end), context, failures, shownCalls)) {
+        if (item.kind === 'tool-call') shownCalls.add(item.itemId);
+        items.push(item);
+      }
     } else {
       const item = archivedItem(message, context);
       if (item) items.push(item);
