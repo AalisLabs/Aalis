@@ -1,4 +1,4 @@
-import { resolveAgainstCwd, type StorageService } from '@aalis/api-storage';
+import { isWebUrl, resolveAgainstCwd, type StorageService } from '@aalis/api-storage';
 import { detectMediaFormat, FILE_HEAD_BYTES, type MediaFormat } from '@aalis/util-file-signature';
 import { safeFetch } from '@aalis/util-network-guard';
 
@@ -17,10 +17,9 @@ export async function loadImage(
   source: string,
   baseUri: string,
 ): Promise<{ buffer: Buffer; format: MediaFormat }> {
-  const buffer =
-    source.startsWith('http://') || source.startsWith('https://')
-      ? await downloadImage(source)
-      : Buffer.from((await storage.readFile(resolveAgainstCwd(source, baseUri))) as Uint8Array);
+  const buffer = isWebUrl(source)
+    ? await downloadImage(source)
+    : Buffer.from((await storage.readFile(resolveAgainstCwd(source, baseUri))) as Uint8Array);
   const format = detectMediaFormat(buffer.subarray(0, FILE_HEAD_BYTES));
   if (format?.kind !== 'image') throw new Error(`不是图片: ${source}`);
   return { buffer, format };

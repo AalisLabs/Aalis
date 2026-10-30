@@ -13,7 +13,7 @@ import { type ASRService, asr, type TranscribeInput, type TranscribeResult } fro
 import type { ProcessService } from '@aalis/api-process';
 import { processService } from '@aalis/api-process';
 import type { StorageService } from '@aalis/api-storage';
-import { isStorageUri, storage as storageService } from '@aalis/api-storage';
+import { isStorageUri, isWebUrl, storage as storageService } from '@aalis/api-storage';
 import { config, definePlugin, logger, provide } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { safeFetch } from '@aalis/util-network-guard';
@@ -117,7 +117,7 @@ async function materializeAudio(
   if (data.startsWith('file://')) {
     return { path: data.slice('file://'.length), cleanup: async () => {} };
   }
-  if (data.startsWith('http://') || data.startsWith('https://')) {
+  if (isWebUrl(data)) {
     return writeTempAudio(proc, storage, await downloadAudio(data));
   }
   // storage URI（scheme:/...）解析到本地路径

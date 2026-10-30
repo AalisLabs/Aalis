@@ -109,6 +109,11 @@ describe('office loadImage：远程图片下载', () => {
     expect(timeoutSpy.mock.calls[i]).toEqual([15_000]);
   });
 
+  it('协议名大写的网址同样按网址下载（协议名不分大小写），不当成相对路径去读存储', async () => {
+    const r = await loadImage(noStorage, `${base.replace('http://', 'HTTP://')}/ok.png`, 'data:/docs');
+    expect(r.buffer.equals(PNG)).toBe(true);
+  });
+
   it('非 2xx 响应先取消响应体再报错，不占着连接', async () => {
     let cancelled = false;
     const body = new ReadableStream<Uint8Array>({
