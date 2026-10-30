@@ -59,7 +59,8 @@
         "agent",
         "session-settings",
         "host-config",
-        "gateway"
+        "gateway",
+        "background-tasks"
       ],
       "required": [
         "config",
