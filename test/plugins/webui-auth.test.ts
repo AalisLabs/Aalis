@@ -614,7 +614,7 @@ describe('主机白名单的每一项是主机名', () => {
       'proxy.example.test:abc',
       '',
     ]) {
-      const reason = `${entry} 不是主机名：只写主机名（可带端口），不带协议、用户名与路径`;
+      const reason = `${entry} 不是主机名：只写主机名，不带协议、用户名与路径`;
       const issues = validateConfig(webuiServer.configSchema, { allowedHosts: ['ok.example.test', entry] });
       expect(
         issues.map(issue => [issue.path, issue.message]),

@@ -41,7 +41,7 @@ nodes:
 const NODES: WorkflowDef['nodes'] = [{ id: 'w', type: 'wait', seconds: 0 }];
 const badId = (id: string) => `工作流 id 只能用字母、数字、下划线与连字符（它是定义文件的文件名）：${id}`;
 const fileTaken = (file: string, other: string, id: string) =>
-  `定义文件 ${file} 已被工作流 ${other} 占用，工作流 ${id} 换一个 id（文件系统不分大小写或字形时，看着不同的 id 也会落到同一个文件）`;
+  `定义文件 ${file} 已被工作流 ${other} 占用，请给工作流 ${id} 换一个 id（文件系统不分大小写或字形时，看着不同的 id 也会落到同一个文件）`;
 /** 临时目录所在的卷不分大小写（macOS 默认的 APFS）：不同的 id 会落到同一个定义文件 */
 const caseInsensitive = (() => {
   const dir = mkdtempSync(join(tmpdir(), 'aalis-wf-case-'));

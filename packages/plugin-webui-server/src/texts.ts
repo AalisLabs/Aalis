@@ -11,7 +11,7 @@ const SOURCE = {
   allowedHostsLabel: '主机白名单',
   allowedHostsDescription:
     '经反向代理或域名访问时浏览器地址栏里的主机名，不带协议与端口。IP 地址、localhost 与监听地址总是认；其余主机名的请求回 421，挡住 DNS 重绑定的网页',
-  badAllowedHost: '{entry} 不是主机名：只写主机名（可带端口），不带协议、用户名与路径',
+  badAllowedHost: '{entry} 不是主机名：只写主机名，不带协议、用户名与路径',
   autoOpenLabel: '启动时自动打开浏览器',
   autoOpenDescription:
     '每次应用启动后首次监听成功时打开默认浏览器；同一应用内沿用 token 的插件重载不重复打开，重新生成 token 时再次打开以便登录。SSH/headless 环境建议关闭',
