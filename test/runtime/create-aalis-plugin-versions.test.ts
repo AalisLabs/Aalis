@@ -264,13 +264,14 @@ describe('生成的源码', () => {
     expect(readme).not.toContain('pnpm');
   });
 
-  it('README 的「多语言」一节写明字典与译文在哪、改了跑 npm test', () => {
+  it('README 的「多语言」一节写明字典与译文在哪、改了跑 npm test，并给出多语言指南的地址', () => {
     expect(renderReadme(answers(ALL))).toContain(
       [
         '## 多语言',
         '',
         '给人看的文字在 `src/texts.ts`，另一种语言的译文在 `src/locales/en.ts`。',
         '改了原文或加了键就跑 `npm test`（`checkTexts` 自检字典）。',
+        '完整写法见文档站的[多语言指南](https://aalis.acenyan.com/guide/i18n)。',
         '',
       ].join('\n'),
     );
@@ -280,6 +281,7 @@ describe('生成的源码', () => {
         '',
         'Text shown to people is in `src/texts.ts`; the translation into the other language is in `src/locales/zh-CN.ts`.',
         'After changing the source text or adding keys, run `npm test` (`checkTexts` checks the dictionary).',
+        'See the [languages guide](https://aalis.acenyan.com/guide/i18n) on the documentation site for the full picture.',
         '',
       ].join('\n'),
     );

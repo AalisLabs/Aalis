@@ -34,6 +34,7 @@
 | [api-host-config](./api-host-config.md) | `hostConfig` 描述符（服务名 `host-config`）+ `HostConfig` + 配置文档类型 `AalisConfig` | 宿主提供（`@aalis/runtime`） |
 | [api-host-logs](./api-host-logs.md) | `hostLogs` 描述符（服务名 `host-logs`）+ `HostLogs`：最近的日志与此后的实时日志 | 宿主提供（`@aalis/runtime`） |
 | [api-host-paths](./api-host-paths.md) | `hostPaths` 描述符（服务名 `host-paths`）+ `HostPaths`：家目录、安装集与家目录布局的绝对路径 | 宿主提供（`@aalis/runtime`） |
+| [api-i18n](./api-i18n.md) | `i18n` 描述符 + `I18nService`；出口共用的 `localizeFor`、贡献点 `i18n:pack` | plugin-i18n |
 | [api-media](../services/media.md) | `media` 描述符 | plugin-media |
 | [api-llm](./api-llm.md) | `llm` 描述符（per-model handle）+ `listLLMModels` / `resolveLLMModel` | plugin-llm-openai / plugin-llm-ollama / plugin-llm-deepseek 等 |
 | [api-memory](./api-memory.md) | `memory` 描述符 | plugin-memory-inmemory / sqlite / mongodb / vector |
@@ -42,6 +43,7 @@
 | [api-publish](./api-publish.md) | `publish` 描述符、提名快照、发布记录和展示面绑定 | plugin-publish-review；plugin-works-site 提供展示面 |
 | [api-reach](./api-reach.md) | `reach` 描述符（服务名 `reach`）+ `ReachService`；档位与越界策略、`resolveReach` / `judgeReach`、三张受保护清单 `protectedLists`、沙箱策略 `sandboxPolicyOf`、触及凭据的类型与品牌符号 | plugin-reach |
 | [api-remote-agent](./api-remote-agent.md) | `remoteAgent` 描述符（服务名 `remote-agent`）+ 提供者接口 `RemoteAgentProvider` + 按实例 id 精确取的 `resolveRemoteAgent` | plugin-remote-agent-cursor |
+| [schema-i18n](./schema-i18n.md) | 给人看的文字对象：原文字典、消息格式与按读者语言解析（库，无 service） | 没有实现，各包直接依赖 |
 | [schema-message](./schema-message.md) | 消息数据契约（无 service） | 由各 adapter 直接 emit |
 | [api-session-history](../services/tool-session.md) | `sessionHistory` 描述符（服务名 `session-history`），按会话 id 读历史 | plugin-tool-session |
 | [api-session-manager](./api-session-manager.md) | `sessionManager` 描述符：会话、场所与会话树 | plugin-session-manager |
