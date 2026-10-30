@@ -4,7 +4,7 @@
 > 本文讲两个脚手架各自的用途、运行哪条命令、问什么、生成了什么、有哪些约定、下一步往哪走。
 >
 > 相关源码：`packages/create-aalis/src/cli.ts`（建项目）、`packages/create-aalis-plugin/src/cli.ts`（建插件）。
-> 两者都是**纯 npm/node 的独立脚手架**；`create-aalis` 的运行时依赖只有 `@aalis/schema-i18n`（终端文字的字典）。
+> 两者都是**纯 npm/node 的独立脚手架**，运行时依赖只有 `@aalis/schema-i18n`（终端文字的字典）。
 
 ---
 
@@ -208,6 +208,9 @@ npm create aalis-plugin@latest my-plugin
 
 # 全取默认（tool 模板，无 command / webui / 可按会话设的配置项）
 npm create aalis-plugin@latest my-plugin -- --yes
+
+# 原文语言写英文（终端也按英文显示）
+npm create aalis-plugin@latest my-plugin -- --yes --lang en
 ```
 
 生成后：
@@ -222,29 +225,33 @@ npm run build
 
 ### 交互式提问与默认值
 
-非 TTY 且无 `--yes` 时提前退出，写明改用 `--yes`。依次问：
+非 TTY 且无 `--yes` 时提前退出，写明改用 `--yes`。终端里的文字有中文与英文两种，按系统语言（Node 的 Intl 默认 locale，跟 `LANG`）显示，别的语言按英文；`--lang zh-CN` 或 `--lang en` 同时指定插件的原文语言与终端的显示语言，给了就不问原文语言，别的值退出并写明只收这两种。依次问：
 
 | 提问 | 默认 | 说明 |
 |---|---|---|
 | 包名 | `aalis-plugin-sample` | 合法 npm 包名，支持 `@scope/my-plugin`；目录名取最后一段 |
-| 显示名（中文标签） | 由包名推导 | 去掉 `plugin-` 前缀、连字符转空格、首字母大写 |
+| 原文语言 | 系统语言（中文或英文，认不出时英文） | 只收 `zh-CN` 与 `en`。生成的字典按它写原文、另一种语言写译文；源码注释、README、给模型的工具说明与结果、日志、示例数据与配置默认值也按它写 |
+| 显示名 | 由包名推导 | 去掉 `plugin-` 前缀、连字符转空格、首字母大写；写进字典的原文，另一种语言的译文照抄并标待翻译 |
 | 注册 AI 工具？ | **是** | 生成 `uses: { tools: optional(tools) }` 与 `tools.use.register` 示例 |
 | 注册斜杠命令？ | 否 | 生成 `uses: { commands: optional(commands) }` 与 `commands.use.command` 示例 |
 | 提供 WebUI 页面？ | 否 | 生成 `uses: { webui: optional(webuiServer) }` 与 `webui.use.definePage` 示例 |
 | 页面用自带前端？ | 否 | 只在上一问选了「是」时问。选了就把页面写成插件前端：另生成 `webui/` 里的静态网页，见下文「页面用自带前端」 |
 | 声明可按会话设的配置项？ | 否 | 生成一个写了 `session` 的配置字段、`uses` 里的 `sessionFields`、`document` 与 `config`，见下文「可按会话设的配置项」 |
 
-`--yes` / `-y` 跳过全部，取上表默认（即只生成 tool 扩展点）。yes/no 输入兼容 `y/yes/true/1` 与 `n/no/false/0`。
+`--yes` / `-y` 跳过全部，取上表默认（即只生成 tool 扩展点，原文语言取终端的显示语言）。yes/no 输入兼容 `y/yes/true/1` 与 `n/no/false/0`。
 
 ### 生成了什么（插件骨架）
 
 ```
 my-plugin/
-├── package.json        # name / keywords:["aalis-plugin"] / peerDep core / 按选项的 *-api 依赖
-├── tsconfig.json       # 自包含 compilerOptions（不 extends 任何外部配置，独立目录也能 tsc）
+├── package.json        # name / keywords:["aalis-plugin"] / peerDep core / schema-i18n 与按选项的 *-api 依赖 / test 脚本
+├── tsconfig.json       # 自包含 compilerOptions（不 extends 任何外部配置，独立目录也能 tsc），按 NodeNext 解析
 ├── src/index.ts        # export default definePlugin({ name, displayName, uses, apply })
+├── src/texts.ts        # 给人看的文字的原文字典（defineTexts，ns 是包名）
+├── src/locales/en.ts   # 另一种语言的译文（原文是英文时为 zh-CN.ts）
+├── test/texts.test.js  # 字典自检（checkTexts），npm test 先构建再跑它
 ├── webui/              # 只在页面用自带前端时生成：index.html 与 main.js
-└── README.md           # 构建、装进 Aalis 项目的办法与已选扩展点清单
+└── README.md           # 构建、装进 Aalis 项目的办法、多语言与已选扩展点清单
 ```
 
 ### 生成的 `package.json` 约定
@@ -259,30 +266,36 @@ my-plugin/
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": ["dist"],                      // 发布包只含编译产物；页面用自带前端时另有 "webui"
-  "dependencies": { "@aalis/api-tools": ">=<最新版> <1.0.0" },  // 选了对应扩展点才写入（描述符是值导入）
-  "peerDependencies": { "@aalis/core": ">=0.20.0 <1.0.0" },
+  "scripts": { "build": "tsc", "dev": "tsc --watch", "test": "npm run build && node --test" },
+  "dependencies": {
+    "@aalis/api-tools": ">=<最新版> <1.0.0",   // 选了对应扩展点才写入（描述符是值导入）
+    "@aalis/schema-i18n": ">=<最新版> <1.0.0"  // 字典要它，什么扩展点都不选也写
+  },
+  "peerDependencies": { "@aalis/core": ">=0.21.0 <1.0.0" },
   "devDependencies": { "@aalis/core": ">=<最新版> <1.0.0", "typescript": "^5.7.0", "@types/node": "^22.0.0" },
   "aalis": { "service": { "required": ["logger"], "optional": ["tools"] } }  // 与 uses 对齐：logger 为 required，optional(tools) 为 optional
 }
 ```
 
 - **`keywords: ["aalis-plugin"]` 是加载硬门**：两个加载器都只认这个关键词来判定「这是不是可加载插件」（`isLoadablePlugin`，`node-modules-loader.ts`）。漏了它，插件永远不被发现。
-- **`@aalis/core` 走 peerDependency**，区间 `>=0.20.0 <1.0.0`：模板用的是 core 0.20 起的服务调用形状（选择层与业务层两层）。插件不必随其后的 core 次版本升级重发（别用 `^0.x` caret 把自己锁死，也别用裸 `*`）。**注意 1.0 之前 core 的公开面可能在次版本被删**，用了更新的 API 就把下限再抬；稳定性承诺自 1.0 起生效，见 `docs/design/core-contract.md`。
+- **`@aalis/core` 走 peerDependency**，区间 `>=0.21.0 <1.0.0`：模板的显示名与页面标题是文字对象（`t('displayName')`），core 0.21 起插件定义的展示值才放宽为 `unknown`，0.20 的 `displayName` 只收字符串。插件不必随其后的 core 次版本升级重发（别用 `^0.x` caret 把自己锁死，也别用裸 `*`）。**注意 1.0 之前 core 的公开面可能在次版本被删**，用了更新的 API 就把下限再抬；稳定性承诺自 1.0 起生效，见 `docs/design/core-contract.md`。
 - **依赖写区间**：`dependencies` 里的 `@aalis/api-*` 与 `devDependencies` 里的 `@aalis/core` 写 `>=<生成时源上的最新版> <1.0.0`。区间能被包管理器去重到与宿主同一份安装，跨次版本也不断；不写 `latest`（发布出去等于不设上限），也不写 caret（0.x 下跨次版本即断）。
-- **选了哪个扩展点，才把对应 `*-api` 进 `dependencies`**：tool→`@aalis/api-tools`、command→`@aalis/api-commands`、webui→`@aalis/api-webui`、可按会话设的配置项→`@aalis/api-session-settings`、`@aalis/api-host-config` 与 `@aalis/schema-config`。描述符是值导入，不能只放 `devDependencies`。
+- **选了哪个扩展点，才把对应 `*-api` 进 `dependencies`**：tool→`@aalis/api-tools`、command→`@aalis/api-commands`、webui→`@aalis/api-webui`、可按会话设的配置项→`@aalis/api-session-settings`、`@aalis/api-host-config` 与 `@aalis/schema-config`。描述符是值导入，不能只放 `devDependencies`。`@aalis/schema-i18n` 总在 `dependencies` 里：字典（`src/texts.ts`）运行时要它。
+- **`test` 脚本**：`npm run build && node --test`，跑 `test/texts.test.js` 的字典自检（原文与译文都解析得了、参数对得上、各语言不缺键），不另装测试框架。
 - **`aalis.service` 与 `uses` 对齐**：`required` 固定含 `logger`；勾选的扩展点按 `optional(...)` 的服务名写进 `optional`（tool → `tools`，command → `commands`，webui → `webui-server`，可按会话设的配置项 → `session-settings` 与 `host-config`，另在 `required` 加 `config`）。一旦你增加 `provides` 或把某依赖改成 required，要**同步** `package.json` 的 `aalis.service`，否则市场「装前披露」与按服务搜都会缺项——对账纪律见 [concepts/manifest-metadata.md](../concepts/manifest-metadata.md)。
 
 ### 生成的 `src/index.ts` 形状
 
-入口必须默认导出 `definePlugin` 的产物。`--yes`（只勾选 tool）生成的形状（注释从略）：
+入口必须默认导出 `definePlugin` 的产物。`--yes`（只勾选 tool，原文语言中文）生成的形状（注释从略）：
 
 ```ts
 import { tools } from '@aalis/api-tools';
 import { definePlugin, logger, optional } from '@aalis/core';
+import { t } from './texts.js';
 
 export default definePlugin({
   name: 'my-plugin',
-  displayName: 'My Plugin',
+  displayName: t('displayName'),
   uses: { logger, tools: optional(tools) },
   apply({ logger, tools }) {
     logger.use.info('插件已加载');
@@ -307,6 +320,39 @@ export default definePlugin({
 
 没有默认注入：`apply` 只收到 `uses` 里声明的各项。`optional(tools)` 缺席不拦激活，登记会在 tools 到场或换人时由描述符的 registrar 重挂。
 
+给人看的文字（显示名、指令的说明与回复、页面的标题与组件、设置项的 label 与说明、动作的 label、确认句、回执与报错、插件前端的按钮与状态）写成 `t('键')`，取自 `src/texts.ts`，按读者的语言显示；给模型的（工具说明与结果）保持字符串，注释写明不进字典，日志也照原文。相对导入写 `.js` 扩展名（按 NodeNext 解析，产物在 Node 里原样加载）。字典的形状：
+
+```ts
+// src/texts.ts
+import { defineTexts } from '@aalis/schema-i18n';
+import en from './locales/en.js';
+
+const SOURCE = {
+  displayName: "My Plugin",
+} as const;
+
+export type Source = typeof SOURCE;
+
+export const t = defineTexts({
+  ns: 'my-plugin',
+  language: 'zh-CN',
+  source: SOURCE,
+  locales: { en },
+});
+```
+
+```ts
+// src/locales/en.ts
+import { defineLocale } from '@aalis/schema-i18n';
+import type { Source } from '../texts.js';
+
+export default defineLocale<Source>()({
+  displayName: "My Plugin", // 待翻译
+});
+```
+
+字典由服务端入口 `src/index.ts` 导入，`ns` 是包名：插件前端的 `frame.t` 也由宿主从服务进程的目录取这份字典。显示名写进字典前按 ICU 的引号规则转义（`{`、`}`、`#` 与撇号连着的一段整段用撇号括起，段内撇号写成两个；单独的撇号写成两个）；模板自带的句子在另一种语言里写好了译文，显示名照抄并标待翻译。
+
 工具声明用 OpenAI 函数调用协议的嵌套形状 `{ type: 'function', function: { name, description, parameters } }`（`ToolDefinition`，`packages/api-tools/src/index.ts`），不是平铺的 `{ name, description }`。`handler` 返回 `Promise<string | ToolExecutionResult>`——字符串即纯文本；需要把图片交给主模型时返回 `{ content, images }`。
 
 `risk` 是工具的风险档位，决定谁能经自然语言驱动它、要不要确认，模板的示例工具只读、不涉隐私，写 `'safe'`。三档：
@@ -319,9 +365,9 @@ export default definePlugin({
 
 什么都不声明时任何人可用、不确认，与 `safe` 相同，所以写、删、执行一定要声明。详见 [安全模型的「插件作者怎么标操作风险」](../concepts/security-model.md#插件作者怎么标操作风险-provider-侧)。耗时长、晚些拿到结果仍有用的工具（构建、下载、渲染）可以声明 `background: {}`，交给执行器转后台，要求见 [插件作者指南「长任务与取消」](../plugin-author-guide.md#长任务与取消)；模板的示例工具是即时的，不声明，只在注释里写了声明法。
 
-选了 command 时追加 `import { commands } from '@aalis/api-commands'`、`uses` 里 `commands: optional(commands)`，以及 `commands.use.command('hello', '示例命令').action(async () => '你好')`。选了 webui 时追加 `webuiServer` 与一段 `webui.use.definePage`：一个键值组件，数据源直接写在声明里（页面与动作一次给出，不是静态字段），页面出现在插件详情里。描述符来自各自的 `*-api` 包，**不**来自 core。各扩展点一览见 [第三方插件开发者指南](./third-party-plugin.md) 第 5 节。
+选了 command 时追加 `import { commands } from '@aalis/api-commands'`、`uses` 里 `commands: optional(commands)`，以及 `commands.use.command('hello', t('commandDescription')).action(async () => t('commandReply'))`。选了 webui 时追加 `webuiServer` 与一段 `webui.use.definePage`：一个键值组件，数据源直接写在声明里（页面与动作一次给出，不是静态字段），页面出现在插件详情里。描述符来自各自的 `*-api` 包，**不**来自 core。各扩展点一览见 [第三方插件开发者指南](./third-party-plugin.md) 第 5 节。
 
-脚手架同时生成 README，其中写明构建命令、装进 Aalis 项目的三种办法，以及入口与 `src/index.ts` 一致的 `uses`。
+脚手架同时生成 README，其中写明构建命令、装进 Aalis 项目的三种办法、「多语言」一节（字典与译文在哪、改了跑 `npm test`），以及入口与 `src/index.ts` 一致的 `uses`。
 
 ### 可按会话设的配置项
 
@@ -341,17 +387,18 @@ export default definePlugin({
 const items = ['示例条目一', '示例条目二', '示例条目三'];
 const page = webui.use.definePage({
   key: 'my-plugin',
-  title: 'My Plugin',
+  title: t('displayName'),
   frame: { module: import.meta.url },
   sources: { items: { data: () => items } },
   actions: {
     remove: {
-      label: '删除',
+      label: t('removeLabel'),
       effect: 'destructive',
-      confirm: '从列表里删掉这一条？',
-      input: { item: { type: 'string', label: '条目', required: true } },
+      confirm: t('removeConfirm'),
+      input: { item: { type: 'string', label: t('itemLabel'), required: true } },
       handler: ({ input }) => {
-        // 删掉这一条，再 page.invalidate('items')：打开着的页面收到通知后重取
+        // 没有这一条时抛 TextError(t('noSuchItem', …))；删掉这一条，再 page.invalidate('items')（打开着的页面收到通知后
+        // 重取），回执是 t('removed', …)
       },
     },
   },
@@ -360,8 +407,8 @@ const page = webui.use.definePage({
 
 另生成两份文件，都不用构建：
 
-- `webui/index.html`：入口，引用宿主提供的样式基线 `/frames/_base/frame.css`，颜色跟随宿主的主题；
-- `webui/main.js`：从 `/frames/_base/frame.js` 导入助手，`connect()` 握手后取数据源 `items` 列出条目，每条一个「删除」调动作 `remove`（宿主先弹确认框，框里列出这一条），插件 `invalidate` 之后重取。
+- `webui/index.html`：入口，引用宿主提供的样式基线 `/frames/_base/frame.css`，颜色跟随宿主的主题；不写死 `lang` 与文字，标题是显示名；
+- `webui/main.js`：从 `/frames/_base/frame.js` 导入助手，`connect()` 握手后取数据源 `items` 列出条目，每条一个删除按钮调动作 `remove`（宿主先弹确认框，框里列出这一条），插件 `invalidate` 之后重取。按钮、加载中与空列表的文字在握手之后经 `frame.t` 写入，键与服务端同一份 `src/texts.ts`，按宿主界面的语言显示，助手按选中的语言设 `<html lang>`（见 [api-webui 的「助手」](../api/api-webui.md#助手)）。两种原文语言共用这一份脚本，注释是英文。
 
 `package.json` 的 `files` 带上 `webui`，README 多一节「插件前端」，写明框架里能做什么、不能做什么。宿主从 `frame.module`（`import.meta.url`）往上取最近一个带 `name` 的 `package.json`（只写 `type` 的跳过），它的 `name` 要等于插件名，那一层就是包根，只托管它下面的 `webui/`；不符就拒绝登记。
 

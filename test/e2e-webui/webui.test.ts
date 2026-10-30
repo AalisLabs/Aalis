@@ -377,10 +377,11 @@ async function scaffolded(): Promise<PluginDefinition> {
     {
       packageName: SCAFFOLD,
       displayName: SCAFFOLD_NAME,
+      sourceLanguage: 'zh-CN',
       features: { tool: false, command: false, webui: 'frame', sessionSetting: false },
     },
     // 只用生成的源码与网页，依赖的版本不进这条用例
-    { '@aalis/core': '0.1.0', '@aalis/api-webui': '0.1.0' },
+    { '@aalis/core': '0.1.0', '@aalis/api-webui': '0.1.0', '@aalis/schema-i18n': '0.1.0' },
   );
   return ((await import(join(dir, 'src/index.ts'))) as { default: PluginDefinition }).default;
 }

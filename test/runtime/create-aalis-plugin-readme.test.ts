@@ -19,6 +19,7 @@ import {
 import { checkPage } from '../../packages/plugin-webui-server/src/page-check.js';
 import { createPageRegistry } from '../../packages/plugin-webui-server/src/pages.js';
 import { defineConfig } from '../../packages/schema-config/src/index.js';
+import { TextError, toSource } from '../../packages/schema-i18n/src/index.js';
 import { fixedRef, ref } from '../fixtures/service-ref.js';
 
 // README 与 index 必须同源：uses 键集合一致，未勾选的能力不得出现在 README。生成的示例页面过 webui-server 登记时的质量门槛；
@@ -40,8 +41,11 @@ type Webui = false | 'declarative' | 'frame';
 const answers = (features: { tool: boolean; command: boolean; webui: Webui; sessionSetting: boolean }) => ({
   packageName: 'aalis-plugin-demo',
   displayName: '演示',
+  sourceLanguage: 'zh-CN' as const,
   features,
 });
+/** 中日韩文字 */
+const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 
 /** 生成时向源查到的版本 */
 const VERSIONS = {
@@ -52,6 +56,7 @@ const VERSIONS = {
   '@aalis/api-session-settings': '0.1.0',
   '@aalis/api-host-config': '0.2.0',
   '@aalis/schema-config': '0.16.0',
+  '@aalis/schema-i18n': '0.1.0',
 };
 
 const COMBOS = [
@@ -91,6 +96,9 @@ describe('create-aalis-plugin README 与 index 同源', () => {
       '@aalis/api-session-settings': { sessionFields },
       '@aalis/api-host-config': { ownHostConfig },
       '@aalis/schema-config': { defineConfig },
+      '@aalis/schema-i18n': { TextError },
+      // 生成的字典另有一份文件，这里只核清单：t 回键名即可
+      './texts.js': { t: (key: string) => key },
     };
     for (let mask = 0; mask < 8; mask++) {
       for (const webui of [false, 'declarative', 'frame'] as const) {
@@ -123,22 +131,18 @@ describe('create-aalis-plugin README 与 index 同源', () => {
   });
 
   it('勾了 webui：apply 登记的示例页面过登记时的质量门槛，数据源给出键值', async () => {
-    const source = ts.transpileModule(
-      renderIndexTs(answers({ tool: false, command: false, webui: 'declarative', sessionSetting: false })),
-      {
-        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-      },
-    ).outputText;
-    const exports: { default?: core.PluginDefinition } = {};
-    const imports: Record<string, unknown> = { '@aalis/core': core, '@aalis/api-webui': { webuiServer } };
-    new Function('require', 'exports', source)((name: string) => imports[name], exports);
+    const dir = await generated({
+      ...answers({ tool: false, command: false, webui: 'declarative', sessionSetting: false }),
+      packageName: 'zz-declarative',
+    });
+    const { default: plugin } = (await import(join(dir, 'src/index.ts'))) as { default: core.PluginDefinition };
     const pages: unknown[] = [];
     const webui = { definePage: (page: unknown) => void pages.push(page) };
-    await (exports.default?.apply as (caps: unknown) => unknown)({ logger: fixedRef(logger), webui: fixedRef(webui) });
+    await (plugin.apply as (caps: unknown) => unknown)({ logger: fixedRef(logger), webui: fixedRef(webui) });
     expect(pages).toHaveLength(1);
     expect(checkPage(pages[0])).toMatchObject({ ok: true, page: { kind: 'declarative' } });
     const [info] = (pages[0] as { content: Array<{ data: () => unknown }> }).content;
-    expect(info.data()).toEqual([{ label: '提示', value: '这是 演示 插件的示例信息面板。' }]);
+    expect(toSource(info.data())).toEqual([{ label: '提示', value: '这是 演示 插件的示例信息面板。' }]);
   });
 
   it('页面用自带前端：生成 webui/ 的入口与脚本，files 带上 webui；登记成插件前端页面，webui-server 找得到包根与入口；删除动作删一条并通知重取', async () => {
@@ -187,16 +191,34 @@ describe('create-aalis-plugin README 与 index 同源', () => {
     expect(items()).toEqual(['示例条目一', '示例条目二', '示例条目三']);
     const remove = page.actions?.remove;
     expect(remove).toMatchObject({ effect: 'destructive', input: { item: { type: 'string', required: true } } });
-    expect(await remove?.handler({ input: { item: '示例条目一' } as never, ctx })).toBe('已删除 示例条目一');
+    expect(toSource(await remove?.handler({ input: { item: '示例条目一' } as never, ctx }))).toBe('已删除 示例条目一');
     expect(items()).toEqual(['示例条目二', '示例条目三']);
     expect(invalidated).toEqual([['items']]);
     expect(() => remove?.handler({ input: { item: '示例条目一' } as never, ctx })).toThrow('没有这一条：示例条目一');
+  });
+
+  it('插件前端的入口页不写死语言与文字（标题是显示名）；脚本不含中日韩文字，按钮、状态与空列表的文字经 frame.t 取', async () => {
+    const dir = await generated({
+      ...answers({ tool: false, command: false, webui: 'frame', sessionSetting: false }),
+      packageName: 'zz-frame-texts',
+    });
+    const html = readFileSync(join(dir, 'webui/index.html'), 'utf-8');
+    expect(html).not.toContain('lang=');
+    expect(html.replace('<title>演示</title>', '')).not.toMatch(CJK);
+    const script = readFileSync(join(dir, 'webui/main.js'), 'utf-8');
+    expect(script).not.toMatch(CJK);
+    expect([...script.matchAll(/frame\.t\('(\w+)'\)/g)].map(m => m[1]).sort()).toEqual([
+      'emptyList',
+      'loading',
+      'removeLabel',
+    ]);
   });
 
   it('显示名按 HTML 文本写进入口页', async () => {
     const dir = await generated({
       packageName: 'zz-escape',
       displayName: '<b>看板</b> & "计数"',
+      sourceLanguage: 'zh-CN',
       features: { tool: false, command: false, webui: 'frame', sessionSetting: false },
     });
     expect(readFileSync(join(dir, 'webui/index.html'), 'utf-8')).toContain(

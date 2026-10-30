@@ -191,14 +191,15 @@ describe('exports 下包根类型面可命名', () => {
   it('按脚手架的 tsconfig 编一个消费方：推断类型都能写成包根引用', () => {
     const consumer = join(root, 'consumer');
     mkdirSync(join(consumer, 'src'), { recursive: true });
-    // create-aalis-plugin 生成的 tsconfig 里与本项相关的几项：bundler 解析、产出声明
+    // create-aalis-plugin 生成的 package.json 与 tsconfig 里与本项相关的几项：ESM 包、NodeNext 解析、产出声明
+    writeFileSync(join(consumer, 'package.json'), JSON.stringify({ type: 'module' }));
     writeFileSync(
       join(consumer, 'tsconfig.json'),
       JSON.stringify({
         compilerOptions: {
           target: 'ES2022',
-          module: 'ESNext',
-          moduleResolution: 'bundler',
+          module: 'NodeNext',
+          moduleResolution: 'NodeNext',
           strict: true,
           skipLibCheck: true,
           declaration: true,
