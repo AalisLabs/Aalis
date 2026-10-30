@@ -14,7 +14,7 @@ import type {
 } from '@aalis/api-media';
 import { isWebUrl } from '@aalis/api-storage';
 import type { Logger, ProviderEntry, ServiceSelection } from '@aalis/core';
-import { toSource } from '@aalis/schema-i18n';
+import { asText, toSource } from '@aalis/schema-i18n';
 import type { Message } from '@aalis/schema-message';
 import { detectMediaFormat, FILE_HEAD_BYTES, type MediaFormatName } from '@aalis/util-file-signature';
 import { materializeAttachment, transcodeAudioToWav } from './ffmpeg.js';
@@ -248,7 +248,7 @@ function wrapLLMAsProcessor(
   const proc: MediaProcessor = {
     name,
     capabilities: [cap],
-    displayName: `${entry.label ?? entry.id} (${cap})`,
+    displayName: t('processorLabel', { label: asText(entry.label) ?? entry.id, cap }),
     priority: 0,
   };
 

@@ -88,6 +88,8 @@ const SOURCE = {
   descriptionsClearedSession: '当前会话{kind}描述缓存已清空（{count, number} 条）',
   descriptionsFailed: '{kind}描述缓存清空失败：{error}',
   cutOff: '{text}（已在长度上限处截断）',
+  processorLabel: '{label} ({cap})',
+  asrLabel: 'Whisper/ASR · {label}',
 } as const;
 export type Source = typeof SOURCE;
 
