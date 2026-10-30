@@ -10,7 +10,7 @@
 
 ## 未发布 · core 0.21（国际化）
 
-给人看的文字改为文字对象（新包 `@aalis/schema-i18n`），由出口按读者语言渲染。本节随国际化各批补全；core 定为 0.21.0。
+core 定为 0.21.0。给人看的文字改为文字对象，由出口按读者的语言渲染（新包 `@aalis/schema-i18n`、`@aalis/api-i18n`、`@aalis/plugin-i18n`）；同批还有插件配置按会话覆盖、通道层与各插件的修整。
 
 ### core 0.21
 
@@ -19,28 +19,102 @@
 - core 自己的四种失败挂 `code` 与数据属性，取值见包根类型 `CoreFailureCode`：`required-retry-exhausted`（`service`）、`provides-not-registered`（`services`）、`exclusive-conflict`（`service`）、`service-unavailable`（`service`、`provider`，即 `ServiceUnavailableError`）。message 不变。
 - `follow`、`registrar` 的回调改在提供者登记、撤回或偏好切换的那次调用里同步执行，先于 `service:changed` 的监听器；`idle()` 放行时自供自用服务的补登记已在（清理返回 Promise 的 `follow` 仍等清理落定才挂新的）。core 不再订阅公开的 `service:changed`，别处发出的这条事件不再触发重算与重挂。消费方的登记在 `provide` 那次调用里就到达，提供者要先完成初始化再 `provide`。
 
-### 第一方插件给人看的文字进字典（@aalis/plugin-package-manager、@aalis/plugin-storage-local、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-ollama、@aalis/plugin-llm-openai、@aalis/plugin-memory-summary、@aalis/plugin-skills、@aalis/plugin-cron-engine、@aalis/plugin-scheduler、@aalis/plugin-workflow、@aalis/plugin-adapter-onebot、@aalis/plugin-user-relation、@aalis/plugin-publish-review）
+### 多语言（新包 @aalis/schema-i18n、@aalis/api-i18n、@aalis/plugin-i18n；@aalis/schema-config、@aalis/schema-message、@aalis/util-cron、@aalis/api-agent、@aalis/api-approval、@aalis/api-authority、@aalis/api-checkpoint、@aalis/api-commands、@aalis/api-cron-engine、@aalis/api-doctor、@aalis/api-llm、@aalis/api-media、@aalis/api-memory、@aalis/api-message-archive、@aalis/api-package-manager、@aalis/api-persona、@aalis/api-publish、@aalis/api-session-history、@aalis/api-session-manager、@aalis/api-session-protocol、@aalis/api-storage、@aalis/api-tools、@aalis/api-trigger、@aalis/api-webui、@aalis/api-workflow、@aalis/runtime、@aalis/plugin-agent、@aalis/plugin-commands、@aalis/plugin-gateway、@aalis/plugin-cli、@aalis/plugin-session-manager、@aalis/plugin-session-server、@aalis/plugin-subtask、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/plugin-message-archive、@aalis/plugin-tool-session、@aalis/plugin-persona、@aalis/plugin-adapter-onebot、@aalis/plugin-user-profile、@aalis/plugin-user-relation、@aalis/plugin-doctor、@aalis/plugin-paper、@aalis/plugin-publish-review、@aalis/plugin-works-site、@aalis/create-aalis、@aalis/create-aalis-plugin）
+
+**新包与安装**
+
+- @aalis/schema-i18n（新包）：给人看的文字对象与原文字典的库，含 ICU 消息格式与按语言链解析，零依赖、浏览器可用。
+- @aalis/api-i18n（新包）：i18n 服务的契约（描述符 `i18n`），出口的统一渲染写法 `localizeFor`，语言包的贡献点 `i18n:pack`。
+- @aalis/plugin-i18n（新包）：i18n 服务的默认提供者，按读者的语言链渲染文字对象；配置项「语言」是有序的语言列表，作者默认 `['en']`；带「翻译」页；诊断 `i18n.languages` 与「需要处理」提示在语言列表里没有任何插件提供的语言时提示，只提示、不报错。
+- `npm create aalis` 的最小档装 plugin-i18n；已有部署升级时不会自动装上。没装时各处一律显示原文（第一方插件的原文是中文）。
+
+**语言与读者**
+
+- WebUI（REST、会话协议与插件前端）与终端里给人看的文字按全局层的语言，聊天平台上按会话的语言；时间一律按服务进程的时区。owner 的会话（WebUI 与终端）不单独设语言。
+- 装上 plugin-i18n 而没设语言时，WebUI、终端与聊天里插件产出的文字是英文。会话标题、合并转发摘要与档案事实三处模型产出按全局层语言列表的第一项写，没设时同样是英文；档案事实落盘后会与旧的中文事实混存。
+
+**会话协议 1.1**
+
+- 会话协议版本由 1.0 升为 1.1。
+- tool-call：生成了却没有执行的调用带 `notExecuted`、没有 `result`，界面据此写出没有执行。
+- 平台事件合成或转成的入站（好友申请、入群邀请、加群申请、戳一戳、群文件上传）是 notice：topic 是它的 `noticeType`，没有时是 `source`，`text` 是给人看的那句；WebUI 画成通知行。
+- 入站带 `noticeType` 时，存档的 `kind` 记成它。
+
+**插件前端协议 1.1**
+
+- 插件前端的消息通道协议由 1.0 升为 1.1：`init` 带 `languages`、`timeZone`、`texts`、`packs`（全局层的语言链、服务进程的时区、这一页所属插件的字典与语言包给它补的译文）；助手 `frame.js` 提供 `t()`、`language`、`timeZone`，并按字典选中的语言设 `<html lang>`。
+
+**WebUI 路由与入口**
+
+- 新路由 `GET /api/i18n/languages`（可选的语言、全局层的语言链与服务进程的时区）、`GET /api/i18n/messages`（语言包给前端自带的字典补的译文）与 `GET /api/pages/:instance/:pageKey/texts`（插件前端的字典）。
+- 登录页与入口页的 `<html lang>` 跟随全局层的语言。
+
+**契约变化**
+
+下列契约有变化。给人看的字段与返回值放宽为 `string | TextRef` 或改为文字对象的，按字符串读它们的代码在类型上报错；同条另列这些包随之新增、删除或改变的成员与行为。
+
+- schema-config：字段、分组与数组的 `label`、`description` 与 `options` 的 `label` 放宽，新增的 `validate` 回的原因也可以是文字对象；`SchemaIssue` 加 `code`（`SchemaIssueCode`）与 `text`，`message` 仍是字符串；`configError` 的 message 与 `missingConfigError` 的 `note` 可以是文字对象，错误的 `name` 仍是 `ConfigError`；`multiselect` 字段加 `ordered`（有序多选）。
+- schema-message：新增可选的 `OutgoingMessage.text`、`IncomingMessage.text` 与 `hostNotice.text`（给人看的那句），经网关派发的出站由网关按所在会话的语言把 `OutgoingMessage.text` 渲染进 `content`；`OutboundDeliveryResult.error` 与投递失败记录的 `DeliveryError` 放宽；登记元数据键 `Text`。
+- api-message-archive：`ArchiveNoticeOptions` 加 `text`；新导出 `unaddressedText`（没有地址的附件记成的那句）。
+- api-commands：指令、参数、选项与取值的说明和 handler 的返回放宽；`CommandService.execute` 仍回字符串（已按会话的读者渲染）。
+- api-authority：`AuthorityService.authorize` 回 `string | TextRef | null`。
+- api-approval：`sanitizeForCard` 只清洗、不再截断，截断由新导出的 `clipForCard` 回 `{ head, omitted, tail }`，省略了多少由显示方写；`ApprovalResponse` 的 `message` 放宽。
+- api-publish：提名与撤下的 `refused`、撤下后的 `degraded`、`health()` 的 `reason` 与 `PublishSurfaceInfo.reason` 放宽，`publicPathProblem` 回 `TextRef | undefined`；plugin-publish-review 与 plugin-works-site 交出的就是文字对象。
+- util-cron、api-cron-engine：`ValidateResult` 的失败分支删掉 `reason`，改为 `{ ok: false; text: string | TextRef }`。
+- api-tools：`ToolGroupInfo.label` 放宽，加给人看的概述 `summary`；`BackgroundTask.reason` 放宽。
+- api-agent：`TokenUsagePart.label` 与 `agent:turn:after` 的 `error` 放宽。
+- api-llm：`ThinkingLevel.label` 放宽；`requestedThinking` 抛 `TextError`。
+- api-memory：`memory:clear` 结果行的 `message` 放宽。
+- api-session-manager：`SessionInfo`、`PlaceInfo` 与 `WorkspaceInfo` 的 `name` 可缺省，新导出 `sessionLabel`、`placeLabel`：没取名的会话、子任务与默认工作区的默认名不落盘，显示时按读者语言生成；`lastTurn.error` 放宽。
+- api-doctor：`CheckResult` 的 `message` 与 `detail`、`UnmetRoot` 的 `error` 放宽，`describeUnmet` 回文字对象；新导出 `failureText`（插件失败给人看的说明）。
+- api-trigger：`TriggerService.label` 放宽。api-storage：`StorageRootInfo.label` 放宽。api-media：`MediaProcessor.displayName` 放宽。api-checkpoint：`RollbackResult.errors` 各项的 `reason` 放宽。api-package-manager：安装、卸载与更新结果的 `message` 与更新结果的 `conflicts` 放宽。api-workflow：`WorkflowRun` 与 `NodeRunInfo` 的 `error` 放宽。
+- api-webui：页面声明、`StatusValue`、`InfoItem`、图与表格、Markdown 正文、`ActionResult`、`Notice`、`ErrorResponse` 与 `MessageResponse` 的产出方形状放宽，线上仍是字符串，`WebuiRestResponse<K>` 是渲染后的线上形状（`Localized<…>`）；`AttentionItem` 的 `session` 与 `error` 放宽；`ThemeParseResult.errors` 是文字对象，`themeContrastIssues` 返回的 `ContrastIssue.pair` 由字符串改为文字对象；内置主题的文件不再带名字，名字按主题 id 取新导出的 `BUILTIN_THEME_NAMES`；新贡献点 `webui:options`（可选项来源）。
+- api-persona：卡没写名字时 `getPersonaName` 回空串（0.20 回「<人设>，未设置名字」）；点名识别跳过空串。
+
+**中文界面看得到的变化**
+
+- 没取名的会话显示「会话 <日期时间>」，带年份（0.20 只写月日）；没取名的子任务显示「子任务 <时间>」。已存下的默认名照旧当名字显示。
+- 拿不到群名或昵称的新房间显示「会话 <日期时间>」，不再显示会话 id。
+- 终端头部的人设在会话的人设卡没取名或人设服务不在时写「-」，与状态页一致（0.20 分别写「<人设>，未设置名字」与 default）。
+- 给人看的数量按读者的语言写千分位。
+- runtime 加载插件之前的终端输出（启动、宿主参数与 `--init`、实例锁、重启与回滚提示、致命错误的标签）改为英文；经 WebUI 显示的配置报错按读者的语言。
+- 诊断页的「类别」、作品站的告警类型、部署结果与作品类型、作品审核的步骤与结论、关系图的实体类型与事件类别，以及白纸的取消来源、出网方式、绑定代理的状态、告警的类别与成品类型里的 other 显示中文名，不再显示英文标识；作品审核「历史」里撤下一条的「裁决者与理由」由 JSON 改为句子；白纸的停开时间按读者的语言写、按服务进程的时区；配置标签「摘要最大字数」「单条事实字数上限」改为「摘要最大字符数」「单条事实字符数上限」，用户档案「每 N 条消息提取一次」的说明与 `/profile` 的说明去掉「Aalis」。
+
+**脚手架**
+
+- create-aalis 按系统语言（Node 的默认 locale）或 `--lang` 显示中文或英文，0.20 一律是中文。交互模式第一问选安装界面的语言；这批插件里有 plugin-i18n 时最后一问排 Aalis 的语言列表（默认顺序：跟随系统 `auto`、安装界面的语言、其余），写进 `plugins["@aalis/plugin-i18n"].language`，bare 档没有这一问、也不写。`--lang <列表>`（逗号分隔）直接给出这份列表，给了就不问这两步。
+- create-aalis：语言列表跟随系统、系统语言又没有插件提供时，交互模式按关键词在源上找语言包，问要不要一起装（默认不装）；最终没有插件提供时提示按列表的下一项显示。非交互时不找，只提示。
+- create-aalis：生成的入口报错是英文（`Aalis failed to start:`），生成的 README、配置注释、package.json 描述与入口注释跟安装界面的语言；依赖 @aalis/schema-i18n。
+- create-aalis-plugin 按系统语言或 `--lang zh-CN|en` 显示，多一问原文语言（缺省按系统语言；给了 `--lang` 时以它为原文语言、不问），显示名一问去掉「中文标签」。
+- create-aalis-plugin 生成的插件多出原文字典 `src/texts.ts`、另一种语言的 `src/locales/<语言>.ts`、`test/texts.test.js` 与 test 脚本（`npm run build && node --test`），依赖 @aalis/schema-i18n；显示名、页面标题与组件、设置项、指令的说明与回复、动作的文字写成 `t()`，工具说明与结果仍是字符串；tsconfig 改 NodeNext（不带扩展名的相对导入编不过）；core peer 下限是 `>=0.21.0`；README、注释与示例跟原文语言；插件前端模板的文字经 `frame.t` 显示，入口页不写死 `lang`。
+- runtime 的 `--init`：安装集里有 @aalis/plugin-i18n 时，写出的 aalis.config.yaml 多一段它的语言列表，顺序是 `auto`、系统语言对上的第一方语言（zh-CN 或 en）、另一种；系统语言对不上时英文排第二，终端在初始化成功那行之后多打一行英文提示。安装集里没有它时不写这一段。
+
+**指令的回复**
+
+- WebUI 时间线把指令的回复画成卡片；会话协议的 notice 多一种 topic `command-reply`（api-session-protocol 新导出 `COMMAND_REPLY_TOPIC`）。
+- 房间与终端会话里指令的回复与宿主提示，送达后记进会话历史（事件标记：WebUI 里看得到，不交给模型）；读会话历史的两个工具（`session_get_history`、`onebot_get_session_history`）滤掉它们，凑不满时结果带略去的条数（api-session-history 新增的可选字段 `omittedNonConversation`）。
+
+### 第一方插件给人看的文字进字典（@aalis/plugin-package-manager、@aalis/plugin-storage-local、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-ollama、@aalis/plugin-llm-openai、@aalis/plugin-memory-summary、@aalis/plugin-skills、@aalis/plugin-cron-engine、@aalis/plugin-scheduler、@aalis/plugin-workflow、@aalis/plugin-adapter-onebot、@aalis/plugin-user-relation）
 
 - plugin-package-manager 导出的纯函数改交文字对象：`validatePackageSpec` 返回 `TextRef | undefined`，`buildUpdateSpecs` 的 `error` 是 `TextRef`，`describeNpmFailure` 返回 `TextRef`，`findUnmetPeers` 返回 `TextRef[]`。
 - plugin-storage-local 的存储操作抛出 `TextError`：message 不变，`name` 由 `Error` 变为 `TextError`，`String(err)` 的前缀随之变为 `TextError:`。
 - plugin-llm-deepseek、plugin-llm-ollama、plugin-llm-openai 的对话请求（`chat`、`chatStream`）抛出的报错与 plugin-llm-ollama、plugin-llm-openai 刷新模型列表（`refresh`）的报错改为 `TextError`：message 不变，`name` 由 `Error` 变为 `TextError`，`String(err)` 的前缀随之变为 `TextError:`。
 - plugin-memory-summary 的压缩服务 `compress` 因本插件判定的原因没压成时以 `TextError` 拒绝（同上），记忆后端的报错原样交出。
 - plugin-skills 的 `SkillsService.deleteSkill` 删不掉技能目录时以 `TextError` 拒绝（同上）。
-- plugin-cron-engine 的 `subscribe` 因时区不合法拒收时抛出 `TextError`（同上）；表达式不合法的照旧。
-- plugin-scheduler 的 `SchedulerService.getJobs()` 返回的 `lastResult` 放宽为 `string | TextRef`；`addJob`、`setJob` 因任务名来自配置文件拒收时抛出 `TextError`（同上），cron 不合法的照旧。
-- plugin-workflow 的 `runWorkflow` 因工作流不存在或已停用拒绝、`defineWorkflow` 因节点字段或依赖不合法拒绝、`removeWorkflow` 因定义文件删不掉拒绝时以 `TextError` 拒绝（同上），event 触发器的拒收照旧。
-- plugin-adapter-onebot 投递没成时，投递结果（`OutgoingMessage.delivery`）的 `error` 与投递失败记录的 `DeliveryError` 由字符串改为文字对象：各条原因不再带 String 化的错误名前缀（`Error:`、`TextError:`、`TypeError:` 等）。平台服务的 `sendMessage`、`callAction` 与扩展方法 `uploadFile` 因 WebSocket 未连接拒绝，`sendMessage`、`uploadFile` 因会话 id 认不出或连接不可用、`uploadFile` 因 v12 连接或会话类型不支持文件附件拒绝时以 `TextError` 拒绝（同上）。
+- plugin-cron-engine 的 `subscribe` 因表达式或时区不合法拒收时抛出 `TextError`（同上）。
+- plugin-scheduler 的 `SchedulerService.getJobs()` 返回的 `lastResult` 放宽为 `string | TextRef`；`addJob`、`setJob` 因 cron 不合法拒收时抛出 `TextError`（同上）；`setJob` 因任务名来自配置文件拒收时抛出 `TextError`，message 由「任务 "<名>" 来自配置文件，无法通过 setJob 覆盖」改为「任务 "<名>" 来自配置文件，要改去配置文件里改」（`addJob` 这时也拒收，见「其余插件的单点清理」一节）。
+- plugin-workflow 的 `runWorkflow` 因工作流不存在或已停用拒绝、`defineWorkflow` 因节点字段或依赖不合法拒绝、`removeWorkflow` 因定义文件删不掉拒绝时以 `TextError` 拒绝（同上）。
+- plugin-adapter-onebot 投递没成时，投递结果（`OutgoingMessage.delivery`）的 `error` 与投递失败记录的 `DeliveryError` 由字符串改为文字对象：各条原因不再带 String 化的错误名前缀（`Error:`、`TypeError:` 等）。平台服务的 `sendMessage`、`callAction` 与扩展方法 `uploadFile` 因 WebSocket 未连接拒绝，`sendMessage`、`uploadFile` 因会话 id 认不出或连接不可用、`uploadFile` 因 v12 连接或会话类型不支持文件附件拒绝时以 `TextError` 拒绝（同上）。
 - plugin-user-relation 导出的 `RelationService` 的 `getLastConsolidateInfo()` 改为返回 `LastConsolidate | undefined`：本次运行以来没整理过时是 `undefined`；有记录时是完成时刻 `at`（原 `lastRunAt`）、触发来源 `trigger` 与各项计数 `counts`（新导出类型 `ConsolidateCounts`），原来的中文摘要 `summary` 删除。
-- plugin-publish-review 提供的发布服务（`publish`）拒绝提名与撤下时的 `refused`、撤下后的 `degraded` 与 `listSurfaces()` 的 `reason` 由字符串改为文字对象（plugin-works-site 的发布目标交来的不可用原因同样是文字对象）。
 
 ### 记忆压缩：摘要预算、保留原文与成段丢弃（@aalis/api-memory、@aalis/api-agent、@aalis/api-llm、@aalis/plugin-memory-summary、@aalis/plugin-agent、@aalis/plugin-memory-inmemory、@aalis/plugin-memory-sqlite、@aalis/plugin-memory-mongodb、@aalis/plugin-session-server）
 
 - **摘要预算**（plugin-memory-summary）：摘要长度按这个会话的自动压缩线算。预算是压缩线（按最近一次用量算）乘 `summaryBudgetRatio`（默认 0.1），不论怎么触发，但不超过这次要压的内容（上一份摘要加这次新压的对话）；不少于 1000 token、不超过压缩线的四分之一；最终不超过摘要模型物理上限（输出上限与窗口的四分之一取小）的三分之二，输出上限 8192 的模型最多约 5461 token；还没有用量时按要压的内容，同样不少于 1000 token、不超过物理上限的三分之二。插件详情里的「摘要 Token 上限（占窗口比例）」换成「摘要预算（占自动压缩线的比例）」。见 [plugin-memory-summary](docs/plugins/plugin-memory-summary.md) 的「摘要预算」。
 - **保留原文**（plugin-memory-summary）：压缩时摘要模型从压掉的那一段里挑出值得原样保留的消息（工具调用连同它的全部结果是一个整体），它们不归档、原样留在活跃历史里，下一轮起紧接在摘要之后发给模型；摘要照常概括它们。摘要与保留的原文合计约为预算，保留的原文不超过这次新压的对话乘 `summaryBudgetRatio`（不算上一份摘要，也不套 1000 的下限）；设了条数线时，挑中的原文只留到压完的活跃条数（保留的原文与切分点之后的对话消息，分隔标记等事件标记不算）不超过条数线的一半（向下取整）为止，超出的从最早的保留单位起去掉。WebUI 时间线上它们照常显示在「对话已压缩」分隔线之前，界面不另标。
-- **条数线超出时成段丢弃**（plugin-agent）：活跃历史超过会话设置「历史条数上限」`historyLimit` 时，发给模型的历史一次丢掉最早的一半（⌈条数线 ÷ 2⌉ 条），之后照常累积到条数线再丢一段，发出的条数在半条线到整条线之间；条数只数对话消息，回合记录、压缩分隔线这类事件标记不发给模型，也不占条数。丢掉的那一段在压成之前模型看不到，会话历史本身不动，压缩时照样进摘要。按条数触发的压缩进行中、没压成的几轮，以及不装摘要插件、只把条数线当发送上限的部署，都按这条规则。记忆后端没实现 api-memory 可选的 `countHistory`（活跃对话消息的条数）时，每轮读全部活跃历史再切出发给模型的那一段。会话用量条目的「已用」随之跳一下：丢一段时降，压成时再降。见 [plugin-agent](docs/plugins/plugin-agent.md) 的「会话设置项」。
+- **条数线超出时成段丢弃**（plugin-agent）：活跃历史超过会话设置「历史条数上限」`historyLimit` 时，发给模型的历史一次丢掉最早的一半（⌈条数线 ÷ 2⌉ 条），之后照常累积到条数线再丢一段，发出的条数在半条线到整条线之间；条数只数对话消息，回合记录、压缩分隔线这类事件标记不发给模型，也不占条数。丢掉的那一段在压成之前模型看不到，会话历史本身不动，压缩时照样进摘要。按条数触发的压缩进行中、没压成的几轮，以及不装摘要插件、只把条数线当发送上限的部署，都按这条规则。记忆后端没实现 api-memory 新增的可选成员 `countHistory`（活跃对话消息的条数）时，每轮读全部活跃历史再切出发给模型的那一段。会话用量条目的「已用」随之跳一下：丢一段时降，压成时再降。见 [plugin-agent](docs/plugins/plugin-agent.md) 的「会话设置项」。
 - **在输出上限处停下算没压成**（plugin-memory-summary）：模型插件报的结束原因 `finishReason` 是 `length` 时，这次压缩没压成，报错「摘要模型在输出上限处停下，输出不完整」，被截断的摘要不存下；后台压缩照常计入退避。服务商不报结束原因时查不出。
 - **破坏性**：
-  - api-memory：`MemoryService.archiveOldest(sessionId, count)` 删除，改为必填的 `archiveSpan(sessionId, { count, keep })`（归档最早的 count 条活跃消息，keep 列出的位置不归档；按位置数，事件标记也占位置），第三方记忆后端须实现它，`getFullHistory` 也要按时间交错返回留下的与归档的消息。
+  - api-memory：`MemoryService.archiveOldest(sessionId, count)` 删除，改为必填的 `archiveSpan(sessionId, { count, keep })`（归档最早的 count 条活跃消息，keep 列出的位置不归档；按位置数，事件标记也占位置），`getFullHistory` 按时间交错返回留下的与归档的消息。
   - api-memory：带条数的读法（`getHistory`、`getFullHistory` 的 `limit`，`getRecentMessagesAcrossSessions` 的 `query.limit`，`updateMessageContent` 的 `recentLimit`）条数为 0 时返回空（`updateMessageContent` 一条都不改），为 `Infinity` 时返回全部（跨会话查询照样收窄到后端配置的上限）。plugin-user-relation 的 `readWindowSize`、`allNewMaxMessages` 配成 0 时，关系提取读不到消息。
   - api-agent：`TokenUsageEvent.historyMessages` 改为这一轮开头会话的活跃历史里对话消息的条数（事件标记不算，与 api-memory 的 `countHistory` 同一口径；含条数线之外、没发给模型的部分），加本回合到这次调用为止追加的工具调用与结果；`token:request` 的快照里是活跃历史里对话消息的条数。类型不变。
   - plugin-memory-summary：插件配置 `summaryTokenRatio` 删除，换成 `summaryBudgetRatio`（见上文「摘要预算」）。配置里留着 `summaryTokenRatio` 时，runtime 在启动与热重载时按 schema 裁掉并写回配置文件，记一条 warn。
@@ -48,7 +122,7 @@
 ### 注入的文字不再执行指令（@aalis/schema-message、@aalis/plugin-commands、@aalis/plugin-scheduler）
 
 - 只有人亲手写的文字才执行指令：带 `source` 的入站注入里的指令不再执行，正文当普通消息交给她。编排里用发消息节点（或 agent 节点）发的指令不再生效；子任务的任务正文与 `send_to_subtask` 的追问、宿主通知、空闲触发里的指令同样不执行。此前注入的文字照常解析指令，不需要确认的指令（如 `/shutdown`、`/status`）按注入带的 `actor` 执行。
-- `IncomingMessage` 加 `ownerApproved`（注入方声明文字建立时经 owner 过目过原文），plugin-commands 只解析不带 `source` 的真人入站与带这个声明的注入；`source` 写成 `scheduler` 而不声明的注入不再执行指令。plugin-scheduler 触发的消息带声明，定时任务里的指令照旧执行。第三方插件注入的文字不算人写的，其中的指令不执行；不要给没经 owner 过目原文的文字设 `ownerApproved`。
+- `IncomingMessage` 加 `ownerApproved`（注入方声明文字建立时经 owner 过目过原文），plugin-commands 只解析不带 `source` 的真人入站与带这个声明的注入；`source` 写成 `scheduler` 而不声明的注入不再执行指令。plugin-scheduler 触发的消息带声明，定时任务里的指令照旧执行。第三方插件注入的文字不算人写的，其中的指令不执行；`ownerApproved` 是注入方的声明，plugin-commands 不另核。
 
 ### /clear 的门槛改为等级 1（@aalis/plugin-commands）
 
@@ -56,26 +130,26 @@
 
 ### 出站文字默认按纯文字发（@aalis/schema-message、@aalis/plugin-adapter-onebot）
 
-- `OutgoingMessage` 加 `markup`：正文含平台标记、要解析。不设的正文 onebot 不再把 `<at>`、`<image|record|video url>`、`<reply>`、`<face>` 解析成消息段，也不再分条（`source: 'agent'` 的也一样），整条一个文字段原样发出，第三方插件出站文字里的这些标记因此按文字显示，要解析标记的出站设 `markup: true`（图片、语音、视频也可以改走 `attachments`）。plugin-agent 的回复设 `markup`，照旧解析并按 `splitMessage` 分条。
-- onebot 适配器的 `sendMessage`（`sendPlatformMessage` 直发）只发纯文字：不解析标记、不分条，不再看 `skipSplit`；它的扩展选项 `replyTo` 删除，引用回复改用 `OutgoingMessage.replyTo`。
+- `OutgoingMessage` 加 `markup`：正文含平台标记、要解析。不设的正文 onebot 不再把 `<at>`、`<image|record|video url>`、`<reply>` 解析成消息段、不再去掉 `<face>`，也不再分条（`source: 'agent'` 的也一样），整条一个文字段原样发出，第三方插件出站文字里的这些标记因此按文字显示；设了 `markup: true` 的出站照旧解析（图片、语音、视频另可走 `attachments`）。plugin-agent 的回复设 `markup`，照旧解析并按 `splitMessage` 分条。
+- onebot 适配器的 `sendMessage`（`sendPlatformMessage` 直发）只发纯文字：不解析标记、不分条，不再看 `skipSplit`；它的扩展选项 `replyTo` 删除，引用回复只经 `OutgoingMessage.replyTo`。
 - 带 `markup` 的正文里媒体标记的网址（以 `http:`、`https:` 开头，不分大小写）由适配器经 `safeFetch` 下载、核对文件头后内联，不再交给实现端去拉：私网地址、解析不了、下载失败、超过 10 MiB 与不是能内联的媒体的标记不发，投递结果报失败。
-- 带 `markup` 的正文里地址不是网址的媒体标记（`file://`、本机路径、存储地址、data URI、正文里写的 `base64://`）一律去掉，不再交给实现端，投递结果报失败，owner 自己的会话也一样：此前实现端与 Aalis 同机时，她回复里本机文件的标记发得出去。存储里的媒体改由 plugin-image-sender 转成附件发出（见下一节），没装它时发不出（create-aalis 的 minimal 与 standard 档不装它）。有标记语法的第三方适配器同样要去掉这些标记、报投递失败，不得自己读取：留在正文里的存储地址是没转成附件的（不在受众范围、读不出、不是对应媒体，或没装 plugin-image-sender）。
+- 带 `markup` 的正文里地址不是网址的媒体标记（`file://`、本机路径、存储地址、data URI、正文里写的 `base64://`）一律去掉，不再交给实现端，投递结果报失败，owner 自己的会话也一样：此前实现端与 Aalis 同机时，她回复里本机文件的标记发得出去。存储里的媒体改由 plugin-image-sender 转成附件发出（见下一节），没装它时发不出（create-aalis 的 minimal 与 standard 档不装它）。schema-message 对 `markup` 的约定：有标记语法的适配器同样去掉这些标记、报投递失败，不自己读取；留在正文里的存储地址是没转成附件的（不在受众范围、读不出、不是对应媒体，或没装 plugin-image-sender）。
 
 ### 发媒体、看图的取用（plugin-image-sender、plugin-media）
 
 - `send_attachment` 的 `storage_uri` 与 `analyze_image` 的存储地址先判后读，能取哪些见「取别的会话的媒体按同一规则，本机文件按主体」一节。
 - `storage_uri` 只收存储地址：只写文件名或带 `./` 前缀的不再补成存储地址，按「要写存储地址」拒绝（相对路径 `data/images/…` 同样拒绝，见「附件归写入方，引用写成存储地址」一节）。
-- `history_ref` 只在调用所在会话历史的结构化引用（入站附件清单与发出附件的 `SentRef`）里按全等找：只写文件名或哈希的引用找不到，存在但不在本会话历史里的文件不能发，owner 自己的会话也一样。
+- `history_ref` 写网址的照旧当网址用，其余只在调用所在会话历史的结构化引用（入站附件清单与发出附件的 `SentRef`）里按全等找：只写文件名或哈希的引用找不到，存在但不在本会话历史里的文件不能发，owner 自己的会话也一样。
 - `analyze_image` 按文件头核对是不是图片，扩展名是图片、内容不是的拒绝。
 - `update_image_description` 去掉 `session_id` 参数，只改调用所在会话；传了按未知参数拒绝。
-- 带 `markup` 的正文（她的回复）里存储地址的 `<image|video|record url="…"/>` 标记改按附件发：受众只有 owner 的会话里不过判据，其余会话只转过得了判据的媒体；转之前按文件头核对。只摘掉转成了附件的标记：没转成的（过不了判据的、读不出的、不是对应媒体的）与别的写法（网址、`file://`、本机路径、data URI 等）一样留在正文里，由适配器按上一节的规则下载内联或去掉，去掉的投递报失败；WebUI 与终端不解析标记，按原文显示。
+- 带 `markup` 的正文（她的回复）里存储地址的 `<image|video|record url="…"/>` 标记改按附件发：只转过得了判据的媒体（判据与按哪一轮判见「通道层：回合开始的钩子与按回合认消息」一节）；转之前按文件头核对。只摘掉转成了附件的标记：没转成的（过不了判据的、读不出的、不是对应媒体的）与别的写法（网址、`file://`、本机路径、data URI 等）一样留在正文里，由适配器按上一节的规则下载内联或去掉，去掉的投递报失败；WebUI 与终端不解析标记，按原文显示。
 
 ### 子会话的出站不交给平台（@aalis/api-session-manager、@aalis/plugin-session-manager、@aalis/plugin-session-server、@aalis/plugin-scheduler）
 
-- 子会话的 id 与根会话一样由会话管理生成（`session-<8位>`），不再是 `<父会话 id>::<随机串>`，按 id 前缀找子会话或父会话的改用会话记录的 `parentId`、`children` 与 `rootSessionOf`。平台适配器按会话 id 认领出站：此前在群里建的子任务，她在子任务里的回复由 onebot 按 id 里的账号认领，往「群号::随机串」这个目标发。现在房间的子会话没有适配器认领，她的话只进子会话的历史，父会话照旧靠子任务的结果与提醒拿到结果。自己实现会话管理的，`createSession` 自生成的 id 不要拼进父会话的 id：拼了的子会话会被平台适配器按 id 认领，她在子任务里的话发进群里。
+- 子会话的 id 与根会话一样由会话管理生成（`session-<8位>`），不再是 `<父会话 id>::<随机串>`，按 id 前缀认不出父子，父子关系只记在会话记录的 `parentId`、`children` 上（`rootSessionOf` 取根会话）。平台适配器按会话 id 认领出站：此前在群里建的子任务，她在子任务里的回复由 onebot 按 id 里的账号认领，往「群号::随机串」这个目标发。现在房间的子会话没有适配器认领，她的话只进子会话的历史，父会话照旧靠子任务的结果与提醒拿到结果。api-session-manager 的约定：`createSession` 自生成的 id（子会话一样）不带父会话的 id；拼进了的，子会话会被平台适配器按 id 认领，她在子任务里的话发进群里。
 - 会话服务的时间线上，房间的子会话里她说的话不再标「没有发出」（工具调用之前说的、没有适配器接手的回复）。
 - 会话管理的房间收录按会话记录跳过子会话，不再看 id 里有没有 `::`：适配器的窗口 id 里带 `::` 的照常收录。
-- 从会话 id 推窗口的平台功能在子会话里认不出窗口：plugin-tool-onebot 的工具不带目标参数（`group_id`、`user_id`）时不再落到父会话的群或私聊，报错要求给出；多个账号时要写 `self_id`（见「onebot 动作与工具结局」一节）。plugin-adapter-onebot 不给子会话注群聊提示与事件提示。
+- 从会话 id 推窗口的平台功能在子会话里认不出窗口：plugin-tool-onebot 的工具不带目标参数（`group_id`、`user_id`）时报错要求给出（此前把 id 里的「群号::随机串」当目标，动作发不成）；多个账号时要写 `self_id`（见「onebot 动作与工具结局」一节）。plugin-adapter-onebot 不给子会话注群聊提示与事件提示。
 - plugin-scheduler 的 `scheduler_create_job` 在子会话里不带 `sessionId` 时报错要求写明目标会话，报错里给出根会话的 id 作候选，不再默认发往调用所在的子会话：子会话没有窗口，删掉后发往它的任务会静默丢失。
 
 ### 子任务的查询与等待只认直接子任务（@aalis/plugin-subtask）
@@ -95,12 +169,12 @@
 - `confirmOverrides` 的 `'off'`、`restrictedPolicy` 白名单与执行守卫的 `skipConfirm` 只对参与者（守卫上下文的 `participants`）都是 owner 的回合生效。别人发起的照旧确认：`'off'` 回落到插件的声明，工具要 owner 批准、不能产生审批的直接拒绝，指令当面问发出者本人。不再免确认的有：群成员（含开了相应工具组的群里的 2 级成员）、别人的私聊里对方发起的、群友亲手输入的指令、创建者不是 owner 的定时任务里的指令（需要确认的直接拒绝）、MCP 客户端、没有授权主体的回合（群里的频率触发、空闲触发、owner 会话里的主动发言、白纸任务完成通知），以及定义者不是 owner 或没有定义者的编排。owner 本人、owner 派的子任务、owner 建的定时任务、定义者与调用者都是 owner 的编排照旧免。
 - 编排按定义者与调用者里不是 owner 的一方执行：调用者是 owner 时按定义者（没有即匿名），否则按调用者。`workflow_run` 的调用者是调用它的人，工作流页「立即运行」是登录的 owner，cron、interval、once、event 触发与 `trigger:fired` 以定义者作调用者，不再匿名。owner 经 `workflow_run` 调起别人定义或覆盖过的编排，按那个人的等级执行。权限服务不在时判不出 owner，调用者与定义者不是同一身份的按匿名。
 - 定义者由 plugin-workflow 自己的入口记下（`workflow_define` 取调用者的授权身份，工作流页「新建或覆盖」取登录的 owner），覆盖即换成覆盖者；它连同定义文件文本的哈希记在运行历史文件（`runsFile`）的 `definers` 里，不写进定义文件。经编排服务的 `defineWorkflow` 定义或覆盖的（别的插件调用的）、手写进 `defsDir` 的定义（含已有的全部定义）、文件在磁盘上被改过的、运行历史文件读不出时，没有定义者，按匿名执行，owner 经 `workflow_run` 调起也一样。
-- 替换编排服务的第三方实现，`defineWorkflow` 定义或覆盖的同样没有定义者；定义者只由实现自己认证过调用者的入口记下（不写进定义文件、不从定义文件读），并按上面的规则定运行身份。
+- api-workflow 的约定：`defineWorkflow` 定义或覆盖的编排没有定义者；定义者只由实现认证过调用者的入口记下（不写进定义文件、不从定义文件读），运行身份按上面的规则定。
 
 ### 编排的事件触发不订阅带会话内容的事件（@aalis/plugin-workflow）
 
-- `event` 触发器不接受负载带会话内容（会话 id、平台、正文等）的事件。在原有的 `inbound:message`、`outbound:message` 之外，新增：`inbound:message:archived`、`assistant:message:archived`、`outbound:delivered`、`outbound:stream`、`tool:execute`、`tool:output`、`background:changed`、`approval:created`、`approval:settled`、`media:processed`、`todo:updated`、`session:created`、`session:updated`、`session:completed`、`token:usage`、`token:request`、`llm:usage`、`gateway:phase:done`、`memory:messages-deleted`、`history:changed`、`session:compressing`、`session:deleted`、`trigger:fired`、`workflow:run:start`、`workflow:run:done`、`workflow:run:error`、`workflow:node:done`。编排按定义者的身份运行，事件参数会插值进 `tool` 节点的参数、`agent` 节点的指令与 `send-message` 的正文；单是会话 id 也让订阅者看出别人的私聊在活动。
-- 订阅这些事件的编排在定义时报错、不保存：`workflow_define` 回 `error`，工作流页「新建或覆盖」与编排服务的 `defineWorkflow` 报错。原有的两个此前照常保存、只在注册触发器时记警告。已在定义目录里的照常载入，触发器不注册，文件不改，启用着的记警告（写明改掉触发器重新保存或删掉）；工作流页对它的「启用」「停用」同样报错。
+- `event` 触发器不接受负载带会话内容（会话 id、平台、正文等）的事件。在 0.20 已拒的 `inbound:message`、`outbound:message` 之外，新增：`inbound:message:archived`、`assistant:message:archived`、`outbound:delivered`、`outbound:stream`、`tool:execute`、`tool:output`、`background:changed`、`approval:created`、`approval:settled`、`media:processed`、`todo:updated`、`session:created`、`session:updated`、`session:completed`、`token:usage`、`token:request`、`agent:queue`、`llm:usage`、`gateway:phase:done`、`memory:messages-deleted`、`memory:messages-rewritten`、`history:changed`、`session:compressing`、`session:deleted`、`trigger:fired`、`workflow:run:start`、`workflow:run:done`、`workflow:run:error`、`workflow:node:done`；0.20 表里的 `inbound:command` 是网关的入站相位名、不是事件，不再列。编排按定义者的身份运行，事件参数会插值进 `tool` 节点的参数、`agent` 节点的指令与 `send-message` 的正文；单是会话 id 也让订阅者看出别人的私聊在活动。
+- 订阅这些事件的编排在定义时报错、不保存：`workflow_define` 回 `error`，工作流页「新建或覆盖」报错，编排服务的 `defineWorkflow` 以 `TextError` 拒绝。`inbound:message`、`outbound:message` 此前照常保存、只在注册触发器时记警告。已在定义目录里的照常载入，触发器不注册，文件不改，启用着的记警告（写明改掉触发器重新保存或删掉）；工作流页对它的「启用」「停用」同样报错。
 
 ### 封禁先于等级判定（@aalis/plugin-authority）
 
@@ -120,47 +194,47 @@
 
 **会话设置插件**
 
-- 会话设置拆成新插件 @aalis/plugin-session-settings，需另装：`npm create aalis` 的最小档装它，已有部署升级时不会自动装上。不装、没启用或会话管理没起来时，`/session` 系列指令、设置的「会话默认」、会话面板的「设置」标签、输入框旁的快捷切换与房间页的「场所设置」都没有，建不了子任务与经会话协议建的子会话；插件详情里这些字段照常能改，各插件只用插件配置里的值（平台档、平台类型档、场所与会话层这段时间不生效）。
-- 层：全局（插件配置）› 平台档 › 平台类型档 › 场所 › 本会话，后面的压过前面的。原来的「全局默认」改称「全局（插件配置）」，改它就是改对应插件的配置，插件详情同步显示；「父会话」一层没有了。没有跨平台按类型名生效的一层：要对所有群生效的设置按平台分别设在平台类型档。
-- 配置文件：`sessionConfig.defaults` 没有了，全局层就是各插件的配置段；平台档与平台类型档多一级插件实例 id（`sessionConfig.platforms.<平台>.<实例 id>.<字段>`）；原来的 `sessionConfig.types.<平台>.<类型>` 改名 `platformTypes`，`types` 段不再认：读到告警一次、不生效，按层写时原样留着。写了不认识的实例 id、或实例值不是对象时日志告警一次（原来静默不生效）；只剩键名的空段不告警。写平台档、平台类型档时只改这一项，配置文件里读不懂的部分原样留着；要写的路径上已有的值不是对象时拒收，回执点名那一段。
+- 会话设置拆成新插件 @aalis/plugin-session-settings：`npm create aalis` 的最小档装它，已有部署升级时不会自动装上。不装、没启用或会话管理没起来时，`/session` 系列指令、设置的「会话默认」、会话面板的「设置」标签、输入框旁的快捷切换与房间页的「场所设置」都没有，建不了子任务与经会话协议建的子会话；插件详情里这些字段照常能改，各插件只用插件配置里的值（平台档、平台类型档、场所与会话层这段时间不生效）。
+- 层：全局（插件配置）› 平台档 › 平台类型档 › 场所 › 本会话，后面的压过前面的。原来的「全局默认」改称「全局（插件配置）」，改它就是改对应插件的配置，插件详情同步显示；「父会话」一层没有了。
+- 配置文件：`sessionConfig.defaults` 没有了，全局层就是各插件的配置段；平台档与平台类型档多一级插件实例 id（`sessionConfig.platforms.<平台>.<实例 id>.<字段>`）；原来的 `sessionConfig.types.<平台>.<类型>` 改名 `platformTypes`，`types` 段不再认：读到告警一次、不生效，按层写时原样留着。写了不认识的实例 id、或实例值不是对象时日志告警一次；只剩键名的空段不告警。写平台档、平台类型档时只改这一项，配置文件里读不懂的部分原样留着；要写的路径上已有的值不是对象时拒收，回执点名那一段。
 - 存储：场所与会话的覆盖值从会话管理记录的 `config` 字段挪到同一条记录的 `metadata['session-settings']` 里，按插件实例分开。
-- 配置文件里多出这些项的作者默认（与其它配置项一样写进各插件的配置段）：工具分组 `[]`、额外提示 `''`、语言 `['en']`、客户端渲染 JSON 按角色卡、启用的技能 `['*']`。语言从 `sessionConfig.defaults.language` 搬到 `plugins['@aalis/plugin-i18n'].language`，i18n 插件第一次有配置区；会话管理起不来时界面仍按这个语言显示（原来会落成英文）。
+- 配置文件里各插件的配置段多出可按会话覆盖、带作者默认的字段（与其它配置项一样写进去），如人设 `default`、额外提示 `''`、工具分组 `[]`、启用的技能 `['*']`、历史条数上限 `0`、客户端渲染 JSON `card`（按角色卡）。
 - 写进配置文件失败（配置文件被外部改过、拒写等）时，会话设置改的全局层、平台档、平台类型档与偏好已经生效，回执写与插件详情保存相同的那一句，拒写与其余写入失败两句不同。原来会撤回这次修改并报错。
-- 新群的第一条消息：网关先等会话管理收录完再跑入站相位，第一条消息就按已建档的房间取平台类型档与场所；原来回合可能先于收录开始，那时会套用默认工作区的场所值。新房间的第一条消息因此多等一次认领查询，已收录的房间不等。会话管理收录不了的会话与按 id 兜底建出的空记录只取全局层与平台档，不再套用默认工作区的值。
-- 刷新：插件详情保存、手改配置文件、会话设置写全局层或偏好，都会让已打开的会话设置、插件详情与界面语言自动重取。原来手改文件后不刷新。
+- 新群的第一条消息：网关先等会话管理收录完再跑入站相位，第一条消息就按已建档的房间取平台类型档与场所；原来回合可能先于收录开始，那时会套用默认工作区的场所值。新房间的第一条消息因此多等一次认领查询，已收录的房间不等。会话管理收录不了的会话只取全局层与平台档，按 id 兜底建出的空记录另取它自己的本会话层，都不再套用默认工作区的值。
+- 刷新：插件详情保存、手改配置文件、会话设置写全局层或偏好，都会让已打开的会话设置、插件详情与界面语言自动重取。原来手改配置文件里的 `sessionConfig` 后会话设置不刷新，手改停用插件的配置段后插件详情不刷新。
 
 **指令**
 
 - `/session`、`/session.set`、`/session.reset` 从 plugin-agent 挪到会话设置插件，这个插件没装时三条都没有，`/help` 里的归属也变了。`-m`、`-p`、`-t` 删掉，旧写法报错。
-- `/session.set [--at <层>] <项> <值>` 能改本会话全部适用的项，也能写场所、平台类型档、平台档与全局（`--at place`、`platformType`、`platform`、`global`）。几个插件同名的项写成 `<实例 id>/<键>`。项写错（不存在、不适用或重名）时回执列出你在这一层能改的项。WebUI 与终端的会话里 `--at platformType` 回「这个会话没有聊天窗口，不属于任何平台类型档」。模型写 `/model` 列出的条目 id。
+- `/session.set [--at <层>] <项> <值>` 能改本会话全部适用的项，也能写场所、平台类型档、平台档与全局（`--at place`、`platformType`、`platform`、`global`）。几个插件同名的项写成 `<实例 id>/<键>`。项写错（不存在或不适用）时回执列出你在这一层能改的项，几个插件都有这一项时列出各自的 `<实例 id>/<键>`。WebUI 与终端的会话里 `--at platformType` 回「这个会话没有聊天窗口，不属于任何平台类型档」。模型的值是 `/model` 列出的条目 id。
 - 门槛取「项的门槛」与「写在哪一层的门槛」两者中较高的，所有会话一律判，私聊也不例外；没装权限插件时聊天里改不了设置。项的门槛默认来自字段声明（第一方里 1 级就能改的是模型、深度思考、人设、语言与子任务模型，其余只有 owner），owner 能在权限页「操作门槛」里和指令、工具一样按项调；写群或私聊的场所要 2 级，写工作区场所、平台类型档、平台档与全局只有 owner，层的门槛不能调。原来 `-m`、`-p`、`-t` 只改三项、1 级即可、不分层。
-- `/session` 只列你能改的项，每项写生效值与来源，模型没设时写此刻实际在用的模型；原来另写的「模型档位」一句没有了。回执不再写「重启不丢」。设了不存在的模型、思考档或人设（全局层的模型除外）不再当场拒绝，下一轮由对应插件处理。校验函数自己出错时回执写「校验时出错」，不转述错误原文。
+- `/session` 只列你能改的项，每项写生效值与来源，模型没设时写此刻实际在用的模型；原来深度思考那一行之后另写的「当前模型的档位：…」一句没有了。回执不再写「重启不丢」。设了不存在的模型、思考档或人设（全局层的模型除外）不再当场拒绝，下一轮由对应插件处理。校验函数自己出错时回执写「校验时出错」，不转述错误原文。
 - `/session.reset` 不带项只用于本会话与场所，清掉这一层你能改的全部项（原来只清三项）；平台类型档以上必须写明清哪一项。
-- 空值：列表与映射写 `[]`，文字写 `""`；回执与 `/session` 里空值写「无」，原来写「（空）」。所有指令里，空的引号（`""`）算一个空参数。
+- 空值：列表与映射写 `[]`，文字写 `""`；回执与 `/session` 里空值写「无」。所有指令里，空的引号（`""`）算一个空参数。
 
 **WebUI**
 
 - 插件详情 › 配置：每一项写作者默认，等于默认时标「默认」，不等时写「默认：<值>」并有「恢复默认」（空的写「无」）；没有作者默认的项没设时写「不设时：<说明>」，设了时写「默认：不设」。原来看不出默认值是多少。
-- 插件详情：可按会话覆盖的字段带「可按会话设置」，全局之外另外设过的带「另有 N 处设置」，点开逐个列出在哪一层、哪个会话（含子会话）设成了什么，每处链到设置的那一层或那个会话的「设置」标签。agent 多出深度思考、最大工具迭代、历史条数上限；人设插件多出人设、额外提示、不用结构化输出、客户端渲染 JSON；工具插件多出工具分组；技能插件多出启用的技能；摘要插件多出自动压缩线；白纸插件多出六项；子任务插件多出「子任务模型」与「交回后闲置销毁（小时）」；关系图多出「关系图范围」；回复策略三个插件的参数都在这里。
-- 插件详情：只改了可按会话覆盖的字段时按钮写「保存」，不重载插件，下一轮起生效（原来一律「保存并重载」）。有未保存的改动时这个插件的配置在别处被改了，不再静默丢掉草稿，底条写「配置已在别处改动」，附「载入新值」；草稿没改动时静默换上新值。原样保存一个禁用的插件，回执从「配置已更新；插件已禁用，启用时按新配置激活」变成「配置无改动，已写回配置文件」；原样保存等依赖或正在激活的插件不再触发重启。停用的插件的这类字段在插件详情里照常能改。
+- 插件详情：可按会话覆盖的字段带「可按会话设置」，全局之外另外设过的带「另有 N 处设置」，点开逐个列出在哪一层、哪个会话（含子会话）设成了什么，每处链到设置的那一层或那个会话的「设置」标签。agent 多出深度思考、最大工具迭代、历史条数上限；人设插件多出人设、额外提示、不用结构化输出、客户端渲染 JSON；工具插件多出工具分组；技能插件多出启用的技能；摘要插件多出自动压缩线；白纸插件多出六项；关系图多出「关系图范围」；回复策略三个插件的参数都在这里。
+- 插件详情：只改了可按会话覆盖的字段时按钮写「保存」，不重载插件，下一轮起生效（原来除停用的插件外一律「保存并重载」）。有未保存的改动时这个插件的配置在别处被改了，不再静默丢掉草稿，底条写「配置已在别处改动」，附「载入新值」；草稿没改动时静默换上新值。原样保存一个禁用的插件，回执从「配置已更新；插件已禁用，启用时按新配置激活」变成「配置无改动，已写回配置文件」；原样保存等依赖或正在激活的插件不再触发重启。停用的插件的这类字段在插件详情里照常能改。
 - 设置 › 会话默认：先选层（全局、各平台档、各平台类型档与全部场所，顶上可以搜索），再改这一层的项；所选的层记在地址里，刷新与分享链接都回到这一层；宽屏左右并排，手机上两屏。原来只有一个下拉框，不列场所。
-- 称呼：层与场所的引号一律用「」。层的列表里平台类型档写「<平台> · <类型的显示名>」（适配器声明了显示名时写它，没声明时写类型名，搜显示名也能搜到），场所写「默认工作区」「工作区「<名字>」」「<类型的显示名>「<窗口名>」」，窗口另补平台；一层的标题与来源不带平台，场所写「<场所的称呼>（场所）」，如「来自：群「读书会」（场所）」。原来会话「设置」标签按多方标记写「群『读书会』」「工作区『论文』」（引号是『』，也不写层名）。
+- 称呼：层与场所的引号一律用「」。层的列表里平台类型档写「<平台> · <类型的显示名>」（适配器声明了显示名时写它，没声明时写类型名，搜显示名也能搜到），场所写「默认工作区」「工作区「<名字>」」「<类型的显示名>「<窗口名>」（<平台>）」；一层的标题与来源不带平台，场所写「<场所的称呼>（场所）」，如「来自：群「读书会」（场所）」。原来会话「设置」标签按多方标记写「群『读书会』」「工作区『论文』」（引号是『』，也不写层名）。
 - 会话面板「设置」标签：来源写「来自：全局（插件配置）」「来自：平台档 <平台>」「来自：平台类型档 <平台> · <类型>」「来自：<场所>（场所）」，全局层的值缺失或不合法时写「来自：默认」。WebUI 与终端的会话写入口平台（「来自：平台档 webui」），原来只写「来自：平台档」。「改到」第三项从「所有会话」改称「全局（插件配置）」；被下面的层盖住时写「这里还被<层>覆盖」。没有场所层的空记录（按 id 兜底建出的根会话）不再给「这个工作区」。子会话的「改到」只有「只这个会话」。
-- 行尾按钮：全局层叫「恢复默认」，其余层叫「恢复继承」。高级区按实例分组，后缀实例的组名写「显示名 · 实例名」（原来同一插件的两个实例并成一组）。空列表、空映射与空文字写「无」，页面动作的输入值、「另有 N 处设置」与快捷切换里也一样。
+- 行尾按钮：全局层叫「恢复默认」，其余层叫「恢复继承」。高级区按实例分组，后缀实例的组名写「显示名 · 实例名」（原来设置项只按键区分，同一插件的两个实例共用同一项）。空列表、空映射与空文字写「无」，页面动作的输入值、「另有 N 处设置」与快捷切换里也一样。
 - 模型没设时写此刻在用的模型：会话里哪一层都没设时写「跟随服务偏好（此刻：<模型名>）」，设置页全局层没设时写「跟随全局偏好（此刻：<模型名>）」，输入框旁的快捷切换同样写此刻的模型。子任务模型没设时写「不另指定（与本会话相同）」。
 - 默认模型：「会话默认 › 全局 › 模型」改的是 agent 的本插件偏好（插件详情「服务偏好」里 agent 的 llm 一行，两处是同一个值），原来改的是全进程的 llm 全局偏好，连带改掉标题生成和摘要用的模型。全局偏好挪回「设置 › 系统 › 服务偏好」作普通一行。agent 没设本插件偏好时照旧跟随全局偏好，聊天用的模型不变。全局层写不存在的模型被拒（与插件详情一致），其余层照旧不当场核对。agent 配置段里手写的 `llm` 键不生效，日志告警一次。
 - 深度思考的可选档按 agent 实际在用的模型列出：给 agent 单设了模型偏好时，原来列的是全局偏好那个模型的档位。会话设置不在、agent 也没设本插件偏好时，插件详情里深度思考的下拉没有可选档。
 - 工具分组的下拉：没登记的分组（如会话历史读取插件不在时它的分组）不再从列表里消失，`*` 总写「全部分组」，每个分组下面一行写它的说明。同时装了 Ollama 与 OpenAI 两个向量化提供者时，各自的「Embedding 模型」下拉只列自己的模型。可选项来源 `platform` 与 `gateway-scopes` 没有了。
-- 会话设置不在时 WebUI 收到的说法换成「会话设置不在（@aalis/plugin-session-settings 没装、没启用，或会话管理没起来）」。
+- 会话设置不在时 WebUI 收到的说法是「会话设置不在（@aalis/plugin-session-settings 没装、没启用，或会话管理没起来）」。
 
 **各插件的项**
 
 - 回复策略（trigger-policy、trigger-laya、flow-control）：「生效作用域」与「分作用域覆盖」两块没有了，换成「生效范围」：不生效、多方房间、一对一房间、全部房间，默认多方房间。冷却、阈值等参数出现在会话设置的高级区，可按平台档、平台类型档、群（场所）与会话设，每条消息现读，改了不重载插件。WebUI 和终端的会话不再能纳入回复策略。onebot 的频道也是多方房间，新装与现有部署开箱都受这三个插件管：原来 `*:group` 不含频道，频道里的消息都直接放行，现在和群一样按触发判定、冷却与限速，Laya 也会对频道消息做判断（它的判别模型只用群聊训练过）。
-- 回复策略：owner 从 WebUI 往群里插话时，两个触发插件一律放行；flow-control 按插话那一端（一对一）判，生效范围设成一对一房间或全部房间时插话会受冷却与限速。一对一类型名不叫 `private` 的平台上，私聊里的 interval 回合不再回填无主体授权（按多方标记判，不认类型名）。trigger-policy 的闲置参数改了不重载插件：session 档下一次排定时器时现读；跨会话（platform 档）的开关与节奏只看全局层，从关闭改成 `platform` 时随即开始排，会话层设成 `platform` 不会开起跨会话选举。
-- 最大工具迭代默认不限，界面写「不限」；要限的在会话设置或插件配置里设。卡在工具调用里的一轮只能手动停下，调用成本随轮数放大。
-- 记忆召回范围：会话设置里原来的一行「召回范围」没有了，改成向量记忆、关系图各自的范围与会话管理的取别的会话的范围（见本节之后的「取别的会话的东西一条规则」），一个群要分别设，只有 owner 能改。某一层写坏了的范围值按最窄处理，不再回落到更宽的层。向量记忆为「同用户加权」档、某个群收窄到同平台的，这个群里没有同用户加权。新装的记忆插件按它自己的作者默认取，已经设好的收窄管不到它。
+- 回复策略：owner 从 WebUI 往群里插话时，两个触发插件一律放行。trigger-policy 的闲置参数（闲置触发策略除外，它仍是插件配置）改了不重载插件：session 档下一次排定时器时现读；跨会话（platform 档）的开关与节奏只看全局层，从关闭改成 `platform` 时随即开始排，会话层设成 `platform` 不会开起跨会话选举。
+- 最大工具迭代没有默认值（原来 30），没设即不限，界面写「不限」。卡在工具调用里的一轮只能手动停下，调用成本随轮数放大。
+- 记忆召回范围：会话设置里原来的一行「记忆召回范围」没有了，改成向量记忆、关系图各自的范围与会话管理的取别的会话的范围（见本节之后的「取别的会话的东西一条规则」），三处各自按会话设，只有 owner 能改。某一层写坏了的范围值按最窄处理，不再回落到更宽的层。向量记忆为「同用户增强」档、某个群收窄到同平台的，这个群里没有同用户加权。新装的记忆插件按它自己的作者默认取，已经设好的收窄管不到它。
 - 关系图范围设成仅本会话时，关系图工具里带会话作用域参数的只能取本会话；「关系图范围」只在注入或工具开着时出现在会话设置里。
-- 后台插件的模型：QQ 转发摘要、记忆摘要（连「摘要模型来源」开关）、用户画像、网页搜索压缩四处的模型字段删掉，改在插件详情的「服务偏好」里给这个插件设。指定的模型不在时从「报错或静默跳过」变成回落到下一级；没有能对话的模型时这四处都只打一条 warn。关系图的提取模型字段只填一半时按没填处理。
+- 后台插件的模型：QQ 转发摘要、记忆摘要（连「摘要模型来源」开关）、用户画像、网页搜索压缩四处的模型字段删掉，模型取 llm 服务给这个插件的选择（插件详情的「服务偏好」里可给它单设）。指定的模型不在时从「报错或静默跳过」变成回落到下一级；没有能对话的模型时这四处都只打一条 warn。关系图的提取模型字段只填一半时按没填处理。
 - 人设卡里的技能名单（`skills`）不再生效，改成技能插件的「启用的技能」，和工具分组一样能按平台档、平台类型档、群与会话设，默认全部、只有 owner 能改。
 - 白纸：「全部房间共用」的判定与称呼按全局层、平台档与平台类型档。
 - 权限页「操作门槛」多出「设置项」一类：每个可按会话设的项一行，默认门槛按声明（1 级、2 级或只有 owner），owner 能像指令、工具一样改，改过的存进 `authorityOverrides`，能力键写作 `setting:<实例 id>/<键>`。写到哪一层的门槛不在这里。
@@ -172,48 +246,48 @@
 
 - 子会话的设置：子任务与经会话协议建的子会话同一规则，建立时把父会话此刻每一项的生效值（包括具体模型）写进子会话自己那一层，之后父会话与场所、平台档、全局再改都不影响它，追问也不重写。收窄场所或全局管不到已经建好的子任务，要逐个改或等它到期销毁。子会话「设置」标签里这些项和自己设的一样显示，「恢复继承」回到场所与全局等上面各层，不回到父会话。原来模型跟随服务偏好时、历史条数上限与自动压缩线不复制，之后随上面各层变。
 - 子任务模型：原来两个文字框（provider、model），改成和对话模型一样的模型选择「子任务模型」，能按群设，没设时与本会话的模型相同。`create_subtask` 的参数合成一个 `model`，写条目 id。子会话的模型按「工具参数 › 子任务模型 › 父会话此刻实际在用的模型」取；这个模型以后被删掉，这个子任务会报「配置指向的模型不存在」。
-- 建子任务与经协议建子会话：会话设置插件不在时回错误、不建（原来照常建）。要指定模型而 agent 不在时回错误、不建（原来会悄悄用父会话的模型）。
+- 建子任务与经协议建子会话：要指定模型而 agent 不在时回错误、不建。
 - 父会话改子会话的设置：子任务组多一个工具 `set_subtask_setting`，能改自己直接的子会话（不含孙会话）本会话层的项，只写值、不能恢复继承；每次调用都要 owner 确认，owner 配了免确认时以 owner 身份做的不弹，群里别人发起的回合用不了它；项的门槛按这一轮发起的人判。
-- 子会话的销毁：子任务插件多一项「交回后闲置销毁（小时）」，默认 24、不设上限，0 即一轮结束立即销毁；子会话的一轮结束（回复、出错或被停止都算）满这个时长，就连同它的对话记录、各插件按会话存的数据和它下面的子会话一起删掉，追问一次重新计时，重启不丢。经协议（WebUI）建的子会话同样到期销毁，从没发过消息的不计时。已有的子会话第一次启动时，跑过至少一轮、闲置超过一天的立即销毁。
+- 子会话的销毁：子任务插件多一项「交回后闲置销毁（小时）」，默认 24、不设上限，0 即一轮结束立即销毁；子会话的一轮结束（回复、出错或被停止都算）满这个时长，就连同它的对话记录、各插件按会话存的数据和它下面的子会话一起删掉，追问一次重新计时，重启不丢。经协议（WebUI）建的子会话同样到期销毁，从没发过消息的不计时。已有的子会话第一次启动时，跑过至少一轮、闲置已满这个时长的立即销毁。
 - 销毁之后，父会话还能经 `check_subtask`、`wait_subtasks` 或父会话提醒拿到它最后的结果一次（`destroyed` 为真）；在它还在时已经取走过同一份结果的不再列出。每到期销毁一个子会话，父会话在会话列表里被顶到前面一次。
 - 清空（`/clear`）一个会话时，它的子会话一并删除，回执多一行「已删除 N 个子会话」；`/clear all` 删除全部子会话；只清别的类型（如 `/clear -t image`）或消息历史没清成时不删。
 - 删除一个正在跑的会话（WebUI 里删除、删除子任务、清空或删除父会话连带的子会话）时，这一轮当场停下，不再写进记录、不再发出。原来删掉之后这一轮还会跑完。
 
 **依赖**
 
-- 约 15 个插件的依赖块多出可选的「会话设置」与「宿主配置」（只读本插件那一段）；网关多出可选的「平台」；权限插件多出可选的「会话设置」；子任务插件多出可选的「agent」与「会话设置」；两个向量化提供者多出可选的「贡献点」；技能插件不再依赖「人设」与「会话管理」；会话管理不再依赖「宿主配置」与「服务」。
+- 约 15 个插件的依赖块多出可选的「会话设置」与「宿主配置」（只读本插件那一段）；网关多出可选的「平台」；权限插件多出可选的「会话设置」；子任务插件多出可选的「agent」与「会话设置」；两个向量化提供者多出可选的「贡献点」；技能插件不再依赖「人设」与「会话管理」；会话管理不再依赖「服务」，原有的「宿主配置」依赖收窄为只读本插件那一段。
 
 **破坏性（第三方）**
 
-- @aalis/schema-config：`SchemaField` 新增 `session`（声明可按会话覆盖，成员由 api-session-settings 并入）、`validate`、`fromText`、`toText`；带 `session` 的顶层字段 `parseConfig` 不交出、不补 default，`ConfigOf` 里没有，读到的类型见新增的 `SessionFieldsOf`；新增 `isSessionField`、`readFieldValue`、`WireSchemaField`、`WireConfigSchema` 与 `CORE_RESTART_KEYS`；`validateConfig` 的问题多一种 code `validate`（字段的 `validate` 判为不合法）。
+- @aalis/schema-config：`SchemaField` 新增 `session`（声明可按会话覆盖，成员由 api-session-settings 并入）、`validate`、`fromText`、`toText`；带 `session` 的顶层字段 `parseConfig` 不交出、不补 default，`ConfigOf` 里没有，读到的类型见新增的 `SessionFieldsOf`；新增 `isSessionField`、`readFieldValue`、`WireSchemaField`、`WireConfigSchema` 与 `CORE_RESTART_KEYS`；字段的 `validate` 判为不合法时，`validateConfig` 的这一项 code 是 `validate`。
 - @aalis/api-host-config：新事件 `host-config:changed`（只由宿主发，带改了哪个实例或整份文档）；新只读窄面 `ownHostConfig`（同一服务名，只有 `get()`，只能写在 `uses` 里）；新增 `saveFailureText`；`applyPluginConfig` 的 `reloaded` 为 `false` 改为「解析出的配置与运行态相同、实例不在 error 态」；读法返回复制品。
-- @aalis/api-session-manager：设置接口删掉：`registerSetting`、`listSettings`、`resolveConfig`、`resolveInheritance`、`getOwnConfig`、`childConfig`、`resolvedDefaults`、`listLayers`、`getLayer`、`resolveLayer`、`updateLayer`，类型 `SessionConfig`、`StoredSessionConfig`、`SessionConfigPatch`、`SessionSetting`、`RegisteredSessionSetting`、`SettingProminence`、`SessionConfigLayer`、`SessionInheritance`、`InheritanceSource`、`SESSION_LAYERS`、`SessionLayerName`、`SessionConfigError`、`isSessionConfigError` 与带 `registerSetting` 的业务层 `BoundSessionManager`；`SessionInfo.config` 删掉，建会话与 `updateSession` 不再收 `config`。`'session:config:changed'` 删掉，旧监听不会报错、只是永远收不到。新增 `PlaceInfo.metadata`、`updatePlace`、`listPlaces`、`recordInbound`、`isUnfiled` 与判从别的平台往房间里插话的 `fromElsewhere`。`session:deleted` 改在会话从表里摘掉、清数据之前发；一个会话的消息历史被清空时它的子会话一并删除；建会话时 `metadata` 里的 `title`、`inputContext` 不再当同名字段读。自己实现会话管理的要实现新增的方法与这几条语义。
-- @aalis/api-session-settings（新包）：插件原来的 `registerSetting` 加 `resolveConfig` 改成「configSchema 字段写 `session`、apply 里调 `fields()` 拿读取器、调用路径上 `get(sessionId, { platform })`」，写自己的字段用读取器的 `set`；读取门面 `sessionFields` 与管理面 `sessionSettings` 两个描述符，管理面只给会话服务与建子会话的插件；`caps.config` 里读不到这类字段；跨插件改别人的设置改成调拥有它的插件的服务（如 agent 的 `assignModel`）；建子会话的插件在建之前取管理面的 `childMetadata` 并进 `metadata`，会话设置不在时不建；权限类的项不要把 `task` 排除在 `appliesTo` 之外，否则子会话里按全局取。另导出 `appliesIn`、`layerLabel`、`describeLayer`、`SETTINGS_ABSENT`、`SessionSettingsError` 等，`SessionSettingsLayerInfo` 带 `platform`、`type`（窗口场所）。
+- @aalis/api-session-manager：设置接口删掉：`registerSetting`、`listSettings`、`resolveConfig`、`resolveInheritance`、`getOwnConfig`、`childConfig`、`resolvedDefaults`、`listLayers`、`getLayer`、`resolveLayer`、`updateLayer`，类型 `SessionConfig`、`StoredSessionConfig`、`SessionConfigPatch`、`SessionSetting`、`RegisteredSessionSetting`、`SettingProminence`、`SessionConfigLayer`、`SessionInheritance`、`InheritanceSource`、`SESSION_LAYERS`、`SessionLayerName`、`SessionConfigError`、`isSessionConfigError` 与带 `registerSetting` 的业务层 `BoundSessionManager`；`SessionInfo.config` 删掉，建会话与 `updateSession` 不再收 `config`。`'session:config:changed'` 删掉，旧监听不会报错、只是永远收不到。新增必需成员 `updatePlace`、`listPlaces`、`recordInbound`，另新增 `PlaceInfo.metadata`、`isUnfiled` 与判从别的平台往房间里插话的 `fromElsewhere`。`session:deleted` 改在会话从表里摘掉、清数据之前发；一个会话的消息历史被清空时它的子会话一并删除；建会话时 `metadata` 里的 `title`、`inputContext` 不再当同名字段读。
+- @aalis/api-session-settings（新包）：可按会话覆盖的设置是 configSchema 上写了 `session` 的字段（取代 api-session-manager 的 `registerSetting` 与 `resolveConfig`），插件在 apply 里调 `fields()` 拿读取器，按 `get(sessionId, { platform })` 读、用读取器的 `set` 写自己的字段；读取门面 `sessionFields` 与管理面 `sessionSettings` 两个描述符，管理面只给会话服务与建子会话的插件；`caps.config` 里读不到这类字段；别的插件的设置经拥有它的插件的服务（如 agent 的 `assignModel`）或管理面的 `setAs` 改；子会话在建立时由管理面的 `childMetadata` 并进 `metadata` 写下父会话此刻的设置，会话设置不在时不建；`appliesTo` 不含 `task` 的项在子会话里只取全局层与作者默认。另导出 `appliesIn`、`layerLabel`、`describeLayer`、`SETTINGS_ABSENT`、`SessionSettingsError` 等，`SessionSettingsLayerInfo` 带 `platform`、`type`（窗口场所）。
 - @aalis/api-session-protocol：设置行的身份改为 `(plugin, key)`，带去掉函数成员的字段声明与 `actual`，不再带 `resolved`；行上的 `dependsOn`、`unset` 挪进字段声明的 `session`（`field.session.dependsOn`、`field.session.unset`）；来源 `source` 只取层名（`global`、`platform`、`platformType`、`place`、`session`）或 `default`（全局层的值缺失或不合法、按作者默认），原来的 `defaults`、`type`、`parent` 没有了；层改为 `global`、`platform`、`platformType`、`place`；`session/config/update` 与 `layer/update` 的参数改为 `{ …, plugin, key, value }`，`SessionConfigUpdateParamsSchema` 改名 `SettingUpdateParamsSchema`，回包另带落盘失败的 `unsaved`（`SettingUpdateResultSchema`）；`session/config/get` 回包另带 `platform`（平台档按哪个平台取）；`session/config/layers` 回包的 `layers` 每一项从层改为 `{ layer, label?, platform?, type? }`（场所另带平台与类型名）；新方法 `session/config/overrides`（回包 `SettingOverridesSchema`）；握手的功能位多 `settings`，会话设置不在时设置方法回 `unsupported`，带 `parentId` 的 `session/create` 也回 `unsupported`；会话摘要的 `place` 改为可选，根会话是空记录时没有。
 - @aalis/api-persona：`PersonaSessionOptions` 改为 `{ sessionId?, platform? }`，人设服务按会话读自己的会话设置；`getPersonaSkills` 删掉；对 `SessionConfig` 的增强删掉。
-- @aalis/api-tools：`ToolService.sessionGroups(sessionId, platform?)`，提供者要实现；对 `SessionConfig` 的增强删掉。
-- @aalis/api-agent：`TokenUsageEvent.historyLimit` 由 agent 填，第三方 agent 不填时摘要的条数线会静默失效；`AgentService.assignModel` 必须实现；会话删除（`session:deleted`）时实现者要停掉这个会话在飞的回合，不停的话删掉的会话里这一轮照样跑完；对 `SessionConfig` 的增强删掉。
+- @aalis/api-tools：新增必需成员 `ToolService.sessionGroups(sessionId, platform?)`；对 `SessionConfig` 的增强删掉。
+- @aalis/api-agent：`TokenUsageEvent.historyLimit` 由 agent 填，第三方 agent 不填时摘要的条数线会静默失效；`AgentService.assignModel` 必须实现；对 `SessionConfig` 的增强删掉。
 - @aalis/api-memory：共享的召回范围 `MEMORY_RECALL_SCOPE_SETTING`、`memoryRecallScope` 与类型 `MemoryRecallScope` 删掉，各记忆插件用自己的范围字段；新增 `historyCleared`（`memory:clear` 之后判消息历史清成没有）。
 - @aalis/api-reach：对 `SessionConfig` 的增强（`accessTier`、`accessOnBoundary`）删掉，档位与越界策略还不能按会话设。
 - @aalis/api-gateway：作用域函数 `extractTargetId`、`isScopeEnabled`、`resolveEffectiveConfig` 删掉；新增「生效范围」字段 `REPLY_AUDIENCE_FIELD`、判定 `audienceIncludes` 与 `InboundPhaseData.chat`（网关给没有 `source` 的入站算的聊天窗口）；网关在入站相位之前等会话管理收录。
-- @aalis/api-trigger：`createBotNames` 去掉 `sessionManager` 参数，人设服务按会话自己读；`markTriggered` 多一个参数 `multiParty`。
-- @aalis/api-embedding：`EmbeddingService.listModels?` 删掉，提供者要给配置下拉列模型就经贡献点 `webui:options` 交自己的来源。
+- @aalis/api-trigger：`createBotNames` 去掉 `sessionManager` 参数，人设服务按会话自己读。
+- @aalis/api-embedding：`EmbeddingService.listModels?` 删掉，配置下拉的可选模型由提供者经贡献点 `webui:options` 交出。
 - @aalis/api-llm：新增模型引用的文字写法 `entryIdOf`、`modelRefOf` 与 `MODEL_REF_TEXT`（条目 id `<提供者实例 id>/<模型 id>`），以及后台功能取对话模型的 `chatModelPicker`。
-- @aalis/api-authority：`AuthorityService.meetsLevel`，提供者要实现；`AuthorizeRequest.minLevel`（操作自己声明的门槛，`Infinity` 即只有 owner）；能力键多一类 `setting:<实例 id>/<键>`。
+- @aalis/api-authority：新增必需成员 `AuthorityService.meetsLevel`；`AuthorizeRequest.minLevel`（操作自己声明的门槛，`Infinity` 即只有 owner）；能力键多一类 `setting:<实例 id>/<键>`。
 - @aalis/api-webui：插件列表的 `configSchema` 改为线上类型 `WireConfigSchema`（带 `session`，没有函数成员）；可选项来源 `llm-thinking` 的 `dependency` 改收条目 id、没带时回空；`OptionDetail.pluginName` 删掉；宿主不再回答可选项来源 `platform` 与 `gateway-scopes`。
 - @aalis/plugin-trigger-policy、@aalis/plugin-flow-control：不再导出配置类型 `TriggerPolicyConfig`、`FlowControlConfig`，参数改为按会话的字段。
 
 ### maxTokens 须为正整数（@aalis/plugin-llm-openai、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-ollama、@aalis/plugin-media）
 
-- 三家的 `maxTokens` 与 plugin-media 的 `vision.maxTokens`、`audio.maxTokens` 须为正整数：填小于 1、不是整数或不是数的值时实例转为出错，错误信息点名该字段。此前 0 与负数照常启动，llm-ollama 按不封顶生成（超时改按停顿计之后，一直在输出的生成截不住），llm-openai、llm-deepseek 原样发给端点，plugin-media 的两项原样交给识别模型；小数照常启动、原样发出；不是数的值回落默认值并告警。
+- 三家的 `maxTokens` 与 plugin-media 的 `vision.maxTokens`、`audio.maxTokens` 须为正整数：填小于 1、不是整数或不是数的值时实例转为出错，错误信息点名该字段。此前 0 与负数照常启动，llm-ollama 按不封顶生成，llm-openai、llm-deepseek 原样发给端点，plugin-media 的两项原样交给识别模型；小数照常启动、原样发出；不是数的值回落默认值并告警。
 
 ### 附件归写入方，引用写成存储地址（@aalis/api-media、@aalis/plugin-adapter-onebot、@aalis/plugin-media、@aalis/plugin-draw、@aalis/plugin-tool-browser、@aalis/plugin-commands、@aalis/plugin-agent、@aalis/plugin-asr-openai、@aalis/plugin-asr-whisper-cpp、@aalis/plugin-message-archive、@aalis/plugin-image-sender）
 
 - 会话媒体按写入方分子目录：`data:/<images|audios|videos|files>/<会话目录>/<写入方>/<文件>`，onebot 收发的附件在 `onebot/`，WebUI 上传的图片在 `media/`，绘图产物在 `draw/`。会话目录名统一由 api-media 的 `sessionDirName` 换（`:`、`/`、`\`、`..` 与前导点换成 `_`），浏览器截图的 `tmp:/browser/<会话目录>/` 同一个换法；会话 id 为空时绘图与浏览器截图回工具错误，不再写进 `nosession`、`unknown` 目录。
 - 附件引用一律写存储地址（`data:/…`）：onebot 入站附件的 `data` 与正文里的 `[图片 | ref:…]`、媒体识别写的引用、`send_attachment` 发出附件的引用（记规整后的地址），不再写相对路径 `data/…`。正文里已有引用的图片（如 OneBot 的图），媒体识别的描述位不再重复写引用。
-- 相对路径不再当地址：api-media 的 `mediaRef` 不再收 `data/…`；`send_attachment` 的 `storage_uri` 写成相对路径时回「要写存储地址」；`analyze_image` 的来源不再按首段补成存储地址，相对路径照旧归到 `workspace:/`（与 file_* 工具一致）：`data/images/…` 会被当成工作区路径，找不到或过不了媒体判据时回错误，错误句提示存储地址的写法；历史占位符里的引用是网址时按网址看（此前回「不能写本机路径」）；消息存档的附件清单、两家 ASR、media 的附件物化不再把 `data/…` 补成 `data:/…`；agent 在 media 缺席时把存储地址的图读成 data URI 交给模型（此前只认 `data/…`、存储地址原样交出）。
-- `/clear` 与删除会话的附件清理改由写入方负责：onebot、media、draw 各挂 `memory:clear` 中间件，只清自己的子目录，每种一行、写明是谁的文件、标 `type`，不带 `-t` 时比此前多几行；会话级与全局清理用同一句、按删掉的文件数计（此前全局清理计会话目录数，没有可清的另回「无需清空」「无缓存」）；会话目录删空了一并删掉，别的写入方的子目录不动（`/clear all -t image` 不再删掉整个 `data:/images`）。不装 plugin-commands 时删会话也清附件；存储不在时 `/clear` 不再出四行附件的失败结果。
-- plugin-commands 不再清附件，导出的 `ATTACHMENT_KINDS` 删除。第三方写入方用 api-media 新导出的 `sessionMediaUri` 取目录写、`clearSessionMedia` 清，并自己挂 `memory:clear`。
+- 相对路径不再当地址：`send_attachment` 的 `storage_uri` 写成相对路径时回「要写存储地址」；`analyze_image` 的来源不再按首段补成存储地址，相对路径照旧归到 `workspace:/`（与 file_* 工具一致）：`data/images/…` 会被当成工作区路径，找不到或过不了媒体判据时回错误，错误句提示存储地址的写法；历史占位符里的引用是网址时按网址看（此前当作存储地址去读，报未知存储根）；消息存档的附件清单、两家 ASR、media 的附件物化不再把 `data/…` 补成 `data:/…`；agent 在 media 缺席时把存储地址的图读成 data URI 交给模型（此前只认 `data/…`、存储地址原样交出）。
+- `/clear` 与删除会话的附件清理改由写入方负责：onebot、media、draw 各挂 `memory:clear` 中间件，只清自己的子目录，每种一行、写明是谁的文件、标 `type`，不带 `-t` 时比此前多几行；会话级与全局清理用同一句、按删掉的文件数计（此前全局清理计会话目录数，没有可清的另回「<种类>缓存目录不存在，无需清空」「当前会话无<种类>缓存」）；会话目录删空了一并删掉，别的写入方的子目录不动（`/clear all -t image` 不再删掉整个 `data:/images`）。不装 plugin-commands 时删会话也清附件；存储不在时 `/clear` 不再出四行附件的失败结果。
+- plugin-commands 不再清附件，导出的 `ATTACHMENT_KINDS` 删除。api-media 新导出 `MEDIA_KIND_DIRS`（各种会话媒体的目录）、`sessionMediaUri`（写入方在会话媒体目录里的子目录）与 `clearSessionMedia`（删写入方的子目录，回删掉的文件数）。
 - 媒体识别的描述缓存：`/clear` 的结果拆成图片、视频两行，各标 `type`。存储地址的文件名是内容哈希（16 位小写十六进制）时，不带会话语境的描述按哈希跨会话复用，不再要求落在会话媒体目录；网址不按文件名认。文件名不是内容哈希的（如绘图产物）以存储地址为键、进快照，会话级清理删得到（此前删不到）。
 
 ### 清理类型由各插件登记，/status 只给计数（@aalis/api-memory、@aalis/api-commands、@aalis/plugin-commands、@aalis/plugin-memory-summary、@aalis/plugin-memory-vector、@aalis/plugin-persona、@aalis/plugin-checkpoint、@aalis/plugin-user-profile、@aalis/plugin-user-relation、@aalis/plugin-media、@aalis/plugin-adapter-onebot、@aalis/plugin-draw）
@@ -226,32 +300,33 @@
 
 ### 出站记历史一套规则（@aalis/schema-message、@aalis/api-message-archive、@aalis/api-memory、@aalis/api-session-protocol、@aalis/plugin-message-archive、@aalis/plugin-webui-server、@aalis/plugin-image-sender、@aalis/plugin-session-server、@aalis/plugin-webui-client、@aalis/plugin-memory-vector、@aalis/plugin-media、@aalis/plugin-workflow、@aalis/plugin-paper）
 
-- 出站消息记进会话历史只由 message-archive 做：api-message-archive 加必需成员 `recordOutbound(message)`，所有平台一条规则，全部记录写完才兑现，写失败时以原因拒绝。替换存档实现的要实现它，并照参考实现监听 `outbound:delivered` 调它、认领子会话没人认领的出站。送达本身就是写进会话历史的适配器调它并等它兑现：WebUI 改由它记，不再发 `outbound:delivered`。plugin-image-sender 不再记出站附件，不再依赖 message-archive。
+- 出站消息记进会话历史只由 message-archive 做：api-message-archive 加必需成员 `recordOutbound(message)`，所有平台一条规则，全部记录写完才兑现，写失败时以原因拒绝；参考实现在 `outbound:delivered` 上调它。送达本身就是写进会话历史的适配器调它并等它兑现：WebUI 改由它记，不再发 `outbound:delivered`。plugin-image-sender 不再记出站附件，不再依赖 message-archive。
 - `MessageAttachment.skipArchive` 删除：发出去的附件都记，`history_ref` 重发的与她回复里转出的各记一条，WebUI 实时时间线上看得到回复里转出的附件。
-- `outboundMediaMessage` 改为 `(kind, ref, { desc, source })`：出站的 `source` 不是 `agent` 的（插件发的）记成 `role: 'notice'`，进模型时是一条系统通知，不算她的发言，不发 `assistant:message:archived`、不进向量记忆；此前 WebUI 会话里插件发的图记成她的消息。`outboundMarkerMessage` 只给正文与文字对象，不再记 `Source`、`TurnId`：出站的来源、回合 id 与调用 id 由记出站的一方给每条记录补上。
+- `outboundMediaMessage` 改为 `(kind, ref, { desc, source })`：出站的 `source` 不是 `agent` 的（插件发的）记成 `role: 'notice'`，进模型时是一条系统通知，不算她的发言，不发 `assistant:message:archived`、不进向量记忆；此前 WebUI 会话里插件发的图记成她的消息。新导出 `outboundMarkerMessage`：不是她回复的出站文字记成事件标记，记录只带正文与文字对象，出站的来源、回合 id 与调用 id 由记出站的一方给每条记录补上。
 - 所有平台发出的文件与插件发的媒体都进会话历史（此前 IM 房间里只记她发的图、音、视频）：IM 房间里发出的文件（如白纸成品）在 WebUI 里看得到。附件记录的 `Source` 写出站的 `source`（此前写 `image-sender`、`webui-server`），并带出站的 `TurnId`、`CallId`（有才记）；`send_attachment` 与 `paper_send` 的出站消息带这次调用的回合 id。
 - 没有地址的附件（data URL、`file://` 与本机路径）记成事件标记「[图片] 名字」一类，带文字对象、按读者语言显示，回看时不显示附件本身；data URL 不再整串写进正文。
+- api-message-archive 新导出 `outboundAddress(attachment)`：出站附件记进会话历史用的地址，有 `ref` 取 `ref`，否则 `data` 是网址或存储地址时取它，data URL、`file://` 与本机路径没有地址。
 - 她发的网址图片与视频在所有平台都发出即记、不等识图，识图描述在后台补上后改写同一条记录（此前 IM 上等描述完才记，WebUI 不补描述）。记忆后端没有 `updateMessageContent` 时不补；识图超时或失败记一条 warn，这一条不带描述。
 - api-memory 加事件 `memory:messages-rewritten`（`{ sessionId, messages }`，改写后的整条），改写已落库消息的一方在改写成功后发：message-archive 补描述、media 的 `update_image_description` 写回描述。memory-vector 据此按会话与时间戳删掉旧条目，删到了才按改写后的正文重收录，`update_image_description` 写回描述之后向量记忆里也换成带描述的；向量存储没有 `deleteByFilter` 时记一条 warn、不重收录。这个事件不能当编排的触发源。
-- 子会话里没人认领的出站由 message-archive 认领：记进子会话自己的历史即算送达，IM 房间与终端里派出的子任务能用 `send_attachment` 发图了（此前回「没有目标适配器确认」）。WebUI 会话的子会话同样由它认领，webui-server 不再认领子会话。会话管理不在时不认领。
+- 子会话里没人认领的出站由 message-archive 认领：记进子会话自己的历史即算送达，IM 房间与终端里派出的子任务能用 `send_attachment` 发图了（此前终端里回「没有目标适配器确认附件发送，请勿声称已发出」，IM 房间里由 onebot 往「目标号::随机串」发而失败）。WebUI 会话的子会话同样由它认领，webui-server 不再认领子会话。会话管理不在时不认领。
 - 会话服务：插件发的附件在历史里还原成带附件的通知（种类同事件标记），实时推送里不是她发的出站按文字一条、每个附件各一条通知推出，与刷新后的历史一样（没有地址的附件推出存档记的那一句）；记着回合 id 的附件带上这一轮的 `turnId`，是这个会话的回合、这一轮还没收尾时并进这一轮（发到别的会话的不并进来）。文件的地址是网址时条目里直接给网址，WebUI 链到网址：会话协议里文件附件的 `src` 也可以是网址（此前只有句柄）。
 
 ### 群聊按多方标记，类型显示名取适配器声明（@aalis/api-platform、@aalis/schema-message、@aalis/plugin-adapter-onebot、@aalis/plugin-persona、@aalis/plugin-memory-vector、@aalis/plugin-user-relation）
 
-- api-platform 的 `resolveSessionType` 解析到声明的类型时带上它的 `label`；消息不带类型名、平台只声明了一对一类型时按声明里的第一个（此前回 `private`）。这种平台上新收录的房间随之把 `originChat.type` 记成声明的类型名，落进那个平台类型档。
+- api-platform 的 `SessionTypeDecl` 新增可选的 `label`（类型的显示名，可以是文字对象），新导出 `sessionTypeLabel`；`resolveSessionType` 解析到声明的类型时带上它的 `label`；消息不带类型名、平台只声明了一对一类型时按声明里的第一个（此前回 `private`）。这种平台上新收录的房间随之把 `originChat.type` 记成声明的类型名，落进那个平台类型档。
 - OneBot 的三个类型带显示名群聊、私聊、频道（有英文），设置页的平台类型档与窗口场所随之显示它们。
 - 是不是群聊一律按会话记下的聊天窗口判（`originChat.multiParty`，子会话取根会话的），不看消息上的类型名与群号；schema-message 的 `GroupId`、`GroupName`、`SessionType` 元数据只用于显示。
 - persona 的会话环境：会话类型写平台声明的显示名，没声明时写类型名（此前只认 group、private、channel）；群名、群号、自己的群身份与头衔和身份判定一段按多方标记给，OneBot 的频道与第三方平台的多方房间也给（此前只给 group）；「短期历史范围」一句不再列类型名。会话类型与群信息只取根会话记下的聊天窗口：房间里派出的子任务也写房间的类型与群号（此前不写），消息上的类型名不再算数，没装会话管理时不写（此前按消息上的类型名写）。
-- user-relation 的「仅在群聊中注入」（`groupOnly`）按根会话的多方标记判（此前看上下文里有没有消息带群号、类型名是不是 group）：第三方平台的多方房间、owner 从 WebUI 往群里插话的一轮与群里的子任务都注入，WebUI 会话与私聊不注入；会话管理不在时不注入。新加会话管理的可选依赖。
+- user-relation 的「仅在群聊中注入」（`groupOnly`）按根会话的多方标记判（此前看上下文里有没有消息带群号、类型名是不是 group）：第三方平台的多方房间与 owner 从 WebUI 往群里插话的一轮注入，WebUI 会话与私聊不注入；会话管理不在时不注入。
 - OneBot 平台提示里「群聊历史记录包含多位群友的发言」一句按会话 ID 里的类型查本插件声明的多方标记，频道也给（此前只给群）。
 - memory-vector 召回片段的位置：没有群名时写说话所在类型的显示名，没声明显示名或平台不在时写类型名（此前只写私聊、频道，别的类型不写）；终端会话也写平台名 `cli`（此前不写）。新加平台服务的可选依赖。
 
 ### 发送者前缀按房间类别（@aalis/schema-message、@aalis/api-message-archive、@aalis/api-authority、@aalis/plugin-authority、@aalis/plugin-message-archive、@aalis/plugin-trigger-laya、@aalis/plugin-agent）
 
-- schema-message 的 `buildIncomingContent(incoming, speaker?)` 改收调用方给的说话人：给了才加发送者前缀，不再按平台判（删掉 webui、cli 不加的特判）。直接调它的要自己给说话人，参考规则是 api-message-archive 新导出的 `speakerOf(incoming, { sessionManager?, authority? })`。
+- schema-message 的 `buildIncomingContent(incoming, speaker?)` 改收调用方给的说话人：给了才加发送者前缀，不再按平台判（删掉 webui、cli 不加的特判）。api-message-archive 新导出 `speakerOf(incoming, { sessionManager?, authority? })`（说话人规则见下一条）。
 - 存档正文的发送者前缀按房间类别给，触发判定看到的当前消息（Laya 发给侧车的 `cur`）与存档不在时 agent 当轮的正文同一规则：带 `source` 的注入不带（子任务的任务正文与 `send_to_subtask` 的追问不再带 `[parent:…]: `，onebot 好友申请、入群邀请与加群申请的合成通知不再带 `[账号]: `）；受众只有 owner 的会话不带（owner 自己的 IM 私聊不再带 `[昵称(账号)]: `，第三方客户端建的会话也不带）；owner 从别的平台往房间里插话（如从 WebUI 往群里发）带 `[owner 在房间所在平台登记的账号]: `（此前 WebUI 来的不带），那个平台没登记账号时带这条消息自己的身份（`[console]: `）；其余照旧带 `[昵称(账号)]: `。会话管理不在时判不出房间，一律带这条消息自己的说话人，WebUI 与终端的消息也带（如 `[console]: `）；权限服务不在时没有人是 owner。已存的记录不改。
 - 存档不在时 agent 当轮发给模型的正文与存档同一份拼法，也拼进引用回复与附件描述（此前只加发送者前缀）。
-- api-authority 的 `AuthorityService` 新增必填成员 `ownerOn(platform)`：owner 在这个平台登记的账号（配置 `owners` 里这个平台的第一个，本机控制台身份不算），自己实现权限服务的要实现它。plugin-message-archive、plugin-trigger-laya、plugin-agent 新加权限服务的可选依赖。
+- api-authority 的 `AuthorityService` 新增必填成员 `ownerOn(platform)`：owner 在这个平台登记的账号（配置 `owners` 里这个平台的第一个，本机控制台身份不算）。plugin-message-archive、plugin-trigger-laya、plugin-agent 新加权限服务的可选依赖。
 
 ### 检查点默认只记受众只有 owner 的会话，回滚提示固定一句（@aalis/api-checkpoint、@aalis/plugin-checkpoint、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/plugin-webui-client）
 
@@ -262,11 +337,11 @@
 
 ### 能不能看图由 agent 定（@aalis/api-agent、@aalis/api-tools、@aalis/plugin-agent、@aalis/plugin-media）
 
-- api-tools 的 `ToolCallContext.acceptsImages` 改为「这次调用的主模型能亲眼看图」：plugin-agent 按这一轮的模型在模型服务登记的能力（端点报告，或「单模型能力覆盖」里写的 `vision`）填，此前对所有模型都填 `true`；第三方 agent 要按模型能力填。为 `false` 时 agent 不把工具结果里的图交给模型（此前不论模型能不能看都交），工具不守约硬塞的图模型看不到、只读它的文字结果。
-- api-agent 的 `agent:llm:before` 新加必填的 `acceptsImages`，与工具上下文同一个值；第三方 agent 跑这个钩子要带上。
+- api-tools 的 `ToolCallContext.acceptsImages` 改为「这次调用的主模型能亲眼看图」：plugin-agent 按这一轮的模型在模型服务登记的能力（端点报告、模型插件内置的模型名表、适配器的默认能力或「单模型能力覆盖」）有没有视觉填，此前对所有模型都填 `true`。为 `false` 时 agent 不把工具结果里的图交给模型（此前不论模型能不能看都交），工具不守约硬塞的图模型看不到、只读它的文字结果。
+- api-agent 的 `agent:llm:before` 新加必填的 `acceptsImages`，与工具上下文同一个值。
 - media 不在时，plugin-agent 自己的图片兜底也按 `acceptsImages` 判：主模型不能看图的这一轮不把当轮附件里的图交给模型，正文里的图片占位照旧（此前照交，存储地址读成 data URI）。
 - plugin-media 的 `vision.delivery` 为 `auto` 时按 `acceptsImages` 判当轮附件与 `analyze_image` 的交付，不再自己查模型能力（此前用会话设置里的模型或自己能取到的默认模型去查，可能与 agent 实际用的不是同一个）。
-- 端点没报告视觉能力的模型（如经中转站接入的）做主模型时按不能看图算，浏览器截图随之回文字与存储地址；要直接看图，在模型服务的「单模型能力覆盖」里给它加上 `vision`。
+- 登记的能力里没有视觉的模型（如经中转站接入、名字不在模型名表里的）做主模型时按不能看图算，浏览器截图随之回文字与存储地址；模型服务的「单模型能力覆盖」里写了 `vision` 的按能看图算。
 
 ### agent、记忆摘要与契约的小项（@aalis/api-agent、@aalis/api-persona、@aalis/api-media、@aalis/plugin-agent、@aalis/plugin-persona、@aalis/plugin-media、@aalis/plugin-tool-system、@aalis/plugin-memory-summary）
 
@@ -278,8 +353,8 @@
 ### 会话与房间的小项，WebUI 横幅与工具卡（@aalis/api-session-manager、@aalis/api-trigger、@aalis/plugin-trigger-policy、@aalis/plugin-trigger-laya、@aalis/plugin-user-relation、@aalis/plugin-webui-client、@aalis/plugin-session-server）
 
 - api-session-manager 的 `SessionManagerService` 删掉 `generateTitle`：自动标题是 plugin-session-manager 自己的行为（只给带创建来源的根会话在首条消息时生成），不再是契约成员。
-- api-trigger 的 `createBotNames` 改收人设服务的 `present` 与 `use`（此前用 `list`）：名字表只取人设服务此刻的胜者（触发插件按自己的服务偏好选出）的名字与昵称。同时装了多个人设插件时，叫没在用的那家的名字不再算点名；给 agent 单设了人设偏好时，触发插件要设同一个。读名字抛错时名字表只剩别名（此前只跳过出错的那家）。
-- WebUI 驱动房间时头部的提示改为「你正在以 owner 身份在「房间名」发言」，群与私聊同一句（此前写「按群的人设和能力运行」）；房间里经工具发出、平台收下的消息，工具卡标「已发出」（此前「已发到群」）；房间里调用工具之前说的话标「没有发出：调用工具之前说的话不发到房间里」（此前「…不发到群里」）。英文同改。
+- api-trigger 的 `createBotNames` 改收人设服务的 `present` 与 `use`（此前用 `list`）：名字表只取人设服务此刻的胜者（触发插件按自己的服务偏好选出）的名字与昵称。同时装了多个人设插件时，叫没在用的那家的名字不再算点名；给 agent 单设的人设偏好不影响名字表。读名字抛错时名字表只剩别名（此前只跳过出错的那家）。
+- WebUI 驱动房间时头部的提示改为「你正在以 owner 身份在「房间名」发言」，群与私聊同一句（此前写「按群的人设和能力运行」）；房间里经工具发出、平台收下的消息，工具卡标「已发出」（此前「已发到群」）；房间里调用工具之前说的话标「没有发出：调用工具之前说的话不发到房间里」（此前「…不发到群里」）。
 - plugin-user-relation 的 `/relation` 长任务（consolidate、rewrite-weights 等）开跑时的「正在…」提示按会话有没有平台适配器认领判，不再看平台名：定时任务（平台写 `internal`）在群里跑这些长任务时，群里也会收到这句（此前跳过）。
 
 ### 关系图工具守关系图范围（@aalis/plugin-user-relation）
@@ -292,35 +367,34 @@
 
 ### 别处往房间插话不进冷却与限速（@aalis/plugin-flow-control）
 
-- owner 从别的平台往房间里插话（如从 WebUI 往群里或私聊里发）时，流控与触发插件同一判法（api-session-manager 的 `fromElsewhere`），直接放行，不进冷却与限速；禁言期照旧吞掉。此前流控按插话那一端的一对一窗口判，生效范围设成全部房间或一对一房间时，房间里刚回复过，插话就被冷却或限速吞掉并影子归档，WebUI 上没有回应。插话得到的回复照常记一次回复，此后房间里的消息照旧受冷却与限速。
+- owner 从别的平台往房间里插话（如从 WebUI 往群里或私聊里发）时，流控与触发插件同一判法（api-session-manager 的 `fromElsewhere`），直接放行，不进冷却与限速；禁言期照旧吞掉。此前流控按插话那一端的平台与类型判作用域：默认的 `*:group` 不含 WebUI 发来的话，插话直接放行；作用域同时含房间与插话那一端时（如 `*`，或在默认之外加上 `webui:*`），房间里刚回复过，插话就被冷却或限速吞掉并影子归档，WebUI 上没有回应。插话得到的回复照常记一次回复，此后房间里的消息照旧受冷却与限速。
 
 ### 取别的会话的东西一条规则（@aalis/api-session-manager、@aalis/api-session-history、@aalis/plugin-session-manager、@aalis/plugin-tool-session、@aalis/plugin-tool-onebot、@aalis/plugin-memory-history）
 
-- api-session-manager 的 `SessionManagerService` 新增必填成员 `canTake(currentId, targetId, principal?)`：取别的会话的东西（历史、媒体）的唯一规则，同步回 `{ ok: true }` 或 `{ ok: false, reason }`。自己实现会话管理的要实现它，没有可选写法。另导出包装函数 `takeFrom(sessionManager, currentId, targetId, principal?)`（会话管理不在时只放行同一会话 id，其余回判不出）、判「自己的私聊」的纯函数 `oneToOneWith`、判不出时的原因 `TAKE_UNKNOWN` 与类型 `TakeVerdict`。
-- api-session-history 删掉 `AccessChecker`、`AccessDecision`、`AccessCheckArgs`、`AccessCheckerDisposer` 与 `SessionHistoryService.registerAccessChecker`：`getHistory` 每次按会话管理的规则判能不能读，平台插件不再注入访问规则。自己实现 session-history 的，在 `getHistory` 里调 `takeFrom`。
-- plugin-tool-session 删掉「允许读取范围」`scope`，plugin-memory-history 删掉「跨会话历史范围」`scope`，`recent_messages` 删掉 `scope` 参数；plugin-tool-onebot 删掉 `sessionHistory` 的 `allowGroupReadPrivate`、`allowCrossSelf`、`allowCrossGroup`、`allowCrossPrivate` 四个开关（`enabled`、`maxLimit`、`defaultLimit` 照旧）。配置里写着的这些键不再生效，换成 plugin-session-manager 的四个按会话字段（会话设置的高级区，可按平台档、平台类型档、场所与会话设，只有 owner 能改）：取别的会话的范围 `takeScope`（本会话、同平台、全部，默认同平台）、读别的群 `takeOtherGroups`（默认是）、读别人的私聊 `takeOthersPrivate`（默认否）、跨机器人账号 `takeCrossBot`（默认否）。开关按场所生效，在哪个场所打开，那里的每个人都拿得到（此前 onebot 的开关是全局的）；「群读私聊」「私聊读私聊」两个开关并成一个，要分开得在平台类型档各设一次；私聊读群此前总放行，现在也受「读别的群」管。plugin-session-manager 新加会话设置与宿主配置的可选依赖，plugin-tool-onebot 新加会话管理的可选依赖。
+- api-session-manager 的 `SessionManagerService` 新增必填成员 `canTake(currentId, targetId, principal?)`：取别的会话的东西（历史、媒体）的唯一规则，同步回 `{ ok: true }` 或 `{ ok: false, reason }`。另导出包装函数 `takeFrom(sessionManager, currentId, targetId, principal?)`（会话管理不在时只放行同一会话 id，其余回判不出）、判「自己的私聊」的纯函数 `oneToOneWith`、判不出时的原因 `TAKE_UNKNOWN` 与类型 `TakeVerdict`。
+- api-session-history 删掉 `AccessChecker`、`AccessDecision`、`AccessCheckArgs`、`AccessCheckerDisposer` 与 `SessionHistoryService.registerAccessChecker`：`getHistory` 每次按会话管理的规则判能不能读（第一方经 `takeFrom`），平台插件不再注入访问规则。
+- plugin-tool-session 删掉「允许读取范围」`scope`，plugin-memory-history 删掉「查询作用域（被动注入 + 工具默认）」`scope`，`recent_messages` 删掉 `scope` 参数；plugin-tool-onebot 删掉 `sessionHistory` 的 `allowGroupReadPrivate`、`allowCrossSelf`、`allowCrossGroup`、`allowCrossPrivate` 四个开关（`enabled`、`maxLimit`、`defaultLimit` 照旧）。配置里写着的这些键不再生效，换成 plugin-session-manager 的四个按会话字段（会话设置的高级区，可按平台档、平台类型档、场所与会话设，只有 owner 能改）：取别的会话的范围 `takeScope`（本会话、同平台、全部，默认同平台）、读别的群 `takeOtherGroups`（默认是）、读别人的私聊 `takeOthersPrivate`（默认否）、跨机器人账号 `takeCrossBot`（默认否）。开关按场所生效，在哪个场所打开，那里的每个人都拿得到（此前 onebot 的开关是全局的）；「允许群聊读取私聊历史」与「允许私聊读取其他私聊历史」两个开关并成「读别人的私聊」，按取的一方所在会话生效（要分开这两种情形，在平台类型档给群与私聊分别设）；私聊读群此前总放行，现在也受「读别的群」管。plugin-session-manager 新加会话设置的可选依赖，plugin-tool-onebot 新加会话管理的可选依赖。
 - 第一方的跨会话取用一律按这条规则判：`session_get_history`、`onebot_get_session_history`、`onebot_get_msg`、`recent_messages` 与跨会话历史的被动注入。规则只看取的目标：多方要「读别的群」；一对一要「读别人的私聊」，这一轮授权身份自己与她的私聊除外（只认适配器明确声明为一对一的窗口）；WebUI、终端与项目会话按与 owner 的一对一，owner 本人那一轮算自己的私聊。对所有人一样，owner 也不例外。会话管理不在时，以及会话表里没有的、按 id 兜底建档的空记录与只记了出生平台的旧房间记录，都不跨会话取用。向量记忆的召回照旧按自己的 `crossSessionMode`。
 - 跨会话历史的被动注入与 `recent_messages` 不再把同平台别人的私聊带进群回合（此前默认带）。被动注入不传授权身份，不享受「自己的私聊」：WebUI、终端会话的被动注入默认不再带别的 WebUI、终端会话。跨会话历史一律超取后逐条过规则，被拒的多时注入少于上限。
-- WebUI、终端会话默认只取同一创建来源的会话：owner 用 `session_get_history` 读别的 WebUI 会话由拒绝变成放行；要在 WebUI 里读 IM 的会话，把 WebUI 平台档的范围设成全部，别人的私聊另开。同平台不同机器人账号之间默认不取，不同平台之间只看范围。
+- WebUI、终端会话默认只取同一创建来源的会话：owner 用 `session_get_history` 读别的 WebUI 会话由拒绝变成放行；WebUI 里读 IM 的会话只在这个会话生效的范围是全部时放行，读别人的私聊另受「读别人的私聊」管。同平台不同机器人账号之间默认不取，不同平台之间只看范围。
 - `onebot_get_msg` 取不到规则不放行的会话里的消息（此前按 `message_id` 什么都取得到），判不出所在会话的（她自己发的私聊消息、实现端不给群号或发送者）同样不给，工具说明删掉「不限定会话类型」；`onebot_resolve_session_id` 不再检查跨机器人账号，只拼会话 id。拒绝时回给模型的原因换成会话管理的几句（如「取别的会话的范围限于同平台」）。
 
-### 权限按这一轮的触发者：发起类别、插话与续做（@aalis/api-approval、@aalis/api-session-protocol、@aalis/schema-message、@aalis/api-authority、@aalis/plugin-authority、@aalis/plugin-agent、@aalis/plugin-tools、@aalis/plugin-session-server、@aalis/plugin-chat-approval、@aalis/api-trigger、@aalis/plugin-trigger-policy、@aalis/plugin-trigger-laya）
+### 权限按这一轮的触发者：发起类别、插话与续做（@aalis/api-approval、@aalis/api-session-protocol、@aalis/schema-message、@aalis/api-authority、@aalis/plugin-authority、@aalis/plugin-agent、@aalis/plugin-tools、@aalis/plugin-session-server、@aalis/api-trigger、@aalis/plugin-trigger-policy、@aalis/plugin-trigger-laya）
 
-- api-approval 的 `OriginKind` 只留 `hand`（人亲手发来的消息与它的续做、派出的子任务，不论在哪个会话、是谁）与 `autonomous`，删掉 `owner`、`owner-chain`、`subtask`、`room`、`other`（子任务与续做一样随起它的那一轮，见「子任务的审批上浮」一节）；`ApprovalOrigin` 删掉 `platform`，`userId` 换成 `participants`（这一轮的参与者，即授权身份，现在一轮只有一个）。api-session-protocol 审批对象的 `origin` 与审批审计的请求行同改。审批服务按「类别为 `hand` 且参与者里有 owner」判能不能产生审批。
-- schema-message 的 `IncomingMessage` 加 `fromTurn`（类型 `FromTurn`：起它的那次调用所在那一轮的平台、发言者、参与者、来源与那一轮自己的 `fromTurn`），删掉 `hostNotice.callerUserId`。后台任务的结束通知不再带 `actor`，改带 `fromTurn`；自己注入延续某次调用的通知的，照这个写。
-- api-authority 的 `InboundTurn` 删掉 `callerUserId`、加 `fromTurn`；新导出 `originTurnOf(inputs)`，由一轮的输入拼执行守卫要的回合信息（发言者与授权身份缺省时取 `fromTurn` 的），自己实现 agent 的要用它填工具调用上下文。`originOf` 不再看会话的受众，续做与起它的那一轮同一类别；api-authority 新加 schema-message 的依赖。
+- api-approval 的 `OriginKind` 只留 `hand`（人亲手发来的消息与它的续做、派出的子任务，不论在哪个会话、是谁）与 `autonomous`，删掉 `owner`、`owner-chain`、`subtask`、`room`、`other`（子任务与续做一样随起它的那一轮，见「子任务的审批上浮」一节）；`ApprovalOrigin` 删掉 `platform`，`userId` 换成 `participants`（这一轮的参与者，即授权身份）。api-session-protocol 审批对象的 `origin` 与审批审计的请求行同改。
+- schema-message 的 `IncomingMessage` 加 `fromTurn`（类型 `FromTurn`：起它的那次调用所在那一轮的平台、发言者、参与者、来源与那一轮自己的 `fromTurn`），删掉 `hostNotice.callerUserId`。延续某次工具调用的宿主通知约定不带 `actor`、改带 `fromTurn`，后台任务的结束通知随之不再带 `actor`。
+- api-authority 的 `InboundTurn` 删掉 `callerUserId`、加 `fromTurn`；由一轮的输入拼这一轮的 `originTurnOf` 见「通道层：多人的一轮逐动作审批」一节。`originOf` 不再看会话的受众，续做与起它的那一轮同一类别；api-authority 新加 schema-message 的依赖。
 - plugin-authority 不再用会话管理（删掉 `session-manager` 的可选依赖）。
-- api-trigger 的 `markTriggered(message, addressed)` 删掉 `multiParty` 参数，不再给多方窗口里没点名的话回填无主体授权身份。
-- owner 在群里点名她、戳她、没点名而被频率触发挑中、从 WebUI 往群里插话，以及在受众判不出的会话里，亲手发起需要确认的工具：推审批卡到 WebUI 与终端，批了就执行。此前直接拒，模型拿到「需要批准的操作在这里不能执行。」。前提是这个群开的工具分组里有这样的工具。
+- api-trigger 的 `markTriggered` 不再给没点名的话回填无主体授权身份（0.20 在消息的类型名不是 `private`、且消息没带 `actor` 时回填）。
+- owner 在群里点名她、戳她、没点名而被频率触发挑中、从 WebUI 往群里插话，以及在受众判不出的会话里，亲手发起需要确认的工具：推审批卡到 WebUI 与终端，批了就执行。此前直接拒（群里的回合拿到「需要批准的操作在这里不能执行。」）。前提是这个群开的工具分组里有这样的工具。
 - 续做按起它的那一轮判：owner 在群里转到后台的调用，结束后的续做也能产生审批（此前拒）；owner 自己的平台请求事件（她申请入群、邀请机器人进群）那一轮里转后台的调用，续做不再能产生审批。起它的人在同一会话说话不再中止续做那一轮。
 - 回给模型的拒绝语不论在哪个会话发起都是固定格式，不再指名 owner：「需要批准的操作没有执行」「被拒绝了，说明：…」「有能批的人在场时可以再申请」；不能产生审批的那句改为「这一轮里没有 owner 的话，要 owner 确认的操作不能执行」。群成员、群里的定时任务等回合被拦下时拿到这句，不再是「需要批准的操作在这里不能执行。」。owner 在群里发起的一轮被拦下时，她拒绝时写的说明与「没人在场」「等满时限」也交给模型，群里那一轮可能转述出去。
-- 群里没点名、被频率触发挑中的话按说话的人算：owner 的这样一轮能产生审批；群友按他自己的等级、权限组与免确认（此前一律按无主体的默认 0 级）；这一轮能交白纸任务（此前回「这一回合没有发起人」），建的定时任务记说话的人为创建者。
-- 聊天审批认 owner 亲手发的消息时另核对一对一窗口的对端就是发言者：机器人账号登记成 owner、实现端又上报了机器人自己发的消息时，那条消息不再算 owner 在场，也不再能应答审批。
+- 群里没点名、被频率触发挑中的话按说话的人算：owner 的这样一轮能产生审批；群友按他自己的等级与权限组（此前一律按无主体的默认 0 级）；这一轮能交白纸任务（此前回「这一回合没有发起人」），建的定时任务记说话的人为创建者。
 
 ### 子任务跟派它的那一轮（@aalis/api-authority、@aalis/plugin-authority、@aalis/plugin-subtask、@aalis/plugin-reach）
 
-- api-authority 的 `AuthorityService` 加 `principalOf(turn)`：这一轮的主体（`'owner' | 'other'`），类别为 `hand` 且参与者都是 owner 的为 owner（续做与子任务的类别沿 `fromTurn` 随起它的那一轮，批过的调用按批的人），其余为 other。替换权限服务实现的要提供它。
-- plugin-subtask 在入站回合里派出的任务消息与 `send_to_subtask` 的追问带 `fromTurn`（派它的那一轮），不再带 `actor`；子任务那一轮的授权身份取它的参与者，与此前的 `actor` 相同，要从消息取授权身份的用 api-authority 的 `originTurnOf`。不在入站回合里派的（编排的工具节点、mcp-server）照旧带 `actor`、不带 `fromTurn`。
+- api-authority 的 `AuthorityService` 加必填的 `principalOf(turn)`：这一轮的主体（`'owner' | 'other'`），类别为 `hand` 且参与者都是 owner 的为 owner（续做与子任务的类别沿 `fromTurn` 随起它的那一轮，批过的调用按批的人），其余为 other。
+- plugin-subtask 在入站回合里派出的任务消息与 `send_to_subtask` 的追问带 `fromTurn`（派它的那一轮），不再带 `actor`；子任务那一轮的授权身份取它的参与者，由 api-authority 的 `originTurnOf` 从消息算出。不在入站回合里派的（编排的工具节点、mcp-server）照旧带 `actor`、不带 `fromTurn`。
 
 ### 触及只按这一轮的主体，删掉污点与来源记录（@aalis/api-reach、@aalis/plugin-reach）
 
@@ -336,34 +410,33 @@
   - 不属于任何会话的本机文件（工作区、白纸成品、下载等）：只在这一轮的主体是 owner 时能取（owner 亲手那一轮，含它的续做与她那一轮派的子任务，在群里也一样），或授权身份是 owner、所在会话里没有别人（她自己会话里的定时任务、按她跑的编排、mcp-server 的调用）。
 
   过不了时回给模型的话是「这个文件不在这一轮能取的范围里：…」（`analyze_image` 是「这张图不在这一轮能看的范围里：…」），说明两类规则。
-- 她回复里存储地址的媒体标记：受众只有 owner 的会话里不过判据；其余会话不带授权身份过同一份判据，同平台别的群（在会话表里）的转成附件，别人私聊里的、经另一个机器人账号的与本机文件的不转。
-- api-media 导出这份判据：`mediaScopeOf(call, services)` 交出一次调用的判定，两个工具与回复里的标记都用它，按路径取存储媒体的第三方工具也用它；底下是 `mediaInScope(target, call, deps)`（别的会话的取用判定 `take` 与本机文件判定 `local` 由调用方给）与本机文件判法 `localFileInScope(call, deps)`。api-media 新加 api-authority 的依赖（只用它的类型）。
+- 她回复里存储地址的媒体标记过同一份判据，按回复所在的那一轮判，见「通道层：回合开始的钩子与按回合认消息」一节。
+- api-media 新导出这份判据：`mediaScopeOf(call, services)` 交出一次调用的判定，`call` 是 `MediaScopeCall`（`sessionId`、`platform?`、必填的 `participants`、`inbound?`）加取用判定 `approveFor`（同工具调用上下文的）：工具交它的工具调用上下文，逐个参与者判；没有可挂审批的调用的（回复里的标记）交只按一个授权身份判的（第一方取 api-tools 的 `actingIdentity`）。两个工具与回复里的标记都用它。底下是 `mediaInScope(target, call, deps)`（`deps` 是 `MediaScopeDeps`，别的会话的取用判定 `take` 与本机文件判定 `local` 由调用方给）与本机文件判法 `localFileInScope(call, deps)`（`deps` 是 `LocalFileDeps`；非人回合的条款只认唯一的参与者是 owner）；另导出把地址规整成可比形态的 `mediaRef`（网址与存储地址，其余没有）与取历史里系统记下的媒体引用的 `historyMediaRefs`。api-media 新加 api-authority（只用它的类型）、api-session-manager 与 api-storage 的依赖。
 
-### 审批推回 owner 的 IM 私聊，改动照给，在场一条规则（@aalis/api-approval、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/plugin-chat-approval、@aalis/plugin-cli、@aalis/plugin-webui-client）
+### 审批推到 owner 的 IM 私聊，改动照给，在场一条规则（@aalis/api-approval、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/plugin-chat-approval、@aalis/plugin-cli、@aalis/plugin-webui-client）
 
-- 审批卡的改动一律照给：api-approval 的 `ApprovalFacts.diff.patch` 与 api-session-protocol 审批对象的 `facts.diff.patch` 改为必有，审批服务不再按路径（`.env`、私钥、凭据文件等）或内容（令牌前缀、「密钥名 = 值」等）猜密钥、整段不给。改 `.env`、内容像密钥的改动，WebUI、终端与 IM 私聊的卡上都逐字显示，审计里也有；替换审批服务实现的要给出 `patch`。
-- api-approval 的 `ApprovalSurface.attend` 与 `SurfaceBinding.attend` 加可选的第三个参数 `scope`（类型 `AttendScope`，`{ selfId? }`）：给了的接入只覆盖这一轮的参与者里有它的身份、且所在会话的根会话的机器人账号（`originChat.selfId`）就是 `selfId` 的审批，只因它们算在场、只收和只能应答它们；不给的覆盖全部。替换审批服务实现的要按它判推给谁、算谁在场、认谁的应答。
-- 推给审批面客户端、还没结的审批让它一直算在场：终端推出卡之后不再按键，卡照样等到结算或满 300 秒（此前到最近一次按键满 10 分钟就进 30 秒宽限，按没人在场结算）。客户端上报离开时，推给它、还没结的对它算没收到，再报在场时同一张再推一次：WebUI 页面转到后台再回来时会再收到同一张（按 id 收，不重复），自己实现审批面的要按审批 id 去重。
-- plugin-chat-approval（聊天审批，还没发布过）：每个（owner 的 IM 身份，机器人账号）一份接入，她经这个账号第一次亲手说话时建，会话管理里有她与这个账号的私聊才建，没有就等她私聊这个账号之后。她经这个账号发起的审批，在私聊里、在群里都推到这个私聊，这种审批不发进群（群里的参与者审批见「通道层：群里的审批消息」一节）；卡上总有一行来源，写群或私聊与窗口 id，会话名只作附注；子会话里的审批在来源一行之后另有一行「子任务：…」，写根会话以下各级子会话的标题。她经这个账号亲手说话（私聊或群里，点没点名都算）即在场。应答只认在这个私聊里引用审批消息、正文是应答词的回复：「同意」「approve」为批准，「拒绝」「deny」开头为拒绝，后面是原因，不论长短、原样转给模型；没引用审批消息的（私聊与群里一样）与引用了但不是应答词的都当普通消息交给这一轮，不回提示。卡没送达时 WebUI 或终端在场就照常在那里等，否则按 30 秒宽限结算，其间她再说话，没送达的那张重发、送达过的不再发；过期那一行只发给送达过的。从 WebUI 往她的私聊或群里插话发起的审批不推到 IM。插件新加 `events` 的必需依赖。
+- 审批卡的改动一律照给：api-approval 的 `ApprovalFacts.diff.patch` 与 api-session-protocol 审批对象的 `facts.diff.patch` 改为必有，审批服务不再按路径（`.env`、私钥、凭据文件等）或内容（令牌前缀、「密钥名 = 值」等）猜密钥、整段不给。改 `.env`、内容像密钥的改动，WebUI、终端与 IM 私聊的卡上都逐字显示，审计里也有。
+- api-approval 的 `ApprovalSurface.attend` 与 `SurfaceBinding.attend` 加可选的第三个参数 `scope`（新导出的类型 `AttendScope`，`{ selfId?, window? }`）：给了的接入只覆盖限定的那些审批，只因它们算在场、只收和只能应答它们。给 `window`（群窗口的根会话 id）的覆盖根会话就是这个窗口的（连同它的子会话）、不是只有 owner 能批的；不给 `window` 的（IM 私聊）覆盖只有 owner 能批的、这一轮的参与者里有接入的身份、且所在会话的根会话的机器人账号（`originChat.selfId`）就是 `selfId` 的。不给 `scope` 的覆盖全部。审批服务按它判推给谁、算谁在场、认谁的应答。
+- 推给审批面客户端、还没结的审批让它一直算在场：终端推出卡之后不再按键，卡照样等到结算或满 300 秒（此前到最近一次按键满 10 分钟就进 30 秒宽限，按没人在场结算）。客户端上报离开时，推给它、还没结的对它算没收到，再报在场时同一张再推一次：WebUI 页面转到后台再回来时会再收到同一张（按 id 收，不重复）；同一张审批可能对同一个客户端推出不止一次。
+- plugin-chat-approval（聊天审批，还没发布过）：每个（owner 的 IM 身份，机器人账号）一份接入。她与这个账号的私聊是会话管理里这个账号下、出生平台的适配器明确声明为一对一、对端就是她的根会话；有这样的私聊才建接入，没有就等她私聊这个账号之后。机器人账号登记成 owner、实现端又上报了机器人自己发的消息时，那个身份没有这样的私聊：那条消息不算她在场，也不能应答。她经这个账号亲手说话（私聊或群里，点没点名都算）即在场，接入随之建起；审批服务说她已不在场时撤掉（默认实现：10 分钟内没说话、推给她的都已结），再说话时重建。她经这个账号发起的、只有她能批的审批，在私聊里、在群里都推到这个私聊，不发进群（群里的参与者审批见「通道层：群里的审批消息」一节）；卡上总有一行来源，写群或私聊与窗口 id，会话名只作附注；子会话里的审批在来源一行之后另有一行「子任务：…」，写根会话以下各级子会话的标题。应答只认在这个私聊里引用审批消息、正文是应答词的回复（回复开头客户端自动插的对机器人账号的 @ 不算正文）：「同意」「approve」为批准，「拒绝」「deny」开头为拒绝，后面是原因，不论长短、原样转给模型；没引用审批消息的（私聊与群里一样）与引用了但不是应答词的都当普通消息交给这一轮，不回提示。卡没送达时 WebUI 或终端在场就照常在那里等，否则按 30 秒宽限结算，其间她再说话，没送达的那张重发、送达过的不再发；过期那一行只发给送达过的。从 WebUI 往她的私聊或群里插话发起的审批不推到 IM。
 
-### 通道层：多人的一轮逐动作审批（@aalis/api-tools、@aalis/api-authority、@aalis/api-approval、@aalis/api-media、@aalis/api-session-protocol、@aalis/api-agent、@aalis/plugin-authority、@aalis/plugin-tools、@aalis/plugin-agent、@aalis/plugin-commands、@aalis/plugin-session-server、@aalis/plugin-webui-client、@aalis/plugin-subtask、@aalis/plugin-scheduler、@aalis/plugin-workflow、@aalis/plugin-paper、@aalis/plugin-mcp-server、@aalis/plugin-tool-session、@aalis/plugin-tool-onebot、@aalis/plugin-memory-history、@aalis/plugin-image-sender、@aalis/plugin-media）
+### 通道层：多人的一轮逐动作审批（@aalis/api-tools、@aalis/api-authority、@aalis/api-approval、@aalis/api-session-protocol、@aalis/api-agent、@aalis/plugin-authority、@aalis/plugin-tools、@aalis/plugin-agent、@aalis/plugin-commands、@aalis/plugin-session-server、@aalis/plugin-webui-client、@aalis/plugin-subtask、@aalis/plugin-scheduler、@aalis/plugin-workflow、@aalis/plugin-paper、@aalis/plugin-mcp-server、@aalis/plugin-tool-session、@aalis/plugin-tool-onebot、@aalis/plugin-memory-history、@aalis/plugin-image-sender、@aalis/plugin-media）
 
-- api-tools 的 `ToolCallContext` 删掉 `actor`，加必填的 `participants`（这一轮的参与者，即授权身份；不在入站回合里的调用方填它自己的身份，没有身份的填一个无主体）与必填的 `approveFor(check)`（取用判定：按参与者与等级裁决同一条三分，都过放行，有人过不了时发一道参与者审批，都过不了回原因；执行器给每次调用一份）。`userId` 只在这一轮各条输入的发言者相同时有。`ToolService.execute` 与 api-agent 的 `agent:tool:before`、`agent:tool:after` 的 `toolCallContext` 改收新类型 `ToolCallRequest`（不含 `approveFor`）。新导出 `actingIdentity(ctx)`：参与者只有一个时是他，有几个时是无主体。直接调工具处理函数的要给 `participants` 与 `approveFor`。
-- api-authority 的 `ExecutionGuardContext` 删掉 `actor`，加必填的 `participants` 与可选的 `check`（取用判定）；`OriginTurn` 随之带 `participants`、不带 `actor`。`ExecutionGuard` 的返回从 `string | TextRef | null` 改成新导出的 `Verdict`：`{ ok: true; by? }`（`by` 是批的人，经审批放行才有）或 `{ ok: false; reason }`；另新导出 `sameParticipant`。`originTurnOf(inputs, isOwner?)` 按一轮的多条输入算参与者（各条的 `actor ?? 发言者`，带 `fromTurn` 的取它的参与者，按身份去重，owner 的各个身份算一个），`inbound.messageId` 取最近一条输入的。`principalOf` 只在参与者都是 owner 时为 owner。自己实现执行守卫、指令或工具执行器的照新形状改。
+- api-tools 的 `ToolCallContext` 删掉 `actor`，加必填的 `participants`（这一轮的参与者，即授权身份；不在入站回合里的调用方填它自己的身份，没有身份的填一个无主体）与必填的 `approveFor(check)`（取用判定：按参与者与等级裁决同一条三分，都过放行，有人过不了时发一道参与者审批，都过不了回原因；执行器给每次调用一份）。`userId` 只在这一轮各条输入的发言者相同时有。`ToolService.execute` 与 api-agent 的 `agent:tool:before`、`agent:tool:after` 的 `toolCallContext` 改收新类型 `ToolCallRequest`（不含 `approveFor`）。新导出 `actingIdentity(ctx)`：参与者只有一个时是他，有几个时是无主体。
+- api-authority 的 `ExecutionGuardContext` 删掉 `actor`，加必填的 `participants` 与可选的 `check`（取用判定）；`OriginTurn` 随之带 `participants`、不带 `actor`。`ExecutionGuard` 的返回从 `string | null` 改成新导出的 `Verdict`：`{ ok: true; by? }`（`by` 是批的人，经审批放行才有）或 `{ ok: false; reason }`（`reason` 可以是文字对象）；另新导出 `sameParticipant`。新导出的 `originTurnOf(inputs, isOwner?)` 由一轮的输入拼这一轮：参与者是各条输入的授权身份（`actor ?? 发言者`，带 `fromTurn` 的取它的参与者），按身份去重，owner 的各个身份算一个；发言者只在各条相同时有，缺省时取 `fromTurn` 的；`inbound.messageId` 取最近一条输入的。第一方 agent 用它填工具调用上下文。
 - 执行守卫对每个参与者各裁决一次：都能做照常执行；有人做不了的这一个调用要一道参与者审批，凡自己就能做这个动作的人都能批；都做不了照旧拒，几位参与者时拒绝语是「这一轮的参与者里没有人能做这件事」。要 owner 确认的与参与者审批合成一张，只有 owner 能批；免确认（`confirmOverrides` 的 `'off'`、受信来源、`restrictedPolicy` 白名单）只在参与者都是 owner 时生效。经审批放行的调用按批的人执行：交给处理函数的与转后台登记的上下文里参与者换成他，结束通知、派出的子任务与建的定时任务随之按他。
-- api-approval 的 `ApprovalRequest` 加必填的 `canAnswer(who)` 与 `ownerOnly`；结算来源 `owner` 改名 `answer`，`ApprovalSettlement` 加 `by`（应答人），`ApprovalOutcome` 批准的一支带 `by`；`AttendScope` 加 `window`（群窗口的根会话 id）。审批服务推给谁、算谁在场、认谁的应答改为「接入的身份能批这一张（`canAnswer`）且接入覆盖它」：不限定的覆盖全部，限定了群窗口的覆盖这个窗口发起的、不是只有 owner 能批的，只限定了机器人账号的（IM 私聊）只覆盖只有 owner 能批的；能不能产生改为「类别为人亲手且参与者里有人能批」；应答已结的回 `approval-settled`，不覆盖的回 `not-found`，覆盖而不能批的回 `forbidden`，原因文字从「应答人不是 owner」改为「应答人不能批这一张」。替换审批服务实现的照这条规则改。
+- api-approval 的 `ApprovalRequest` 加必填的 `canAnswer(who)` 与 `ownerOnly`；结算来源 `owner` 改名 `answer`，`ApprovalSettlement` 加 `by`（应答人），`ApprovalOutcome` 批准的一支带 `by`。审批服务推给谁、算谁在场、认谁的应答改为「接入的身份能批这一张（`canAnswer`）且接入覆盖它（`AttendScope`，见「审批推到 owner 的 IM 私聊，改动照给，在场一条规则」一节）」；能不能产生改为「类别为人亲手且参与者里有人能批」；应答已结的回 `approval-settled`，不覆盖的回 `not-found`，覆盖而不能批的回 `forbidden`，原因文字从「应答人不是 owner」改为「应答人不能批这一张」。
 - api-session-protocol 的审批结算（工具卡的 `settlement` 与 `approval/settled`）来源 `owner` 改名 `answer`，加 `by`（应答人，说话人的写法：平台、账号、是不是 owner）。WebUI 工具卡的结算句对不是 owner 批的、拒的写出是谁（「已批准 · <账号> · 10:32」）。
-- api-media 的 `MediaScopeCall` 删掉 `userId` 与 `actor`，加必填的 `participants`；本机文件判法 `localFileInScope` 的非人条款只认唯一的参与者是 owner。`mediaScopeOf` 的 `call` 必须带取用判定 `approveFor`（同工具调用上下文的）：工具交它的工具调用上下文，逐个参与者判；没有可挂审批的调用的（回复里的标记）交只按一个授权身份判的（第一方取 api-tools 的 `actingIdentity`）。
 - 几个人的一轮取别的会话的东西（`send_attachment`、`analyze_image`、`session_get_history`、`onebot_get_session_history`、`onebot_get_msg`）逐个参与者过会话管理的规则：某个参与者自己私聊里的、别人过不了的发一道参与者审批，由他本人批；`recent_messages` 不带谁自己的私聊里的东西。不属于任何会话的本机文件在 owner 与别人同在的一轮里要 owner 批，没有 owner 参与的一轮取不到。
 - 要记一个人的按 `actingIdentity`：定时任务的创建者、编排的定义者与 `workflow_run` 的调用者，几个人都能做、没经审批的一轮按匿名；白纸交任务与取消在这样的一轮被拒，拒绝语改为「这一轮没有单一的发起人，不能交任务或取消任务」（没有人的注入也是这句，此前是「这一回合没有发起人」）。编排的工具调用上下文的唯一参与者是运行身份（匿名时是无主体），mcp-server 的是 `mcp:mcp-client`。
 - plugin-authority 的拒绝语「需要 owner 批准，但审批服务不在」改为「需要批准，但审批服务不在」。
 
 ### 通道层：回合开始的钩子与按回合认消息（@aalis/api-agent、@aalis/api-message-archive、@aalis/schema-message、@aalis/plugin-agent、@aalis/plugin-message-archive、@aalis/plugin-checkpoint、@aalis/plugin-image-sender、@aalis/plugin-subtask、@aalis/plugin-persona、@aalis/plugin-session-manager、@aalis/plugin-session-server、@aalis/plugin-memory-summary、@aalis/plugin-memory-vector、@aalis/plugin-user-profile、@aalis/plugin-user-relation、@aalis/plugin-adapter-onebot、@aalis/plugin-file-reader、@aalis/plugin-media、@aalis/plugin-publish-review）
 
-- api-agent：`agent:input:before` 改为每条输入一次，data 只有 `{ message }`（去掉 `turnId` 与 `metadata`），不调 `next` 即丢掉这条，`next` 在这条落定时返回；预处理器照旧挂在它上面。新增 `agent:turn:before`（`{ turnId, sessionId, inputs }`，一轮开始，`next` 之后是这一轮的全部，不调 `next` 即这一轮不跑、输入不归档、不发 `agent:turn:after`）与类型 `TurnInput`（`message`，归档之后带 `archived`）。`agent:turn:after` 用 `inputs` 取代 `message`、去掉 `metadata`；`agent:llm:before`、`agent:reply:before` 去掉 `userId` 与 `triggerType`；`PromptContributionView` 用 `inputs` 取代 `userId` 与 `triggerType`。用 `agent:input:before` 包一轮、取回合 id 或按 `view.userId` 取材的插件照新钩子改。实现者多一条约定：输入在进入一轮时经 message-archive 归档，`archiveIncoming` 带回合 id 与进入方式。
+- api-agent：`agent:input:before` 改为每条输入一次，data 只有 `{ message }`（去掉 `turnId` 与 `metadata`），不调 `next` 即丢掉这条，`next` 在这条落定时返回；预处理器照旧挂在它上面。新增 `agent:turn:before`（`{ turnId, sessionId, inputs }`，一轮开始，`next` 之后是这一轮的全部，不调 `next` 即这一轮不跑、输入不归档、不发 `agent:turn:after`）与类型 `TurnInput`（`message`，归档之后带 `archived`）。`agent:turn:after` 用 `inputs` 取代 `message`、去掉 `metadata`；`agent:llm:before`、`agent:reply:before` 去掉 `userId` 与 `triggerType`；`PromptContributionView` 用 `inputs` 取代 `userId` 与 `triggerType`。实现者多一条约定：输入在进入一轮时经 message-archive 归档，`archiveIncoming` 带回合 id 与进入方式。
 - api-message-archive：`archiveIncoming` 多一个可选的回合参数 `{ turnId, entry: 'opened' | 'joined' }`，存档记成元数据的 `TurnId` 与新登记的 `TurnEntry`（schema-message）。进了一轮的输入因此带回合 id。
 - 连对话回滚（plugin-checkpoint）只删这一轮的消息：提交时只记时间窗里回合 id 是这一轮的（输入、工具调用组、回复、子任务合成的回报、带回合 id 的出站记录与投递失败记录）。这一轮进行期间同一会话里别的来源的输入、别的回合的产出与别人的消息不再被连带删掉。
-- 她回复里存储地址的媒体标记（plugin-image-sender）与 `send_attachment` 同一份判据，按回复所在那一轮的授权身份判（几个人的一轮不带授权身份），受众只有 owner 的会话不再免判据（此前见「发媒体、看图的取用」一节）：owner 私聊里别人私聊的图的标记不再转成附件；本机文件的标记只在主体是 owner 的一轮（或 owner 授权的自动运行且会话里没有别人）转，owner 在群里亲手那一轮也转；认不出这一轮的出站（不是回合里的回复）照旧不带授权身份判。
+- 她回复里存储地址的媒体标记（plugin-image-sender）与 `send_attachment` 同一份判据，按回复所在那一轮的授权身份判（几个人的一轮不带授权身份）：「读别人的私聊」关着（默认）时，别人私聊里的图的标记不转成附件，在 owner 自己的私聊里也一样；本机文件的标记只在主体是 owner 的一轮（或 owner 授权的自动运行且会话里没有别人）转，owner 在群里亲手那一轮也转；认不出这一轮的出站（不是回合里的回复）不带授权身份判。
 - 子任务自动完成时在子会话历史里合成的 `report_to_parent` 两条带这一轮的回合 id，WebUI 子会话的历史里它们并进那一轮。
 - 向量记忆的检索词改取这一轮输入归档的正文（带发送者前缀与附件描述），不再取发给模型的那条去掉时间标签的正文；这一轮的输入都没有归档（没装存档插件、空闲开话题）时不检索。
 - onebot 的事件提示（戳一戳、群文件上传）按这一轮各条输入自带的事件种类（`noticeType`）给，不再按正文开头认：发起者昵称里带「]」时也给，群友打出的像事件的文字不再给。
@@ -371,30 +444,30 @@
 
 ### 通道层：新消息不打断在跑的一轮（@aalis/api-agent、@aalis/schema-message、@aalis/api-gateway、@aalis/api-workflow、@aalis/api-session-manager、@aalis/plugin-agent、@aalis/plugin-commands、@aalis/plugin-gateway、@aalis/plugin-flow-control、@aalis/plugin-session-server、@aalis/plugin-workflow、@aalis/plugin-subtask、@aalis/plugin-trigger-policy、@aalis/plugin-trigger-laya、@aalis/plugin-persona、@aalis/plugin-user-profile、@aalis/plugin-user-relation、@aalis/plugin-memory-vector、@aalis/plugin-media、@aalis/plugin-session-manager）
 
-- 新消息不再中止在跑的一轮。每个会话同一时刻最多一轮：真人消息叠进由真人消息开的、在跑的一轮（每次调用模型之前，第一次与每批工具之后都算），她已经在写最后的回复时才到的排到下一轮另回一条；带来源的注入（定时任务、宿主通知、编排节点、白纸与作品通知、好友申请、空闲开话题、子任务的派发与追问）各自成一轮，排在在跑的一轮之后，注入那一轮在跑时来的真人消息排在它之后。一轮结束后队首是真人消息时，排着的真人消息一起开下一轮，前面告诉她「下面几条是你上一轮进行期间到的」，多方房间里这几条全是没点名她的插话时另说「没有需要接的可以不说话」。排着开的那一轮不再过冷却与限速（这些消息到达时已过闸）。叠进来的人从下一批工具起算参与者。
-- 输入在进入一轮时归档，消息的时间标注是进入这一轮的时刻；排着、还没进一轮的不在历史里。这一轮的模型、深度思考、工具迭代上限、条数线、工具分组与人设选项在开轮时读一次，一轮进行中改了的下一轮才生效。焦点指引的多方判定改取根会话记下的聊天窗口（owner 从 WebUI 往群里发的话照样按群算），按时间与发送者账号逐条列出这一轮被点名的输入（没经触发判定的真人输入也算点名），插进被点名的输入时在它们之前另加一块，前面那块不改。
+- 新消息不再中止在跑的一轮。每个会话同一时刻最多一轮：真人消息叠进由真人消息开的、在跑的一轮（每次调用模型之前，第一次与每批工具之后都算），她已经在写最后的回复时才到的排到下一轮另回一条；带来源的注入（定时任务、宿主通知、编排节点、白纸与作品通知、好友申请、空闲开话题、子任务的派发与追问）各自成一轮，排在在跑的一轮之后，注入那一轮在跑时来的真人消息排在它之后。一轮结束后队首是真人消息时，排着的真人消息一起开下一轮，前面告诉她「下面几条是你上一轮进行期间到的」，多方房间里这几条全是没点名她的插话时另说「没有需要接的可以不说话」。排着开的那一轮不另过冷却与限速（这些消息到达时已过闸）。叠进来的人从下一批工具起算参与者。
+- 输入在进入一轮时归档，消息的时间标注是进入这一轮的时刻；排着、还没进一轮的不在历史里。这一轮的模型、深度思考、工具迭代上限、条数线、工具分组与人设选项在开轮时读一次，一轮进行中改了的下一轮才生效。焦点指引的多方判定改取根会话记下的聊天窗口（owner 从 WebUI 往群里发的话也按群算），按时间与发送者账号逐条列出这一轮被点名的输入（没经触发判定的真人输入也算点名），插进被点名的输入时在它们之前另加一块，前面那块不改。
 - 带来源的注入（定时任务、编排、各种通知）不算点名：档案与关系图不再按它带的账号给完整档案与子图（如 onebot 的好友申请、入群申请通知那一轮），它开的一轮也没有焦点指引。用户档案的关系分与关系图的提取只算真人的话（有账号且不带来源）：带来源的注入不加旁观增量与回复增量、不计入两边的提取，也不进关系图的提取窗口；子任务的任务消息不再建出键为 `<平台>:parent:<会话>` 的档案与关系图里的这个人，好友申请、入群申请通知不给申请人加分。
 - 读历史时，夹在一组工具调用与它的结果之间的别的消息挪到这组之后，不再整组丢掉：按时间戳读历史的存储（MongoDB、SQLite）里，组写入期间插进来的输入与被触发判定或流控吞掉的群聊会排进组中间，此前她因此忘了做过的调用。
 - 这一轮有几条输入时：人设只在各条输入的说话人相同时写说话人事实；档案给每位点名她的发言者完整档案；关系图把几位的子图合在一块，几位时小节标题注明是谁；向量记忆的检索词按先后相接各条输入的归档正文，超过 4000 字从最早的一条丢起，同用户加权取各条输入的发言者；媒体把各条带图的 user 消息都规范化。
-- api-agent：`AgentService.abort` 改为必须实现，参数改为 `abort(sessionId, { turnId?, queued?, reason? })`：只停在跑的一轮，`queued` 为真时连同排队与待插入的一起放掉（不开轮，在那一轮落定之后归档、不带回合 id），`reason` 只进日志。`handleMessage` 返回时这条输入已落定，被放掉也算；入口记下这个会话的代号（api-session-manager 的 `generationOf`），交给通道之前（按住期间等着的放开之后）再取一次，变了的放掉、不归档。`agent:turn:before` 的 `inputs` 是活的，插进来的输入追加在末尾、归档的进入方式为 `joined`。`AgentService` 加必须实现的 `clearing(sessionIds, clear, reason?)`：清消息历史的一方（第一方是 `/clear` 与会话管理删会话）把整条清理（`memory:clear` 链连同默认动作；会话管理删会话时交来的先删各级子会话、发 `session:deleted`）交给它，先停下这些会话在跑的一轮、放掉排着的（不归档），按住到清完，实现者自己的 `session:deleted` 监听在这次按住之内被调起、不能等它放开，`reason` 同 `abort` 的只进日志；第一方 agent 不再挂 `memory:clear` 中间件。自己实现 AgentService 的照新形状改。
+- api-agent：`AgentService.abort` 改为必须实现，参数改为 `abort(sessionId, options?)`，选项 `{ turnId?, queued?, reason?, by? }`：只停在跑的一轮，`queued` 为真时连同排队与待插入的一起放掉（不开轮，在那一轮落定之后归档、不带回合 id），`reason` 只进日志，`by` 是停下这一轮的人（与入站的 `actor` 同一形状，不给即没有具体的人，如停机、清历史、删会话、禁言）。`handleMessage` 返回时这条输入已落定，被放掉也算；入口记下这个会话的代号（api-session-manager 的 `generationOf`），交给通道之前（按住期间等着的放开之后）再取一次，变了的放掉、不归档。`agent:turn:before` 的 `inputs` 是活的，插进来的输入追加在末尾、归档的进入方式为 `joined`。`AgentService` 加必须实现的 `clearing(sessionIds, clear, reason?)`：清消息历史的一方（第一方是 `/clear` 与会话管理删会话）把整条清理（`memory:clear` 链连同默认动作；会话管理删会话时交来的先删各级子会话、发 `session:deleted`）交给它，先停下这些会话在跑的一轮、放掉排着的（不归档），按住到清完，实现者自己的 `session:deleted` 监听在这次按住之内被调起、不能等它放开，`reason` 同 `abort` 的只进日志。
 - schema-message：`IncomingMessage.source` 不再表示并发隔离（带来源的输入各自成一轮）。
 - api-gateway：`ingressMessage` 在这条输入落定时返回（在相位里被挡下，或它所在的一轮结束、它被放掉）。网关在所有入站相位之前给每条入站打到达序号；规则版与 Laya 的判定行、流控与网关的吞噬行、agent 每条输入的去向与回合结束行带 `#序号`，不记正文与昵称。
-- api-workflow：`runWorkflow` 的 `caller` 加 `sessionId`（调起这次运行的会话，经 `workflow_run` 调起时有）。替换编排服务实现的，据它让指向这个会话的 agent 节点立即失败：调起它的那一轮在等这次运行，节点的指令要等那一轮结束才能开轮，不这样就互等到节点超时。
-- api-session-manager：`SessionManagerService` 加必须实现的 `generationOf(sessionId)`，这个会话此刻的代号：开始删除时（与让它新来的入站在 `recordInbound` 里等着同一步，同步地，带子会话的先于删子会话）换成这个会话没给过的值，其余时候不变，删过的 id 之后再建档也不换回去，只按相等比；网关交给 agent 之前、agent 交给通道之前据它放掉删除开始之前已收录的旧一代。自己实现会话管理的照此实现（参考实现按 id 记开始删除的次数，没删过的为 0）。
-- 停下一轮：停止键只停在跑的一轮，它随即不再收输入，待插入的、排着的与之后到的照常开下一轮；禁言（`setMuted` 时长大于 0；关键词禁言不看说话人的等级）真的停下在跑的一轮，不外发、不落库回复，排着的不再开轮；后台页「全部停止」对每个下级会话连同排队项停，只有排着的追问、没有在跑一轮的子会话同样放掉；停机时排着的不再开轮；`/clear` 与 `/clear all`（全部会话）清消息历史时经 agent 先停下在跑的一轮、放掉排着的（不记进历史）再跑整条清理，停下到清完之间到的消息等清完再处理，与各插件清理中间件的登记先后无关（plugin-commands 新加 `agent` 的可选依赖），`-t vector` 这类不清消息历史的不停。
-- plugin-workflow：agent 节点经网关送达指令（没有网关时节点失败），按自己的异步上下文只认它开的那一轮，同一会话里别的回合的回复不再被当成它的结果；指向调起这次运行的会话、指令在网关相位被吞（禁言、限速）或被放掉时立即失败，不再等满节点超时。`workflow_run` 所在的一轮被停下时不再等这次运行，回已中止，这一轮随即落定；运行不取消，要停它到工作流页「最近运行」里取消。
+- api-workflow：`runWorkflow` 的 `caller` 加 `sessionId`（调起这次运行的会话，经 `workflow_run` 调起时有）。编排服务据它让指向这个会话的 agent 节点立即失败：调起它的那一轮在等这次运行，节点的指令要等那一轮结束才能开轮，否则互等到节点超时。
+- api-session-manager：`SessionManagerService` 加必须实现的 `generationOf(sessionId)`，这个会话此刻的代号：开始删除时（与让它新来的入站在 `recordInbound` 里等着同一步，同步地，带子会话的先于删子会话）换成这个会话没给过的值，其余时候不变，删过的 id 之后再建档也不换回去，只按相等比；网关交给 agent 之前、agent 交给通道之前据它放掉删除开始之前已收录的旧一代。参考实现按 id 记开始删除的次数，没删过的为 0。
+- 停下一轮：停止键只停在跑的一轮，它随即停止收输入，待插入的、排着的与之后到的照常开下一轮；禁言（`setMuted` 时长大于 0；关键词禁言不看说话人的等级）真的停下在跑的一轮，不外发、不落库回复，排着的不开轮；后台页「全部停止」对每个下级会话连同排队项停，只有排着的追问、没有在跑一轮的子会话同样放掉；停机时排着的不开轮；`/clear` 与 `/clear all`（全部会话）清消息历史时经 agent 先停下在跑的一轮、放掉排着的（不记进历史）再跑整条清理，停下到清完之间到的消息等清完再处理，与各插件清理中间件的登记先后无关（plugin-commands 新加 `agent` 的可选依赖），`-t vector` 这类不清消息历史的不停。
+- plugin-workflow：agent 节点经网关送达指令（没有网关时节点失败），按自己的异步上下文只认它开的那一轮，同一会话里别的回合的回复不再被当成它的结果；指令在网关相位被吞（禁言、限速）或被放掉时立即失败，不再等满节点超时。`workflow_run` 所在的一轮被停下时不再等这次运行，回已中止，这一轮随即落定；运行不取消，要停它到工作流页「最近运行」里取消。
 - plugin-subtask：追问经网关送达（没有网关时 `send_to_subtask` 回错误），排在子任务在跑的一轮之后，不再打断它；那一轮结束时还有没落定的追问，它的回复不交回、不完成，等追问那一轮；还有没落定的追问的子任务，`check_subtask` 与父会话的子任务提醒按进行中报，`wait_subtasks` 不返回。`wait_subtasks` 所在的一轮被停下（停止键、禁言、`/clear` 等）时不再等，回已中止，这一轮随即落定。
 - 删除会话（plugin-session-manager 经 agent 的 `clearing` 删）：开始删除时（带子会话的在删子会话之前）就停下这个会话在跑的一轮、放掉排着的（不记进历史），按住到清完。删除开始之后到的同一会话的消息等删除做完再往下走，是新的一代，照常处理，不会回了话又被清掉；删除开始之前已过会话管理收录、删完之后才会进一轮的是删除之前的一代，不再开轮、不记进历史。删带子会话的会话时某个子会话的清理抛错，余下的子会话与这个会话照样删完、清掉数据，做完再交出抛错；此前停在出错的那一处，这个会话与余下的子会话留着。
 - plugin-agent：她连着两轮回同一句话时两句都发出、都落库。此前回复与上一条 assistant 消息逐字相同就当作模型卡壳、不发出：两条通知都回「好」、排着开的一轮回了与上一轮相同的话，后一句都发不出去。
 
 ### 通道层：群里的审批消息（@aalis/api-approval、@aalis/plugin-session-server、@aalis/plugin-chat-approval）
 
-- api-approval 的 `ApprovalAttendance` 加必须实现的 `present()`：这份接入此刻还算不算在场，由审批服务按它的在场规则判（审批服务不在时为假）。替换审批服务实现的照加。
-- plugin-chat-approval（还没发布过）在 owner 的 IM 私聊之外加群窗口的接入：每个（群窗口，发言者）一份，他在这个群里亲手说话即在场（没点名、被触发器吞掉的也算），审批服务说他已不在场时撤掉（默认实现：10 分钟内没说话、推给他的都已结），再说话时重建；私聊的接入同样。这个群发起的参与者审批（连同它的子会话里的），群里有能批的人在场时由这个群的机器人账号在群里发一条审批消息，同一张只发一条：先列工具与参数（照审批服务给出的原样显示，不打码；子会话里的在工具那一行之后另有一行「子任务：…」），再写「这一轮里有人自己做不了这件事」，末行写自己就能做这件事的人怎么回复，不写来源一行。群里的人引用它回应答词即算他本人的应答（回复开头 QQ 客户端自动插的对她的 @ 不算正文，私聊里同样）：能批的批准或拒绝（拒绝的说明原样转给模型），做不了的回「应答没有生效：应答人不能批这一张」，已结的回「这张已经处理过」；不引用的「同意」、引用了但不是应答词的、带 source 的都当普通消息交给这一轮。只有 owner 能批的（要她确认的，与参与者审批合成的）不发进群，owner 自己在群里的接入也不收。群里那条发不出去时，拿着它的接入上报离开，没有别的在场面就按 30 秒宽限结算，宽限内能批的人再说话即重发。
+- api-approval 的 `ApprovalAttendance` 加必须实现的 `present()`：这份接入此刻还算不算在场，由审批服务按它的在场规则判（审批服务不在时为假）。
+- plugin-chat-approval（还没发布过）的群窗口接入：每个（群窗口，发言者）一份，他在这个群里亲手说话即在场（没点名、被触发器吞掉的也算），审批服务说他已不在场时撤掉（默认实现：10 分钟内没说话、推给他的都已结），再说话时重建。这个群发起的参与者审批（连同它的子会话里的），群里有能批的人在场时由这个群的机器人账号在群里发一条审批消息，同一张只发一条：先列工具与参数（照审批服务给出的原样显示，不打码；子会话里的在工具那一行之后另有一行「子任务：…」），再写「这一轮里有人自己做不了这件事」，末行写自己就能做这件事的人怎么回复，不写来源一行。群里的人引用它回应答词即算他本人的应答（回复开头 QQ 客户端自动插的对她的 @ 不算正文）：能批的批准或拒绝（拒绝的说明原样转给模型），做不了的回「应答没有生效：应答人不能批这一张」，已结的回「这张已经处理过」；不引用的「同意」、引用了但不是应答词的、带 source 的都当普通消息交给这一轮。只有 owner 能批的（要她确认的，与参与者审批合成的）不发进群，owner 自己在群里的接入也不收。群里那条发不出去时，拿着它的接入上报离开，没有别的在场面就按 30 秒宽限结算，宽限内能批的人再说话即重发。
 
 ### 子任务的审批上浮（@aalis/api-approval、@aalis/api-session-protocol、@aalis/api-authority、@aalis/plugin-authority、@aalis/plugin-session-server、@aalis/plugin-webui-client、@aalis/plugin-cli、@aalis/plugin-chat-approval）
 
-- api-approval 的 `ApprovalSource` 删掉 `subtask`；`Approval` 加可选的 `chain`（来源链：所在会话在根会话以下时，从根会话往下到它的各级子会话的 id 与标题，不含根会话）。api-session-protocol 的审批对象加 `chain`，审批结算的来源同删 `subtask`。替换权限服务实现的，`originOf` 让续做与带 `fromTurn` 的子任务都随起它的那一轮；替换审批服务实现的，推出时按会话树填 `chain`。
+- api-approval 的 `ApprovalSource` 删掉 `subtask`；`Approval` 加可选的 `chain`（来源链：所在会话在根会话以下时，从根会话往下到它的各级子会话的 id 与标题，不含根会话；标题可以是文字对象）。api-session-protocol 的审批对象加 `chain`，审批结算的来源同删 `subtask`。api-authority 的 `originOf` 让带 `fromTurn` 的子任务也随起它的那一轮；审批服务推出时按会话树填 `chain`。
 - 子任务里需要审批的调用不再一律拒：类别按派它的那一轮，人亲手那一轮派的能产生审批，与主会话同一条规则，批过的按批的人执行。推送按根会话：要 owner 确认的推到她的 WebUI、终端与 IM 私聊（她用这个机器人账号派的），几个人派出的子任务里有人自己做不了的动作，参与者审批发在父会话所在的群里。定时任务、编排、mcp-server 派的子任务照旧拒，回「这一轮里没有 owner 的话」那句；给模型的「子任务里需要确认的操作不会转给 owner」那句不再出现。
 - 审批的频率上限按根会话算：根会话连同各级子会话 10 分钟内合计 10 张（此前按会话各算各的），超出时回给模型的话写「这个会话树」。
 - 会话协议的会话摘要 `attention` 与房间组的 `attention` 按子树算：子会话在等审批时，父会话也标需要我处理，「我的」区排在最前，房间的组计一个需要处理。WebUI「后台」标签与运行状况「正在运行」里，在等审批的子会话写「等你批准」。
@@ -404,29 +477,29 @@
 ### 通道层：硬裁剪按 token 成段丢历史（@aalis/plugin-agent）
 
 - 发给模型的历史超过它的可用量时一次丢掉一大段：单位是裁剪预算的四分之一，历史可用量是预算减去头部（人设、技能、摘要等）再减一个单位，超出时从最早的一条起丢到累计达到整数个单位的那一条，切在工具调用组中间时整组丢；之后照常累积到又多出一个单位再丢一段。切点只由头部与历史定，不看本轮多大：历史超过可用量之后，本轮很小、整份请求放得下时也照样丢这一段，用量事件的 `trimmed` 为真，摘要插件的压缩因此可能早一点到来。两次丢弃之间发给模型的开头逐字不变，服务商的前缀缓存照常命中。此前超出预算之后每轮逐条删最旧的消息，开头每轮都变。
-- 头部的注入块（技能、摘要等）不再先按比例缩短：历史丢完仍超预算时才按 `memoryTokenBudget` 缩，仍超时删。历史里的旧工具结果不再截短、旧工具调用组不再压成摘要，超了随历史整段丢；本轮较早的工具结果、思考内容与工具调用组照旧截短、压成摘要，最后一组不动。
-- 本轮的输入一条不删：开轮的与插进来的用户消息，宿主通知与代发任务那一轮的指令块（此前只保护最后一条用户消息）。本轮超过一个单位时历史接着按单位丢，丢完仍超才动头部；最后一组工具调用本身就超预算时（几个并行的大结果、很长的思考内容），最后手段截短它里面过长的结果与思考内容，请求不再超窗发出。
+- 注入的 system 块（头部的技能、摘要等，以及本轮的材料与提示）不再先按比例缩短：历史丢完仍超预算时才按 `memoryTokenBudget` 缩，仍超时删。历史里的旧工具结果不再截短、思考内容不再缩、旧工具调用组不再压成摘要，超了随历史整段丢；本轮较早的工具结果、思考内容与工具调用组照旧截短、压成摘要。最后一组工具调用不再与它们一起截短（此前它过长的结果与思考内容同样先截，末条结果除外），见下一条。
+- 本轮的输入一条不删：开轮的与插进来的用户消息，宿主通知、代发任务与空闲开话题那一轮的指令块（此前只保护最后一条用户消息）。本轮超过一个单位时历史接着按单位丢，丢完仍超才动头部；最后一组工具调用本身就超预算时（几个并行的大结果、很长的思考内容），最后手段截短它里面过长的结果与思考内容，末条结果也在内（此前末条结果从不截短，它本身超预算时请求超窗发出）。
 
 ### 通道层：/stop，停后台任务同一条规则（@aalis/plugin-agent、@aalis/plugin-tools、@aalis/plugin-commands、@aalis/plugin-workflow、@aalis/plugin-paper）
 
 - plugin-agent 新加指令 `/stop`：停下本会话在跑的一轮，同停止键，排着的照常开下一轮。不看等级：这一轮的参与者（进了这一轮的各条输入算出的那几位：真人的话是说话的人，后台任务结束通知与子任务开的一轮是起它的那一轮的参与者，定时任务开的一轮是建它的人；排队与待插入的不算）和 owner 能停，别人回「只有参与这一轮的人和 owner 能停」，没有在跑的一轮回「没有在跑的一轮」。WebUI、终端与各 IM 平台同一条指令，终端此前没有停下一轮的入口。
 - plugin-tools：`background_stop` 与 `/stop` 同一条规则，只在调它的这一轮的参与者里有起这个任务的人（起它那次调用审批之前的参与者，经审批放行的再加上批的人）或有 owner 时停，否则回「只有起这个任务的人或 owner 在的一轮能停它」；此前本会话里谁的一轮都能停。列出、取输出与等待照旧谁都能用。plugin-tools 加 `authority` 的可选依赖，它不在时没有人是 owner。
-- plugin-commands：群里 @ 她或引用她的消息发指令、回意图确认时，开头那个对她的 @（QQ 客户端自动插的，适配器写下的 `<at self>` 标记）不算正文：指令照常执行，回的 `y` 照常算确认，私聊同样；此前指令当普通消息交给她，`/stop`、`/clear` 等都没执行，引用她「确认执行 /clear 吗？」那条回的 `y` 按取消。
-- plugin-workflow：工作流页「最近运行」表里在跑的运行多一个「取消运行」（确认框）：点了之后这次运行停下、照常收尾，记录留在表里，状态为「已取消」，agent 节点已派发的那一轮在它的会话里照常跑完；已结束的运行没有这个按钮，运行已经结束时点了回「这次运行已经结束」。表里列最近 50 次，更早而还在跑的接在后面（此前只列最近 50 次）。此前编排运行没有停止的入口。
+- plugin-commands：群里 @ 她或引用她的消息发指令、回意图确认时，开头那个对她的 @（QQ 客户端自动插的，适配器写下的 `<at self>` 标记）不算正文：指令照常执行，回的 `y` 照常算确认，私聊同样；此前指令当普通消息交给她，`/clear` 等都没执行，引用她「确认执行 /clear 吗？」那条回的 `y` 按取消。
+- plugin-workflow：工作流页「最近运行」表里在跑的运行多一个「取消运行」（确认框）：点了之后这次运行停下、照常收尾，记录留在表里，状态为「已取消」，agent 节点已派发的那一轮在它的会话里照常跑完；已结束的运行没有这个按钮，运行已经结束时点了回「这次运行已经结束」。表里列最近 50 次，更早而还在跑的接在后面（此前只列最近 50 次）。此前停止编排运行只有工作流服务的 `cancelRun`，页面与工具里没有入口。
 - plugin-workflow：运行历史超过 `maxRuns` 时只裁最旧的已结束的运行，在跑的留着、收尾时照常更新（此前按先后裁，在跑的被裁掉之后到收尾之前不在运行历史里）。进程没有正常退出（崩溃、被强行结束）时还在跑的运行，下次载入运行历史时改成「已取消」，与停机时被打断的同一状态，错误写「进程退出时中断」，用时写「—」，`workflow_get_runs` 不带 `durationMs`，节点里在跑的记失败、等着的记跳过（此前一直停在「运行中」，用时一直在涨）。工作流页概况的「24 小时失败」只数失败的，不再算上已取消的。
 - plugin-paper：白纸页任务表与群会话面板里的行动作「取消」改名「取消任务」，确认框里确认的按钮与关掉框的「取消」不再同名。
 
 ### 通道层：时间线（@aalis/schema-message、@aalis/api-session-protocol、@aalis/api-agent、@aalis/plugin-agent、@aalis/plugin-message-archive、@aalis/plugin-session-server、@aalis/plugin-webui-client、@aalis/plugin-memory-summary）
 
-- api-session-protocol：`turn` 条目的 `by` 换成 `source`（这一轮的来源，真人消息开的没有）；回合条目在这一轮开始时推出，这一轮的输入随后带着同一个 `turnId` 并进来。历史里也有 `turn` 条目，由回合记录还原，带结局与来源。提问与通知加 `entry`（开轮的 `opened`、插进来的 `joined`）与 `addressed`（被点名为 true，多方房间里的插话为 false）；进了一轮的提问与通知带这一轮的 `turnId`。新增 `queue` 条目：这个会话排着、还没进一轮的输入，每个会话一条、整份替换。读 `turn.by` 的客户端照新形状改。
-- api-agent：实现者的约定多两项：每一轮在 `agent:turn:after` 之前写一条回合记录（结局与来源，登记的键 `TurnRecord`），记在最后落库的那条回复上，没有落库回复的一轮另落一条只带回合 id 与它的事件标记，不写的 agent，历史里没有这一轮的结局；输入入队、进了一轮、被放掉时发新增的事件 `agent:queue`（这个会话排着与待插入、还没进一轮的全部输入，按入队先后），不发的 agent，输入框上方列不出排着的消息。
+- api-session-protocol：`turn` 条目的 `by` 换成 `source`（这一轮的来源，真人消息开的没有）；回合条目在这一轮开始时推出，这一轮的输入随后带着同一个 `turnId` 并进来。历史里也有 `turn` 条目，由回合记录还原，带结局与来源。提问与通知加 `entry`（开轮的 `opened`、插进来的 `joined`）与 `addressed`（被点名为 true，多方房间里的插话为 false）；进了一轮的提问与通知带这一轮的 `turnId`。新增 `queue` 条目：这个会话排着、还没进一轮的输入，每个会话一条、整份替换。
+- api-agent：实现者的约定多一项：每一轮在 `agent:turn:after` 之前写一条回合记录（结局与来源，登记的键 `TurnRecord`），记在最后落库的那条回复上，没有落库回复的一轮另落一条只带回合 id 与它的事件标记，不写的 agent，历史里没有这一轮的结局。新增事件 `agent:queue`（这个会话排着与待插入、还没进一轮的全部输入，按入队先后），输入入队、进了一轮、被放掉时由 agent 发，不发的 agent，输入框上方列不出排着的消息。
 - plugin-agent：没有落库回复的一轮（静默、中止、出错）在存档里多一条只带回合记录的事件标记（`role: 'system'`、`kind: 'event-marker'`、正文为空，不进模型、不进摘要），连对话回滚随这一轮删；自己读存档的插件会读到它。
 - WebUI 时间线：进了一轮的提问与通知在这一轮的段里，被点名或插话开了这一轮的下面写「开了这一轮 · 被点名」或「开了这一轮 · 插话」，插进来的写「并入这一轮」，通知（如群里有人戳她）同样写；别的开轮不写（如 WebUI 与终端会话、默认设置下私聊里的提问，定时任务与宿主通知开的一轮）；没有输入的一轮（空闲开话题）段首写「来自 idle-trigger」。结局写在这一轮最后一段的末尾，什么都没做就停下或没回的一轮，结局紧跟在它的消息下面；刷新之后「没有回复」「已停止」「这一轮出错了」照样在（此前刷新就不见了）。「N 轮没有回复」合并时被并掉的几轮的输入照常显示。连对话回滚放回输入框的是这一轮 owner 的各条输入（空行连起来），此前是这一轮之前的那一条。排着、还没进一轮的消息列在输入框上方，进了一轮移进时间线。回合在跑时重连，这一轮的条目（插进来的输入也在其中）与这期间别人说的话按出现的先后排，与当时实时看到的一样（此前这一轮的条目一律排在最后）。房间里被停下的一轮说过的话写「没有发出：这一轮已停止」（此前「没有发出：回合已中止」）。
-- 工具调用组里夹进别的消息时（按时间戳读历史的存储，见上一节「读历史时」一条）：会话页的工具卡照常带着结果（此前显示为已停止、没有结果），翻页不拆开这一组；记忆摘要把这一组当一个完整的单位，能原样保留，夹进来的另成一个。
+- 工具调用组里夹进别的消息时（按时间戳读历史的存储，见「通道层：新消息不打断在跑的一轮」一节「读历史时」一条）：会话页的工具卡照常带着结果（此前显示为已停止、没有结果），翻页不拆开这一组；记忆摘要把这一组当一个完整的单位，能原样保留，夹进来的另成一个。
 
 ### 通道层：按条数读历史只数对话消息（@aalis/api-memory、@aalis/plugin-memory-inmemory、@aalis/plugin-memory-sqlite、@aalis/plugin-memory-mongodb、@aalis/plugin-memory-vector）
 
-- api-memory（给记忆后端的实现者）：按条数的 `getHistory(sessionId, limit)` 只数对话消息，schema-message 的 `CONTROL_KINDS`（回合记录、压缩分隔线、指令的回复这类事件标记）不占条数：读出第 `limit + 1` 新的那条对话消息之后的全部活跃消息，夹在其间的标记一并带回，对话消息不超过 `limit` 条时是全部活跃消息，`limit` 为 0 时为空。自己实现记忆后端的照改；不改时 agent 的条数线、按条数的压缩与按条数读历史的插件都被标记占去名额，没实现 `getFullHistory` 的后端上会话页翻历史还会提前到头，更早的翻不出来。
+- api-memory（给记忆后端的实现者）：按条数的 `getHistory(sessionId, limit)` 只数对话消息，schema-message 的 `CONTROL_KINDS`（回合记录、压缩分隔线、指令的回复这类事件标记）不占条数：读出第 `limit + 1` 新的那条对话消息之后的全部活跃消息，夹在其间的标记一并带回，对话消息不超过 `limit` 条时是全部活跃消息，`limit` 为 0 时为空。按旧口径（事件标记占条数）实现的记忆后端上，agent 的条数线、按条数的压缩与按条数读历史的插件都被标记占去名额；其中没实现 `getFullHistory` 的，会话页翻历史还会提前到头，更早的翻不出来。
 - 按条数读历史的插件（用户档案与关系图的提取窗口、识图时带的前文、会话标题等）随之只数对话消息，压缩分隔线这类事件标记不再占名额，多带真实消息。
 - plugin-memory-vector：命中点前后 N 条的扩窗不算事件标记，标记不再占名额。
 
@@ -437,16 +510,16 @@
 - plugin-agent：交给模型的历史里她的回复一律取可见正文（元数据的 `VisibleContent`），不再是结构化输出的整串信封：关掉结构化输出或换成纯文本人设之后，她不再照着历史里的信封回 JSON；开着结构化输出的会话里，格式只靠系统提示里的格式说明与校验重试。落库照旧存信封原文。`token:request` 的用量快照与真实回合同一个读法：不完整的工具调用组不交，用户消息带时间标注。
 - plugin-agent：回复不再改写表格分隔行：「带竖线的一行、下一行是 `---`」在 QQ 等平台照原样发出，历史里也是原文；WebUI 渲染时照旧修，显示不变。
 - plugin-agent：落库的时间线与正文同一份净化，刷新后的 WebUI 历史里不再出现漏进正文的工具调用标记；回复还在输出时的实时显示照旧。
-- util-text-normalize：`normalizeAssistantContent` 删除。剥漏出的协议标记用 `stripLeakedSpecialTokens`，渲染端修表格用 `fixGfmTables`。
+- util-text-normalize：`normalizeAssistantContent` 删除，它做的两步分别是导出的 `stripLeakedSpecialTokens`（剥漏出的协议标记）与 `fixGfmTables`（修表格）。
 
 ### 内部注入与存档（@aalis/schema-message、@aalis/api-message-archive、@aalis/plugin-message-archive、@aalis/plugin-memory-vector、@aalis/plugin-agent、@aalis/plugin-flow-control、@aalis/plugin-adapter-onebot）
 
-- api-message-archive：`archiveIncoming` 对空闲开话题的提示（`triggerType: 'idle'`）回 `undefined`，不落档、不发 `inbound:message:archived`，返回类型改为 `Promise<ArchiveIncomingResult | undefined>`。第三方存档要照做：agent 与 flow-control 不再按来源名字 `idle-trigger` 自己挡，换了来源名的空闲注入同样不落档。
+- api-message-archive：`archiveIncoming` 对空闲开话题的提示（`triggerType: 'idle'`）回 `undefined`，不落档、不发 `inbound:message:archived`，返回类型改为 `Promise<ArchiveIncomingResult | undefined>`。agent 与 flow-control 不再按来源名字 `idle-trigger` 自己挡，空闲提示落不落档只由 `archiveIncoming` 定：换了来源名的同样不落档，对它不回 `undefined` 的存档实现照样落档。
 - schema-message：存档元数据登记 `SenderLabel`（归档文本发送者前缀里的标签，只在加了前缀时写）与 `Mentions`（发言人自己写的话 @ 的账号，键名照旧是 `mentions`）；新增 `stripSenderPrefix(content, label)` 与 `extractMentions(text)`。`WellKnownKinds` 加 `IdlePrompt`（`'idle-prompt'`，空闲开话题的提示交给模型时那条指令块的 `injector`），`DIRECTIVE_KINDS` 随之多这一项。
 - plugin-message-archive：归档的 `Mentions` 只记发言人自己写的 @：引用的消息里别人 @ 的人不再算成这条消息 @ 了谁。
 - plugin-memory-vector：带 `source` 的入站一律不收录，好友申请、入群申请这类合成的系统通知不再作为申请人的发言进向量记忆、之后被检索回来。入站条目的被 @ 的人取存档的 `Mentions`。召回片段只按存档记下的 `SenderLabel` 去掉发送者前缀，正文本身以「[xx]: 」开头的消息不再被吞掉开头；此前归档的消息没有这个标签，召回片段里照原样带着「[昵称(账号)]: 」。
 - plugin-agent：空闲开话题的提示以 system 指令块交给模型（`metadata.injector` 为 `idle-prompt`），照常带时间与会话环境，不再当成有人这样对她说话。
-- plugin-adapter-onebot：撤回通知的摘录与引用反查按存档记下的标签去掉发送者前缀：正文本身以「[xx]: 」开头的不再被剥；owner 从 WebUI 往群里插的话被引用时，引用正文不再带「[<owner 账号>]: 」。此前归档的消息没有这个标签，摘录与引用照原样带前缀。
+- plugin-adapter-onebot：撤回通知的摘录与引用反查按存档记下的标签去掉发送者前缀，撤回摘录里正文本身以「[xx]: 」开头的不再被剥。此前归档的消息没有这个标签，摘录与引用照原样带前缀。
 
 ### 模型插件出口（@aalis/plugin-llm-openai、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-ollama、@aalis/plugin-embedding-openai、@aalis/plugin-embedding-ollama、@aalis/plugin-asr-openai、@aalis/plugin-okx-trading、@aalis/plugin-remote-agent-cursor、@aalis/plugin-maimai、@aalis/plugin-trigger-laya）
 
@@ -460,13 +533,13 @@
 ### onebot 动作与工具结局（@aalis/schema-message、@aalis/plugin-adapter-onebot、@aalis/plugin-tool-onebot、@aalis/plugin-tools、@aalis/plugin-session-server）
 
 - plugin-adapter-onebot：发送失败不再自动重发。超时或回执前断线的报「结果未知，可能已经执行」，投递结果带 `unconfirmed`（同一条里另有确定没发出的部分时也带，此前只在失败全部是上传超时时带；发起方据此按结果未知处理、不整条重发），上传超时与发消息超时同一句说法：「已发出但没等到确认，结果未知，可能已经送达，不要重发：<消息（第 K 条）或文件 名>」，群里不再因超时出现同一句两三遍。实现端回失败的按确定失败报，报错带动作名、返回码与实现端原话（「OneBot action <名> 失败（retcode=<码>）：<原话>」），返回码是协议的「不支持该动作」时（v11 取 NapCat 的 1404，v12 是 10002）另带 `unsupported: true`。
-- plugin-adapter-onebot：正文各条与附件的消息段逐条发，一条没发成就停，后面的（含附件的消息段）不再发。正文没发出时，后面的图片等附件消息段也不发；上传的文件照常各自上传。前面已经发出的，投递结果带 `sentPieces`（schema-message 的 `OutboundDeliveryResult` 失败分支新加的可选字段，存档元数据登记同一个数 `SentPieces`），原因只写停下那一条的原话，给她的投递回报写明前几条已经发出、不要整条重发（停在最后一条、这一条结果未知时同样），另有附件或文件没送达的另说一句；plugin-session-server 据此在时间线与历史里写「只发出了前 K 条：<原因>」，不再写「没有发出：平台没收下」。送达快照只带已发出的附件，存档据此只记这几张。投递结果的原因不再以「附件或消息未获完整发送确认：」开头。
+- plugin-adapter-onebot：正文各条与附件的消息段逐条发，一条没发成就停、后面的不发，上传的文件照常各自上传；停在中途时前面已经发出的，投递结果带 `sentPieces`（schema-message 的 `OutboundDeliveryResult` 失败分支新加的可选字段，存档元数据登记同一个数 `SentPieces`），原因只写停下那一条的原话，给她的投递回报写明前几条已经发出、不要整条重发（停在最后一条、这一条结果未知时同样），另有附件或文件没送达的另说一句；plugin-session-server 据此在时间线与历史里写「只发出了前 K 条：<原因>」，不再写「没有发出：平台没收下」。送达快照只带已发出的附件，存档据此只记这几张。投递结果的原因不再以「附件或消息未获完整发送确认：」开头。
 - plugin-session-server：结果未知的回复（投递结果带 `unconfirmed`；历史里按投递失败记录上结果未知的名单，存档元数据登记 `Unconfirmed`）在时间线与历史里写「可能已经发出，没等到平台确认：<原因>」，不再写「没有发出：平台没收下」。
 - plugin-adapter-onebot：合并转发只按 v11 标准的参数名 `id` 调 `get_forward_msg`，不再依次换 `message_id`、`res_id`、`m_resid` 重试：读不出时最多等 30 秒（此前最坏 2 分钟），工具报实现端原话。入站展开时拉不到的不进缓存，信封写「拉取失败」与实现端原话，之后 `onebot_get_forward_msg` 照常重新拉（此前拉取失败的结果缓存 7 天，工具回成功文字）。缓存命中时重建的信封与工具结果带上截断标志，`onebot_get_forward_msg` 的头一行注明已截断。
 - plugin-adapter-onebot：`getSelfIdentity()` 不给会话时，本实例恰好一个已知账号才回它，不再取第一个在线账号；给了认不出的会话时不回。
 - plugin-adapter-onebot：非契约扩展 `handleFriendRequest(selfId, userId, approve, remark?)`、`handleGroupRequest(selfId, subType, userId, groupId, approve, reason?)` 多了账号与申请类型参数，没有这条申请（可能已处理）、类型对不上或连接不可用时抛错。待处理的申请按账号（群请求另按类型）登记，同一实例多个账号的申请不再互相覆盖。
-- plugin-tool-onebot：工具失败一律报错，执行层按失败记，日志与 WebUI 的工具卡显示失败，模型拿到的是 `{"error": "…"}`，不再是一句「操作失败：…」或 `{ available: false }`、`{ supported: false }` 一类的成功结果；`onebot_get_self_mute_status` 与 `onebot_list_self_mutes` 成功时的结果去掉 `available`、`supported` 两项。群管工具查不到目标成员、`onebot_recall_self` 全部撤回失败时，报错只带适配器的原话，不再猜「该用户可能不在群中」「可能已超过可撤回时间」；实现端回成功却没给目标成员信息或没给角色时同样报错，不再当成普通成员放行；机器人自身的成员信息没给角色时与取不到时一样跳过检查，不再当成普通成员拦下。
-- plugin-tool-onebot：用到机器人账号的工具都有可选参数 `self_id`。不在 OneBot 会话里（WebUI、子任务、定时任务等）又不写 `self_id` 时，只有一个已知账号才用它，多个账号时报错并列出账号与连接状态，不再取先上线的账号；单账号部署不变。
+- plugin-tool-onebot：工具失败一律报错，执行层按失败记，日志与 WebUI 的工具卡显示失败，模型拿到的是 `{"error": "…"}`，不再是一句「操作失败：…」或 `{ available: false }`、`{ supported: false }` 一类的成功结果；`onebot_get_self_mute_status` 与 `onebot_list_self_mutes` 成功时的结果去掉 `available`、`supported` 两项。群管工具查不到目标成员、`onebot_recall_self` 全部撤回失败时，报错只带适配器的原话，不再猜「该用户可能不在群中」「可能已超过可撤回时间」；实现端回成功却没给目标成员信息或没给角色时同样报错，没给角色的不再当成普通成员放行；机器人自身的成员信息没给角色时与取不到时一样跳过检查，不再当成普通成员拦下。
+- plugin-tool-onebot：用到机器人账号的工具都有可选参数 `self_id`。不在 OneBot 会话里（WebUI、子任务、定时任务等）又不写 `self_id` 时，只有一个已知账号才用它，多个账号时报错并列出账号与连接状态，不再取第一个在线的账号（都不在线时取第一个已知账号）；单账号部署不变。
 - plugin-tool-onebot：戳一戳只在实现端回不支持该动作时才改用 `send_group_poke`、`send_poke`，超时、没权限等别的失败照报，不再换个动作再戳一次。
 - plugin-tool-onebot：`onebot_approve_join_request` 只处理加群申请，`onebot_handle_group_invite` 只处理入群邀请，个人组的入群邀请工具不能再批加群申请。
 - plugin-tools：执行层按结果记结局：工具返回带 `error` 的结果（或命令的退出码不为 0）与抛错一样记「工具 <名> 执行失败: <原因>」，成功才记「执行成功」；调用已中止的（停掉的后台命令、回合中止）记「执行中止」，不算失败。
@@ -483,36 +556,36 @@
 
 - api-llm：`ChatResponse` 加 `finishReason`（`'stop' | 'length' | 'tool_calls' | 'content_filter' | 'other'`），服务商报了才有，没报时没有这个字段（不可知）；`ChatStreamChunk` 在 `done` 那一段带同名字段。新增 `finishReasonOf(raw)` 给服务商翻译线上的值：前四种照原样，别的值记 `'other'`。三个第一方模型插件都填它。
 - util-json-repair：不再补被截断的结尾括号，少了 `}` 或 `]` 的对象解析失败（`parsed` 为 `null`）；删掉「XML 属性引号转义」一步，字符串里 `<face id="14"/>` 这类标签的属性引号照旧由裸引号转义处理。`repairsApplied` 不再出现 `XML 属性引号转义` 与 `补全缺失的 '}' 与 ']'`。plugin-persona 的结构化回复少了结尾括号时（截在最后一个值之后，或模型漏写）按格式不合格重试，重试用尽不发；服务商不报结束原因时，画像与关系图的抽取同样按解析失败重试，仍失败跳过这一批。
-- plugin-user-profile、plugin-user-relation：事实与关系图的抽取被输出上限截断（`finishReason` 为 `length`）时不再收下前半截，按解析失败重试一次，仍失败就跳过这一批；画像抽取回空的（不论报没报截断）与关系图一样按解析失败重试，此前当作没有可写的事实。重试的提示按实际原因写「在长度上限处被截断」或「不是合法的 JSON 对象」，不再猜「包了代码块、夹杂解释或被截断」。重试用同样的输出上限。
+- plugin-user-profile、plugin-user-relation：事实与关系图的抽取被输出上限截断（`finishReason` 为 `length`）时不再收下前半截，按解析失败重试一次，仍失败就跳过这一批；画像抽取回空的（不论报没报截断）与关系图一样按解析失败重试，此前当作没有可写的事实。重试的提示按实际原因写「在长度上限处被截断」或「不是合法的 JSON 对象」，不再猜「很可能是包了 markdown 代码块、夹杂解释文字、或被截断」。重试用同样的输出上限。
 - plugin-publish-review：分类回复被截断时按分类不可用，作品转人工。
-- plugin-media：`vision.maxTokens` 默认从 300 改为 2048，`audio.maxTokens` 默认从 1024 改为 2048，只防失控；识图描述不再在约 300 token 处断成半句。配置里显式写了这两项的照旧用写的值。识图与转写在上限处停下时，末尾带「（已在长度上限处截断）」，写进正文与描述缓存的都是带标记的版本，不重试。空响应的告警报结束原因，不再按用量占比猜「maxTokens 不足导致被截空」。
+- plugin-media：`vision.maxTokens` 默认从 300 改为 2048，`audio.maxTokens` 默认从 1024 改为 2048，只防失控；识图描述不再在约 300 token 处断成半句。配置里显式写了这两项的照旧用写的值。识图与转写在上限处停下时，末尾带「（已在长度上限处截断）」，写进正文与描述缓存的都是带标记的版本，不重试。空响应的告警报结束原因，不再按用量占比猜「可能是 maxTokens 不足导致 completion 被截空」。
 - plugin-adapter-onebot：合并转发摘要的输出上限改为 `forward.summaryMaxChars` 的 3 倍、不少于 2048 token（默认 600 字时为 2048，此前为 900）；在上限处停下时摘要末尾标出「（已在长度上限处截断）」，按全局层的语言，带标记的摘要进转发缓存。
 - plugin-websearch-serper：搜索结果压缩的输出上限从 1024 改为 2048 token，只防失控；在上限处停下时，交给 agent 的结果末尾标出「（已在长度上限处截断）」，不重试。
 
-### 文件类型判定与媒体（新包 @aalis/util-file-signature；@aalis/plugin-adapter-onebot、@aalis/plugin-tool-onebot、@aalis/plugin-media、@aalis/plugin-image-sender、@aalis/plugin-publish-review、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/plugin-asr-openai、@aalis/plugin-office、@aalis/plugin-paper）
+### 文件类型判定与媒体（新包 @aalis/util-file-signature；@aalis/plugin-adapter-onebot、@aalis/plugin-tool-onebot、@aalis/plugin-media、@aalis/plugin-image-sender、@aalis/plugin-publish-review、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/plugin-asr-openai、@aalis/plugin-office、@aalis/plugin-paper、@aalis/plugin-file-reader、@aalis/plugin-session-server、@aalis/plugin-tool-system）
 
-- `@aalis/util-media-signature` 改名 `@aalis/util-file-signature`（新包 0.1.0，旧包不再更新），另认文档、文本与动图：`MEDIA_HEAD_BYTES` 改名 `FILE_HEAD_BYTES`；`MediaFormat` 加 `ext` 与 `mime`，`format` 的类型收成格式名的联合 `MediaFormatName`；新增 `MEDIA_FORMATS`（按格式名查扩展名与 MIME）、`MEDIA_KIND_LABEL`（媒体种类的中文名）、`detectDocumentFormat`、`decodeUtf8Text`、`isAnimatedImage`。plugin-adapter-onebot、plugin-image-sender、plugin-media、plugin-publish-review、plugin-webui-server 改依赖新包，plugin-asr-openai、plugin-office、plugin-paper 新加这个依赖（破坏性）。
+- `@aalis/util-media-signature` 改名 `@aalis/util-file-signature`（新包 0.1.0，旧包不再更新），另认文档、文本与动图：`MEDIA_HEAD_BYTES` 改名 `FILE_HEAD_BYTES`；`MediaFormat` 加 `ext` 与 `mime`，`format` 的类型收成格式名的联合 `MediaFormatName`；新增 `MEDIA_FORMATS`（按格式名查扩展名与 MIME）、`MEDIA_KIND_LABEL`（媒体种类的中文名）、`detectDocumentFormat`、`decodeUtf8Text`、`isAnimatedImage`。plugin-adapter-onebot、plugin-image-sender、plugin-publish-review、plugin-webui-server 改依赖新包，plugin-media、plugin-asr-openai、plugin-office、plugin-paper、plugin-file-reader、plugin-session-server、plugin-tool-system 新加这个依赖（破坏性）。
 - plugin-asr-openai：上传给接口的文件名与类型取按内容判定的格式，路径后缀、Content-Type 或 data URL 写的类型与内容对不上的（如内容是 MP3、名字是 `.opus`）不再被接口拒；接口不接受的格式（AMR、SILK 与认不出的）读出来就报「Whisper 接口不接受 <格式> 音频」，不再改名成 `audio.wav` 硬传。
 - plugin-office：插图的格式按文件头认，扩展名或 Content-Type 写错的图按真实格式插入；Word 只收 PNG、JPEG、GIF、BMP，PPT 只收 PNG、JPEG、GIF，别的格式（WebP、SVG、AVIF 等）与不是图片的内容报错，不再产出打不开的文档。插图来源与 `pdf_convert` 的路径按文件工具的同一判定求值：宿主机绝对路径（含 `C:/`）报错，不再当成根名为 `C` 的存储地址读，也不再悄悄拼到输出目录下。
-- plugin-paper：成品类型按内容判定。MOV 视频记作 `mov`（记录的成品类型加这一项），`paper_send` 以视频发出、文件名 `<任务名>.mov`；M4A、HEIC、AVIF、MKV 等认得出但不能发的媒体记作 `other`，不再冒充 MP4；HTML 只看内容，扩展名不是 `.html` 的网页也按网页处理（开了 `sendHtml` 才发）。`paper_send` 不再核对远端给的原扩展名，发出的文件名照旧按判定类型重写。MOV 成品不进作品的自动挑选与提名（作品站按扩展名给类型，只收 MP4）。
+- plugin-paper：成品类型按内容判定。MOV 视频记作 `mov`（记录的成品类型加这一项），`paper_send` 以视频发出、文件名 `<任务名>.mov`；M4A、HEIC、AVIF 等认得出但不能发的媒体记作 `other`，不再冒充 MP4；HTML 只看内容，扩展名不是 `.html`、`.htm` 的网页也按网页处理（开了 `sendHtml` 才发）。`paper_send` 不再核对远端给的原扩展名，发出的文件名照旧按判定类型重写。MOV 成品不进作品的自动挑选与提名（作品站按扩展名给类型，只收 MP4）。
 - plugin-adapter-onebot：入站落盘的扩展名取文件头判定的格式：MOV 落成 `.mov`、MKV 落成 `.mkv`（此前一律 `.mp4`、`.webm`），认不出的落 `.bin`（此前图片落 `.jpg`、视频落 `.mp4`）。
 - plugin-tool-onebot：合并转发里 `get_image` 给的地址原样交给 media 识图，由 media 读出来按文件头认（此前插件自己读存储地址、按扩展名定 data URI 的类型，认不出当 PNG）。
-- plugin-media：要不要抽帧按读到的字节判：单帧 GIF 按静图识别，少一次 ffprobe 与多帧调用；APNG、动态 WebP 与没有扩展名的动图按动图抽帧；不再看 data URL 写的类型、扩展名与适配器报的 mimeType。网址来源的图先下载下来判（20 MiB 上限）；静图按读到的字节转成 data URL（类型取判定结果）交给识别模型或主模型，网址不再交给提供方去下，存储地址的静图不再按扩展名猜类型（认不出当 PNG）。抽不出帧的动图（缺 ffmpeg、解码不了）退回整图识别，不再写成视频的失败说明，`describeImage` 也不再回空串。到达识别时动图的描述位与静图同一形态（带落盘的引用，WebUI 上传的动图也落盘）；描述缓存命中时不再读来源，网址来源不重下。`describeImage` 的中止信号也让网址来源的下载停下。
+- plugin-media：要不要抽帧按读到的字节判：单帧 GIF 按静图识别，少一次 ffprobe 与多帧调用；APNG、动态 WebP 与没有扩展名的动图按动图抽帧；不再看 data URL 写的类型、扩展名与适配器报的 mimeType。网址来源的图先下载下来判（20 MiB 上限）；静图按读到的字节转成 data URL（类型取判定结果）交给识别模型或主模型，网址不再交给提供方去下，存储地址的静图不再按扩展名猜类型（认不出当 PNG）。抽不出帧的动图（缺 ffmpeg、解码不了）退回整图识别，不再写成视频的失败说明，`describeImage` 也不再回空串。到达识别时动图的描述位与静图同一形态（带落盘的引用，WebUI 上传的动图也落盘）；描述缓存命中时不读来源，网址来源不下载。`describeImage` 的中止信号也让网址来源的下载停下。
 - plugin-media：描述缓存不再按「[图片:」「[动图:」开头认识别失败，识别模型给出的以这几个字开头的描述照常缓存；视频取不到、抽不出帧的失败说明不进缓存，下次照样重试。失败说明不点名 OneBot：视频没有地址时写「[视频] 来源没有给出视频文件地址，无法获取内容」，音频转不出 WAV 时不再附「请检查 OneBot 实现端 get_record…」。
 - plugin-media：交给模型的音频格式按文件头认，MP4、MOV 等视频容器先转 WAV，不再一律当 M4A 原样交出。`analyze_image` 直通交付把网址读进内存、按文件头认图，不再看 Content-Type，也不落临时文件；data URI 同样按文件头认，写着的类型不看：类型写成 `image/png` 的非图片被拒，写成 `application/octet-stream` 的真图照常交出。
-- plugin-webui-client：条目附件与 Markdown 里的地址按 api-storage 的同一文法认存储地址，`file:` 开头的不再拼成 `/api/media` 去取（服务端回 400）：图片只写替代文字，附件写成一行名字。
+- plugin-webui-client：条目附件与 Markdown 里的地址按 api-storage 的同一文法认存储地址，`file:` 开头的不再拼成 `/api/media` 去取：图片只写替代文字，附件写成一行名字。
 - plugin-webui-server：图片代理（`/api/proxy/image`）按文件头认图，放行与 `/api/media` 同一份图片格式（PNG、JPEG、GIF、WebP），类型取判定结果、不看上游的 Content-Type：外链 SVG 不再经代理显示，类型头写错的真图照常显示；不是图片的回 415，说明改为「上游返回的不是能显示的图片」。`/api/media` 按 api-storage 的同一文法认存储地址，`file:/` 开头的回 400。
 
 ### 文件读取、WebUI 附件与 http 工具（@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/plugin-webui-client、@aalis/plugin-file-reader、@aalis/plugin-tool-system、@aalis/plugin-skills）
 
 - api-session-protocol：`turn/send` 的附件（`OutgoingAttachmentSchema`）只收 `data` 与 `name`，删掉 `kind`、`mimeType`、`byteSize`、`durationSec`；`data` 要是 base64 的 data URL，不是的（如存储地址）回不合参数（破坏性）。
 - plugin-session-server：`turn/send` 的附件种类按文件头判定，data URL 的类型头换成判定格式的 MIME，不是媒体的写 `application/octet-stream`，下游看不到浏览器报的类型。浏览器报错类型的文本文件（`.ts` 报成 `video/mp2t`、`.svg` 报成 `image/svg+xml`）改交文件读取当文本读，SVG 不再当图片送去识别；类型头写错的图片照样按图片处理。plugin-webui-client 的输入框发附件只带内容与名字，data URL 的类型一律写 `application/octet-stream`，空文件照常发出。
-- plugin-webui-client：有句柄的文件一律可以点开，点开时取来按内容判：UTF-8 文本（含没有扩展名的 README、扩展名不在原清单里的源码与配置）在对话框里预览，不是文本的用读到的字节直接下载，超过 512 KB 的不读完、直接下载，不再弹框写原因（这两种取的时候同样先弹出写着正在读取的对话框，取完关掉）；名字是 `md`、`markdown` 的照常渲染，名字只决定怎么渲染、不决定能不能预览。
+- plugin-webui-client：有句柄的文件一律可以点开，点开时取来按内容判：UTF-8 文本（含没有扩展名的 README、扩展名不在原清单里的源码与配置）在对话框里预览，不是文本的用读到的字节直接下载，超过 512 KB 的不读完、直接下载，不再弹框写原因（这两种取的时候同样先弹出写着正在读取的对话框，取完关掉）；扩展名是 `md`、`markdown` 的照常渲染，扩展名只决定怎么渲染、不决定能不能预览。
 - plugin-file-reader：QQ 发来的文件在文件段带网址时（附件是落盘的存储地址，落盘失败时是网址）能读了，不再一律「处理失败」：存储地址先看大小再读，网址经受保护的下载（15 秒超时，响应体流式限在 `maxFileSizeMB` 以内），`file://` 与本机路径不读、写明读不出；没给文件地址的写「来源没有给出文件地址」；别的处理失败带上原因。
 - plugin-file-reader：能不能当文本读、是哪种文档按内容判，不看附件报的 MIME 与扩展名：没有扩展名或扩展名不在原清单里的文本（源码、配置、README）能直接读；只认 UTF-8，GBK 等编码的文本与扩展名写成文本的二进制如实写读不出，不再硬解出乱码。读不出的描述写「读不出内容：<原因>」，不再把「[PDF 解析失败]」「[DOCX 无文本内容]」这类占位当文件内容内联；正文以方括号开头的普通文本照常内联。DOCX 内嵌图片按文件头认类型，认不出的（EMF、WMF 等）不送去识别。
 - plugin-file-reader：会话面板与工具输出里的「类型」是判定出的格式名（`文本`、`PDF`、`DOCX`、`PNG`…），不再是 MIME；元信息里的 `mimeType` 换成 `format`，`textCache` 换成结构化的 `extraction`，旧的文字缓存不再读，下次用到时重新解析。
 - plugin-file-reader：`read_uploaded_file` 遇到已清理的文件如实报找不到、请用户重新上传，不再从会话历史里找旧的工具结果冒充文件内容，插件不再用 memory 服务；`maxLength` 要是正整数（负数、0 与小数报错，此前负数切掉尾部、0 不截断），截断不切开代理对；配置的 `toolDefaultMaxLength` 要是非负整数，0 表示不截断（与同组的 `retentionDays`、`lruMaxTotalMB` 一样 0 表示不限），负数与小数读配置时报配置错误，实例转为出错。三个工具的失败一律抛错，WebUI 工具卡上显示为失败。
-- plugin-tool-system：`http_request` 的字符串正文（`body`）原样发出，不再补 `Content-Type: application/json`；要发 JSON 用新参数 `json`（请求头没写 `Content-Type` 时补 `application/json`；给的不是对象的报错，字符串正文用 `body`），两个都给的报错。响应是不是文本按内容判：声明类型不常见的文本（如 `application/vnd.api+json`）能看到正文，声明成文本的二进制只给「不是 <编码> 文本」与字节数、声明的类型，不再返回乱码；编码按服务端声明的 charset，声明成 GBK 等编码的正文照常读出，没声明或认不出的按 UTF-8。`Content-Length` 超限时取消响应体，`http_download` 上游回错误状态时也取消，不再占着连接。
+- plugin-tool-system：`http_request` 的字符串正文（`body`）原样发出，不再补 `Content-Type: application/json`；新参数 `json` 按 JSON 发出请求正文（请求头没写 `Content-Type` 时补 `application/json`，给的不是对象的报错），`body` 与 `json` 两个都给的报错。响应是不是文本按内容判：声明类型不常见的文本（如 `application/vnd.api+json`）能看到正文，声明成文本的二进制只给「不是 <编码> 文本」与字节数、声明的类型，不再返回乱码；编码按服务端声明的 charset，声明成 GBK 等编码的正文照常读出，没声明或认不出的按 UTF-8。`Content-Length` 超限时取消响应体，`http_download` 上游回错误状态时也取消，不再占着连接。
 - plugin-skills：`createSkill` 探目标目录时，存储报的不是「不存在」（没有权限、存储不可用）就报错，不再当作目录不存在去创建。
 
 ### 关系图与档案提取（@aalis/plugin-user-relation、@aalis/plugin-user-profile）
@@ -537,18 +610,17 @@
 - plugin-draw：`draw_animation` 不再按正则查轨迹漂移与循环跳变，结果的 `warnings` 只剩没有声明式动画那一条；工具说明删掉配套的两句提示。
 - plugin-scheduler：配置文件里的任务只写了 `actorPlatform`、`actorUserId` 之一时不再补成 owner 照跑：这条任务不载入，日志记一条错误，WebUI「需要处理」出一条错误提示去改配置文件；持久化里同名的动态任务不顶替它，`scheduler_create_job` 与服务的 `addJob` 用这个名字新建时报「来自配置文件」。
 - plugin-subtask：子任务上下文的「共享资源规则」改为不点名文档的「协作规则」（只操作自己负责的范围、汇报做了什么），不再写 docId 与「不要调用 save」；`create_subtask` 的说明不再点名 `manage_todo_list` 与 office 的文档。plugin-office：建文档的三个工具写子任务直接用任务指令里给的 docId，保存的三个工具写在子任务里不调用。
-- api-process：`SpawnOptions.env` 改为替换语义，给了就是子进程的完整环境，不给时继承宿主环境（破坏性，第三方实现照此）；plugin-process-local 照此实现。plugin-tool-code-runner 在 `sandbox.mode=none` 时脚本也只拿到白名单里的环境变量，白名单补上 Windows 的 `TEMP`、`TMP`、`USERPROFILE`。
+- api-process：`SpawnOptions.env` 改为替换语义，给了就是子进程的完整环境，不给时继承宿主环境（破坏性）；plugin-process-local 按这个语义实现。plugin-tool-code-runner 在 `sandbox.mode=none` 时脚本也只拿到白名单里的环境变量，白名单补上 Windows 的 `TEMP`、`TMP`、`USERPROFILE`。
 - plugin-tool-search：每个关键词取最具体的一档（工具自己的说明排在分组说明之前），各关键词的得分相加，多命中一个的排前面；`found` 改为匹配总数（数字），删掉 `pagination`；还有下一页时 `hint` 开头写还有几个没给、下一页的 `offset`，`offset` 超出匹配数时照实说。
 - plugin-tool-system：`/tools` 只列真正注册了的工具组，开关开着、因缺 storage 或 process 跳过注册的不列。
 - plugin-webui-server：WebSocket 连接建立时认不出身份的以 1008「认不出身份」关闭、记 warn，不再补成 `webui:console`（owner）。
-- 给人看的文字不带表情与勾叉：plugin-commands 的 `/clear` 回执每行就是各家的说明，不再按 `success` 加勾叉，`memory:clear` 结果行的 `message` 要自己写明成败（api-memory 的说明写明，第三方插件照此），警告不带符号（删掉字典键 `cleared`、`notCleared`）；plugin-tool-system 的 `/tools`、plugin-maimai 的查分文案（指令与工具共用）、plugin-doctor 的诊断报告（汇总与分组写「通过」「警告」「错误」）不带表情与符号；create-aalis 与 create-aalis-plugin 的终端提示与生成的插件 README，以及 okx-trading、code-runner、storage-local 的启动告警，警告写「注意：」。
+- 给人看的文字不带表情与勾叉：plugin-commands 的 `/clear` 回执每行就是各家的说明，不再按 `success` 在行首加勾号或警示符号，`memory:clear` 结果行的 `message` 由写这一行的一方写明成败（api-memory 的契约说明写明），警告不带符号；plugin-tool-system 的 `/tools`、plugin-maimai 的查分文案（指令与工具共用）、plugin-doctor 的诊断报告（汇总与分组写「通过」「警告」「错误」）不带表情与符号；create-aalis 与 create-aalis-plugin 的终端提示与生成的插件 README，以及 okx-trading、code-runner、storage-local 的启动告警，警告写「注意：」。
 
-### 停下的一轮留标记（@aalis/schema-message、@aalis/api-agent、@aalis/plugin-agent、@aalis/plugin-session-server、@aalis/plugin-memory-vector）
+### 停下的一轮留标记（@aalis/schema-message、@aalis/plugin-agent、@aalis/plugin-session-server、@aalis/plugin-memory-vector）
 
 - plugin-agent：一轮在回复之前被停下（停止键、`/stop`、禁言、停机、后台页的全部停止），会话历史里已有这一轮的输入或工具调用时，回合记录之前多一条只给模型看的停下标记（`role: 'system'`、`kind: 'turn-stopped'`，有停下的人时写是谁），下一轮的模型看得到这一轮没答完就停了；界面不显示，占一条历史条数。停止键、全部停止与 `/stop` 写停下的人（称呼与发送者前缀同一条规则，owner 自己的会话里不写），禁言与停机不写人。
 - schema-message：`WellKnownKinds` 加 `TurnStopped`（`'turn-stopped'`）。
-- api-agent：`abort` 的选项加 `by`（停下这一轮的人，与入站的 `actor` 同一形状）。
-- plugin-memory-vector：召回片段不再带出投递回报与停下标记（role 为 system 的记录），它们也不占扩窗前后 N 条的名额。
+- plugin-memory-vector：召回片段不带出 role 为 system 的记录（投递回报、停下标记），它们也不占扩窗前后 N 条的名额；此前投递回报会被带出、占名额。
 
 ### 终端按段显示（@aalis/plugin-cli）
 
@@ -558,11 +630,11 @@
 
 ### 转发一栏（@aalis/schema-message、@aalis/plugin-adapter-onebot、@aalis/plugin-tool-onebot、@aalis/plugin-message-archive、@aalis/api-session-protocol、@aalis/plugin-session-server、@aalis/plugin-webui-client）
 
-- schema-message：`IncomingMessage` 加 `forwards`（`ForwardedChat` 的数组：给模型的展开 `content` 与给界面的事实 `facts`），加 `ForwardFacts`、`ArchivedForward`、`forwardPlaceholder`、`withForwards` 与存档元数据键 `Forwards`；`buildIncomingContent` 把转发的展开换回正文里占位的位置。适配器必须在 `content` 里写占位（转发 id 不含双引号），漏写的展开不进归档文本。
-- plugin-adapter-onebot：合并转发的展开不再写进入站消息的 `content`，正文在转发处留 `<forward id="…">[合并转发消息]</forward>`，展开与事实放进 `forwards`；存档正文与模型看到的不变。转发里出现她的名字或禁言关键词不再算点名、不再触发禁言，转发里的字不再触发技能的自动激活，转发里的 @ 不再记进 `Mentions`（关系图认被 @ 的人、向量记忆按 @ 加权都不再算它们）；识图时交给视觉模型的当前消息不再带转发。`forward.summarize` 的说明改准。`get_forward_msg` 命中缓存时交回的条目里 `participants` 只有前 8 个，没列出的人数另在 `unlisted`。实现端对顶层转发回了成功却什么也没展开出来（数据为空或没有节点）的，与拉取失败一样不进缓存、不调摘要。
+- schema-message：`IncomingMessage` 加 `forwards`（`ForwardedChat` 的数组：给模型的展开 `content` 与给界面的事实 `facts`），加 `ForwardFacts`、`ArchivedForward`、`forwardPlaceholder`、`withForwards` 与存档元数据键 `Forwards`；`buildIncomingContent` 把转发的展开换回正文里占位的位置，只换写了占位的（转发 id 不含双引号），没写占位的展开不进归档文本。
+- plugin-adapter-onebot：合并转发的展开不再写进入站消息的 `content`，正文在转发处留 `<forward id="…">[合并转发消息]</forward>`，展开与事实放进 `forwards`；存档正文与给对话模型的文字里，转发照旧在原位置展开。转发里出现她的名字或禁言关键词不再算点名、不再触发禁言，转发里的字不再触发技能的自动激活，转发里的 @ 不再记进 `Mentions`：向量记忆按 @ 加权不再算它们，关系图按 `Mentions` 认被 @ 的人时也不认它们；识图时交给视觉模型的当前消息不再带转发。`forward.summarize` 的说明改准。`get_forward_msg` 命中缓存时交回的条目里 `participants` 只有前 8 个，没列出的人数另在 `unlisted`。实现端对顶层转发回了成功却什么也没展开出来（数据为空或没有节点）的，与拉取失败一样不进缓存、不调摘要。
 - plugin-message-archive：发言人写的话（`SpokenContent`）不再带转发的展开，另记 `Forwards`（各段的 id 与事实）。
-- api-session-protocol：提问条目加 `forwards`（给界面的事实），文字里没有转发的占位；协议版本照旧 1.1。
-- plugin-session-server：提问条目的文字去掉转发的占位、另交 `forwards`；排队条目的文字同样去掉占位。
+- api-session-protocol：提问条目加 `forwards`（给界面的事实），文字里没有转发的占位。
+- plugin-session-server：提问条目的文字不带转发（此前带着整段展开），转发另交 `forwards`；排队条目的文字同样不带转发。
 - plugin-webui-client：时间线把提问随附的转发画成可展开的「转发的聊天记录」块，默认收起，按钮写条数与参与者，开合跟着「全部展开」「全部折叠」；没有展开内容的写一行。
 
 ### 画像原话（@aalis/plugin-user-profile）
@@ -580,7 +652,7 @@
 
 ### 选工具分组时看得到组里的工具（@aalis/api-webui、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/plugin-tools）
 
-- api-webui：`OptionDetail` 与 `OptionItem` 加 `members`（选上这一项会带上的成员的名字），`OptionsResponse` 加 `others`（不属于任何可选项的成员与这一行的名字，只有宿主回答的来源交）。
+- api-webui：`OptionDetail` 加 `members`（选上这一项会带上的成员的名字，贡献点 `webui:options` 来源给的 `OptionItem` 同样可带），`OptionsResponse` 加 `others`（不属于任何可选项的成员与这一行的名字，只有宿主回答的来源交）。
 - plugin-webui-server：`/api/models/toolGroups` 的每个有工具的分组带组内工具的名字，另交不属于任何分组的工具（`others`）。
 - plugin-webui-client：设置与插件配置里的多选在带成员的选项下写「包含 N 项」、点开列出，默认收起；来源给了 `others` 时末尾一行写它的名字（工具分组写「不属于任何分组的工具」），同样点开列出。
 - plugin-tools：「工具分组」的说明写明不属于任何分组的工具总是给。
@@ -615,7 +687,7 @@
 
 ### 她定义编排每次要 owner 审批（@aalis/plugin-workflow）
 
-- `workflow_define` 声明 `confirm: 'always'`，每次要 owner 审批，审批卡上是 YAML 原文；免确认白名单（`restrictedPolicy`）不免；只有参与者都是 owner 的回合能免：`confirmOverrides` 把 `tool:workflow_define` 设为 `off`，或设为 `session` 再被白名单免掉。批过的编排，定义者是批的人。不能产生审批的回合（定时任务、编排节点、mcp-server、空闲触发与主动发言等）里定义编排被拒。工作流页「新建或覆盖」照旧不问。此前它是等级 1、不确认：一次被注入的回合就能留下一份此后一直按调用者身份运行的编排。
+- `workflow_define` 声明 `confirm: 'always'`，每次要 owner 审批，审批卡上是 YAML 原文；免确认白名单（`restrictedPolicy`）不免；只有参与者都是 owner 的回合能免：`confirmOverrides` 把 `tool:workflow_define` 设为 `off`，或设为 `session` 再被白名单免掉。批过的编排，定义者是批的人。不能产生审批的回合（定时任务、编排节点、mcp-server、空闲触发与主动发言等）里定义编排被拒。工作流页「新建或覆盖」照旧不问。此前它是等级 1、不确认。
 
 ## 2026-10-11（create-aalis 0.7.1 patch）
 
