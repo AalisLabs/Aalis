@@ -268,12 +268,12 @@ describe('页面登记', () => {
           'Limit 0 cents (tasks blocked); booked 0 cents; reserved 0 cents',
         ],
         limitedScope: (day: string) => `Global (${day}, limit 1 cent)`,
-        typeShared: 'Shared (1): all rooms under “Platform-type profile onebot · group”',
+        typeShared: 'Shared (1): all rooms under Platform-type profile “onebot · group”',
         roomLimits: ['1 cent', 'Unlimited'],
         unlimited:
           'Unlimited (neither this paper nor the global setting has a limit; room limits apply separately); booked 1 cent; reserved 0 cents; unattributed costs (including old entries) of 2 cents are counted conservatively against every paper’s budget',
         unlimitedScope: (day: string) => `Global (${day}, unlimited)`,
-        globalShared: 'Shared (1): all rooms under “Global (plugin config)”',
+        globalShared: 'Shared (1): all rooms under Global (plugin config)',
       },
     ],
     [
@@ -286,7 +286,7 @@ describe('页面登记', () => {
           '上限 0 美分（禁任务）；已记 0 美分；预留 0 美分',
         ],
         limitedScope: (day: string) => `全局（${day}，上限 1 美分）`,
-        typeShared: '共用（1）：平台类型档 onebot · group 的全部房间',
+        typeShared: '共用（1）：平台类型档「onebot · group」的全部房间',
         roomLimits: ['1 美分', '不限'],
         unlimited:
           '不限额（这块白纸与全局都没设上限；房间上限另算）；已记 1 美分；预留 0 美分；未归属费用（含旧账）2 美分，保守计入每块白纸额度',
@@ -766,7 +766,7 @@ describe('白纸详情的「共用的房间」', () => {
       listed: [ROOM],
       platformTypes: { 'onebot/group': { paperName: PAPER } },
     });
-    expect((await info(hub)).get('共用的房间')).toBe(`共用（2）：${ROOM}、平台类型档 onebot · group 的全部房间`);
+    expect((await info(hub)).get('共用的房间')).toBe(`共用（2）：${ROOM}、平台类型档「onebot · group」的全部房间`);
   });
 
   /** 窗口的场所只开了白纸、没写白纸名：白纸名取覆盖一类房间的层 */

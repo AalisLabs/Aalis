@@ -29,13 +29,13 @@ const SOURCE = {
   languagesProvided: '语言列表里的语言都有插件提供',
   languageUnprovided: '语言列表里的 {language} 没有插件提供，实际用 {used}',
   layerLanguageUnprovided: '{layer}里的 {language} 没有插件提供，实际用 {used}',
-  layerPlatform: '{layer} {platform}',
-  layerPlatformType: '{layer} {platform} · {type}',
+  layerPlatform: '{layer}「{platform}」',
+  layerPlatformType: '{layer}「{platform} · {type}」',
   layerPlace: '{layer}「{place}」',
   installPack:
-    '装上提供这种语言的语言包（在插件市场或 npm 按关键词 {keywords, list, or} 找），或在会话设置的{layer}里调整「语言」列表',
+    '装上提供这种语言的语言包（在插件市场或 npm 搜索关键词 {count, plural, =1 {{keywords, list}} other {{keywords, list} 之一}}），或在会话设置的{layer}里调整「语言」列表',
   installPackGlobal:
-    '装上提供这种语言的语言包（在插件市场或 npm 按关键词 {keywords, list, or} 找），或在设置「会话默认」里调整{layer}层的「语言」一行',
+    '装上提供这种语言的语言包（在插件市场或 npm 搜索关键词 {count, plural, =1 {{keywords, list}} other {{keywords, list} 之一}}），或在设置「会话默认」里调整{layer}层的「语言」一行',
 } as const;
 export type Source = typeof SOURCE;
 

@@ -322,8 +322,8 @@ describe('右侧面板与会话头', () => {
     const origin = (source: string) => settingRow(`<${source}>`).getByText(/^来自：/).textContent;
     expect(sources.map(origin)).toEqual([
       '来自：群「读书会」（场所）',
-      '来自：平台类型档 onebot · 群',
-      '来自：平台档 onebot',
+      '来自：平台类型档「onebot · 群」',
+      '来自：平台档「onebot」',
       '来自：全局（插件配置）',
       '来自：默认',
     ]);
@@ -337,7 +337,7 @@ describe('右侧面板与会话头', () => {
     });
     await panel().findByRole('group', { name: '<place>' });
     expect(origin('place')).toBe('来自：工作区「论文」（场所）');
-    expect(origin('platform'), '没有出生平台的会话写会话服务取平台档用的入口平台').toBe('来自：平台档 webui');
+    expect(origin('platform'), '没有出生平台的会话写会话服务取平台档用的入口平台').toBe('来自：平台档「webui」');
   });
 
   it('改时选写到哪一层：只这个会话、这个场所（工作区、群、私聊）、全局（插件配置），平台档与平台类型档不在选项里；选哪个写进哪一层，生效值出自那一层的行有「恢复继承」，全局层的叫「恢复默认」', async () => {

@@ -163,10 +163,9 @@ export default defineLocale<Source>()({
   paperMissing:
     'The paper “{name}” set for this room does not exist (the paper plugin config has no such name under papers)',
   roomPaperLabel: 'Room paper {id}',
-  profilePlatform: '{layer} {platform}',
-  profilePlatformType: '{layer} {platform} · {type}',
-  allRoomsGlobal: 'all rooms under “{layer}”',
-  allRoomsNamed: 'all rooms under “{layer}”',
+  profilePlatform: '{layer} “{platform}”',
+  profilePlatformType: '{layer} “{platform} · {type}”',
+  allRooms: 'all rooms under {layer}',
   pausedHalted: 'This paper is halted ({detail}); waiting for the owner to resume it in the WebUI',
   pausedUnknownAgent:
     'The account of remote agent “{type}” has an untracked agent; waiting for the owner to verify it in the WebUI and mark it as read',
@@ -204,7 +203,7 @@ export default defineLocale<Source>()({
   doctorAccountUnknown:
     'Could not get the remote account id of provider “{type}” (used by {papers, list}; reason: {detail}); treated as a conflict, so no named paper referencing providers of this kind will start',
   doctorTypesInherited:
-    'remoteAgentTypes ({types, list}) is set in “{layer}”, so every room with paper enabled that this layer covers inherits it; set it per window in the room’s place settings instead',
+    'remoteAgentTypes ({types, list}) is set in {layer}, so every room with paper enabled that this layer covers inherits it; set it per window in the room’s place settings instead',
   doctorRemoteAbsent: 'Remote agent “{type}” referenced by paper {name} is not present',
   doctorShared:
     'Paper {name} is shared by several rooms ({rooms, list}): the long-lived agent’s conversation and workspace are visible to all of them',
@@ -301,7 +300,7 @@ export default defineLocale<Source>()({
     'Could not submit for publishing within 24 hours (the publish target or publish service stayed unavailable)',
   targetNotAllowed: 'This paper is not allowed to use that publish target',
   receiptUnverified: 'The origin of the publishing receipt could not be verified',
-  publishOutcome: 'Publishing ended as {state}',
+  publishOutcome: 'Publishing ended: {state}',
   selectedGone: 'The selected outputs no longer exist',
   selectedPathsBad: 'The selected work paths do not meet the publishing requirements',
   coverGone: 'The selected cover no longer exists',
