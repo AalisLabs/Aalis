@@ -155,7 +155,7 @@ const REASONS: Record<Exclude<ApprovalSource, 'answer'>, [reason: string, again:
   timeout: [`等了 ${APPROVAL_WAIT_MS / 1000} 秒没有人应答`, '可以再申请；不要换别的办法绕过'],
   ineligible: ['这一轮里没有 owner 的话，要 owner 确认的操作不能执行', '不能；不要换别的办法绕过'],
   'rate-limit': [
-    `这个会话树（根会话连同各级子会话）${RATE_WINDOW_MS / 60_000} 分钟内的审批已达 ${RATE_LIMIT} 张的上限`,
+    `这个会话树（根会话连同各级子会话）${RATE_WINDOW_MS / 60_000} 分钟内的同一种审批已达 ${RATE_LIMIT} 张的上限`,
     '稍后可以；先停下来说明在做什么',
   ],
   'turn-ended': ['发起它的回合已结束', '可以在新的一轮里再申请'],
@@ -257,7 +257,7 @@ export function createApprovals(deps: ApprovalDeps) {
   /**
    * 在场或推出的审批有变：按会话记下推出的审批从什么时候起没有覆盖它的在场客户端，有了覆盖或队列空了即撤（队首刚结、下一张
    * 还没推出的那一拍照旧记着）；宽限的计时器定在最早到期的会话上。覆盖推出的审批的在场客户端都拿着它，不会到时失效，
-   * 只在离开、断开、登记撤回时变
+   * 只在离开、断开、登记撤回与报没送到（undelivered）时变
    */
   function recheck(): void {
     const now = Date.now();

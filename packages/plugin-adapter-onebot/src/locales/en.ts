@@ -136,7 +136,7 @@ export default defineLocale<Source>()({
   noHead: 'Could not read the file header, so it was not sent',
   tooLargeToUpload: '{size} bytes exceed the inline limit and cannot be uploaded as a file',
   uploadBase64Only:
-    'File uploads only accept base64:// (NapCat cannot read a file that exceeds the inline limit or comes from a host path or the original link)',
+    'File uploads only accept base64:// (NapCat cannot read a file that exceeds the inline limit or comes from a host path)',
   notUrl: 'The address is not a URL, so it was not passed to the OneBot implementation and was not sent',
   cannotInline: 'The {format} format cannot be inlined, so it was not sent',
   tooLargeToInline:

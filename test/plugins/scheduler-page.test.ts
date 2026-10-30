@@ -641,7 +641,7 @@ describe('读不出来与没排上的提示', () => {
             id: 'unscheduled:bad',
             level: 'error',
             title: '计划任务「bad」没有排上，不会运行',
-            detail: expect.stringMatching(/^在计划任务页编辑这个任务，改正它的 cron 后保存。原因：\S/),
+            detail: expect.stringMatching(/^在计划任务页编辑这个任务，改正它的调度方式后保存。原因：\S/),
             open: { page: 'scheduler' },
           },
           expect.objectContaining({ id: 'unscheduled:worse' }),
@@ -668,7 +668,7 @@ describe('读不出来与没排上的提示', () => {
             id: 'unscheduled:static',
             level: 'error',
             title: '计划任务「static」没有排上，不会运行',
-            detail: expect.stringMatching(/^在配置文件里改正这个任务的 cron 或 timeZone，保存后生效。原因：\S/),
+            detail: expect.stringMatching(/^在配置文件里改正这个任务的调度方式或 timeZone，保存后生效。原因：\S/),
             open: 'config',
           },
         ]);
@@ -695,7 +695,7 @@ describe('读不出来与没排上的提示', () => {
             id: 'unscheduled:tz',
             level: 'error',
             title: '计划任务「tz」没有排上，不会运行',
-            detail: '在配置文件里改正这个任务的 cron 或 timeZone，保存后生效。原因：非法时区：Mars/Olympus',
+            detail: '在配置文件里改正这个任务的调度方式或 timeZone，保存后生效。原因：非法时区：Mars/Olympus',
             open: 'config',
           },
         ]);
@@ -824,7 +824,7 @@ describe('固定间隔的上下限', () => {
             id: 'unscheduled:static',
             level: 'error',
             title: '计划任务「static」没有排上，不会运行',
-            detail: `在配置文件里改正这个任务的 cron 或 timeZone，保存后生效。原因：${reason('2592000')}`,
+            detail: `在配置文件里改正这个任务的调度方式或 timeZone，保存后生效。原因：${reason('2592000')}`,
             open: 'config',
           },
           expect.objectContaining({ id: 'unscheduled:static-every' }),
@@ -833,7 +833,7 @@ describe('固定间隔的上下限', () => {
             id: 'unscheduled:stored',
             level: 'error',
             title: '计划任务「stored」没有排上，不会运行',
-            detail: `在计划任务页编辑这个任务，改正它的 cron 后保存。原因：${reason('2592000')}`,
+            detail: `在计划任务页编辑这个任务，改正它的调度方式后保存。原因：${reason('2592000')}`,
             open: { page: 'scheduler' },
           },
         ]);
@@ -874,14 +874,14 @@ describe('计划任务给人看的出口按读者的语言', () => {
   const CASES = {
     en: [
       'Scheduled task “tz” could not be scheduled and will not run',
-      "Fix this task's cron or timeZone in the configuration file; it takes effect once saved. Reason: Invalid time zone: Mars/Olympus",
+      "Fix this task's scheduling method or timeZone in the configuration file; it takes effect once saved. Reason: Invalid time zone: Mars/Olympus",
       'Ran every',
       'Succeeded',
       'One of cron, fixed interval, one-time run at and run once after X seconds must be filled in',
     ],
     'zh-CN': [
       '计划任务「tz」没有排上，不会运行',
-      '在配置文件里改正这个任务的 cron 或 timeZone，保存后生效。原因：非法时区：Mars/Olympus',
+      '在配置文件里改正这个任务的调度方式或 timeZone，保存后生效。原因：非法时区：Mars/Olympus',
       '已执行 every',
       '成功',
       'cron、固定间隔、一次性运行时间、X 秒后执行必须填写其中之一',

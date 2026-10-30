@@ -113,7 +113,7 @@ const SOURCE = {
   groupOnlyDescription: '私聊一般无需关系图上下文',
   recallScopeLabel: '关系图范围',
   recallScopeDescription:
-    '注入关系图与关系图工具取哪些会话的事件：仅本会话时注入不带别的会话里抽出的事件、跨会话话题与全局热点，人际关系照常，工具的会话作用域只能是本会话；写坏了按仅本会话',
+    '注入关系图、关系图工具与 /relation 的查看指令取哪些会话的事件：仅本会话时注入不带别的会话里抽出的事件、跨会话话题与全局热点，人际关系照常，工具的会话作用域只能是本会话，/relation show 与 orphans 只列本会话的事件；写坏了按仅本会话',
   recallScopeSession: '仅本会话',
   recallScopeAll: '全部',
   toolsLabel: '向 Agent 暴露 dig 工具',

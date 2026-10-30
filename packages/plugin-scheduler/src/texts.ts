@@ -39,7 +39,7 @@ const SOURCE = {
   fieldCronDescription:
     '5 字段或别名：@hourly、@daily、@weekly、@every 30s；与固定间隔、一次性运行时间、X 秒后执行四选一',
   fieldIntervalLabel: '固定间隔（秒）',
-  fieldIntervalDescription: '不小于 5；与其余三种调度方式四选一',
+  fieldIntervalDescription: '不小于 5、不超过 {max, number}（约 24.8 天）；与其余三种调度方式四选一',
   fieldRunAtDescription: 'ISO 时间，如 2026-05-19T10:00:00；执行一次后自动删除',
   delaySecondsLabel: 'X 秒后执行一次',
   delaySecondsDescription: '换算成一次性运行时间 = 现在 + N 秒，执行一次后自动删除',
@@ -95,8 +95,8 @@ const SOURCE = {
   loadFailedContent:
     '修好这个文件后重载本插件：内容要是任务数组；不要里面的任务就把它移走再重载。修好之前新建与改动的任务只在本次运行生效。原因：{error}',
   unscheduledTitle: '计划任务「{name}」没有排上，不会运行',
-  unscheduledInConfig: '在配置文件里改正这个任务的 cron 或 timeZone，保存后生效。原因：{error}',
-  unscheduledOnPage: '在计划任务页编辑这个任务，改正它的 cron 后保存。原因：{error}',
+  unscheduledInConfig: '在配置文件里改正这个任务的调度方式或 timeZone，保存后生效。原因：{error}',
+  unscheduledOnPage: '在计划任务页编辑这个任务，改正它的调度方式后保存。原因：{error}',
   halfActorTitle: '计划任务「{name}」没有载入：执行身份只写了一半',
   halfActorDetail:
     '在配置文件里把这个任务的 actorPlatform 与 actorUserId 写成一对，或两项都删掉（以 owner 身份运行），保存后生效。',

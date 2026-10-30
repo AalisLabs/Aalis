@@ -40,7 +40,8 @@ export default defineLocale<Source>()({
   fieldCronDescription:
     '5 fields or an alias: @hourly, @daily, @weekly, @every 30s; exactly one of this, fixed interval, one-time run at and run once after X seconds',
   fieldIntervalLabel: 'Fixed interval (seconds)',
-  fieldIntervalDescription: 'At least 5; exactly one of the four scheduling methods',
+  fieldIntervalDescription:
+    'At least 5 and at most {max, number} (about 24.8 days); exactly one of the four scheduling methods',
   fieldRunAtDescription: 'An ISO time, such as 2026-05-19T10:00:00; deleted automatically after running once',
   delaySecondsLabel: 'Run once after X seconds',
   delaySecondsDescription: 'Converted to a one-time run at = now + N seconds; deleted automatically after running once',
@@ -101,8 +102,8 @@ export default defineLocale<Source>()({
     "Fix this file, then reload this plugin: its content must be an array of tasks; if you don't want the tasks in it, move it away and reload. Until it is fixed, tasks created or changed only take effect for this run. Reason: {error}",
   unscheduledTitle: 'Scheduled task “{name}” could not be scheduled and will not run',
   unscheduledInConfig:
-    "Fix this task's cron or timeZone in the configuration file; it takes effect once saved. Reason: {error}",
-  unscheduledOnPage: 'Edit this task on the scheduled task page, fix its cron and save. Reason: {error}',
+    "Fix this task's scheduling method or timeZone in the configuration file; it takes effect once saved. Reason: {error}",
+  unscheduledOnPage: 'Edit this task on the scheduled task page, fix its scheduling method and save. Reason: {error}',
   halfActorTitle: 'Scheduled task “{name}” was not loaded: only half of the run-as identity is filled in',
   halfActorDetail:
     "In the configuration file, write this task's actorPlatform and actorUserId as a pair, or delete both (to run as the owner); it takes effect once saved.",
