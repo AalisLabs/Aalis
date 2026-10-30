@@ -79,7 +79,7 @@ const SOURCE = {
   clearProfileConfirm: '这个人的全部事实连同关系强度、互动次数一起清空。',
   profileGone: '{key} 已经没有档案了',
   profileCleared: '已清空 {key} 的档案',
-  groupSummary: '查询已经积累的某人事实档案。',
+  groupSummary: '查询已经积累的某人事实档案',
   // /profile 各指令
   profileDescription: '查看你的事实档案',
   noIdentityView: '当前会话未识别用户身份，无法查看档案。',

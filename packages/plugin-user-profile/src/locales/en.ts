@@ -83,7 +83,7 @@ export default defineLocale<Source>()({
     'All facts of this person are cleared, together with the relationship strength and interaction count.',
   profileGone: '{key} no longer has a profile',
   profileCleared: 'Cleared the profile of {key}',
-  groupSummary: 'Look up the fact profile built up for a person.',
+  groupSummary: 'Look up the fact profile built up for a person',
   profileDescription: 'Show your fact profile',
   noIdentityView: 'This session has no recognized user, so the profile cannot be shown.',
   noProfileYet: 'No profile data yet ({key})',

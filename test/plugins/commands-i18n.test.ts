@@ -268,12 +268,17 @@ describe('指令回复按会话的语言', () => {
 });
 
 describe('内置指令的说明与回复按会话的语言', () => {
-  it('en 会话的 /help 概览里，内置指令的摘要是英文', async () => {
+  it('en 会话的 /help 概览里，内置指令的摘要是英文祈使句', async () => {
     const s = await setup();
     const lines = (await s.ask(await s.session(['en']), '/help')).content.split('\n');
-    expect(lines).toContain('- /status — Shows the system status');
-    expect(lines).toContain('- /clear — Clears the memory of this session · 1 subcommand');
-    expect(lines).toContain('- /restart — Restarts the application');
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        '- /clear — Clear the memory of this session · 1 subcommand',
+        '- /restart — Restart the application',
+        '- /shutdown — Shut down the application',
+        '- /status — Show the system status',
+      ]),
+    );
   });
 
   it('en 会话里 /clear -t 给了不认识的类型：报错是英文', async () => {

@@ -287,14 +287,14 @@ describe('会话默认', () => {
       ]);
   const settingRow = (label: string) => within(section().getByRole('group', { name: label }));
 
-  it('第一步选层：全局、平台档、平台类型档、场所四组，组名取自层表，平台类型写声明的显示名（没有时写类型名），窗口场所在称呼后补平台；第二步改这一层的项，所选的层记进地址；宽屏左右并排', async () => {
+  it('第一步选层：全局、平台档、平台类型档、场所四组，组名取自层表，平台类型写声明的显示名（没有时写类型名），窗口场所在称呼后用括号补平台；第二步改这一层的项，所选的层记进地址；宽屏左右并排', async () => {
     app = await renderApp('/settings/session-defaults', handlers(), settingsRest());
     await layerList().findByRole('link', { name: '全局（插件配置）' });
     expect(groups()).toEqual([
       ['全局（插件配置）', ['全局（插件配置）']],
       ['平台档', ['cli', 'onebot', 'webui']],
       ['平台类型档', ['onebot · channel', 'onebot · 群', 'onebot · 私聊']],
-      ['场所', ['默认工作区', '工作区「论文」', '群「读书会」onebot']],
+      ['场所', ['默认工作区', '工作区「论文」', '群「读书会」（onebot）']],
     ]);
     expect(section().getByText('先在左边选一层')).toBeTruthy();
     expect(requests('session/config/layer/get')).toEqual([]);
@@ -359,14 +359,14 @@ describe('会话默认', () => {
     expect(groups()).toEqual([
       ['平台档', ['onebot']],
       ['平台类型档', ['onebot · channel', 'onebot · 群', 'onebot · 私聊']],
-      ['场所', ['群「读书会」onebot']],
+      ['场所', ['群「读书会」（onebot）']],
     ]);
     fireEvent.change(search, { target: { value: 'private' } });
     expect(groups()).toEqual([['平台类型档', ['onebot · 私聊']]]);
     fireEvent.change(search, { target: { value: '私聊' } });
     expect(groups()).toEqual([['平台类型档', ['onebot · 私聊']]]);
     fireEvent.change(search, { target: { value: 'group:20001' } });
-    expect(groups()).toEqual([['场所', ['群「读书会」onebot']]]);
+    expect(groups()).toEqual([['场所', ['群「读书会」（onebot）']]]);
   });
 
   it('全局层：每项写作者默认，等于默认标「默认」，不等写「默认：<值>」（空列表、空文字写「无」），行尾「恢复默认」写 null；模型没设时写「跟随全局偏好（此刻：<模型名>）」', async () => {
