@@ -717,8 +717,9 @@ describe('读不出来与没排上的提示', () => {
 });
 
 // 固定间隔交给 setInterval：延时超过 2^31-1 毫秒（约 24.8 天）时 Node 按 1 毫秒处理，「每 30 天」的任务每毫秒触发一次、
-// 每次在目标会话里排一轮。假时钟同样按 1 毫秒处理，只假 setInterval（间隔通道都是它），推进 50 毫秒数开始执行的次数
-describe('固定间隔的上限', () => {
+// 每次在目标会话里排一轮；不到 5 秒的（如 0.001）同样占满调度，所有入口与上限同一处拒收。假时钟同样按 1 毫秒处理，只假
+// setInterval（间隔通道都是它），推进 50 毫秒数开始执行的次数
+describe('固定间隔的上下限', () => {
   const MONTH = 30 * 24 * 3600;
   const reason = (value: string) => `间隔须大于 0 且不超过 2,147,483 秒（约 24.8 天）：${value}`;
 
@@ -766,6 +767,50 @@ describe('固定间隔的上限', () => {
       expect(started, '溢出的话 50 毫秒里会执行 50 次').toEqual([]);
       expect(jobs().map(j => j.name)).toEqual(['max']);
     });
+  });
+
+  it('不到 5 秒的间隔（含 @every）：经服务新建与修改、计划任务页与 scheduler_create_job 一律拒收，配置文件与存量文件里的不排、发提示；5 秒照收', async () => {
+    const tooShort = '固定间隔不能小于 5 秒（防高频任务耗尽资源）';
+    const task = { sessionId: 'internal', platform: 'internal', content: 'x' };
+    await withFakeIntervals(
+      async ({ svc, create, createByTool, jobs, files, pages }, started) => {
+        const service = svc();
+        if (!service) throw new Error('scheduler 服务未提供');
+        expect(() => service.addJob({ ...base, interval: 0.001 })).toThrow(tooShort);
+        expect(() => service.setJob({ ...base, interval: 4.9 })).toThrow(tooShort);
+        expect(() => service.addJob({ ...base, cron: '@every 1s' })).toThrow(tooShort);
+        expect(toSource(await create({ ...base, interval: 1 }))).toEqual(refused(500, tooShort));
+        expect(await createByTool({ name: 'tiny', interval: 0.001, content: 'x' })).toEqual({ error: tooShort });
+        expect(await createByTool({ name: 'tiny', cron: '@every 4s', content: 'x' })).toEqual({ error: tooShort });
+        expect(JSON.parse(files.get('data:/scheduler-jobs.json') ?? '[]').map((j: { name: string }) => j.name)).toEqual(
+          ['stored'],
+        );
+        expect(toSource(pages.notices()).map(n => [n.id, n.detail])).toEqual([
+          ['unscheduled:static', `在配置文件里改正这个任务的 cron 或 timeZone，保存后生效。原因：${tooShort}`],
+          ['unscheduled:static-every', `在配置文件里改正这个任务的 cron 或 timeZone，保存后生效。原因：${tooShort}`],
+          ['unscheduled:stored', `在计划任务页编辑这个任务，改正它的 cron 后保存。原因：${tooShort}`],
+        ]);
+        expect(jobs().map(j => [j.name, j.nextRun])).toEqual([
+          ['static', 0],
+          ['static-every', 0],
+          ['stored', 0],
+        ]);
+        await vi.advanceTimersByTimeAsync(50);
+        expect(started, '每毫秒触发的话 50 毫秒里会执行 50 次').toEqual([]);
+
+        service.addJob({ ...base, name: 'five', interval: 5 });
+        expect(jobs().map(j => j.name)).toContain('five');
+      },
+      {
+        jobs: [
+          { ...task, name: 'static', interval: 0.001 },
+          { ...task, name: 'static-every', cron: '@every 1s' },
+        ],
+        persisted: [
+          { ...task, name: 'stored', interval: 1, enabled: true, actorPlatform: 'webui', actorUserId: 'console' },
+        ],
+      },
+    );
   });
 
   it('配置文件与存量文件里超过上限的间隔（含 @every）：插件照常激活，任务列着但不排、发「没有排上」提示，下次执行不显示', async () => {
