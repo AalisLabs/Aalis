@@ -92,8 +92,9 @@ const POOL_ROOM = 'onebot:40000:group:2';
 const OWNER = { platform: 'webui', userId: 'console' };
 
 /**
- * 设置项：env 是字符串映射（形如文字对象的取值也是合法的映射）；tone 的标签与没设时的说明是文字对象，只适用于房间；broken 的
- * validate 会抛错，全局层里存着它的值时读这一层不能抛
+ * 设置项：env 是字符串映射（形如文字对象的取值也是合法的映射）；tone 的标签与没设时的说明是文字对象，只适用于房间，没设时声明它的
+ * 插件交的此刻实际在用的值形如文字对象、称呼是文字对象（见 TONE_ACTUAL）；broken 的 validate 会抛错，全局层里存着它的值时读这一层
+ * 不能抛
  */
 const SCHEMA = defineConfig({
   env: { type: 'map', label: '环境变量', default: FORGED, session: { appliesTo: ALL, prominence: 'advanced' } },
@@ -111,6 +112,9 @@ const SCHEMA = defineConfig({
     session: { appliesTo: ALL, prominence: 'advanced', unset: '<没设>' },
   },
 });
+
+/** tone 没设时此刻实际在用的值：取值是原样数据，称呼是给人看的文字 */
+const TONE_ACTUAL = { tone: () => ({ value: FORGED, label: t('tone') }) };
 
 const ENGLISH = { result: ['QQ bot', 'QQ bot (work)'], notify: ['QQ bot', 'QQ bot (work)'], session: ['History'] };
 const CHINESE = {
@@ -232,7 +236,7 @@ async function setup({
     },
   });
   await app.plugin(surfacePlugin);
-  const settings = fieldsPlugin('@zz/session-i18n-settings', SCHEMA).definition;
+  const settings = fieldsPlugin('@zz/session-i18n-settings', SCHEMA, TONE_ACTUAL).definition;
   await registerFromDoc(app, store, settings);
   if (withI18n) await registerFromDoc(app, store, i18nPlugin);
   await app.plugins.idle();
@@ -534,20 +538,19 @@ describe('会话协议按全局默认层的语言渲染', () => {
     expect(snapshot?.approvals.map(approval => approval.facts)).toEqual([{ params: { x: FORGED } }]);
   });
 
-  it('设置项一行里的取值与字段的默认值不渲染：形如文字对象的映射原样读回', async () => {
+  it('设置项的取值与字段的默认值不渲染：一行里的取值、生效值与此刻实际在用的值，写过的各处的取值，形如文字对象的原样读回；实际在用的值的称呼照常渲染', async () => {
     const { connect } = await setup({ language: ['en'] });
     const c = await connect();
-    const { items } = await c.call('session/config/update', {
-      sessionId: ROOM,
-      plugin: '@zz/session-i18n-settings',
-      key: 'env',
-      value: FORGED,
-    });
+    const plugin = '@zz/session-i18n-settings';
+    const { items } = await c.call('session/config/update', { sessionId: ROOM, plugin, key: 'env', value: FORGED });
     expect(items.find(row => row.key === 'env')).toMatchObject({
       field: { label: '环境变量', default: FORGED },
       value: FORGED,
       effective: FORGED,
     });
+    expect(items.find(row => row.key === 'tone')?.actual).toEqual({ value: FORGED, label: 'Tone' });
+    const { items: overrides } = await c.call('session/config/overrides', { plugin });
+    expect(overrides.find(item => item.key === 'env')?.entries.map(entry => entry.value)).toEqual([FORGED]);
   });
 });
 
