@@ -59,6 +59,20 @@ async function headlessCli(run: (cli: Cli) => Promise<void>, before?: (app: App)
 }
 
 describe('plugin-cli 附件', () => {
+  it('内联数据的附件写大小，与别处同一个大小格式（2 kB，不写多余的小数）', () =>
+    headlessCli(async ({ host, entries }) => {
+      const message: OutgoingMessage = {
+        sessionId: 'cli-default',
+        platform: 'cli',
+        content: '',
+        source: 'agent',
+        attachments: [{ kind: 'image', data: `data:image/png;base64,${'A'.repeat(2731)}`, name: 'a.png' }],
+      };
+      await host.events.use.emit('outbound:message', message);
+      expect(await message.delivery).toEqual({ ok: true });
+      expect(entries.map(e => e.message)).toContain('[cli] [图片] a.png · 2 kB');
+    }));
+
   it('附件写成一行说明并算送达；没有存储服务时写存储地址；附件消息不写空行', () =>
     headlessCli(async ({ host, entries, delivered }) => {
       const message: OutgoingMessage = {

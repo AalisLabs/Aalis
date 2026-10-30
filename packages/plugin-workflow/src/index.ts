@@ -92,13 +92,9 @@ function identityOf(who: { platform?: string; userId?: string } | undefined): Us
 /** 定义表里的定义者：平台:用户 ID，没有的写「匿名」 */
 const identityText = (who: UserIdentity | undefined) => (who ? `${who.platform}:${who.userId}` : t('anonymous'));
 
-function fmtDuration(ms: number | undefined): string {
-  if (ms === undefined || !Number.isFinite(ms) || ms < 0) return '—';
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  const m = Math.floor(ms / 60_000);
-  const s = Math.floor((ms % 60_000) / 1000);
-  return `${m}m${s}s`;
+/** 用时的写法：字典的 {ms, duration}（到秒，按读者的语言）；没有用时写「—」 */
+function fmtDuration(ms: number | undefined): string | TextRef {
+  return ms === undefined || !Number.isFinite(ms) || ms < 0 ? '—' : t('elapsed', { ms });
 }
 
 /** 运行的用时（ms）：在跑的算到现在；进程退出时中断的不知道停在何时，没有用时 */

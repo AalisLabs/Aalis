@@ -1,10 +1,10 @@
 // ============================================================
 // routes/i18n.ts — 多语言的两条路由
 //
-// GET /api/i18n/languages 给有文字可用的语言（供可选项与第三方客户端用；第一方前端只读后两样）、全局默认层的语言链与服务
+// GET /api/i18n/languages 给有文字可用的语言（供可选项与第三方客户端用；第一方前端只读后两样）、全局层的语言链与服务
 // 进程的时区（前端的文字、格式与时间按它们，不读浏览器的语言与时区；后两样另写进前端入口的页面，见 interfaceLanguage）；
 // GET /api/i18n/messages 给前端自带的字典
-// （外壳、契约包）补语言包的译文：取贡献点 i18n:pack 建索引，按 ns 与全局默认层的语言链筛，取舍（只补缺、指纹）
+// （外壳、契约包）补语言包的译文：取贡献点 i18n:pack 建索引，按 ns 与全局层的语言链筛，取舍（只补缺、指纹）
 // 由前端的 resolveText 做。i18n 缺席时前端按原文显示，语言、语言链与补充都是空的，时区照给。插件前端的字典连同补充经
 // frameTexts 交出（routes/pages.ts）。
 // ============================================================
@@ -39,7 +39,7 @@ function processTimeZone(): string {
   return `${east > 0 ? '+' : '-'}${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`;
 }
 
-/** 界面的语言：全局默认层的语言链与服务进程的时区。GET /api/i18n/languages 回它，SPA 兜底也写进前端入口的页面 */
+/** 界面的语言：全局层的语言链与服务进程的时区。GET /api/i18n/languages 回它，SPA 兜底也写进前端入口的页面 */
 export const interfaceLanguage = (localizer: Pick<Localizer, 'languages'>): PageLanguage => ({
   chain: [...localizer.languages()],
   timeZone: processTimeZone(),
@@ -53,7 +53,7 @@ interface I18nDeps {
 }
 
 /**
- * 语言包给这些 ns 补的译文：ns → 键 → 各语言包给的。只留全局默认层语言链里某种的语言相同的（zh-TW 读者遇到只有简体时用
+ * 语言包给这些 ns 补的译文：ns → 键 → 各语言包给的。只留全局层语言链里某种的语言相同的（zh-TW 读者遇到只有简体时用
  * 简体），另留 en（链里都没有时按 en）。i18n 缺席时为空
  */
 function packedTexts(deps: I18nDeps, names: Iterable<string>): Record<string, Record<string, PackedText[]>> {

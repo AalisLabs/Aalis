@@ -1,9 +1,9 @@
 // ============================================================
 // html.ts — 服务端直出的页面（登录页、换前端的恢复页）与前端入口共用的几样
 //
-// 两页都按全局默认层的语言输出：文字在服务端渲染好写进 HTML，外链脚本要的文字放进 texts 块（type 为 application/json，
+// 两页都按全局层的语言输出：文字在服务端渲染好写进 HTML，外链脚本要的文字放进 texts 块（type 为 application/json，
 // 不执行，文档级 CSP 不用动）。页面上不设语言切换：登录之前改不了全局设置。前端的入口同样在服务端写好 <html lang>，首帧的
-// 字体就按全局默认层的语言选；界面的语言（语言链与服务进程的时区）照 texts 块的写法放进语言块，前端首帧按它画、不等往返。
+// 字体就按全局层的语言选；界面的语言（语言链与服务进程的时区）照 texts 块的写法放进语言块，前端首帧按它画、不等往返。
 // ============================================================
 
 import { PAGE_LANGUAGE_ID, type PageLanguage } from '@aalis/api-webui';
@@ -36,7 +36,7 @@ export function withPageLanguage(html: string, lang: string, language: PageLangu
 
 /**
  * 页面实际用的语言，写进 `<html lang>`：取字典键 pageLanguage 渲染出的译文。第三方语言包可以把它译成任意字符串，规范化
- * 不了时用全局默认层语言链的第一项；链为空（i18n 缺席）时渲染的是原文 zh-CN，本来就规范化得了
+ * 不了时用全局层语言链的第一项；链为空（i18n 缺席）时渲染的是原文 zh-CN，本来就规范化得了
  */
 export function pageLanguageOf(rendered: string, chain: readonly string[]): string {
   return normalizeLanguages([rendered])[0] ?? chain[0];

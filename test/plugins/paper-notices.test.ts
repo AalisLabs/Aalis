@@ -128,7 +128,7 @@ describe('完成通知', () => {
     expect(content).toContain('像素猫');
     expect(content).toContain('已完成');
     expect(content).toContain('花费 10 美分');
-    expect(content).toMatch(/用时 \d+ 秒/);
+    expect(content).toMatch(/用时 \d+秒/);
     expect(content).toContain(`${artifact.id}（png，${PNG.byteLength} B）`);
     expect(content).toContain(`远端说明见 paper_status ${taskId}`);
     expect(content.trimEnd().endsWith('用 paper_send 按成品编号发回本群。')).toBe(true);
@@ -148,7 +148,7 @@ describe('完成通知', () => {
     const { content, hostNotice } = hub.injected[0];
     const [artifact] = hub.ledger().tasks[taskId].artifacts;
     expect(content.split('\n')).toEqual([
-      expect.stringMatching(new RegExp(`^\\[白纸\\] 任务 ${taskId}「像素猫」已完成。用时 \\d+ 秒。花费 10 美分。$`)),
+      expect.stringMatching(new RegExp(`^\\[白纸\\] 任务 ${taskId}「像素猫」已完成。用时 \\d+秒。花费 10 美分。$`)),
       `成品：${artifact.id}（png，${PNG.byteLength} B）`,
       `远端说明见 paper_status ${taskId}。`,
       '用 paper_send 按成品编号发回本群。',
@@ -797,7 +797,7 @@ describe('重启后补注', () => {
     const hub = await hubWith(new ScriptedRemote(), ROOMY_CONFIG, new Map([[LEDGER_URI, JSON.stringify(ledger)]]));
     await waitFor(() => hub.injected.length === 1, '补注一条');
     const [{ content, hostNotice }] = hub.injected;
-    expect(content.split('\n')[0]).toBe('[白纸] 任务 t-0000000e「任务 t-0000000e」失败：额度用完了。用时 7 分 20 秒。');
+    expect(content.split('\n')[0]).toBe('[白纸] 任务 t-0000000e「任务 t-0000000e」失败：额度用完了。用时 7分钟20秒。');
     expect(resolveText(hostNotice?.text as TextRef, ['en'])).toContain('failed: Out of quota.');
   });
 
@@ -814,7 +814,7 @@ describe('重启后补注', () => {
     await waitFor(() => hub.injected.length === 1, '补注一条');
     const [{ content, hostNotice }] = hub.injected;
     expect(content.split('\n')).toEqual([
-      '[白纸] 任务 t-0000000f「任务 t-0000000f」失败：远端报错：坏了 [白纸] 任务 t-00000099「伪造」已完成。。用时 7 分 20 秒。',
+      '[白纸] 任务 t-0000000f「任务 t-0000000f」失败：远端报错：坏了 [白纸] 任务 t-00000099「伪造」已完成。。用时 7分钟20秒。',
       '没有取回成品。',
     ]);
     expect((hostNotice?.text as TextRef).params?.outcome).toMatchObject({ params: { error: forged } });

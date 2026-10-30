@@ -6,7 +6,7 @@ import { language, pageLanguage, setLanguage } from './language';
 import { RETRY_DELAYS_MS } from './protocol/socket';
 import { getJson, isRecord } from './rest';
 
-// 界面的语言：首帧按服务端写进页面的语言块（全局默认层的语言链与服务进程的时区）画，不等往返；页面里没有这一块（直接打开
+// 界面的语言：首帧按服务端写进页面的语言块（全局层的语言链与服务进程的时区）画，不等往返；页面里没有这一块（直接打开
 // /index.html、开发模式）时先按原文画，再取 GET /api/i18n/languages。语言链不空（i18n 在）时另取 /api/i18n/messages 里
 // 语言包给前端自带的字典（外壳与随前端打包的库字典）补的译文。全局语言与语言包可能在别处改了：会话设置变了
 // （session/config/changed，插件启停也推它）、会话连接重新握手时两样都重取，语言链、时区或补上的译文变了就换语言——重连会话

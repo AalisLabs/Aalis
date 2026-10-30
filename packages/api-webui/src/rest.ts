@@ -9,7 +9,7 @@
 // 不要登录的只有 /api/auth/ 下的四条与 /frames/ 下的文件；其余要登录（cookie），没登录的 /api/ 请求回 401，页面回登录页。
 // 改状态的请求（非 GET）另校验来源：带 Origin 的要与本服务同源。登记表里没有的 /api/ 路径回 404 与 ErrorResponse。
 //
-// 回应里给人看的文字按全局默认层的语言（读者是 owner 自己，不看浏览器的语言），日期与时间按服务进程的时区。这里的回应类型
+// 回应里给人看的文字按全局层的语言（读者是 owner 自己，不看浏览器的语言），日期与时间按服务进程的时区。这里的回应类型
 // 写的是服务端交出的形状，文字可以是文字对象（schema-i18n 的 TextRef），发出前一律渲染成字符串：线上的形状是 Localized<…>，
 // 路由的见 WebuiRestResponse。
 
@@ -421,7 +421,7 @@ export interface UpdateRequest {
 /**
  * GET /api/i18n/languages：界面的语言与时区。languages 是有文字可用的语言（i18n 服务的 languages()），供可选项与第三方客户端
  * 用，每项的形状同 api-i18n 的 LanguageInfo（tag 是规范化的语言标签，name 是该语言的自称），第一方前端只读 chain 与 timeZone；
- * chain 是全局默认层的语言链（i18n 的 chainOf({ host: true })），界面的文字按它渲染，数字、日期与排序
+ * chain 是全局层的语言链（i18n 的 chainOf({ host: true })），界面的文字按它渲染，数字、日期与排序
  * 按渲染时选中的语言；timeZone 是服务进程的时区，界面的时间按它。i18n 缺席时 languages 与 chain 为空，timeZone 照给
  */
 export interface I18nLanguagesResponse {
@@ -449,7 +449,7 @@ export interface PackedText {
 
 /**
  * GET /api/i18n/messages：语言包给这些 ns 补的译文，供前端自带的字典用。entries 是 ns → 键 → 各语言包给的
- * （同一语言按交付的先后，取先），只留全局默认层的语言链用得上的语言（与链里某种的语言相同的，以及 en）；没有的 ns 不列。
+ * （同一语言按交付的先后，取先），只留全局层的语言链用得上的语言（与链里某种的语言相同的，以及 en）；没有的 ns 不列。
  * 前端照它建语言包索引（schema-i18n 的 PackIndex）交给 resolveText，取舍（只补缺、指纹）在那里做。i18n 缺席时为空
  */
 export interface I18nMessagesResponse {

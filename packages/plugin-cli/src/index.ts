@@ -53,13 +53,6 @@ import { SessionView } from './session-view.js';
 import { t } from './texts.js';
 import type { CLIService } from './types.js';
 
-/** 附件说明里的大小 */
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
-}
-
 export type { CLIService } from './types.js';
 
 // terminal:claimed / terminal:released 是 CLI（独占终端 UI）与宿主
@@ -145,7 +138,7 @@ const uses = {
   commands: optional(commands),
   /** 发出入站之前给配置的会话建档，创建来源写 cli 审批面的登记名 */
   sessionManager: optional(sessionManager),
-  /** 界面文字按全局默认层的语言显示；缺席时按原文 */
+  /** 界面文字按全局层的语言显示；缺席时按原文 */
   i18n: optional(i18n),
   /** 聊天区她的输出取会话协议里本会话的条目；缺席时只写整条回复 */
   sessionProtocol: optional(sessionProtocol),
@@ -168,7 +161,7 @@ type TuiCaps = Pick<
   | 'sessionProtocol'
 >;
 
-/** 按全局默认层的语言渲染给人看的值（i18n 缺席或渲染抛错时按原文） */
+/** 按全局层的语言渲染给人看的值（i18n 缺席或渲染抛错时按原文） */
 type Localize = <T>(value: T) => Localized<T>;
 
 export default definePlugin({
@@ -201,9 +194,9 @@ function startCli(caps: Caps): void {
   const onRenderError = (err: unknown) => {
     if (renderWarned) return;
     renderWarned = true;
-    logger.use.warn('按全局默认层的语言渲染界面文字出错，按原文显示（之后再出错不再告警）:', err);
+    logger.use.warn('按全局层的语言渲染界面文字出错，按原文显示（之后再出错不再告警）:', err);
   };
-  // 终端是 owner 自己看的：界面文字按全局默认层的语言，不看终端会话自己的语言设置（聊天输出已由网关按会话渲染）。终端不做
+  // 终端是 owner 自己看的：界面文字按全局层的语言，不看终端会话自己的语言设置（聊天输出已由网关按会话渲染）。终端不做
   // Markdown 转义
   const localize: Localize = value => localizeFor(caps.i18n, value, { host: true }, { onError: onRenderError });
 
@@ -240,13 +233,13 @@ function startCli(caps: Caps): void {
     if (/^https?:\/\//i.test(att.data)) return `${label} ${att.name ?? ''} ${att.data}`.replace(/\s+/g, ' ').trim();
     if (att.data.startsWith('data:') && att.data.includes(';base64,')) {
       const bytes = Math.floor(((att.data.length - att.data.indexOf(',') - 1) * 3) / 4);
-      return `${label} ${att.name ?? localize(t('inlineData'))} · ${formatBytes(bytes)}`;
+      return `${label} ${att.name ?? localize(t('inlineData'))} · ${localize(t('size', { bytes }))}`;
     }
     let path = att.data;
     let size = '';
     try {
       path = await attachmentStorage.resolveLocalPath(att.data, 'read');
-      size = formatBytes((await attachmentStorage.stat(att.data)).size);
+      size = localize(t('size', { bytes: (await attachmentStorage.stat(att.data)).size }));
     } catch {
       // 取不到本机路径时照写存储地址
     }
@@ -356,7 +349,7 @@ class CliTui {
     this.view = config.startupView === 'last' ? config.lastView : config.startupView;
     // 日志由插件入口的订阅送来：界面起来之前的这一批，之后经 appendLog 一条条接着
     this.logLines = initialEntries.slice();
-    // 以本地终端身份接入审批面（与输入消息的 userId 相同）。有按键才上报在场。卡上的文字按全局默认层的语言渲染，事实原样
+    // 以本地终端身份接入审批面（与输入消息的 userId 相同）。有按键才上报在场。卡上的文字按全局层的语言渲染，事实原样
     this.attendance = this.approvalSurface.attend(CONSOLE, {
       requested: approval => {
         this.cards.push(approval);

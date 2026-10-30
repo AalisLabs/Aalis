@@ -166,7 +166,7 @@ describe('工作流页', () => {
     const before = pages.invalidations.length;
     const reply = await pages.act('workflows', 'runWorkflow', { rowKey: 'zz-manual' });
     expect(reply.status).toBe(200);
-    expect(toSource((reply.body as { message: string }).message)).toMatch(/^已运行 zz-manual，用时 /);
+    expect(toSource((reply.body as { message: string }).message)).toMatch(/^已运行 zz-manual，用时 \d+秒$/);
     expect(calls).toBe(1);
     expect(invalidated(before), '运行中与运行完都要让运行表重取').toEqual([WHOLE_PAGE, WHOLE_PAGE]);
     const runs = await pages.data<Array<Record<string, unknown>>>('workflows', 'runs');

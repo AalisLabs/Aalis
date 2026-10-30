@@ -72,7 +72,7 @@ export default defineLocale<Source>()({
     'Limit on the original text given to the summary model; only the beginning of longer text is used. 0 means no cut-off (very long text makes summaries cost more).',
   summaryPromptLabel: 'Summary system prompt (advanced; leave empty to use the built-in one)',
   summaryPromptDescription:
-    'Leave empty to use the built-in default prompt (tuned to keep the structure of multi-person conversations). Any non-empty text replaces the default prompt completely.\n\nThe built-in default prompt is below (<输出语言> becomes the first entry of the global default language list); use it as a reference when writing your own:\n\n{prompt}',
+    'Leave empty to use the built-in default prompt (tuned to keep the structure of multi-person conversations). Any non-empty text replaces the default prompt completely.\n\nThe built-in default prompt is below (<输出语言> becomes the first entry of the global-layer language list); use it as a reference when writing your own:\n\n{prompt}',
   replyLabel: 'Quoted messages',
   replyDescription: 'How to expand the chain of quoted messages when a quote reply arrives',
   replyMaxDepthLabel: 'Maximum quote chain depth',

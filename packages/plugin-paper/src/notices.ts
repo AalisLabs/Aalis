@@ -38,7 +38,7 @@ import {
 } from './deliver.js';
 import { type LedgerStore, randomHex, type TaskRecord, UNFINISHED_STATES } from './ledger.js';
 import { t } from './texts.js';
-import { describe, formatDuration, formatSize, truncate } from './util.js';
+import { describe, formatSize, truncate } from './util.js';
 
 /** 通知里远端说明的长度 */
 const NOTICE_NOTE_MAX = 800;
@@ -94,7 +94,7 @@ function noticeText(task: TaskRecord): TextRef {
 function noticeContent(task: TaskRecord, direct?: DirectSend): string {
   const facts: string[] = [];
   if (task.startedAt !== undefined && task.endedAt !== undefined) {
-    facts.push(`用时 ${toSource(formatDuration(task.endedAt - task.startedAt))}`);
+    facts.push(`用时 ${toSource(t('elapsed', { ms: task.endedAt - task.startedAt }))}`);
   }
   if (task.costCents !== undefined) facts.push(`花费 ${task.costCents} 美分`);
   else if (task.runId) facts.push('费用还没入账');

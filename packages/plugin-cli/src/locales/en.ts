@@ -33,6 +33,7 @@ export default defineLocale<Source>()({
   answerRefused: 'Approval for {tool}: the answer did not take effect: {reason}',
   attachmentKind: '{kind, select, image {Image} audio {Audio} video {Video} file {File} other {Attachment}}',
   inlineData: 'inline data',
+  size: '{bytes, size}',
   toolRun: 'Run {command}',
   toolRunClipped: 'Run {head}…({count, plural, one {# character} other {# characters}} omitted)…{tail}',
   toolWrite: 'Write {path}',

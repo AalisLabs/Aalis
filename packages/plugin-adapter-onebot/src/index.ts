@@ -612,7 +612,7 @@ const uses = {
   messageArchive: optional(messageArchive),
   flowControl: optional(flowControl),
   hooks: optional(hooks),
-  /** 默认合并转发摘要的输出语言（全局默认层的语言列表），缺席时按中文 */
+  /** 默认合并转发摘要的输出语言（全局层的语言列表），缺席时按中文 */
   i18n: optional(i18n),
 };
 type Caps = BoundOf<typeof uses>;

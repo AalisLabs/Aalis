@@ -72,7 +72,7 @@ const SOURCE = {
     '喂给摘要模型的原文输入上限；原文超过则前段截断。设为 0 表示不截断（注意超长文本会增加摘要成本）。',
   summaryPromptLabel: '摘要 system prompt（高级，留空使用内置）',
   summaryPromptDescription:
-    '留空使用内置默认 prompt（专为保留多人互动结构调优过）。填入非空内容则完全覆盖默认 prompt。\n\n内置默认 prompt 如下（<输出语言> 取全局默认的语言列表的第一项），可作为撰写参考：\n\n{prompt}',
+    '留空使用内置默认 prompt（专为保留多人互动结构调优过）。填入非空内容则完全覆盖默认 prompt。\n\n内置默认 prompt 如下（<输出语言> 取全局层的语言列表的第一项），可作为撰写参考：\n\n{prompt}',
   replyLabel: '引用消息处理',
   replyDescription: '收到引用回复时如何展开被引用消息链',
   replyMaxDepthLabel: '引用链深度上限',

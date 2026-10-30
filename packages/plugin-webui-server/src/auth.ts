@@ -205,7 +205,7 @@ export interface AuthSystem {
  *   地址锁住。带 cookie 的请求不计数：各种模式的 token 都够长（随机生成的 24 字节，固定的至少 32 个字符），
  *   按 cookie 逐个猜猜不中；对 cookie 也锁定的话，共用一个来源地址（同一个反向代理）的已登录页面会被别人一起锁住
  * - 身份恒为 `webui:console`（owner 级，单人模式语义）
- * - 登录页与回应里的文字按全局默认层的语言（localizer）
+ * - 登录页与回应里的文字按全局层的语言（localizer）
  */
 export function createAuthSystem(
   getToken: () => string,

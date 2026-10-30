@@ -23,6 +23,7 @@ export default defineLocale<Source>()({
   runDisabled: 'workflow "{id}" is disabled',
   runWorkflow: 'Run now',
   ran: 'Ran {id} in {duration}',
+  elapsed: '{ms, duration}',
   enableAction: 'Enable',
   disableAction: 'Disable',
   delete: 'Delete',

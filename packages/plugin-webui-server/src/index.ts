@@ -249,7 +249,7 @@ const uses = {
   contributions: optional(contributions),
   /** 发往 WebUI 自己会话的出站消息经它的 recordOutbound 记进会话历史，记成了才算送达 */
   archive: optional(messageArchive),
-  /** 回应里的文字对象按全局默认层的语言渲染（localize.ts）；缺席时按原文 */
+  /** 回应里的文字对象按全局层的语言渲染（localize.ts）；缺席时按原文 */
   i18n: optional(i18n),
 };
 type Caps = BoundOf<typeof uses>;
@@ -275,9 +275,9 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
   // 创建 storage gateway；所有文件读写（token、访问凭据、媒体与会话文件）都走这里
   const storage = caps.storage.use;
-  // 给人看的文字按全局默认层的语言渲染（localize.ts）：回应、登录页与恢复页、access.txt
+  // 给人看的文字按全局层的语言渲染（localize.ts）：回应、登录页与恢复页、access.txt
   const localizer = createLocalizer(caps.i18n, logger.use);
-  /** 多语言路由与插件前端的字典要的：i18n、语言包的来源与全局默认层的语言链 */
+  /** 多语言路由与插件前端的字典要的：i18n、语言包的来源与全局层的语言链 */
   const i18nDeps = { i18n: caps.i18n, contributions: caps.contributions, localizer };
 
   // ---- Token 解析 ----
@@ -308,7 +308,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     await Promise.all(pendingWrites);
   }, '等 token 与访问凭据落盘');
 
-  /** 返回是否真的写成了：调用方据此决定能不能宣称「凭据已写入」。说明行按全局默认层的语言写 */
+  /** 返回是否真的写成了：调用方据此决定能不能宣称「凭据已写入」。说明行按全局层的语言写 */
   async function writeAccessFile(url: string, token: string): Promise<boolean> {
     const lines = textLines([
       t('accessTitle'),
@@ -376,7 +376,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   const auth = createAuthSystem(() => authToken, localizer, [uiConfig.host, ...uiConfig.allowedHosts]);
 
   const expressApp = express();
-  // 回应里的文字按全局默认层的语言渲染：中间件最早挂上，之后的路由与中间件回的 JSON 都经过它
+  // 回应里的文字按全局层的语言渲染：中间件最早挂上，之后的路由与中间件回的 JSON 都经过它
   expressApp.use(localizer.middleware);
   // 文档级 CSP：脚本只许同源，样式放开内联（Mermaid 的输出带内联样式），图片只认同源与本地生成的；不许被别的页面嵌入。
   // 每个响应都带上，前端的 HTML、登录页与恢复页都在其中；媒体路由另设更严的沙箱，插件前端的文件另设框架 CSP
@@ -980,7 +980,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     res.status(404).json({ error: t('unknownApi', { method: req.method, path: req.path }) } satisfies ErrorResponse);
   });
 
-  // SPA fallback: 所有非 API 路径返回 index.html，<html lang> 与界面的语言块按全局默认层的语言写好；/assets/ 下缺失的文件回
+  // SPA fallback: 所有非 API 路径返回 index.html，<html lang> 与界面的语言块按全局层的语言写好；/assets/ 下缺失的文件回
   // 404（旧页面引用的资源换了构建就不在了，回 index.html 只会让浏览器把 HTML 当脚本执行）
   route(expressApp, 'GET /{*path}', (req, res) => {
     if (req.path.startsWith('/assets/')) {
@@ -990,7 +990,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     // 还没有选中的前端时 clientDist 为空：不能拼出相对 cwd 的 index.html
     const indexPath = clientDist ? join(clientDist, 'index.html') : undefined;
     if (indexPath && existsSync(indexPath)) {
-      // 每次再验证：页面随全局默认层的语言变
+      // 每次再验证：页面随全局层的语言变
       const lang = pageLanguageOf(localizer.render(t('pageLanguage')), localizer.languages());
       res.set('Cache-Control', 'public, max-age=0');
       res.type('html').send(withPageLanguage(readFileSync(indexPath, 'utf-8'), lang, interfaceLanguage(localizer)));

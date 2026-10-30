@@ -31,6 +31,7 @@ const SOURCE = {
   answerRefused: '审批 {tool}：应答没有生效：{reason}',
   attachmentKind: '{kind, select, image {图片} audio {音频} video {视频} file {文件} other {附件}}',
   inlineData: '内联数据',
+  size: '{bytes, size}',
   toolRun: '执行 {command}',
   toolRunClipped: '执行 {head}…（省略 {count, number} 字）…{tail}',
   toolWrite: '写入 {path}',
