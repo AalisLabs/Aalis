@@ -1,5 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { type AuthorityService, authority } from '../../packages/api-authority/src/index.js';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { SessionInfo } from '../../packages/api-session-manager/src/index.js';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import {
@@ -17,13 +16,12 @@ import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-tools 的转后台接线：配置的两项上限、backgroundTasks 服务、会话删除与 app:stopping 两个事件、
-// 停用时落成 aborted 并写进插件数据、storage 晚于本插件上线时照样读回、停任务时按权限服务判 owner。
+// 停用时落成 aborted 并写进插件数据、storage 晚于本插件上线时照样读回。
 // 执行器本身的规则见 tools-background.test.ts，重启读回见 test/integration/background-restart.test.ts。
 // ════════════════════════════════════════════════════════════
 
 const SESSION = 'zz-6b-plugin-session';
 const FILE = 'pluginData:/tools/background-tasks.json';
-const OWNER_QQ = { platform: 'onebot', userId: '99999' };
 
 const apps: App[] = [];
 afterEach(async () => {
@@ -170,28 +168,6 @@ describe('plugin-tools 的转后台接线', () => {
       ['aborted', expect.objectContaining({ source: '工具注册表停用时还在跑' })],
       ['completed', undefined],
     ]);
-  });
-
-  it('停任务时 owner 按权限服务的 isOwner 判：权限服务不在时没有人是 owner，上线之后 owner 的一轮能停别人起的', async () => {
-    const w = await start();
-    const { taskId } = await w.run({ runInBackground: true });
-    const stop = async () => {
-      const result = await w.host.tools.use.execute(
-        'background_stop',
-        { taskId },
-        toolRequest({ sessionId: SESSION, ...OWNER_QQ, enabledGroups: [], inbound: {}, turnId: 't', callId: 'c' }),
-      );
-      return JSON.parse(result.content) as Record<string, unknown>;
-    };
-    expect((await stop()).error).toBe('只有起这个任务的人或 owner 在的一轮能停它');
-    expect(w.runs[0].ctx.signal?.aborted).toBe(false);
-    w.host.provide.use(authority, {
-      isOwner: (platform: string, userId?: string) => platform === OWNER_QQ.platform && userId === OWNER_QQ.userId,
-    } as AuthorityService);
-    const stopping = stop();
-    await vi.waitFor(() => expect(w.runs[0].ctx.signal?.aborted).toBe(true));
-    w.runs[0].finish();
-    expect(await stopping).toMatchObject({ taskId, status: 'stopped' });
   });
 
   it('storage 晚于 plugin-tools 上线时照样读回', async () => {

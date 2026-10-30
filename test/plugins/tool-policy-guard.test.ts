@@ -22,6 +22,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 interface RegisteredTool {
   name: string;
   visibility?: string;
+  confirm?: string;
 }
 
 async function registeredTools(plugin: PluginDefinition): Promise<RegisteredTool[]> {
@@ -48,10 +49,11 @@ describe('高危工具不得退回 public', () => {
     }
   });
 
-  it('subtask 的只读查询工具保持 public（不该被这条守卫误伤）', async () => {
+  it('subtask 的只读查询工具 2 级、不确认：低于 2 级的看不到别人派出的子任务', async () => {
     const all = await registeredTools(subtask);
     for (const name of ['check_subtask', 'wait_subtasks']) {
-      expect(all.find(x => x.name === name)?.visibility ?? 'public').toBe('public');
+      const t = all.find(x => x.name === name);
+      expect({ visibility: t?.visibility, confirm: t?.confirm }, name).toEqual({ visibility: 'restricted' });
     }
   });
 

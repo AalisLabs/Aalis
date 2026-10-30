@@ -1143,8 +1143,8 @@ async function run(caps: Caps): Promise<void> {
         },
       },
     },
-    // 读类：任务清单含 sessionId / prompt，属信息暴露向量；不弹确认。
-    risk: 'sensitive',
+    // 只看不改：任务清单含 sessionId / prompt，2 级、不确认，低于 2 级的看不到
+    visibility: 'restricted',
     handler: async args => {
       const all = service.getJobs().map(j => ({
         name: j.name,

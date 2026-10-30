@@ -1,8 +1,8 @@
 // ════════════════════════════════════════════════════════════
 // 四个后台任务工具（执行器提供）：列出、取输出、等待、停止本会话里的后台任务。按会话放行：本会话里的后台任务谁都能查，不论
-// 是谁起的；别的会话里的回「不存在」。停与 /stop 停一轮同一条规则，不看等级：调它的这一轮的参与者里有起这个任务的人，或有
-// owner（规则在 BackgroundTasks.mayStop）。
-// 不设 restricted 与 risk，取输出也不另设等级闸：任务的输出与结果本来就在这个会话里，与前台调用的结果一样谁在场谁看得到。
+// 是谁起的；别的会话里的回「不存在」。列出、取输出与等待不设 restricted 与 risk，也不另设等级闸：任务的输出与结果本来就在这个
+// 会话里，与前台调用的结果一样谁在场谁看得到。停与子任务、编排、定时任务同一规则，2 级加确认（risk 'dangerous'），不另判是谁
+// 起的：别人单独发起的没人能批即拒，有 owner 在的一轮出卡给她批，owner 一个人的回合在免确认白名单里不问。
 // 结束通知开的那一轮仍按起它的人的身份运行。
 // ════════════════════════════════════════════════════════════
 
@@ -110,23 +110,26 @@ export function backgroundTaskTools(tasks: BackgroundTasks): Tool[] {
       },
     ),
 
-    tool(
-      'background_stop',
-      '停掉一个后台任务，等它停下后如实回报（最多等 3 秒）。被停掉的任务不再通知你。',
-      { taskId },
-      ['taskId'],
-      async (args, ctx) => {
-        const task = find(ctx, args.taskId);
-        if (!task) return missing(args.taskId);
-        if (task.status !== 'running') return JSON.stringify({ ...viewOf(task), message: '任务已结束' });
-        if (!tasks.mayStop(task.id, ctx)) return error('只有起这个任务的人或 owner 在的一轮能停它');
-        const after = await tasks.stop(task.id);
-        if (!after) return missing(args.taskId);
-        return JSON.stringify({
-          ...viewOf(after),
-          message: after.status === 'running' ? '已发出停止，3 秒内还没停下；它停下后记为已停止，不会通知你' : '已停止',
-        });
-      },
-    ),
+    {
+      ...tool(
+        'background_stop',
+        '停掉一个后台任务，等它停下后如实回报（最多等 3 秒）。被停掉的任务不再通知你。',
+        { taskId },
+        ['taskId'],
+        async (args, ctx) => {
+          const task = find(ctx, args.taskId);
+          if (!task) return missing(args.taskId);
+          if (task.status !== 'running') return JSON.stringify({ ...viewOf(task), message: '任务已结束' });
+          const after = await tasks.stop(task.id);
+          if (!after) return missing(args.taskId);
+          return JSON.stringify({
+            ...viewOf(after),
+            message:
+              after.status === 'running' ? '已发出停止，3 秒内还没停下；它停下后记为已停止，不会通知你' : '已停止',
+          });
+        },
+      ),
+      risk: 'dangerous',
+    },
   ];
 }

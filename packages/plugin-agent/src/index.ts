@@ -2270,9 +2270,9 @@ function run(caps: Caps): void {
       return renderPaged(names, String(keyword ?? ''), page, t('personasLabel'), '/persona');
     });
 
-  // /stop 同停止键：只停本会话在跑的一轮，排着的照常开下一轮。不看等级，与停后台任务同一条规则：发出者是这一轮的参与者（进了
-  // 这一轮的各条输入按 originTurnOf 算：真人的话是发言者，续做与子任务是起它的那一轮的参与者，定时任务与编排是它的授权身份），
-  // 或是 owner；排队与待插入的不算，没有账号的不算任何人
+  // /stop 同停止键：只停本会话在跑的一轮，排着的照常开下一轮。不看等级：发出者是这一轮的参与者（进了这一轮的各条输入按
+  // originTurnOf 算：真人的话是发言者，续做与子任务是起它的那一轮的参与者，定时任务与编排是它的授权身份），或是 owner；排队与
+  // 待插入的不算，没有账号的不算任何人
   caps.commands.use.command('stop', t('stopDescription'), { risk: 'safe' }).action(({ session }) => {
     const { sessionId, platform, userId } = session;
     const inputs = agentImpl.queues.inputs(sessionId);

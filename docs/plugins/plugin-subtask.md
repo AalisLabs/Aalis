@@ -39,9 +39,11 @@ export default definePlugin({
 | `create_subtask` | 创建子会话并异步派发任务（不阻塞当前会话）；`model` 参数写条目 id `<提供者实例 id>/<模型 id>` |
 | `check_subtask` | 查询一个或多个子任务的当前状态和结果；状态为 `active`、`completed`、`error` 或 `stopped`（已停止），汇总里另数已停止的个数。出错的另带 `reason`（出错原因）。到期销毁了的回它最后的状态与结果一次（`destroyed` 为真） |
 | `send_to_subtask` | 向子任务追加消息（追问/补充指令）；已完成或出错的重新进入进行中 |
-| `set_subtask_setting` | 改一个直接子任务本会话层的一项设置（只写值，不能恢复继承）；声明 `sensitive`，每次都要确认 |
+| `set_subtask_setting` | 改一个直接子任务本会话层的一项设置（只写值，不能恢复继承） |
 | `delete_subtask` | 递归删除子任务会话 |
 | `wait_subtasks` | 阻塞直到指定子任务全部结束（完成、出错、被停止或会话已不存在）或超时；超时取 `timeout_seconds` 与 `maxWaitMs` 中的较小者（事件驱动，非轮询）。被停止的报 `stopped`，不算完成；出错的另带 `reason`（出错原因）；到期销毁了的同 `check_subtask`；`timedOut` 只在等满时还有没结束的才为真。调用被中止（所在的一轮被停止键、禁言、`/clear` 等停下）时不再等，回 `error`「回合已中止，不再等」 |
+
+`create_subtask`、`send_to_subtask`、`set_subtask_setting`、`delete_subtask` 声明 `risk: 'dangerous'`（2 级加确认）：子任务替发起的人在后台接着做，与编排、定时任务、停后台任务同一规则。别人单独发起的一轮没人能批，拒绝；有 owner 在的一轮出审批卡给她批，批过的调用按她执行；她一个人的回合在免确认白名单（`restrictedPolicy`）里不问，不在就出卡，常要连续派几个并行子任务时把 `tool:create_subtask` 等加进白名单。`check_subtask` 与 `wait_subtasks` 只看不改，2 级、不确认（`visibility: 'restricted'`），低于 2 级的看不到别人派出的子任务的任务与结果。
 
 除 `create_subtask` 外的五个工具只认调用所在会话的直接子任务（会话记录的 `parentId` 是调用所在会话）。别的会话的子任务、根会话与不存在的 id 一律按「子任务不存在」回，不确认存在与否：`check_subtask` 与 `wait_subtasks` 对这一项不交出状态、任务与结果，也不等它；`send_to_subtask`、`set_subtask_setting` 与 `delete_subtask` 不执行。
 
@@ -59,7 +61,7 @@ export default definePlugin({
 6. `wait_subtasks` 监听 `session:completed` / `session:updated` / `session:deleted` 事件与追问落定等待全部子任务终结；子会话出错、被停止或到期销毁时随即返回，不等到超时。还有没落定的追问的子任务不算终结，`check_subtask` 与父会话的子任务提醒按进行中报：会话管理在它前后两轮之间可能已把状态收口成已完成
 7. **到期销毁**：子会话的一轮结束（回复、出错或被停止都算）后闲置满 `idleDeleteHours`，就连同它的对话记录、各插件按会话存的数据和它下面的子会话一起删掉；追问一次在下一轮结束时重新计时，从没跑过一轮的不计时，重启不丢（按记下的最近一轮结束时间重算）。在飞的一轮与发出还没落定的追问（所在的一轮结束、被放掉、在网关相位被挡下都算落定）由本插件自己记：这期间不销毁，一轮一直不收尾时同样不判到期，追问落定时重新排。子会话有在跑的后台任务（api-tools 的 `backgroundTasks`）时同样不销毁：正常结束（含失败）的由结束通知开的那一轮收尾时重新计时，被停止或中断的不发结束通知，结束时（`background:changed`）按最近一轮的结束时间重判。删除只在定时器里做，删除时这一轮当场停下（agent 在 `session:deleted` 里中止它）
 8. **回报**：到期销毁之前，把子任务最后的状态、出错原因、结果与任务写进父会话记录（`metadata.subtask`）。父会话经 `check_subtask`、`wait_subtasks` 读到即删，父会话提醒里列出它的那一轮回复或静默收尾后删（那一轮出错或被停止时留着，下一轮照常列出）；父会话在它还在时已经取走过同一份结果的不再写。父会话的消息历史被清空时回报一并清掉。每到期销毁一个子会话，父会话在会话列表里被顶到前面一次
-9. **父会话改子会话的设置**：`set_subtask_setting` 经会话设置管理面的 `setAs` 写直接子会话本会话层的一项，与在那个子会话里用 `/session.set` 是同一份实现：认项、文字读法（列表与映射写 `[]`、文字传空串即设成空）、门槛（按这次调用的授权身份判，即 api-tools 的 `actingIdentity`：几个人的一轮里经 owner 批过的是 owner）与回执。项写错、不适用或重名时回执列出能改的项。声明 `sensitive` 加 `confirm: 'session'`：模型给自己派的子会话放权等于自授，要有人确认；owner 配了免确认时只有 owner 参与的回合不弹，没有 owner 参与的回合发不起审批、用不了它
+9. **父会话改子会话的设置**：`set_subtask_setting` 经会话设置管理面的 `setAs` 写直接子会话本会话层的一项，与在那个子会话里用 `/session.set` 是同一份实现：认项、文字读法（列表与映射写 `[]`、文字传空串即设成空）、门槛（按这次调用的授权身份判，即 api-tools 的 `actingIdentity`：几个人的一轮里经 owner 批过的是 owner）与回执。项写错、不适用或重名时回执列出能改的项。与 `create_subtask` 同为 2 级加确认：模型给自己派的子会话放权等于自授，要 owner 确认；owner 配了免确认时只有 owner 参与的回合不弹，没有 owner 参与的回合发不起审批、用不了它
 10. 清空（`/clear`）一个会话时它的子会话一并删除（会话管理做），删除父会话同样连带子会话
 
 ## 配置

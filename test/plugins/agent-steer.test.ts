@@ -697,6 +697,8 @@ describe('能停下一轮的', () => {
       } as unknown as SessionManagerService,
       { priority: 1000 },
     );
+    // 没装权限插件：放行这一次调用（只看等待，不看权限）
+    s.host.tools.use.setExecutionGuard(async () => ({ ok: true }));
     await stopInTool(s, 'wait_subtasks');
   });
 

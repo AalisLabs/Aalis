@@ -325,9 +325,9 @@ function registerSubtask(
   // ---- create_subtask ----
   tools.use.register({
     groups: ['subtask'],
-    // 每个子任务是一条独立的 LLM 会话链——不受信任的调用方可连续创建以放大 API 开销。
-    // sensitive(L1) 挡住 level-0，不加逐次 confirm（正常用法是 agent 连续创建多个并行子任务）。
-    risk: 'sensitive',
+    // 子任务替发起的人在后台接着做（每个是一条独立的 LLM 会话链）：建、追问、改设置与删都与编排、定时任务、停后台任务同一规则，
+    // 2 级加确认。别人单独发起的没人能批即拒；owner 一个人的回合在免确认白名单里不问，常连续派几个并行子任务的把它加进白名单
+    risk: 'dangerous',
     definition: {
       type: 'function',
       function: {
@@ -457,6 +457,8 @@ function registerSubtask(
   // ---- check_subtask ----
   tools.use.register({
     groups: ['subtask'],
+    // 只看不改：2 级、不确认，低于 2 级的看不到别人派出的子任务的任务与结果
+    visibility: 'restricted',
     definition: {
       type: 'function',
       function: {
@@ -526,8 +528,8 @@ function registerSubtask(
   // ---- send_to_subtask ----
   tools.use.register({
     groups: ['subtask'],
-    // 向子任务追加指令 = 驱动其再跑一轮 LLM，同 create_subtask 的开销放大面。
-    risk: 'sensitive',
+    // 追问让子任务再跑一轮：与 create_subtask 同一规则
+    risk: 'dangerous',
     definition: {
       type: 'function',
       function: {
@@ -594,10 +596,9 @@ function registerSubtask(
   // ---- set_subtask_setting ----
   tools.use.register({
     groups: ['subtask'],
-    // 模型给自己派的子会话放权等于自己给自己授权：要 owner 确认（免确认只对以 owner 身份做的事生效），项的门槛另按这一轮
-    // 发起的人逐项判
-    risk: 'sensitive',
-    confirm: 'session',
+    // 模型给自己派的子会话放权等于自己给自己授权：与 create_subtask 同一规则，要 owner 确认（免确认只对以 owner 身份做的事
+    // 生效），项的门槛另按这一轮发起的人逐项判
+    risk: 'dangerous',
     definition: {
       type: 'function',
       function: {
@@ -646,8 +647,8 @@ function registerSubtask(
   // ---- delete_subtask ----
   tools.use.register({
     groups: ['subtask'],
-    // 销毁子任务会话（含其未完成工作）——破坏性且影响他人发起的任务。
-    risk: 'sensitive',
+    // 销毁子任务会话连同它没做完的事：与 create_subtask 同一规则
+    risk: 'dangerous',
     definition: {
       type: 'function',
       function: {
@@ -698,6 +699,8 @@ function registerSubtask(
   // ---- wait_subtasks ----
   tools.use.register({
     groups: ['subtask'],
+    // 只看不改：同 check_subtask
+    visibility: 'restricted',
     definition: {
       type: 'function',
       function: {

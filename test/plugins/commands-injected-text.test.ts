@@ -38,7 +38,8 @@ afterEach(async () => {
 });
 
 async function setup(schedulerConfig: Record<string, unknown> = {}) {
-  const { app } = hostedApp();
+  // 建子任务与追问 2 级加确认：owner 的长期授权里有这两项，她一个人的回合不问
+  const { app } = hostedApp({ restrictedPolicy: { allow: ['tool:create_subtask', 'tool:send_to_subtask'] } });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ events, hooks, services, commands, provide, tools, gateway });

@@ -77,13 +77,9 @@ describe('set_subtask_setting 的处理器', () => {
     return { hub, child, set };
   }
 
-  it('登记在子任务组，声明 sensitive 加 session 确认', async () => {
+  it('登记在子任务组，声明 dangerous（2 级加确认）', async () => {
     const { hub } = await setup();
-    expect(hub.registered.get('set_subtask_setting')).toMatchObject({
-      groups: ['subtask'],
-      risk: 'sensitive',
-      confirm: 'session',
-    });
+    expect(hub.registered.get('set_subtask_setting')).toMatchObject({ groups: ['subtask'], risk: 'dangerous' });
   });
 
   it('按发起的人判项的门槛：owner 能写工具分组，1 级的人被拒、值不变；回执是原文，下一轮读到写下的值', async () => {

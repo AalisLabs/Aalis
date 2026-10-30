@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type { ElementHandle, Frame, HTTPResponse, Page, Viewport } from 'puppeteer';
 import { describe, expect, it, vi } from 'vitest';
 import { approvals } from '../../packages/api-approval/src/index.js';
-import { hostConfig } from '../../packages/api-host-config/src/index.js';
+import { type AalisConfig, hostConfig } from '../../packages/api-host-config/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
@@ -536,13 +536,14 @@ async function relay(target: number) {
 }
 
 /**
- * 起运行时（共用的 minimal 档组合，模型是按 script 回话的假模型），再加一个需要批准的探针工具；extra 是另加的插件。
- * requests 是假模型收到的请求
+ * 起运行时（共用的 minimal 档组合，模型是按 script 回话的假模型），再加一个需要批准的探针工具；extra 是另加的插件，doc 是宿主
+ * 配置文档。requests 是假模型收到的请求
  */
 async function startStack(
   replies: Record<string, string> = {},
   extra: PluginDefinition[] = [],
   rooms?: Record<string, string>,
+  doc?: Partial<AalisConfig>,
 ) {
   const requests: ChatModelRequest[] = [];
   const { app, port } = await webuiStack({
@@ -551,6 +552,7 @@ async function startStack(
     extra,
     cleanups,
     rooms,
+    doc,
   });
   const runs: string[] = [];
   app.bind({ tools }).tools.use.register({
@@ -2025,7 +2027,10 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
   }, 90_000);
 
   it('子会话：「后台」标签按会话树列出子会话，带状态、耗时与 token；停掉父会话在等的那个，父会话的等待随即返回，「全部停止」停掉余下的；子会话页的路径逐层退回；父会话用量的累计含子会话', async () => {
-    const stack = await startStack({}, [subtaskPlugin]);
+    // 建子任务 2 级加确认：owner 的长期授权（免确认白名单）里有它，她一个人的回合不问
+    const stack = await startStack({}, [subtaskPlugin], undefined, {
+      restrictedPolicy: { allow: ['tool:create_subtask'] },
+    });
     const sessions = stack.app.bind({ sessionManager }).sessionManager.use;
     const { id: parentId } = await sessions.createSession({}, { createdFrom: 'webui' });
     await stack.app
