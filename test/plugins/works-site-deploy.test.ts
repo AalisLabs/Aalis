@@ -9,7 +9,7 @@ import {
 import { assetKey } from '../../packages/plugin-works-site/src/cloudflare/hash.js';
 import type { WorksSiteConfig } from '../../packages/plugin-works-site/src/config.js';
 import { WorksDeployer } from '../../packages/plugin-works-site/src/deploy.js';
-import { WorksStore } from '../../packages/plugin-works-site/src/state.js';
+import { type WorksState, WorksStore } from '../../packages/plugin-works-site/src/state.js';
 import {
   abortablePause,
   ContentMismatchError,
@@ -21,12 +21,28 @@ import {
 } from '../../packages/plugin-works-site/src/verify.js';
 import { isTextRef, resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import { startFakePages } from '../fixtures/fake-pages.js';
+import { renderIn } from '../fixtures/host-language.js';
 import { ownView } from '../fixtures/own-storage.js';
 import { memoryStorage } from '../fixtures/paper.js';
 import { fixedRef, ref } from '../fixtures/service-ref.js';
 
 /** 默认实例的状态文件 */
 const STATE_URI = 'pluginData:/works-site/state.json';
+
+/** 不连假 Pages 的用例共用的配置 */
+const CONFIG: WorksSiteConfig = {
+  targetId: 'works',
+  basePath: '/',
+  accountId: '0'.repeat(32),
+  apiToken: 'sentinel',
+  projectName: 'aalis',
+  productionBranch: 'main',
+  siteOrigin: 'https://aalis.pages.dev',
+  mainOrigins: ['https://aalis.pages.dev'],
+  failOpen: false,
+  siteTitle: '作品集',
+  siteIntro: '',
+};
 
 const settings = { fail_open: false, env_vars: {}, kv_namespaces: [] };
 const project = {
@@ -431,6 +447,47 @@ describe('作品站持久状态与内容核对', () => {
     expect(() => store.copy()).toThrow();
   });
 
+  it.each([
+    [
+      'en',
+      [
+        'The works site has paused automatic deployment',
+        'Cloudflare authentication failed',
+        'Deployment failed repeatedly',
+      ],
+    ],
+    ['zh-CN', ['作品站已暂停自动部署', 'Cloudflare 鉴权失败', '部署连续失败']],
+  ])('%s：health() 的三种原因（暂停、鉴权失败、部署连续失败）', async (language, expected) => {
+    const reasons = [];
+    for (const prepare of [
+      (state: WorksState) => {
+        state.paused = { reason: 'x', at: 1 };
+      },
+      (state: WorksState) => {
+        state.lastFailure = 'auth';
+      },
+      (state: WorksState) => {
+        state.lastFailure = 'deploy-failed';
+      },
+    ]) {
+      const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
+      await store.load();
+      await store.update(prepare);
+      const deployer = new WorksDeployer({
+        config: CONFIG,
+        store,
+        client: {} as PagesClient,
+        publish: ref(),
+        live: () => {},
+        logger: { info: () => {}, warn: () => {} },
+        signal: new AbortController().signal,
+      });
+      const health = deployer.health();
+      reasons.push(health.ok ? undefined : renderIn(health.reason, language));
+    }
+    expect(reasons).toEqual(expected);
+  });
+
   it('变更文件逐个用随机查询串核对哈希，投毒内容被拒', async () => {
     const called: string[] = [];
     const file = { path: '/w/abcdefghij/index.html', bytes: new TextEncoder().encode('expected') };
@@ -714,19 +771,7 @@ describe('作品站持久状态与内容核对', () => {
       },
     ]);
     const deployer = new WorksDeployer({
-      config: {
-        targetId: 'works',
-        basePath: '/',
-        accountId: '0'.repeat(32),
-        apiToken: 'sentinel',
-        projectName: 'aalis',
-        productionBranch: 'main',
-        siteOrigin: 'https://aalis.pages.dev',
-        mainOrigins: ['https://aalis.pages.dev'],
-        failOpen: false,
-        siteTitle: '作品集',
-        siteIntro: '',
-      },
+      config: CONFIG,
       store,
       client: { ...rogue, verifyToken: async () => ({}) } as unknown as PagesClient,
       publish: ref(),
@@ -926,7 +971,7 @@ describe('作品站编排与假 Pages', () => {
       deployer.start();
       await eventually(() => store.data?.lastFailure === 'auth');
       expect(store.data?.paused).toBeUndefined();
-      expect(deployer.health()).toEqual({ ok: false, reason: 'Cloudflare 鉴权失败' });
+      expect(toSource(deployer.health())).toEqual({ ok: false, reason: 'Cloudflare 鉴权失败' });
       expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
       controller.abort();

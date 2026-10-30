@@ -34,7 +34,6 @@ import { compilerOptions, fixtureProgram, holdsTextRef, ROOT, sourceFiles } from
 const PACKAGE_ALLOWLIST = new Map([
   ['plugin-paper', '尚未迁移'],
   ['plugin-publish-review', '尚未迁移'],
-  ['plugin-works-site', '尚未迁移'],
 ]);
 
 /** 位置级名单：长期不翻的位置，reason 写依据 */

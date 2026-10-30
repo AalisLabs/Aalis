@@ -12,6 +12,7 @@
 import type { Logger } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { canonicalBasePath } from './site/paths.js';
+import { t } from './texts.js';
 
 /** Pages 项目名：小写字母、数字与连字符，最长 58 个字符 */
 const PROJECT_PATTERN = '^[a-z0-9][a-z0-9-]{0,57}$';
@@ -23,72 +24,69 @@ const TARGET_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 export const configSchema = defineConfig({
   targetId: {
     type: 'string',
-    label: '发布目标 ID',
+    label: t('targetIdLabel'),
     default: 'works',
     onInvalid: 'error',
-    description: '宿主内唯一的小写标识；白纸按此 ID 选择发布目标，发布后不可随意修改',
+    description: t('targetIdDescription'),
   },
   basePath: {
     type: 'string',
-    label: '发布目录',
+    label: t('basePathLabel'),
     default: '/',
     onInvalid: 'error',
-    description: '作品集所在目录，如 /draw/；不能填写域名，留根目录用 /',
+    description: t('basePathDescription'),
   },
   accountId: {
     type: 'string',
-    label: 'Cloudflare 账号 ID',
+    label: t('accountIdLabel'),
     required: true,
     secret: true,
-    description: '作品站所在的 Cloudflare 账号（32 位十六进制）。建议这个账号里只放作品站一个 Pages 项目',
+    description: t('accountIdDescription'),
   },
   apiToken: {
     type: 'string',
     label: 'Cloudflare API token',
     required: true,
     secret: true,
-    description:
-      '建议新建只给 Pages Write、带过期时间的账号级 token；离过期不到 14 天诊断项提醒。密钥只用于部署请求，不写入站点文件',
+    description: t('apiTokenDescription'),
   },
   projectName: {
     type: 'string',
-    label: 'Pages 项目名',
+    label: t('projectNameLabel'),
     default: 'aalis',
     onInvalid: 'error',
-    description: '已建好的 Direct Upload 项目。不要删掉它：删了名字会被释放，旧链接可能指向别人的内容',
+    description: t('projectNameDescription'),
   },
   productionBranch: {
     type: 'string',
-    label: '生产分支',
+    label: t('productionBranchLabel'),
     default: 'main',
     onInvalid: 'error',
-    description: '与项目设置一致；主站部署到这个分支。不能以 p- 开头（作品分支用这个前缀）',
+    description: t('productionBranchDescription'),
   },
   siteOrigin: {
     type: 'string',
-    label: '主站网址',
+    label: t('siteOriginLabel'),
     onInvalid: 'error',
     default: '',
-    description:
-      '作品链接的前缀，形如 https://example.com，不带路径；留空为 https://<项目名>.pages.dev。链接发出去之后要一直能打开，定下后不要再改',
+    description: t('siteOriginDescription'),
   },
   failOpen: {
     type: 'boolean',
-    label: 'Functions 额度用尽时照常返回作品',
+    label: t('failOpenLabel'),
     default: false,
-    description:
-      '期望的项目设置 fail_open，与线上不符时暂停自动部署。打开时额度用尽后作品子域不再经过中间件，顶层跳转与清单拦截失效；关闭时额度用尽当天作品子域报错，主站不受影响',
+    description: t('failOpenDescription'),
   },
   siteTitle: {
     type: 'string',
-    label: '站点标题',
+    label: t('siteTitleLabel'),
     default: '作品集',
   },
   siteIntro: {
     type: 'textarea',
-    label: '站点简介',
+    label: t('siteIntroLabel'),
     default: '',
-    description: '显示在作品集首页标题下',
+    description: t('siteIntroDescription'),
   },
 });
 
@@ -112,7 +110,7 @@ function readBasePath(value: string): string {
   try {
     return canonicalBasePath(value.trim());
   } catch {
-    throw configError('basePath 须是安全的绝对目录，如 /draw/，不能含保留路由或编码分隔符');
+    throw configError(t('basePathInvalid'));
   }
 }
 
@@ -136,27 +134,26 @@ function readOrigin(value: string, projectName: string): string {
     !url.hash &&
     !raw.includes('?') &&
     !raw.includes('#');
-  if (!url || !bare)
-    throw configError('siteOrigin 须是 https 网址的源，形如 https://example.com，不带路径、端口与查询串');
+  if (!url || !bare) throw configError(t('siteOriginInvalid'));
   return url.origin;
 }
 
 /** 把 schema 解析结果转成客户端需要的规范配置；不重复解释原始值。 */
 export function resolveConfig(parsed: ConfigOf<typeof configSchema>): WorksSiteConfig {
   const targetId = parsed.targetId.trim();
-  if (!TARGET_PATTERN.test(targetId)) throw configError('targetId 须是小写字母或数字开头的小写标识');
+  if (!TARGET_PATTERN.test(targetId)) throw configError(t('targetIdInvalid'));
   const basePath = readBasePath(parsed.basePath);
   const accountId = parsed.accountId.trim();
   const apiToken = parsed.apiToken.trim();
-  if (!accountId) throw configError('accountId 必须填写');
-  if (!apiToken) throw configError('apiToken 必须填写');
+  if (!accountId) throw configError(t('required', { key: 'accountId' }));
+  if (!apiToken) throw configError(t('required', { key: 'apiToken' }));
   const projectName = parsed.projectName.trim();
   if (!new RegExp(PROJECT_PATTERN).test(projectName)) {
-    throw configError('projectName 不合规：只能是小写字母、数字与连字符，以字母或数字开头，最长 58 个字符');
+    throw configError(t('projectNameInvalid'));
   }
   const productionBranch = parsed.productionBranch.trim();
   if (!BRANCH_PATTERN.test(productionBranch) || WORK_BRANCH_PREFIX.test(productionBranch)) {
-    throw configError('productionBranch 不合规：须是分支名，且不能以 p- 开头（作品分支用这个前缀）');
+    throw configError(t('productionBranchInvalid'));
   }
 
   const siteOrigin = readOrigin(parsed.siteOrigin, projectName);

@@ -10,11 +10,12 @@ import { WorksDeployer } from './deploy.js';
 import { registerWorksDoctor } from './doctor.js';
 import { claimWorksTarget } from './ownership.js';
 import { WorksStore } from './state.js';
+import { t } from './texts.js';
 import { registerWorksPage } from './webui.js';
 
 export default definePlugin({
   name: '@aalis/plugin-works-site',
-  displayName: '作品站',
+  displayName: t('displayName'),
   subsystem: 'agent',
   reusable: true,
   configSchema,

@@ -121,12 +121,12 @@ export class WorksDeployer {
     this.#convergencePauseMs = input.convergencePauseMs ?? 3000;
   }
 
-  health(): { ok: true } | { ok: false; reason: string } {
+  health(): { ok: true } | { ok: false; reason: TextRef } {
     const state = this.#store.data;
-    if (this.#store.failure || !state) return { ok: false, reason: this.#store.failure ?? '作品站状态文件读取失败' };
-    if (state.paused) return { ok: false, reason: '作品站已暂停自动部署' };
-    if (state.lastFailure === 'auth') return { ok: false, reason: 'Cloudflare 鉴权失败' };
-    if (state.lastFailure === 'deploy-failed') return { ok: false, reason: '部署连续失败' };
+    if (this.#store.failure || !state) return { ok: false, reason: t('stateUnreadable') };
+    if (state.paused) return { ok: false, reason: t('paused') };
+    if (state.lastFailure === 'auth') return { ok: false, reason: t('authFailed') };
+    if (state.lastFailure === 'deploy-failed') return { ok: false, reason: t('deployFailedRepeatedly') };
     return { ok: true };
   }
 
