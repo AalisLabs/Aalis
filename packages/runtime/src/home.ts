@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { basename, isAbsolute, join, normalize, resolve } from 'node:path';
 import type { HostPaths } from '@aalis/api-host-paths';
 import { CORE_CONFIG_SCHEMA, defaultsFrom } from '@aalis/schema-config';
+import { matchLanguage } from '@aalis/schema-i18n';
 import { stringify as stringifyYaml } from 'yaml';
 
 // ============================================================
@@ -220,12 +221,29 @@ export function isHomeInitialized(paths: HostPaths): boolean {
 const ALL_TOOL_GROUPS = { '@aalis/plugin-tools': { enabledToolGroups: ['*'] } };
 const OWNER_PLATFORM_PROFILES = { cli: ALL_TOOL_GROUPS, webui: ALL_TOOL_GROUPS };
 
+/** 第一方插件提供的语言：第一方字典都是原文 zh-CN、带 en。与 create-aalis 一致 */
+const FIRST_PARTY_LANGUAGES = ['zh-CN', 'en'];
+
 /**
- * 建家目录：目录 0700，写默认主配置与空的密钥文件（0600），建布局里的子目录。主配置里写上 owner 平台的平台档。
+ * 初始化时写给 plugin-i18n 的语言列表：跟随系统在前，其后是系统语言对上的第一方语言与另一种；对不上时英文排第二，
+ * provided 为 false。与 create-aalis 不带 --lang 的默认列表一致
+ */
+export function initLanguages(locale: string): { languages: string[]; provided: boolean } {
+  const at = matchLanguage([locale], FIRST_PARTY_LANGUAGES);
+  const second = at === undefined ? 'en' : FIRST_PARTY_LANGUAGES[at];
+  return {
+    languages: ['auto', second, ...FIRST_PARTY_LANGUAGES.filter(tag => tag !== second)],
+    provided: at !== undefined,
+  };
+}
+
+/**
+ * 建家目录：目录 0700，写默认主配置与空的密钥文件（0600），建布局里的子目录。主配置里写上 owner 平台的平台档，
+ * 给了语言列表时写进 plugin-i18n 的插件段。
  * 已初始化时拒绝，不覆盖任何文件。目录已存在时只接受空目录，或只有布局自己条目的目录（上次初始化中途失败），
  * 沿用并收紧为 0700：`--home ~ --init` 这类笔误不能把用户主目录改成 0700、再往里铺一层布局。
  */
-export function initHome(paths: HostPaths): void {
+export function initHome(paths: HostPaths, languages?: readonly string[]): void {
   if (isHomeInitialized(paths)) throw new HomeArgsError(`The home directory is already initialized: ${paths.home}`);
   if (existsSync(paths.home)) {
     const foreign = readdirSync(paths.home).filter(name => !LAYOUT_ENTRIES.has(name));
@@ -258,7 +276,8 @@ export function initHome(paths: HostPaths): void {
   else writeFileSync(paths.secrets, '', { mode: 0o600, flag: 'wx' });
   const { name, logLevel } = defaultsFrom(CORE_CONFIG_SCHEMA);
   const sessionConfig = { platforms: OWNER_PLATFORM_PROFILES };
-  writeFileSync(paths.config, stringifyYaml({ name, logLevel, plugins: {}, sessionConfig }), {
+  const plugins = languages ? { '@aalis/plugin-i18n': { language: [...languages] } } : {};
+  writeFileSync(paths.config, stringifyYaml({ name, logLevel, plugins, sessionConfig }), {
     mode: 0o600,
     flag: 'wx',
   });

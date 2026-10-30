@@ -3,8 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
-import { MINIMAL_BASE, pluginSettings, renderConfig } from '../../packages/create-aalis/src/cli.js';
-import { derivePaths, initHome } from '../../packages/runtime/src/home.js';
+import {
+  defaultLanguages,
+  MINIMAL_BASE,
+  pluginSettings,
+  renderConfig,
+  uiLanguage,
+} from '../../packages/create-aalis/src/cli.js';
+import { derivePaths, initHome, initLanguages } from '../../packages/runtime/src/home.js';
 import { isLoadablePlugin } from '../../packages/runtime/src/node-modules-loader.js';
 import { defineConfig } from '../../packages/schema-config/src/index.js';
 import { fieldsPlugin, startSettings } from '../fixtures/session-settings.js';
@@ -76,8 +82,8 @@ describe('create-aalis renderConfig', () => {
   });
 });
 
-// `--init` 建的家目录与脚手架生成的家目录写同样的平台档：两份实现（脚手架引用不了 runtime），在这里核完全相等
-describe('平台档：create-aalis 与 --init 一致', () => {
+// `--init` 建的家目录与脚手架生成的家目录写同样的平台档与默认语言列表：两份实现（脚手架引用不了 runtime），在这里核完全相等
+describe('平台档与语言列表：create-aalis 与 --init 一致', () => {
   const dirs: string[] = [];
   afterEach(() => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -89,6 +95,15 @@ describe('平台档：create-aalis 与 --init 一致', () => {
     const paths = derivePaths(join(dir, 'home'), join(dir, 'app'));
     initHome(paths);
     expect(parse(readFileSync(paths.config, 'utf-8')).sessionConfig).toEqual(configOf(new Set()).sessionConfig);
+  });
+
+  it.each([
+    'zh-CN',
+    'zh-TW',
+    'en-US',
+    'ja-JP',
+  ])('系统语言 %s：默认语言列表相同（脚手架不带 --lang、没装语言包）', locale => {
+    expect(initLanguages(locale).languages).toEqual(defaultLanguages(uiLanguage(locale)));
   });
 });
 

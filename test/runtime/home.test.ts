@@ -20,6 +20,7 @@ import {
   derivePaths,
   HomeArgsError,
   initHome,
+  initLanguages,
   isFullyAbsolute,
   isHomeInitialized,
   parseHostArgs,
@@ -317,6 +318,14 @@ describe('initHome', () => {
     });
   });
 
+  it('给了语言列表时按给的顺序写进 plugin-i18n 的插件段', () => {
+    const paths = derivePaths(join(tmp(), 'h'), '/app');
+    initHome(paths, ['auto', 'en', 'zh-CN']);
+    expect(parseYaml(readFileSync(paths.config, 'utf-8')).plugins).toEqual({
+      '@aalis/plugin-i18n': { language: ['auto', 'en', 'zh-CN'] },
+    });
+  });
+
   it('不读安装集的 package.json：它坏了也照常初始化', () => {
     const app = tmp();
     writeFileSync(join(app, 'package.json'), '{ not json');
@@ -334,5 +343,16 @@ describe('initHome', () => {
     expect(statSync(home).mode & 0o777).toBe(0o755);
     expect(existsSync(join(home, 'state'))).toBe(false);
     expect(existsSync(join(home, 'secrets.yaml'))).toBe(false);
+  });
+});
+
+describe('initLanguages', () => {
+  it.each([
+    ['zh-CN', ['auto', 'zh-CN', 'en'], true],
+    ['zh-TW', ['auto', 'zh-CN', 'en'], true],
+    ['en-GB', ['auto', 'en', 'zh-CN'], true],
+    ['ja-JP', ['auto', 'en', 'zh-CN'], false],
+  ])('系统语言 %s：跟随系统在前，其后是对上的第一方语言与另一种，对不上时英文排第二', (locale, languages, provided) => {
+    expect(initLanguages(locale)).toEqual({ languages, provided });
   });
 });
