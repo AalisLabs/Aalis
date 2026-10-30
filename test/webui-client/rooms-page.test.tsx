@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, screen, within } from '@testing-library/react';
+import { act, fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionMethodParams, SettingLayer } from '../../packages/api-session-protocol/src/index.js';
 import { stubPlatform, stubViewport } from '../helpers/browser.js';
@@ -17,6 +17,7 @@ import {
   renderApp,
   requests,
   room,
+  server,
 } from './harness.js';
 import { row as settingRow } from './items.js';
 
@@ -253,6 +254,20 @@ describe('房间表', () => {
     await vi.waitFor(() => expect(names()).toHaveLength(4));
     expect(screen.queryByRole('button', { name: '场所设置' })).toBeNull();
     expect(screen.queryByRole('link', { name: '去会话默认' })).toBeNull();
+  });
+
+  it('「场所设置」开着时会话设置服务下线（功能位 settings 变假）：对话框关掉，不留只有标题的空框', async () => {
+    app = await renderApp('/rooms?instance=im-a', {
+      'sessions/list': () => ({ sessions: ROOMS, groups: GROUPS }),
+      'session/config/layer/get': () => ({
+        items: [settingRow('persona', { field: { type: 'string', label: '人设' } })],
+      }),
+    });
+    await vi.waitFor(() => expect(names()).toHaveLength(4));
+    fireEvent.click(within(screen.getByRole('row', { name: /读书会/ })).getByRole('button', { name: '场所设置' }));
+    await within(screen.getByRole('dialog', { name: '场所设置：读书会' })).findByRole('group', { name: '人设' });
+    act(() => server().notify('features/changed', { features: { ...INIT.features, settings: false } }));
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('多账号的组有账号列', async () => {
