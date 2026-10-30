@@ -2,6 +2,42 @@ import { defineLocale } from '@aalis/schema-i18n';
 import type { Source } from '../texts.js';
 
 export default defineLocale<Source>()({
+  displayName: 'User fact profiles',
+  extractEveryLabel: 'Extract every N messages',
+  extractEveryDescription:
+    'Fact extraction runs once every N messages from the same user. Messages count whether or not they get a reply, and each person in a group chat is counted separately. 1 tries to extract on every message (not recommended); 0 or a negative number turns extraction off (existing profiles are still injected)',
+  historyLabel: 'History messages for extraction',
+  historyDescription: 'How many recent messages the LLM gets when extraction runs',
+  maxFactsLabel: 'Maximum facts per user',
+  maxFactsDescription:
+    'Beyond this, the facts updated longest ago (by updatedAt) are dropped automatically. The smallest effective value is 5 (enforced when writing), and 0 does not turn extraction off; to turn extraction off, set extractEveryNMessages to 0',
+  maxFactCharsLabel: 'Maximum characters per fact',
+  maxFactCharsDescription: 'Longer facts are cut off, so the LLM cannot write long paragraphs instead of facts',
+  maxOthersLabel: 'Maximum other participants in group chats',
+  maxOthersDescription:
+    'In group chats, how many people besides the current speaker have their profile summaries injected for the LLM at most. 0 turns off injecting several users in group chats',
+  maxFactsForOthersLabel: 'Maximum facts per other participant',
+  maxFactsForOthersDescription:
+    'Each background participant in a group chat shows only the N most recently updated facts, to keep the prompt short',
+  temporaryMaxAgeLabel: 'Days to keep temporary facts',
+  temporaryMaxAgeDescription:
+    'Facts with temporality=temporary that have not been updated for this many days are no longer injected into the prompt (they stay in the profile until a later update or remove). 0 means they never fade',
+  decayLabel: 'Daily relationship strength decay',
+  decayDescription: 'How much relationScore decays each day while a user does not interact. 0 means no decay',
+  directLabel: 'Private chat increment',
+  directDescription: 'Relationship strength added per message on a direct trigger',
+  immediateLabel: 'Mention increment',
+  immediateDescription:
+    'Relationship strength added per message when an @ or the name triggers a reply in a group chat',
+  intervalLabel: 'Passive group chat increment',
+  intervalDescription:
+    'Relationship strength added per message by a passive trigger (frequency or activity) or an ordinary incoming message in a group chat',
+  witnessLabel: 'Bystander (no reply) increment',
+  witnessDescription:
+    'The lowest increment, added for every incoming message whether or not the agent replies. If the agent replies, one of direct/immediate/interval is added on top. 0 means watching adds nothing; the interaction count and the last interaction time are still recorded (the only source for the decay baseline and for sorting by recent interaction)',
+  backfillLabel: 'Fill in background profiles from other sessions',
+  backfillDescription:
+    'When the current group or session has too few candidates, whether users who interacted recently in other groups, private chats and other sessions may fill up the "other participants" background summaries. When off, only users seen in the current context are used',
   categoryInterests: 'Interests',
   categoryOccupation: 'Occupation',
   categoryRelationships: 'Relationships',
@@ -21,4 +57,47 @@ export default defineLocale<Source>()({
   clearType: 'User profiles (across sessions)',
   clearSkipped:
     'User profiles are cross-session data and are cleared only when clearing all sessions, so they were not cleared this time',
+  clearDone: 'Cleared user profiles ({count, plural, one {# entry} other {# entries}})',
+  clearFailed: 'Failed to clear user profiles: {error}',
+  profiles: 'User profiles',
+  pageDescription:
+    'Facts the assistant noted about each person from conversations, brought into later conversations. They can only be deleted here, not edited.',
+  pageEmpty: 'No profiles yet',
+  columnUser: 'User',
+  columnFacts: 'Facts',
+  columnLastNoted: 'Last noted',
+  factsEmpty: 'This profile has no facts left',
+  columnFact: 'Fact',
+  columnCategory: 'Category',
+  columnTerm: 'Term',
+  columnNoted: 'Noted',
+  termShort: 'Short-term',
+  termLong: 'Long-term',
+  forgetLabel: 'Delete',
+  forgetConfirm: 'Once deleted, this fact is no longer brought into later conversations.',
+  forgotten: 'Deleted: {text}',
+  unknownFact: 'Unrecognized fact: {rowKey}',
+  factGone: 'This fact is no longer in the profile',
+  clearProfileLabel: 'Clear profile',
+  clearProfileConfirm:
+    'All facts of this person are cleared, together with the relationship strength and interaction count.',
+  profileGone: '{key} no longer has a profile',
+  profileCleared: 'Cleared the profile of {key}',
+  groupSummary: 'Look up the fact profile built up for a person.',
+  profileDescription: 'Show your fact profile',
+  noIdentityView: 'This session has no recognized user, so the profile cannot be shown.',
+  noProfileYet: 'No profile data yet ({key})',
+  clearDescription: 'Clear your own fact profile',
+  noIdentityClear: 'This session has no recognized user, so the profile cannot be cleared.',
+  noOwnProfile: 'You have no profile data ({key})',
+  ownCleared: 'Cleared your profile ({key})',
+  ownClearFailed: 'Failed to clear: {error}',
+  forgetDescription: "Remove a poisoned fact from a user's profile",
+  noProfile: 'No profile data ({key})',
+  factNotFound: 'Fact [{factId}] not found. {key} has {count, plural, one {# fact} other {# facts}}:\n{listing}',
+  factForgotten: 'Deleted fact [{factId}] of {key}: {text}',
+  forgetFailed: 'Failed to delete: {error}',
+  nukeDescription: '[Dangerous] Clear all user profiles',
+  nukeDone: 'Cleared all user profiles ({count, plural, one {# entry} other {# entries}})',
+  nukeFailed: 'Failed to clear: {error}',
 });

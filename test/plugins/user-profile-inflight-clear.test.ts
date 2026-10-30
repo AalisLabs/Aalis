@@ -11,6 +11,7 @@ import { memory } from '../../packages/api-memory/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import userProfile from '../../packages/plugin-user-profile/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
@@ -175,7 +176,7 @@ describe('plugin-user-profile: LLM 调用期间的清除不被合并写回撤销
     await inbound('u1');
     await llm.entered;
     await vi.waitFor(async () => expect((await mem.getMetadata(PROFILE_NS, 'onebot:u1'))?.interactionCount).toBe(1));
-    expect(String(await cmd.run('profile.forget', 'onebot:u1', 'f1'))).toContain('已删除');
+    expect(toSource(await cmd.run('profile.forget', 'onebot:u1', 'f1'))).toContain('已删除');
 
     llm.release();
     await vi.waitFor(async () => expect(factTexts(await mem.getMetadata(PROFILE_NS, 'onebot:u1'))).toContain('喜欢狗'));

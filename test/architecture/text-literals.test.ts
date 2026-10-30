@@ -34,7 +34,6 @@ import { compilerOptions, fixtureProgram, holdsTextRef, ROOT, sourceFiles } from
 const PACKAGE_ALLOWLIST = new Map([
   ['plugin-paper', '单元 D'],
   ['plugin-publish-review', '单元 D'],
-  ['plugin-user-profile', '单元 D'],
   ['plugin-user-relation', '单元 D'],
   ['plugin-works-site', '单元 D'],
 ]);

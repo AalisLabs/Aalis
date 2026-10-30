@@ -1,8 +1,41 @@
-// 本插件自己的原文字典：事实分类的显示名、/profile 的回复与 /clear 的类型显示名和未清理的一行（给模型的档案块另写，不进字典）
+// 本插件自己的原文字典：显示名与配置项、事实分类的显示名、档案页、工具分组名与概述、/profile 各指令的说明与回复、/clear 的类型
+// 显示名与结果行（给模型的档案块、提取提示词与工具另写，不进字典）
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
 const SOURCE = {
+  displayName: '用户事实档案',
+  extractEveryLabel: '每 N 条消息提取一次',
+  extractEveryDescription:
+    '同一用户每发 N 条消息触发一次事实提取。无论是否回复都会计数，群聊中每人独立计数。设为 1 表示每条消息都尝试提取（不推荐）；设为 0 或负数则禁用提取（仍会注入已有档案）',
+  historyLabel: '提取参考历史条数',
+  historyDescription: '触发提取时，喂给 LLM 的最近消息条数',
+  maxFactsLabel: '单用户事实上限',
+  maxFactsDescription:
+    '超出后按 updatedAt 升序淘汰最久未更新的，旧事实自动淘汰。最小有效值为 5（写入时自动下限），不支持设为 0 来禁用提取；若要禁用提取请将 extractEveryNMessages 设为 0',
+  maxFactCharsLabel: '单条事实字符数上限',
+  maxFactCharsDescription: '超出会被裁断，避免 LLM 输出长段落代替事实',
+  maxOthersLabel: '群聊其他参与者档案上限',
+  maxOthersDescription: '群聊中除当前发言者外，最多加载多少人的档案摘要注入 LLM。0 表示禁用群聊多用户注入',
+  maxFactsForOthersLabel: '其他参与者摘要条数上限',
+  maxFactsForOthersDescription: '群聊背景参与者每人只显示最近更新的 N 条事实，避免 prompt 过长',
+  temporaryMaxAgeLabel: '临时事实保留天数',
+  temporaryMaxAgeDescription:
+    'temporality=temporary 的事实超过该天数未更新后不再主动注入 prompt（仍保留在档案中，等待后续 update/remove）。0 表示不淡出',
+  decayLabel: '关系强度每日衰减',
+  decayDescription: '用户长期未互动时，relationScore 每天衰减的分数。0 表示不衰减',
+  directLabel: '私聊关系增量',
+  directDescription: 'direct 触发时每条消息增加的关系强度',
+  immediateLabel: '主动呼叫关系增量',
+  immediateDescription: '群聊 @/名字主动触发时每条消息增加的关系强度',
+  intervalLabel: '群聊被动参与关系增量',
+  intervalDescription: '群聊频率/活跃度被动触发或普通入站消息增加的关系强度',
+  witnessLabel: '旁观（不回复）关系增量',
+  witnessDescription:
+    '每条入站消息无论 agent 是否回复都加上的最低档增量。若 agent 触发回复，会再叠加 direct/immediate/interval 之一。0 表示旁观不加分；互动次数与最近互动时戳仍照记（衰减基准与最近互动排序的唯一来源）',
+  backfillLabel: '允许跨会话补齐副档案',
+  backfillDescription:
+    '当前群/会话中的候选不足时，是否允许从其他群、私聊等跨会话中选取最近互动过的用户来补全「其他参与者背景摘要」。关闭后仅限当前上下文内出现过的用户',
   categoryInterests: '兴趣爱好',
   categoryOccupation: '职业身份',
   categoryRelationships: '人际关系',
@@ -21,6 +54,49 @@ const SOURCE = {
   factTemporary: '临时状态',
   clearType: '用户档案（跨会话）',
   clearSkipped: '用户档案是跨会话数据，只在清理全部会话时清，本次未清理',
+  clearDone: '用户档案已清空 ({count, number} 条)',
+  clearFailed: '用户档案清空失败: {error}',
+  // 档案页（标题与工具分组名同一称呼）
+  profiles: '用户档案',
+  pageDescription: '她从对话里记下的关于各人的事实，会带进以后的对话。这里只能删除，不能改写。',
+  pageEmpty: '还没有人的档案',
+  columnUser: '用户',
+  columnFacts: '事实',
+  columnLastNoted: '最近记下',
+  factsEmpty: '这个人的档案里没有事实了',
+  columnFact: '事实',
+  columnCategory: '分类',
+  columnTerm: '时效',
+  columnNoted: '记下',
+  termShort: '近期',
+  termLong: '长期',
+  forgetLabel: '删除',
+  forgetConfirm: '删掉后，以后的对话里不再带上这条事实。',
+  forgotten: '已删除：{text}',
+  unknownFact: '不认识的事实：{rowKey}',
+  factGone: '这条事实已经不在档案里了',
+  clearProfileLabel: '清空档案',
+  clearProfileConfirm: '这个人的全部事实连同关系强度、互动次数一起清空。',
+  profileGone: '{key} 已经没有档案了',
+  profileCleared: '已清空 {key} 的档案',
+  groupSummary: '查询已经积累的某人事实档案。',
+  // /profile 各指令
+  profileDescription: '查看你的事实档案',
+  noIdentityView: '当前会话未识别用户身份，无法查看档案。',
+  noProfileYet: '暂无档案数据 ({key})',
+  clearDescription: '清除你自己的事实档案',
+  noIdentityClear: '当前会话未识别用户身份，无法清除档案。',
+  noOwnProfile: '你当前没有档案数据 ({key})',
+  ownCleared: '已清除你的档案 ({key})',
+  ownClearFailed: '清除失败：{error}',
+  forgetDescription: '定点删除某用户档案中的一条事实（运维除毒）',
+  noProfile: '无档案数据 ({key})',
+  factNotFound: '未找到事实 [{factId}]。{key} 现有 {count, number} 条：\n{listing}',
+  factForgotten: '已删除 {key} 的事实 [{factId}]：{text}',
+  forgetFailed: '删除失败：{error}',
+  nukeDescription: '【危险】清空所有用户档案',
+  nukeDone: '已清空全部用户档案（{count, number} 条）',
+  nukeFailed: '清空失败：{error}',
 } as const;
 export type Source = typeof SOURCE;
 

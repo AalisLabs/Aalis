@@ -3,18 +3,20 @@ import { type CommandHandler, commands } from '../../packages/api-commands/src/i
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import { llm } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
-import type { DeclarativePageView } from '../../packages/api-webui/src/index.js';
+import type { DeclarativePageView, PageActionResponse } from '../../packages/api-webui/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, events, provide, services } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import userProfile from '../../packages/plugin-user-profile/src/index.js';
 import { isTextRef, resolveText, type TextRef, toSource } from '../../packages/schema-i18n/src/index.js';
+import { renderIn } from '../fixtures/host-language.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
 // ════════════════════════════════════════════════════════════
 // 用户档案页：插件详情里一张带详情的表格，列出有事实的人；详情列出各条事实。只删不改：删一条事实、清空一个人，
-// 都是 destructive，由宿主确认；档案的事实变了（页面动作、指令、提取、全局清理）就 invalidate。webui 不在时插件照常
+// 都是 destructive，由宿主确认；档案的事实变了（页面动作、指令、提取、全局清理）就 invalidate。webui 不在时插件照常。
+// 页面数据、动作回执与报错、指令回复与全局清理的结果行都是文字对象，按读者的语言显示
 // ════════════════════════════════════════════════════════════
 
 const PAGE = 'profiles';
@@ -88,15 +90,21 @@ describe('用户档案页', () => {
       { key: 'onebot:bob', facts: 1, updatedAt: 500 },
       { key: 'onebot:alice', facts: 2, updatedAt: 300 },
     ]);
-    const facts = await pages.data<Array<{ category: string | TextRef }>>(PAGE, 'facts', { rowKey: 'onebot:alice' });
+    const facts = await pages.data<Array<{ category: string | TextRef; temporality: string | TextRef }>>(
+      PAGE,
+      'facts',
+      {
+        rowKey: 'onebot:alice',
+      },
+    );
     expect(toSource(facts)).toEqual([
       { ref: '["onebot:alice","f2"]', text: '在读研', category: '', temporality: '近期', updatedAt: 300 },
       { ref: '["onebot:alice","f1"]', text: '喜欢猫', category: '偏好', temporality: '长期', updatedAt: 100 },
     ]);
-    // 分类的显示名按读者语言；落盘的分类值照旧
-    expect(facts.map(f => (isTextRef(f.category) ? resolveText(f.category, ['en']) : f.category))).toEqual([
-      '',
-      'Preferences',
+    // 分类与时效的显示名按读者语言；落盘的分类值照旧
+    expect(facts.map(f => [renderIn(f.category, 'en'), renderIn(f.temporality, 'en')])).toEqual([
+      ['', 'Short-term'],
+      ['Preferences', 'Long-term'],
     ]);
     expect((await mem.getMetadata(NS, 'onebot:alice'))?.facts).toContainEqual(
       expect.objectContaining({ id: 'f1', category: '偏好' }),
@@ -117,9 +125,20 @@ describe('用户档案页', () => {
     expect(pages.invalidations).toEqual([{ instance: userProfile.name, pageKey: PAGE }]);
 
     const read = vi.spyOn(mem, 'getMetadata');
+    const refused: Array<string | TextRef> = [];
     for (const rowKey of ['["onebot:alice","f1"]', 'onebot:alice', '["onebot:alice"]', '[{"$ne":null},"f2"]']) {
-      expect((await pages.act(PAGE, 'forgetFact', { rowKey })).status, rowKey).not.toBe(200);
+      const failed = await pages.act(PAGE, 'forgetFact', { rowKey });
+      expect(failed.status, rowKey).not.toBe(200);
+      refused.push((failed.body as { error: string | TextRef }).error);
     }
+    const shown = (language: string) =>
+      [(reply.body as PageActionResponse).message, ...refused.slice(0, 2)].map(text => renderIn(text, language));
+    expect(shown('en')).toEqual([
+      'Deleted: 喜欢猫',
+      'This fact is no longer in the profile',
+      'Unrecognized fact: onebot:alice',
+    ]);
+    expect(shown('zh-CN')).toEqual(['已删除：喜欢猫', '这条事实已经不在档案里了', '不认识的事实：onebot:alice']);
     // 认不出的行在查档案之前就拒掉：不是字符串的键不交给记忆后端
     expect(read.mock.calls.map(([, key]) => key)).toEqual(['onebot:alice']);
     expect(await facts('onebot:alice')).toEqual(['f2']);
@@ -128,11 +147,19 @@ describe('用户档案页', () => {
 
   it('清空一个人：删掉这个人的档案，别人的照旧，页面 invalidate；已经没有档案的回错误', async () => {
     const { pages, facts } = await setup();
-    expect((await pages.act(PAGE, 'clearProfile', { rowKey: 'onebot:alice' })).status).toBe(200);
+    const cleared = await pages.act(PAGE, 'clearProfile', { rowKey: 'onebot:alice' });
+    expect(cleared.status).toBe(200);
     expect(await facts('onebot:alice')).toBeUndefined();
     expect(await facts('onebot:bob')).toEqual(['f9']);
     expect(pages.invalidations).toEqual([{ instance: userProfile.name, pageKey: PAGE }]);
-    expect((await pages.act(PAGE, 'clearProfile', { rowKey: 'onebot:alice' })).status).not.toBe(200);
+    const again = await pages.act(PAGE, 'clearProfile', { rowKey: 'onebot:alice' });
+    expect(again.status).not.toBe(200);
+    const shown = (language: string) =>
+      [(cleared.body as PageActionResponse).message, (again.body as { error: string | TextRef }).error].map(text =>
+        renderIn(text, language),
+      );
+    expect(shown('en')).toEqual(['Cleared the profile of onebot:alice', 'onebot:alice no longer has a profile']);
+    expect(shown('zh-CN')).toEqual(['已清空 onebot:alice 的档案', 'onebot:alice 已经没有档案了']);
     expect(await pages.data(PAGE, 'profiles')).toEqual([{ key: 'onebot:bob', facts: 1, updatedAt: 500 }]);
   });
 
@@ -149,15 +176,68 @@ describe('用户档案页', () => {
     expect(await pages.data(PAGE, 'profiles')).toEqual([]);
   });
 
-  it('指令改了事实也 invalidate：/profile.forget、/profile.clear、/profile.clear.nuke', async () => {
+  it('指令改了事实也 invalidate：/profile.forget、/profile.clear、/profile.clear.nuke；回复按读者的语言', async () => {
     const { pages, facts, command } = await setup();
-    await command('profile.forget', 'onebot:bob', 'f9');
+    const replies = [
+      await command('profile.forget', 'onebot:bob', 'zz'),
+      await command('profile.forget', 'onebot:alice', 'zz'),
+      await command('profile.forget', 'onebot:bob', 'f9'),
+    ];
     expect(await facts('onebot:bob')).toEqual([]);
-    await command('profile.clear');
+    replies.push(await command('profile.clear'));
     expect(await facts('onebot:alice')).toBeUndefined();
+    replies.push(await command('profile.clear'), await command('profile'));
     await command('profile.clear.nuke');
     expect(await pages.data(PAGE, 'profiles')).toEqual([]);
     expect(pages.invalidations).toHaveLength(3);
+    expect(replies.map(reply => renderIn(reply as string | TextRef, 'en'))).toEqual([
+      'Fact [zz] not found. onebot:bob has 1 fact:\n  [f9] 会弹琴',
+      'Fact [zz] not found. onebot:alice has 2 facts:\n  [f1] 喜欢猫\n  [f2] 在读研',
+      'Deleted fact [f9] of onebot:bob: 会弹琴',
+      'Cleared your profile (onebot:alice)',
+      'You have no profile data (onebot:alice)',
+      'No profile data yet (onebot:alice)',
+    ]);
+    expect(replies.map(reply => renderIn(reply as string | TextRef, 'zh-CN'))).toEqual([
+      '未找到事实 [zz]。onebot:bob 现有 1 条：\n  [f9] 会弹琴',
+      '未找到事实 [zz]。onebot:alice 现有 2 条：\n  [f1] 喜欢猫\n  [f2] 在读研',
+      '已删除 onebot:bob 的事实 [f9]：会弹琴',
+      '已清除你的档案 (onebot:alice)',
+      '你当前没有档案数据 (onebot:alice)',
+      '暂无档案数据 (onebot:alice)',
+    ]);
+  });
+
+  it('清掉的条数按读者的语言：/profile.clear.nuke 与全局清理各清 1 条、2 条', async () => {
+    const { mem, host, command } = await setup();
+    const keep = async (...keys: string[]) => {
+      for (const entry of await mem.listMetadata(NS)) await mem.deleteMetadata(NS, entry.key);
+      for (const key of keys) await mem.saveMetadata(NS, key, { facts: [fact('f1', 'zz', 1)], updatedAt: 1 });
+    };
+    const clearAll = async () => {
+      const data: HookContextMap['memory:clear'] = { scope: 'all', sessionId: 's1', results: [] };
+      await host.hooks.use.run('memory:clear', data, async () => {});
+      return data.results.find(result => result.source === 'user-profile')?.message;
+    };
+    const replies: unknown[] = [];
+    for (const keys of [['onebot:a'], ['onebot:a', 'onebot:b']]) {
+      await keep(...keys);
+      replies.push(await command('profile.clear.nuke'));
+      await keep(...keys);
+      replies.push(await clearAll());
+    }
+    expect(replies.map(reply => renderIn(reply as string | TextRef, 'en'))).toEqual([
+      'Cleared all user profiles (1 entry)',
+      'Cleared user profiles (1 entry)',
+      'Cleared all user profiles (2 entries)',
+      'Cleared user profiles (2 entries)',
+    ]);
+    expect(replies.map(reply => renderIn(reply as string | TextRef, 'zh-CN'))).toEqual([
+      '已清空全部用户档案（1 条）',
+      '用户档案已清空 (1 条)',
+      '已清空全部用户档案（2 条）',
+      '用户档案已清空 (2 条)',
+    ]);
   });
 
   it('/profile 交出文字对象：分类名与说明按读者语言，原文与给模型的档案块同一版式', async () => {
