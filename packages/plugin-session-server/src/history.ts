@@ -22,6 +22,7 @@ import {
   type SessionItem,
   TurnOutcomeSchema,
 } from '@aalis/api-session-protocol';
+import { isWebUrl } from '@aalis/api-storage';
 import { toolFailed } from '@aalis/api-tools';
 import type { Logger } from '@aalis/core';
 import { isTextRef, type TextRef } from '@aalis/schema-i18n';
@@ -104,7 +105,6 @@ const OUTBOUND_KINDS: Readonly<Record<string, Attachment['kind']>> = {
 const ATTACHMENT_KINDS: ReadonlySet<string> = new Set(Object.values(OUTBOUND_KINDS));
 
 const text = (value: unknown) => (typeof value === 'string' && value ? value : undefined);
-const isWebUrl = (value: string) => /^https?:\/\//i.test(value);
 const finite = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : undefined);
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);

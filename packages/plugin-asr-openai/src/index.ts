@@ -8,7 +8,7 @@
 import { Buffer } from 'node:buffer';
 import { type ASRService, asr, type TranscribeInput, type TranscribeResult } from '@aalis/api-asr';
 import { type ProcessService, processService } from '@aalis/api-process';
-import { isStorageUri, type StorageService, storage as storageService } from '@aalis/api-storage';
+import { isStorageUri, isWebUrl, type StorageService, storage as storageService } from '@aalis/api-storage';
 import { config, definePlugin, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { detectMediaFormat, FILE_HEAD_BYTES, type MediaFormatName } from '@aalis/util-file-signature';
@@ -81,7 +81,7 @@ async function attachmentBytes(data: string, proc: ProcessService, storage: Stor
   if (dataUri) return Buffer.from(dataUri[1], 'base64');
   // 走 ProcessService.readExternalFile（治外文件能力），避免直 import node:fs
   if (data.startsWith('file://') || data.startsWith('/')) return proc.readExternalFile(data);
-  if (data.startsWith('http://') || data.startsWith('https://')) return downloadAudio(data);
+  if (isWebUrl(data)) return downloadAudio(data);
   if (isStorageUri(data)) return (await storage.readFile(data)) as Uint8Array;
   throw new Error(`不支持的附件来源: ${data.slice(0, 32)}`);
 }

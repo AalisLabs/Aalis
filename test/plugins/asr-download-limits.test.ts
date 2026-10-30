@@ -136,4 +136,13 @@ describe.each([
     expect(i, '下载信号不是 AbortSignal.timeout 造的').toBeGreaterThanOrEqual(0);
     expect(timeoutSpy.mock.calls[i]).toEqual([15_000]);
   });
+
+  it('协议名大写的网址同样按网址下载转写（协议名不分大小写）', async () => {
+    const probe: Probe = { downstream: 0, signals: new Map() };
+    stubFetch(probe);
+    const service = await bootAsr(plugin, config, probe);
+    const r = await service.transcribe({ attachment: { kind: 'audio', data: `HTTP://127.0.0.1:${port}/ok` } });
+    expect(r.text).toBe('转写文本');
+    expect(probe.signals.has('/ok')).toBe(true);
+  });
 });
