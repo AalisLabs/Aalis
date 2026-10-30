@@ -47,7 +47,7 @@ function expectUnpoisoned(snap: object): void {
 }
 
 function expectIllegalPluginId(run: () => unknown, id: string): void {
-  expect(run).toThrow(new Error(`插件 id 不合法: ${id}`));
+  expect(run).toThrow(new Error(`插件 id 不合法：${id}`));
 }
 
 /** provider 经 watch 推送新快照的接线 */
