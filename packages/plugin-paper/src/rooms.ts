@@ -13,13 +13,15 @@
 
 import { type EgressReport, egressWithin, type RemoteAgentProvider, resolveRemoteAgent } from '@aalis/api-remote-agent';
 import { placePaperId, type SessionInfo, type SessionManagerService } from '@aalis/api-session-manager';
-import { describeLayer, type SessionFieldReader, type SessionSettingsLayer } from '@aalis/api-session-settings';
+import { layerLabel, type SessionFieldReader, type SessionSettingsLayer } from '@aalis/api-session-settings';
 import { actingIdentity, type ToolCallContext } from '@aalis/api-tools';
 import type { Logger, ProviderEntry, ServiceSelection } from '@aalis/core';
 import type { SessionFieldsOf } from '@aalis/schema-config';
+import { sameText, type TextRef, textOf, toSource } from '@aalis/schema-i18n';
 import type { configSchema, PaperConfig, PaperSpec } from './config.js';
 import type { LedgerStore, PaperLedger } from './ledger.js';
-import { category, describe } from './util.js';
+import { t } from './texts.js';
+import { category } from './util.js';
 
 /** 本插件按会话字段的读取器 */
 export type PaperFields = SessionFieldReader<typeof configSchema>;
@@ -35,28 +37,31 @@ export interface RoomPaper {
   room: RoomSettings;
 }
 
-/** 房间用哪块白纸；不开时给出原因。不写名字的用房间所在场所的那一块：同一个窗口里几个机器人账号的会话共用 */
+/**
+ * 房间用哪块白纸；不开时给出原因（房间面板显示它，交给模型与写进任务的失败原因时取原文）。不写名字的用房间所在场所的
+ * 那一块：同一个窗口里几个机器人账号的会话共用
+ */
 export function resolveRoomPaper(
   sm: SessionManagerService,
   fields: PaperFields,
   cfg: PaperConfig,
   sessionId: string,
   platform: string | undefined,
-): RoomPaper | { unavailable: string } {
+): RoomPaper | { unavailable: TextRef } {
   const room = fields.get(sessionId, { platform });
-  if (room.paperEnabled !== true) return { unavailable: '本房间没有开启白纸' };
+  if (room.paperEnabled !== true) return { unavailable: t('roomPaperOff') };
   const name = room.paperName.trim();
   if (!name) return { paperId: placePaperId(sm.placeOf(sessionId).key), spec: cfg.defaults, room };
   const broken = cfg.brokenPapers.get(name);
-  if (broken) return { unavailable: `白纸「${name}」的配置有误（${broken}），改对之前不能用` };
+  if (broken) return { unavailable: t('paperBroken', { name, problem: broken }) };
   const spec = cfg.papers.get(name);
-  if (!spec) return { unavailable: `本房间写的白纸「${name}」不存在（白纸插件配置的 papers 里没有这个名字）` };
+  if (!spec) return { unavailable: t('paperMissing', { name }) };
   return { paperId: `n:${name}`, spec, room };
 }
 
-/** 白纸在页面与诊断里的称呼：具名白纸用名字，房间白纸用 id */
-export function paperLabel(paperId: string): string {
-  return paperId.startsWith('n:') ? paperId.slice(2) : `房间白纸 ${paperId}`;
+/** 白纸在页面与诊断里的称呼：具名白纸用名字，房间白纸用 id（交给发布服务的分组名取原文） */
+export function paperLabel(paperId: string): string | TextRef {
+  return paperId.startsWith('n:') ? paperId.slice(2) : t('roomPaperLabel', { id: paperId });
 }
 
 /**
@@ -90,11 +95,22 @@ export function layersWith<K extends 'paperName' | 'remoteAgentTypes'>(
   return found;
 }
 
+/** 覆盖一类房间的一层的称呼：层表里的称呼加选的是哪一份，如「全局（插件配置）」「平台类型档 onebot · group」 */
+export function layerName(layer: ProfileLayer): TextRef {
+  const label = layerLabel(layer.scope);
+  if (layer.scope === 'platform') return t('profilePlatform', { layer: label, platform: layer.platform });
+  if (layer.scope === 'platformType') {
+    return t('profilePlatformType', { layer: label, platform: layer.platform, type: layer.type });
+  }
+  return label;
+}
+
 /**
  * 一层覆盖的全部房间的称呼，如「全局（插件配置）的全部房间」「平台档 onebot 的全部房间」「平台类型档 onebot · group 的全部
  * 房间」（以平台名或类型名收尾的称呼与汉字隔一个空格）
  */
-const allRoomsOf = (layer: ProfileLayer) => `${describeLayer(layer)}${layer.scope === 'global' ? '' : ' '}的全部房间`;
+const allRoomsOf = (layer: ProfileLayer) =>
+  t(layer.scope === 'global' ? 'allRoomsGlobal' : 'allRoomsNamed', { layer: layerName(layer) });
 
 /**
  * 共用一块白纸的房间：已登记的 IM 房间里，从全局层、平台档、平台类型档或所在窗口的场所取到了这个白纸名的；写了它的全局层、
@@ -108,14 +124,15 @@ export function sharingRooms(
   fields: PaperFields,
   ledger: PaperLedger,
   paperId: string,
-): { labels: string[]; shared: boolean } {
+): { labels: Array<string | TextRef>; shared: boolean } {
   const rooms = new Set<string>();
-  const profiles = new Set<string>();
+  // 每一层只出现一次，称呼不会重复
+  const profiles: TextRef[] = [];
   if (paperId.startsWith('n:')) {
     const name = paperId.slice(2);
     const names = (value: string | undefined) => value?.trim() === name;
     for (const { layer, value } of layersWith(fields, 'paperName')) {
-      if (names(value)) profiles.add(allRoomsOf(layer));
+      if (names(value)) profiles.push(allRoomsOf(layer));
     }
     for (const { session, name: paper } of imRoomPapers(sm, fields)) if (names(paper)) rooms.add(session.id);
   }
@@ -123,15 +140,15 @@ export function sharingRooms(
   for (const task of Object.values(ledger.tasks)) {
     if (task.paperId === paperId && (task.endedAt === undefined || task.endedAt > since)) rooms.add(task.room);
   }
-  return { labels: [...rooms, ...profiles], shared: rooms.size > 1 || profiles.size > 0 };
+  return { labels: [...rooms, ...profiles], shared: rooms.size > 1 || profiles.length > 0 };
 }
 
-/** 白纸停开，或它的提供者实例有未读的未登记代理告警时，给出原因（受理时回给她，出队时不出） */
-export function pausedReason(ledger: PaperLedger, paperId: string, type: string): string | undefined {
+/** 白纸停开，或它的提供者实例有未读的未登记代理告警时，给出原因（受理时回给她，取原文；出队时不出） */
+export function pausedReason(ledger: PaperLedger, paperId: string, type: string): TextRef | undefined {
   const halted = ledger.papers[paperId]?.halted;
-  if (halted) return `这块白纸已停开（${halted.detail}），等 owner 在 WebUI 恢复`;
+  if (halted) return t('pausedHalted', { detail: halted.detail });
   if (ledger.alerts.some(a => a.kind === 'unknown-agent' && !a.acknowledged && a.providerType === type)) {
-    return `远端代理「${type}」的账号下有未登记的代理，等 owner 在 WebUI 核实并标为已读`;
+    return t('pausedUnknownAgent', { type });
   }
   return undefined;
 }
@@ -171,7 +188,7 @@ export function checkEligibility(
  */
 export class Isolation {
   /** 提供者实例 id → 上次记 warn 的类别；取到 accountKey 后清掉 */
-  readonly #warned = new Map<string, string>();
+  readonly #warned = new Map<string, TextRef>();
 
   constructor(
     private readonly remote: ServiceSelection<RemoteAgentProvider>,
@@ -182,21 +199,22 @@ export class Isolation {
   async #accountKey(
     entry: ProviderEntry<RemoteAgentProvider>,
     signal: AbortSignal,
-  ): Promise<{ key: string } | { category: string; detail: string }> {
-    let failure: { category: string; detail: string };
+  ): Promise<{ key: string } | { category: TextRef; detail: string | TextRef }> {
+    let failure: { category: TextRef; detail: string | TextRef };
     try {
       const { accountKey } = await entry.use.ready(signal);
       if (accountKey) {
         this.#warned.delete(entry.id);
         return { key: accountKey };
       }
-      failure = { category: '账号标识为空', detail: 'ready() 报告的 accountKey 为空' };
+      failure = { category: t('accountKeyEmpty'), detail: t('accountKeyEmptyDetail') };
     } catch (err) {
-      failure = { category: category(err), detail: describe(err) };
+      failure = { category: category(err), detail: textOf(err) };
     }
-    if (this.#warned.get(entry.id) !== failure.category) {
+    const warned = this.#warned.get(entry.id);
+    if (!warned || !sameText(warned, failure.category)) {
       this.#warned.set(entry.id, failure.category);
-      this.logger.warn(`取不到提供者「${entry.id}」的远端账号标识，按冲突处理：${failure.detail}`);
+      this.logger.warn(`取不到提供者「${entry.id}」的远端账号标识，按冲突处理：${toSource(failure.detail)}`);
     }
     return failure;
   }
@@ -206,9 +224,9 @@ export class Isolation {
    * 几块白纸，unknown 是取不到账号标识的提供者实例、引用它的白纸、类别与提供者报错的原文（只给诊断项）。
    */
   async report(signal: AbortSignal): Promise<{
-    blocked: Map<string, string>;
+    blocked: Map<string, TextRef>;
     collisions: string[][];
-    unknown: Array<{ type: string; papers: string[]; category: string; detail: string }>;
+    unknown: Array<{ type: string; papers: string[]; category: TextRef; detail: string | TextRef }>;
   }> {
     const byType = new Map<string, { entry: ProviderEntry<RemoteAgentProvider>; names: string[] }>();
     for (const [name, spec] of this.papers) {
@@ -219,7 +237,7 @@ export class Isolation {
       byType.set(entry.id, group);
     }
     const byAccount = new Map<string, string[]>();
-    const unknown: Array<{ type: string; papers: string[]; category: string; detail: string }> = [];
+    const unknown: Array<{ type: string; papers: string[]; category: TextRef; detail: string | TextRef }> = [];
     await Promise.all(
       [...byType].map(async ([type, { entry, names }]) => {
         const result = await this.#accountKey(entry, signal);
@@ -227,20 +245,18 @@ export class Isolation {
         else unknown.push({ type, papers: names, ...result });
       }),
     );
-    const blocked = new Map<string, string>();
+    const blocked = new Map<string, TextRef>();
     for (const { type, papers, category } of unknown) {
-      for (const name of papers) {
-        blocked.set(name, `取不到提供者「${type}」的远端账号标识（${category}），按与其他白纸同账号处理`);
-      }
+      for (const name of papers) blocked.set(name, t('blockedUnknown', { type, category }));
     }
     const collisions = [...byAccount.values()].filter(names => names.length > 1);
     for (const names of byAccount.values()) {
       for (const name of names) {
         if (names.length > 1) {
-          blocked.set(name, `白纸 ${names.join('、')} 用的提供者在同一远端账号下（同账号的代理能互读对话）`);
+          blocked.set(name, t('blockedCollision', { papers: names }));
         } else if (unknown.length > 0) {
-          const causes = unknown.map(u => `「${u.type}」的远端账号标识（${u.category}）`).join('、');
-          blocked.set(name, `取不到提供者${causes}，按与本白纸同账号处理`);
+          const causes = unknown.map(u => t('accountIdOf', { type: u.type, category: u.category }));
+          blocked.set(name, t('blockedOthersUnknown', { causes }));
         }
       }
     }
@@ -249,7 +265,8 @@ export class Isolation {
 }
 
 /**
- * 远端条件。成立时返回解析到的提供者，否则返回原因；任何一条不满足都不换用别的提供者。
+ * 远端条件。成立时返回解析到的提供者，否则返回原因（交给模型与写进任务的失败原因时取原文，出网方式与上限照原值写）；任何一条
+ * 不满足都不换用别的提供者。
  */
 export async function checkRemote(deps: {
   paper: RoomPaper;
@@ -257,34 +274,27 @@ export async function checkRemote(deps: {
   ledger: LedgerStore;
   isolation: Isolation;
   signal: AbortSignal;
-}): Promise<{ provider: ProviderEntry<RemoteAgentProvider> } | { unavailable: string }> {
+}): Promise<{ provider: ProviderEntry<RemoteAgentProvider> } | { unavailable: TextRef }> {
   const { paper, remote, ledger } = deps;
   const { spec } = paper;
-  if (ledger.failure) return { unavailable: '白纸记录读取失败，远端任务暂停，等 owner 处理' };
+  if (ledger.failure) return { unavailable: t('ledgerDownPaused') };
   const type = spec.remoteAgentType;
-  if (!type) return { unavailable: '这块白纸没有配置远端代理类型' };
-  if (!paper.room.remoteAgentTypes.includes(type))
-    return { unavailable: `本房间没有允许这块白纸的远端代理类型「${type}」` };
+  if (!type) return { unavailable: t('noRemoteType') };
+  if (!paper.room.remoteAgentTypes.includes(type)) return { unavailable: t('roomDisallowsType', { type }) };
   const provider = resolveRemoteAgent(remote, type);
-  if (!provider) return { unavailable: `远端代理「${type}」不在场` };
+  if (!provider) return { unavailable: t('remoteAbsent', { type }) };
   let egress: EgressReport;
   try {
     egress = await provider.use.egress(deps.signal);
   } catch (err) {
     deps.signal.throwIfAborted();
-    return { unavailable: `取不到远端代理「${type}」的出网方式（${category(err)}）` };
+    return { unavailable: t('egressUnreadable', { type, category: category(err) }) };
   }
   if (!egressWithin(egress, spec.remoteAgentEgress)) {
-    return {
-      unavailable: `远端代理「${type}」的出网方式（${egress.mode}）超过这块白纸的上限（${spec.remoteAgentEgress}）`,
-    };
+    return { unavailable: t('egressExceeds', { type, mode: egress.mode, ceiling: spec.remoteAgentEgress }) };
   }
   if (provider.use.transcriptIsolation === 'shared') {
-    if (!spec.name) {
-      return {
-        unavailable: `远端代理「${type}」的同账号代理能互读对话，只能给具名白纸用；本房间没有写白纸名`,
-      };
-    }
+    if (!spec.name) return { unavailable: t('sharedNeedsName', { type }) };
     const blocked = (await deps.isolation.report(deps.signal)).blocked.get(spec.name);
     if (blocked) return { unavailable: blocked };
   }

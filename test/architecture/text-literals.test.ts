@@ -18,20 +18,16 @@ import { compilerOptions, fixtureProgram, holdsTextRef, ROOT, sourceFiles } from
 //
 // 扫描面是 packages/*/src 的全部 .ts / .tsx，编译选项取 tsconfig.test.json，全仓只建一次程序。
 //
-// 还没迁的违例按名单放行，每条带理由。包级名单按包放行，迁完一个包删一行。位置级名单登记长期不翻的位置（显示但不翻的日志、
-// 协议与数据，或某单元定下的诊断句），按「文件 + 字面量原文」认，不用行号，同一文件里同一原文一条放行全部（有意的：同一句
-// 是同一个决定）；可以与包级名单重叠，一经确认就登记，包迁完删掉包级那一行时它们自然保留。名单里的包已经没有位置级名单之外
-// 的违例（包级那一行没有放行的了）、位置已经没有违例时，守卫报「该删掉」，同一位置登记两次也报。
+// 长期不翻的位置（显示但不翻的日志、协议与数据，或某单元定下的诊断句）登记进位置级名单放行，每条带理由，按「文件 + 字面量
+// 原文」认，不用行号，同一文件里同一原文一条放行全部（有意的：同一句是同一个决定）。名单里的位置已经没有违例时，守卫报
+// 「该删掉」，同一位置登记两次也报。
 //
 // 看不到的写法有两类。一类永久看不到，要靠迁移时自查：Error 与只收 string 的内置类型的说明，标签模板，插值里的字面量，加号
 // 与 join 拼出的句子，数组里的展开（有没有条件都一样），展开实参，先赋给变量再交出去的字面量，as 断言成 string 的字面量，对象
 // 字面量里 getter 的返回值，Object.fromEntries 的条目值，flatMap 回调返回的数组，core 展示值写在条件分支里的字面量；套了两层
 // 的泛型回调（如 flatMap 里再 map）里的字面量也可能看不到。扫描面只认 .ts 与 .tsx，示例前端 plugin-webui-client-example 的
-// src/index.html 等不在内。另一类是只收 string 的契约位置，放宽契约时自然进入视野。
+// src/index.html 等不在内。另一类是只收 string 的契约位置：契约放宽成 string | TextRef 之后自然进入视野。
 // ════════════════════════════════════════════════════════════
-
-/** 包级名单：包目录名 → 理由 */
-const PACKAGE_ALLOWLIST = new Map([['plugin-paper', '尚未迁移']]);
 
 /** 位置级名单：长期不翻的位置，reason 写依据 */
 const POSITION_ALLOWLIST: readonly (Position & { reason: string })[] = [
@@ -182,18 +178,14 @@ function literalHits(program: ts.Program, files: readonly string[]): Hit[] {
   return hits;
 }
 
-/** 对照两份名单：名单外的违例（`文件:行 原文`），该删掉的包（没有位置级名单之外的违例）与位置（没有违例），登记了两次的位置 */
-function audit(hits: readonly Hit[], packages: ReadonlyMap<string, string>, positions: readonly Position[]) {
-  const packageOf = (file: string) => file.split('/')[1];
+/** 对照名单：名单外的违例（`文件:行 原文`），该删掉的位置（没有违例），登记了两次的位置 */
+function audit(hits: readonly Hit[], positions: readonly Position[]) {
   const same = (a: Position, b: Position) => a.file === b.file && a.literal === b.literal;
   const show = (position: Position) => `${position.file} ${position.literal}`;
   return {
     unlisted: hits
-      .filter(hit => !packages.has(packageOf(hit.file)) && !positions.some(position => same(position, hit)))
+      .filter(hit => !positions.some(position => same(position, hit)))
       .map(hit => `${hit.file}:${hit.line} ${hit.literal}`),
-    stalePackages: [...packages.keys()].filter(
-      pkg => !hits.some(hit => packageOf(hit.file) === pkg && !positions.some(position => same(position, hit))),
-    ),
     stalePositions: positions.filter(position => !hits.some(hit => same(position, hit))).map(show),
     duplicatePositions: positions
       .filter((position, i) => positions.findIndex(other => same(other, position)) !== i)
@@ -302,29 +294,18 @@ describe('给人看的位置不写死中文', () => {
     expect(fixtureHits(at('other.ts'), source)).toEqual(["1 '你好'"]);
   });
 
-  it('名单外的违例报出来；包里没有位置级名单之外的违例、位置已经没有违例时报「该删掉」；位置可与包重叠，登记两次的位置报出来', () => {
+  it('名单外的违例报出来；位置已经没有违例时报「该删掉」，登记两次的位置报出来', () => {
     const hits: Hit[] = [
-      { file: 'packages/plugin-a/src/index.ts', line: 3, literal: "'甲'" },
       { file: 'packages/plugin-b/src/index.ts', line: 5, literal: "'乙'" },
       { file: 'packages/plugin-c/src/index.ts', line: 7, literal: "'丙'" },
-      { file: 'packages/plugin-e/src/index.ts', line: 2, literal: "'戊'" },
-      { file: 'packages/plugin-e/src/index.ts', line: 4, literal: "'己'" },
     ];
     const positions: Position[] = [
-      { file: 'packages/plugin-a/src/index.ts', literal: "'甲'" },
       { file: 'packages/plugin-b/src/index.ts', literal: "'乙'" },
       { file: 'packages/plugin-b/src/index.ts', literal: "'丁'" },
       { file: 'packages/plugin-b/src/index.ts', literal: "'乙'" },
-      { file: 'packages/plugin-e/src/index.ts', literal: "'戊'" },
     ];
-    const packages = new Map([
-      ['plugin-a', '夹具'],
-      ['plugin-d', '夹具'],
-      ['plugin-e', '夹具'],
-    ]);
-    expect(audit(hits, packages, positions)).toEqual({
+    expect(audit(hits, positions)).toEqual({
       unlisted: ["packages/plugin-c/src/index.ts:7 '丙'"],
-      stalePackages: ['plugin-a', 'plugin-d'],
       stalePositions: ["packages/plugin-b/src/index.ts '丁'"],
       duplicatePositions: ["packages/plugin-b/src/index.ts '乙'"],
     });
@@ -334,8 +315,8 @@ describe('给人看的位置不写死中文', () => {
     const files = sourceFiles();
     const hits = literalHits(ts.createProgram(files, compilerOptions()), files);
     expect(
-      audit(hits, PACKAGE_ALLOWLIST, POSITION_ALLOWLIST),
-      '名单外的违例改成文字对象；名单里已经没有违例的条目（包是没有位置级名单之外的违例）删掉，登记两次的删掉一条',
-    ).toEqual({ unlisted: [], stalePackages: [], stalePositions: [], duplicatePositions: [] });
+      audit(hits, POSITION_ALLOWLIST),
+      '名单外的违例改成文字对象；名单里已经没有违例的条目删掉，登记两次的删掉一条',
+    ).toEqual({ unlisted: [], stalePositions: [], duplicatePositions: [] });
   }, 120_000);
 });

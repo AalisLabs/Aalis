@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Logger } from '../../packages/core/src/index.js';
 import { configSchema, paperAuditSchema, readConfig } from '../../packages/plugin-paper/src/config.js';
 import { parseConfig } from '../../packages/schema-config/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 
 function read(raw: Record<string, unknown>) {
   const warn = vi.fn();
@@ -115,14 +116,14 @@ describe('paper 配置契约', () => {
       ],
     });
     expect(cfg.papers.has('pilot')).toBe(false);
-    expect(cfg.brokenPapers.get('pilot')).toContain(reason);
+    expect(toSource(cfg.brokenPapers.get('pilot'))).toContain(reason);
     expect(warn.mock.calls.flat().join('\n')).toContain('pilot');
   });
 
   it('同名写了多条、其中有写错的：分不出哪条是本意，整块停用', () => {
     const { cfg } = read({ papers: [{ name: 'pilot' }, { name: 'pilot', remoteAgentEgress: 'wide-open' }] });
     expect(cfg.papers.has('pilot')).toBe(false);
-    expect(cfg.brokenPapers.get('pilot')).toContain('同名写了多条');
+    expect(toSource(cfg.brokenPapers.get('pilot'))).toContain('同名写了多条');
   });
 
   it('对照：同名写了多条但都写对时，照旧以第一条为准，后面的按重名忽略', () => {
@@ -138,6 +139,8 @@ describe('paper 配置契约', () => {
   });
 
   it('安全：默认属性的发布目标含无效 ID 时拒绝启用，不再忽略后照用', () => {
-    expect(() => read({ defaults: { publishTargets: 'works, Bad Target' } })).toThrow(/发布目标/);
+    expect(() => read({ defaults: { publishTargets: 'works, Bad Target' } })).toThrow(
+      'defaults.publishTargets：发布目标里有无效的目标 ID',
+    );
   });
 });

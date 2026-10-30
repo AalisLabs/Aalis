@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import {
   emptyLedger,
   human,
@@ -117,7 +118,7 @@ describe('白纸自动发布入口与交付边界', () => {
     expect(hub.injected).toHaveLength(0);
     expect(await hub.call('paper_send', { artifact_id: 'a-12345678' })).toMatchObject({ ok: false });
     expect(hub.outbound).toHaveLength(0);
-    expect(await hub.pages.data('paper', 'paperTasks', { rowKey: task.paperId })).toContainEqual(
+    expect(toSource(await hub.pages.data('paper', 'paperTasks', { rowKey: task.paperId }))).toContainEqual(
       expect.objectContaining({ id: task.id, publication: expect.stringContaining('works') }),
     );
   });

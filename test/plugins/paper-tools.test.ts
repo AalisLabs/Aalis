@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RemoteAgentError } from '../../packages/api-remote-agent/src/index.js';
 import type { TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
-import { defineTexts } from '../../packages/schema-i18n/src/index.js';
+import { defineTexts, toSource } from '../../packages/schema-i18n/src/index.js';
 import {
   emptyLedger,
   fakeRemote,
@@ -74,7 +74,7 @@ describe('登记', () => {
       expect(tool?.risk, name).toBeUndefined();
       expect(tool?.visibility, name).toBeUndefined();
     }
-    expect(hub.groups).toEqual([
+    expect(toSource(hub.groups)).toEqual([
       expect.objectContaining({
         name: 'paper',
         label: '白纸',
@@ -453,7 +453,7 @@ describe('记录', () => {
     expect(files.get(LEDGER_URI)).toBe(broken);
     const [check] = await hub.doctor();
     expect(check.level).toBe('error');
-    expect(check.message).toMatch(/记录/);
+    expect(toSource(check.message)).toMatch(/记录/);
   });
 
   it('记录文件不存在时从空记录起步，诊断项不报记录问题', async () => {

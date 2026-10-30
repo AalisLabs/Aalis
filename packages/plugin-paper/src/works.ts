@@ -20,6 +20,7 @@ import { type PaperConfig, specOf } from './config.js';
 import { rawDeliveryAllowed } from './deliver.js';
 import type { LedgerStore, TaskRecord } from './ledger.js';
 import { actorKey, checkEligibility, type PaperFields, paperLabel } from './rooms.js';
+import { t } from './texts.js';
 import { enterPaperRoom } from './tools.js';
 
 interface WorksDeps {
@@ -56,33 +57,34 @@ function publishedPaths(artifacts: readonly Artifact[]): string[] {
   return paths.map(parts => parts.slice(common).join('/'));
 }
 
-/** 自动投稿只认明确的作品根；其它成品留给发起人显式挑选。 */
+/** 自动投稿只认明确的作品根；其它成品留给发起人显式挑选。挑不出时的原因写进发布状态（白纸页显示，交给模型时取原文） */
 export function automaticPublicationArtifacts(
   task: TaskRecord,
-): { artifacts: Artifact[]; paths: string[] } | { reason: string } {
+): { artifacts: Artifact[]; paths: string[] } | { reason: TextRef } {
   const candidates = task.artifacts.filter(a => a.type === 'html' || MEDIA_TYPES.has(a.type));
   if (task.artifacts.length === 1 && candidates.length === 1) {
     return { artifacts: [candidates[0]], paths: publishedPaths(candidates) };
   }
   const roots = task.artifacts.filter(a => a.type === 'html' && a.rel.split('/').pop()?.toLowerCase() === 'index.html');
-  if (roots.length !== 1) return { reason: '无法确定唯一的网页入口，请手动选择成品' };
+  if (roots.length !== 1) return { reason: t('noSingleEntry') };
   const root = roots[0].rel.split('/').slice(0, -1).join('/');
   const prefix = root ? `${root}/` : '';
   const artifacts = task.artifacts.filter(a => a.rel.startsWith(prefix));
-  if (artifacts.length !== task.artifacts.length) return { reason: '成品分属不同目录，请手动选择成品' };
+  if (artifacts.length !== task.artifacts.length) return { reason: t('mixedDirectories') };
   const paths = artifacts.map(a => a.rel.slice(prefix.length));
-  if (pathsProblem(paths)) return { reason: '作品路径不符合发布要求，请手动选择成品' };
+  if (pathsProblem(paths)) return { reason: t('pathsBad') };
   return { artifacts, paths };
 }
 
 /**
  * 一组公开路径里第一个不合规的：逐条过 publicPathProblem，按小写比较也不得重复（公开根可能在大小写不敏感的
- * 文件系统上）。原因只写类别，不回显路径
+ * 文件系统上）。原因只写类别、不回显路径，只交给模型，取原文
  */
-export function pathsProblem(paths: readonly string[]): { index: number; reason: string | TextRef } | undefined {
+export function pathsProblem(paths: readonly string[]): { index: number; reason: string } | undefined {
   const lowered = new Set<string>();
   for (const [index, path] of paths.entries()) {
-    const reason = publicPathProblem(path) ?? (lowered.has(path.toLowerCase()) ? '文件路径重复' : undefined);
+    const problem = publicPathProblem(path);
+    const reason = problem ? toSource(problem) : lowered.has(path.toLowerCase()) ? '文件路径重复' : undefined;
     if (reason) return { index, reason };
     lowered.add(path.toLowerCase());
   }
@@ -235,7 +237,7 @@ export function registerWorksTools(deps: WorksDeps): void {
     const pathProblem = pathsProblem(paths);
     if (pathProblem) {
       return fail(
-        `成品 ${selected[pathProblem.index].id} 的公开路径不符合发布要求（${toSource(pathProblem.reason)}），请换选成品`,
+        `成品 ${selected[pathProblem.index].id} 的公开路径不符合发布要求（${pathProblem.reason}），请换选成品`,
       );
     }
     let repair = task.publication;
@@ -314,7 +316,7 @@ export function registerWorksTools(deps: WorksDeps): void {
           actorKey: actorKey(task.initiator),
         },
         group: task.paperId,
-        groupLabel: paperLabel(task.paperId),
+        groupLabel: toSource(paperLabel(task.paperId)),
         surfaces: [target],
         title,
         summary,
@@ -332,7 +334,7 @@ export function registerWorksTools(deps: WorksDeps): void {
             if (task.publication !== repair) return false;
             task.publication =
               retry === undefined
-                ? { ...task.publication!, state: 'failed', reason: '作品未通过发布检查', nextAttemptAt: undefined }
+                ? { ...task.publication!, state: 'failed', reason: t('publishCheckFailed'), nextAttemptAt: undefined }
                 : { ...task.publication!, nextAttemptAt: Date.now() + retry };
             try {
               await ledger.save();
@@ -407,7 +409,12 @@ export function registerWorksTools(deps: WorksDeps): void {
     }
   }
 
-  tools.registerGroup({ name: 'works', label: '作品', description: '把白纸成品提名到作品页、撤下本房间的作品' });
+  tools.registerGroup({
+    name: 'works',
+    label: t('works'),
+    summary: t('worksGroupSummary'),
+    description: '把白纸成品提名到作品页、撤下本房间的作品',
+  });
   tools.register({
     groups: ['works'],
     definition: {

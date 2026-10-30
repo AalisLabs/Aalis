@@ -7,6 +7,8 @@ import type { PaperConfig } from '../../packages/plugin-paper/src/config.js';
 import { rawDeliveryAllowed } from '../../packages/plugin-paper/src/deliver.js';
 import type { LedgerStore, TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
 import { PaperPublication } from '../../packages/plugin-paper/src/publication.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
+import { renderIn } from '../fixtures/host-language.js';
 
 const artifact = (id: string, rel: string, type: TaskRecord['artifacts'][number]['type']) => ({
   id,
@@ -173,7 +175,7 @@ describe('PaperPublication', () => {
     now = 24 * 3_600_000;
     h.notify();
     await vi.waitFor(() => expect(t.publication?.state).toBe('failed'));
-    expect(t.publication?.reason).toContain('24 小时');
+    expect(toSource(t.publication?.reason)).toContain('24 小时');
     expect(t.publication?.directSend).toBe(true);
     expect(h.nominate).not.toHaveBeenCalled();
     await h.coordinator.close();
@@ -191,7 +193,7 @@ describe('PaperPublication', () => {
     now = 48 * 3_600_000;
     h.notify();
     await vi.waitFor(() => expect(t.publication?.state).toBe('failed'));
-    expect(t.publication?.reason).toContain('24 小时');
+    expect(toSource(t.publication?.reason)).toContain('24 小时');
     await h.coordinator.close();
   });
 
@@ -202,7 +204,7 @@ describe('PaperPublication', () => {
     h.connect();
     h.coordinator.open();
     await vi.waitFor(() => expect(t.publication?.state).toBe('failed'));
-    expect(t.publication?.reason).toContain('24 小时');
+    expect(toSource(t.publication?.reason)).toContain('24 小时');
     expect(rawDeliveryAllowed(t), '审核结论不因之后的期限失败被洗成可直接发').toBe(false);
     await h.coordinator.close();
   });
@@ -214,7 +216,7 @@ describe('PaperPublication', () => {
     h.connect();
     h.coordinator.open();
     await vi.waitFor(() => expect(t.publication?.state).toBe('failed'));
-    expect(t.publication?.reason).toBe('作品未通过发布检查');
+    expect(toSource(t.publication?.reason)).toBe('作品未通过发布检查');
     expect(t.publication?.directSend).toBeUndefined();
     await h.coordinator.close();
   });
@@ -225,7 +227,7 @@ describe('PaperPublication', () => {
     h.connect();
     h.coordinator.open();
     await vi.waitFor(() => expect(t.publication?.state).toBe('failed'));
-    expect(t.publication?.reason).toMatch(/手动选择/);
+    expect(toSource(t.publication?.reason)).toMatch(/手动选择/);
     expect(h.nominate).not.toHaveBeenCalled();
     expect(t.publication?.directSend, '挑不出成品属于发布环节的问题：通知前先直接发').toBe(true);
     await h.coordinator.close();
@@ -265,7 +267,7 @@ describe('PaperPublication', () => {
     automatic.connect();
     automatic.coordinator.open();
     await vi.waitFor(() => expect(rooted.publication?.state).toBe('failed'));
-    expect(rooted.publication?.reason).toBe('作品路径不符合发布要求，请手动选择成品');
+    expect(toSource(rooted.publication?.reason)).toBe('作品路径不符合发布要求，请手动选择成品');
     expect(automatic.nominate).not.toHaveBeenCalled();
     await automatic.coordinator.close();
 
@@ -280,7 +282,7 @@ describe('PaperPublication', () => {
     stored.connect();
     stored.coordinator.open();
     await vi.waitFor(() => expect(manual.publication?.state).toBe('failed'));
-    expect(manual.publication?.reason).toBe('已选作品路径不符合发布要求');
+    expect(toSource(manual.publication?.reason)).toBe('已选作品路径不符合发布要求');
     expect(stored.nominate).not.toHaveBeenCalled();
     await stored.coordinator.close();
   });
@@ -387,7 +389,7 @@ describe('PaperPublication', () => {
       now = 24 * 3_600_000;
       await vi.advanceTimersByTimeAsync(30_000);
       expect(t.publication?.state, '推进不了时 30 秒后重试，期限到了自然会查到').toBe('failed');
-      expect(t.publication?.reason).toContain('24 小时');
+      expect(toSource(t.publication?.reason)).toContain('24 小时');
       expect(h.nominate).not.toHaveBeenCalled();
       await h.coordinator.close();
     } finally {
@@ -439,6 +441,9 @@ describe('PaperPublication', () => {
     await vi.waitFor(() => expect(t.publication?.state).toBe('submitted'));
     h.setState('rejected');
     await vi.waitFor(() => expect(t.publication?.state).toBe('failed'));
+    // 处理状态照原值写：交给模型的原因（取原文）与改前逐字相同
+    expect(toSource(t.publication?.reason)).toBe('发布处理rejected');
+    expect(renderIn(t.publication?.reason, 'en')).toBe('Publishing ended as rejected');
     await h.coordinator.close();
     h.coordinator.kick();
     expect(h.nominate).toHaveBeenCalledTimes(1);
@@ -497,7 +502,7 @@ describe('PaperPublication', () => {
     const h = setup(t);
     h.coordinator.open();
     await vi.waitFor(() => expect(t.publication?.state).toBe('failed'));
-    expect(t.publication?.reason).toMatch(/未提交发布/);
+    expect(toSource(t.publication?.reason)).toMatch(/未提交发布/);
     expect(t.notice, '创作失败的通知已经报过这件任务，不因发布随之失败再报一次').toBe(notice);
     expect(h.ledger.save).toHaveBeenCalled();
     await vi.waitFor(() => expect(h.changed).toHaveBeenCalled());

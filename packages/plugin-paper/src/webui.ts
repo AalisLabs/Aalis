@@ -8,7 +8,8 @@
 //
 // 成品按存储地址交给宿主：文件列由宿主签发下载句柄，一律当附件以 octet-stream 下发，文件名是宿主生成的产物 id 加判定类型的
 // 扩展名，不用远端给的路径；判定为位图的另给预览列，宿主经 /api/media 按文件头再核一次。创作日志在插件数据里，详情显示
-// 最近的记录与它的位置。工程包不经 WebUI 下载，白纸详情里显示它在本机的位置。
+// 最近的记录（原文的代码块）与它的位置（两个文字组件：位置一句按读者语言，代码块不能作文字对象的参数）。工程包不经 WebUI
+// 下载，白纸详情里显示它在本机的位置。
 // 记录每次落盘后两页都重取；未读告警数与记录读取失败发提示。
 // ============================================================
 
@@ -18,16 +19,16 @@ import type { SessionManagerService } from '@aalis/api-session-manager';
 import type { StorageService } from '@aalis/api-storage';
 import { type BoundWebui, type InfoItem, markdownCode, type NoticeHandle, type StatusValue } from '@aalis/api-webui';
 import type { ServiceSelection } from '@aalis/core';
-import { type TextRef, toSource } from '@aalis/schema-i18n';
+import { TextError, type TextRef, textOf } from '@aalis/schema-i18n';
 import { artifactUri, bundleUri, paperDirUri, usageOf } from './artifacts.js';
 import { dayKey, paperBudgetUsage } from './budget.js';
-import { type PaperConfig, type PaperSpec, specOf } from './config.js';
+import { egressName, type PaperConfig, type PaperSpec, specOf } from './config.js';
 import type { PaperDriver } from './driver.js';
-import { type LedgerStore, type TaskRecord, UNFINISHED_STATES } from './ledger.js';
+import { type AgentRecord, type AlertRecord, type LedgerStore, type TaskRecord, UNFINISHED_STATES } from './ledger.js';
 import { currentProgress } from './progress.js';
 import { actorKey, type PaperFields, paperLabel, resolveRoomPaper, sharingRooms } from './rooms.js';
 import { t } from './texts.js';
-import { describe, formatDuration, formatSize } from './util.js';
+import { formatDuration, formatSize, named } from './util.js';
 
 const PAGE_KEY = 'paper';
 /** 能在页面里预览的位图；宿主经 /api/media 按文件头再核一次 */
@@ -37,59 +38,92 @@ const RECENT_ARTIFACTS = 10;
 /** 创作日志的详情显示最近几条记录 */
 const RECENT_LOG_RECORDS = 20;
 
-const STATE_TEXT: Record<TaskRecord['state'], string> = {
-  queued: '排队',
-  starting: '开轮中',
-  running: '运行中',
-  collecting: '取回成品',
-  done: '完成',
-  failed: '失败',
-  cancelled: '已取消',
+const STATE_TEXT: Record<TaskRecord['state'], TextRef> = {
+  queued: t('stateQueued'),
+  starting: t('stateStarting'),
+  running: t('stateRunning'),
+  collecting: t('stateCollecting'),
+  done: t('stateDone'),
+  failed: t('stateFailed'),
+  cancelled: t('cancelled'),
+};
+
+const VIA_TEXT: Record<NonNullable<TaskRecord['cancelledVia']>, TextRef> = {
+  tool: t('viaTool'),
+  webui: t('viaWebui'),
+  timeout: t('viaTimeout'),
 };
 
 function taskStatus(task: TaskRecord): StatusValue {
-  const base = STATE_TEXT[task.state];
+  const base = named(STATE_TEXT, task.state);
   const text = task.error
     ? t('stateWithError', { state: base, error: task.error })
     : task.cancelledVia
-      ? `${base}（${task.cancelledVia}）`
+      ? t('annotated', { text: base, note: named(VIA_TEXT, task.cancelledVia) })
       : base;
   if (task.state === 'failed') return { text, state: 'error' };
   if (task.state === 'cancelled') return { text, state: 'inactive' };
   return UNFINISHED_STATES.has(task.state) ? { text, state: 'running' } : { text };
 }
 
-const PUBLICATION_TEXT: Record<NonNullable<TaskRecord['publication']>['state'], string> = {
-  pending: '等待自动提交',
-  submitted: '发布处理中',
-  live: '已上线',
-  failed: '未能上线',
+/** 绑定代理的状态（存储里的值照旧） */
+const AGENT_STATES: Record<AgentRecord['state'], TextRef> = {
+  creating: t('agentCreating'),
+  active: t('agentActive'),
+  archived: t('agentArchived'),
+  retired: t('agentRetired'),
+};
+
+/** 告警的类别（存储里的值照旧） */
+const ALERT_KINDS: Record<AlertRecord['kind'], TextRef> = {
+  'unknown-run': t('alertUnknownRun'),
+  'unknown-agent': t('alertUnknownAgent'),
+  'cost-missing': t('alertCostMissing'),
+  provider: t('alertProvider'),
+  'delete-failed': t('alertDeleteFailed'),
+  'cancel-failed': t('alertCancelFailed'),
+  'storage-full': t('alertStorageFull'),
+  'cost-estimated': t('alertCostEstimated'),
+  'claim-unverified': t('alertClaimUnverified'),
+  'claim-failed': t('alertClaimFailed'),
+};
+
+/** 成品的类型：其余是文件格式名，原样显示 */
+const ARTIFACT_TYPES: Record<'other', TextRef> = { other: t('artifactOther') };
+
+const PUBLICATION_TEXT: Record<NonNullable<TaskRecord['publication']>['state'], TextRef> = {
+  pending: t('publicationPending'),
+  submitted: t('publicationSubmitted'),
+  live: t('publicationLive'),
+  failed: t('publicationFailed'),
 };
 
 /** 任务的发布状态：目标与进度，没能上线的带原因 */
-function publicationStatus({ target, state, reason }: NonNullable<TaskRecord['publication']>): string | TextRef {
-  const label = PUBLICATION_TEXT[state];
-  return reason ? t('publicationWithReason', { target, state: label, reason }) : `${target}：${label}`;
+function publicationStatus({ target, state, reason }: NonNullable<TaskRecord['publication']>): TextRef {
+  const label = named(PUBLICATION_TEXT, state);
+  return reason
+    ? t('publicationWithReason', { target, state: label, reason })
+    : t('publicationState', { target, state: label });
 }
 
 /** 白纸的状态：停开写明原因 */
-const paperStatus = (halted: { detail: string } | undefined): StatusValue =>
-  halted ? { text: `停开：${halted.detail}`, state: 'error' } : { text: '正常' };
+const paperStatus = (halted: { detail: string | TextRef } | undefined): StatusValue =>
+  halted ? { text: t('paperHalted', { detail: halted.detail }), state: 'error' } : { text: t('paperOk') };
 
 const TASK_COLUMNS = [
-  { key: 'name', label: '任务名', primary: true },
-  { key: 'state', label: '状态', kind: 'status', primary: true },
-  { key: 'progress', label: '最近动作' },
-  { key: 'progressAt', label: '动作时间', kind: 'time' },
-  { key: 'initiator', label: '发起者' },
+  { key: 'name', label: t('taskName'), primary: true },
+  { key: 'state', label: t('status'), kind: 'status', primary: true },
+  { key: 'progress', label: t('latestActivity') },
+  { key: 'progressAt', label: t('activityAt'), kind: 'time' },
+  { key: 'initiator', label: t('initiator') },
 ] as const;
 
 const ARTIFACT_COLUMNS = [
-  { key: 'file', label: '文件', kind: 'file', primary: true },
-  { key: 'preview', label: '预览', kind: 'image' },
-  { key: 'task', label: '任务' },
-  { key: 'type', label: '类型' },
-  { key: 'size', label: '大小' },
+  { key: 'file', label: t('file'), kind: 'file', primary: true },
+  { key: 'preview', label: t('preview'), kind: 'image' },
+  { key: 'task', label: t('task') },
+  { key: 'type', label: t('type') },
+  { key: 'size', label: t('size') },
 ] as const;
 
 export function registerPaperPage(deps: {
@@ -109,16 +143,6 @@ export function registerPaperPage(deps: {
   const today = () => dayKey(deps.now(), cfg.budgetTimeZone);
   const byNewest = (a: TaskRecord, b: TaskRecord) => b.createdAt - a.createdAt;
 
-  const formatTime = (ts: number) =>
-    new Intl.DateTimeFormat('sv-SE', {
-      timeZone: cfg.budgetTimeZone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(ts);
-
   /** 页面上列出的白纸：配置里的具名白纸，加上记录里出现过的 */
   const paperIds = (): string[] => {
     const ids = new Set([...cfg.papers.keys()].map(name => `n:${name}`));
@@ -128,7 +152,7 @@ export function registerPaperPage(deps: {
   };
   /** 行动作与详情带来的白纸 id：只认页面上列得出的，免得给不存在的白纸建出记录条目 */
   const knownPaper = (paperId: string): string => {
-    if (!paperIds().includes(paperId)) throw new Error('没有这块白纸');
+    if (!paperIds().includes(paperId)) throw new TextError(t('noSuchPaper'));
     return paperId;
   };
   const tasksOf = (pick: (task: TaskRecord) => boolean) => Object.values(ledger.data.tasks).filter(pick).sort(byNewest);
@@ -145,9 +169,11 @@ export function registerPaperPage(deps: {
       room: task.room,
       initiator: actorKey(task.initiator),
       duration: task.startedAt !== undefined ? formatDuration((task.endedAt ?? deps.now()) - task.startedAt) : '',
-      cost: task.costCents ?? (ledger.data.reserves[task.id] ? `预留 ${ledger.data.reserves[task.id].cents}` : ''),
+      cost:
+        task.costCents ??
+        (ledger.data.reserves[task.id] ? t('reservedCents', { cents: ledger.data.reserves[task.id].cents }) : ''),
       text: task.text,
-      publication: publication ? publicationStatus(publication) : '不发布',
+      publication: publication ? publicationStatus(publication) : t('noPublication'),
       cancellable: task.state === 'queued' || task.state === 'running',
       abandonable: driver.abandonRefusal(task) === undefined,
       writeOffable: !UNFINISHED_STATES.has(task.state) && Object.hasOwn(ledger.data.reserves, task.id),
@@ -166,38 +192,38 @@ export function registerPaperPage(deps: {
             file: uri,
             preview: BITMAPS.has(artifact.type) ? uri : undefined,
             task: task.name,
-            type: artifact.type,
+            type: named(ARTIFACT_TYPES, artifact.type),
             size: formatSize(artifact.sizeBytes),
             rel: artifact.rel,
           };
         }),
       );
 
-  async function egressText(paperId: string): Promise<string> {
+  async function egressText(paperId: string): Promise<string | TextRef> {
     const spec = specOf(cfg, paperId);
     if (!spec?.remoteAgentType) return '';
     const provider = resolveRemoteAgent(deps.remote, spec.remoteAgentType);
-    if (!provider) return '提供者不在场';
+    if (!provider) return t('providerAbsent');
     let egress: EgressReport;
     try {
       egress = await provider.use.egress(deps.signal);
     } catch (err) {
-      return `读取失败：${describe(err)}`;
+      return t('readFailed', { error: textOf(err) });
     }
-    const source = egress.source === 'owner-config' ? '（owner 配置，未核实）' : '';
-    return `${egress.mode}${source}；上限 ${spec.remoteAgentEgress}`;
+    const shown = { mode: egressName(egress.mode), ceiling: egressName(spec.remoteAgentEgress) };
+    return t(egress.source === 'owner-config' ? 'egressUnverified' : 'egressVerified', shown);
   }
 
-  async function usageText(paperId: string): Promise<string> {
+  async function usageText(paperId: string): Promise<string | TextRef> {
     try {
       const used = await usageOf(storage, paperDirUri(paperId));
       return `${formatSize(used)} / ${formatSize(cfg.artifacts.maxPaperBytes)}`;
     } catch (err) {
-      return `读取失败：${describe(err)}`;
+      return t('readFailed', { error: textOf(err) });
     }
   }
 
-  async function bundleText(paperId: string): Promise<string> {
+  async function bundleText(paperId: string): Promise<string | TextRef> {
     const uri = bundleUri(paperId);
     let size: number;
     try {
@@ -211,25 +237,29 @@ export function registerPaperPage(deps: {
     } catch {
       // 存储提供者给不出本机路径时显示 URI
     }
-    return `${where}（${formatSize(size)}）`;
+    return t('annotated', { text: where, note: formatSize(size) });
   }
 
   /** 这块白纸的每日额度一句话 */
   const budgetLimit = (spec: PaperSpec | undefined) =>
     !spec
-      ? '配置里已没有这块白纸'
+      ? t('paperGone')
       : spec.dailyCents === undefined
         ? cfg.globalDailyCents === undefined
-          ? '不限额（这块白纸与全局都没设上限；房间上限另算）'
-          : '不单独限额（仍受全局与房间限制）'
+          ? t('budgetUnlimited')
+          : t('budgetShared')
         : spec.dailyCents === 0
-          ? '上限 0 美分（禁任务）'
-          : `上限 ${spec.dailyCents} 美分`;
+          ? t('budgetZero')
+          : t('budgetCents', { cents: spec.dailyCents });
 
-  function publishTargetsText(spec: PaperSpec | undefined): string {
-    if (!spec) return '（配置里已没有这块白纸）';
-    if (spec.publishTargets.length === 0) return '（禁止发布）';
-    if (!deps.publish.present) return spec.publishTargets.map(name => `${name}（发布服务不在场）`).join('、');
+  /** 允许的发布目标一个个列出：地址与能不能用；作品站给的不可用原因原样作参数 */
+  function publishTargetsText(spec: PaperSpec | undefined): TextRef {
+    if (!spec) return t('paperGoneParen');
+    if (spec.publishTargets.length === 0) return t('publishForbidden');
+    const noted = (text: string | TextRef, note: TextRef) => t('annotated', { text, note });
+    if (!deps.publish.present) {
+      return t('items', { items: spec.publishTargets.map(name => noted(name, t('publishServiceAbsent'))) });
+    }
     const service = deps.publish.use;
     try {
       const allowed = new Set(spec.publishTargets);
@@ -239,16 +269,21 @@ export function registerPaperPage(deps: {
           .filter(surface => allowed.has(surface.name))
           .map(surface => [surface.name, surface]),
       );
-      return spec.publishTargets
-        .map(name => {
-          const surface = byName.get(name);
-          if (!surface) return `${name}（未登记）`;
-          const title = surface.label && surface.label !== name ? `${name}／${surface.label}` : name;
-          return `${title}${surface.baseUrl ? `：${surface.baseUrl}` : ''}（${surface.available ? '可用' : `不可用${surface.reason ? `：${toSource(surface.reason)}` : ''}`}）`;
-        })
-        .join('、');
+      const items = spec.publishTargets.map(name => {
+        const surface = byName.get(name);
+        if (!surface) return noted(name, t('unregistered'));
+        const title = surface.label && surface.label !== name ? t('targetTitle', { name, label: surface.label }) : name;
+        const where = surface.baseUrl ? t('targetUrl', { title, url: surface.baseUrl }) : title;
+        const state = surface.available
+          ? t('available')
+          : surface.reason
+            ? t('unavailableBecause', { reason: surface.reason })
+            : t('unavailable');
+        return noted(where, state);
+      });
+      return t('items', { items });
     } catch {
-      return '（发布目标读取失败）';
+      return t('targetsReadFailed');
     }
   }
 
@@ -257,26 +292,36 @@ export function registerPaperPage(deps: {
     const spec = specOf(cfg, paperId);
     const { spentCents, unattributedCents, reservedCents } = paperBudgetUsage(ledger.data, today(), paperId);
     const { labels, shared } = sharingRooms(deps.sessionManager.use, deps.fields, ledger.data, paperId);
+    const budget = { limit: budgetLimit(spec), spent: spentCents, reserved: reservedCents };
     return [
-      { label: '共用的房间', value: shared ? `共用（${labels.length}）：${labels.join('、')}` : labels.join('') },
-      { label: '远端类型', value: spec ? spec.remoteAgentType || '（未配置）' : '（配置里已没有这块白纸）' },
-      { label: '出网', value: await egressText(paperId) },
-      { label: '可用发布目标', value: publishTargetsText(spec) },
       {
-        label: '默认发布目标',
+        label: t('sharingRooms'),
+        // 不共用时至多一个房间
+        value: shared ? t('sharedRooms', { count: labels.length, rooms: labels }) : (labels[0] ?? ''),
+      },
+      { label: t('remoteType'), value: spec ? spec.remoteAgentType || t('notConfigured') : t('paperGoneParen') },
+      { label: t('egress'), value: await egressText(paperId) },
+      { label: t('availableTargets'), value: publishTargetsText(spec) },
+      {
+        label: t('defaultTargetLabel'),
         value: !spec?.publishTargets.length
-          ? '（禁止发布）'
-          : (spec.defaultPublishTarget ?? (spec.publishTargets.length === 1 ? spec.publishTargets[0] : '（每次选择）')),
+          ? t('publishForbidden')
+          : (spec.defaultPublishTarget ??
+            (spec.publishTargets.length === 1 ? spec.publishTargets[0] : t('chooseEachTime'))),
       },
       {
-        label: '每日额度',
+        label: t('dailyBudget'),
         value:
-          `${budgetLimit(spec)}；已记 ${spentCents} 美分；预留 ${reservedCents} 美分` +
-          (unattributedCents > 0 ? `；未归属费用（含旧账）${unattributedCents} 美分，保守计入每块白纸额度` : ''),
+          unattributedCents > 0
+            ? t('dailyBudgetUnattributed', { ...budget, unattributed: unattributedCents })
+            : t('dailyBudgetValue', budget),
       },
-      { label: '目录占用 / 上限', value: await usageText(paperId) },
-      { label: '工程包（本机位置）', value: await bundleText(paperId) },
-      { label: '停开原因', value: state?.halted ? `${state.halted.detail}（${formatTime(state.halted.at)}）` : '' },
+      { label: t('usage'), value: await usageText(paperId) },
+      { label: t('bundle'), value: await bundleText(paperId) },
+      {
+        label: t('haltReason'),
+        value: state?.halted ? t('haltedAt', { detail: state.halted.detail, at: state.halted.at }) : '',
+      },
     ];
   }
 
@@ -299,21 +344,24 @@ export function registerPaperPage(deps: {
     return [
       {
         key: 'global',
-        scope: `全局（${day}，${cfg.globalDailyCents === undefined ? '不限额' : `上限 ${cfg.globalDailyCents} 美分`}）`,
+        scope:
+          cfg.globalDailyCents === undefined
+            ? t('globalScope', { day })
+            : t('globalScopeLimit', { day, cents: cfg.globalDailyCents }),
         cents: spend.global,
         tasks: todays.length,
         reserved: sum(reserves),
       },
       ...[...rooms].map(room => ({
         key: `room:${room}`,
-        scope: `房间 ${room}`,
+        scope: t('roomScope', { room }),
         cents: spend.rooms[room] ?? 0,
         tasks: todays.filter(task => task.room === room).length,
         reserved: sum(reserves.filter(r => r.room === room)),
       })),
       ...[...users].map(user => ({
         key: `user:${user}`,
-        scope: `发起者 ${user}`,
+        scope: t('initiatorScope', { user }),
         cents: spend.users[user]?.cents ?? 0,
         tasks: todays.filter(task => actorKey(task.initiator) === user).length,
         reserved: sum(reserves.filter(r => r.user === user)),
@@ -324,35 +372,34 @@ export function registerPaperPage(deps: {
   // ----- 动作 -----
 
   const writable = () => {
-    if (ledger.failure) throw new Error('白纸记录读取失败，等 owner 处理');
+    if (ledger.failure) throw new TextError(t('ledgerDown'));
   };
   /** 白纸上的动作：驱动回原因即拒绝 */
   const onPaper =
-    (run: (paperId: string) => Promise<string | undefined>, message: string) =>
+    (run: (paperId: string) => Promise<TextRef | undefined>, message: TextRef) =>
     async ({ rowKey }: { rowKey: string }) => {
       writable();
       const refused = await run(knownPaper(rowKey));
-      if (refused) throw new Error(refused);
+      if (refused) throw new TextError(refused);
       return message;
     };
   const onTask =
-    (run: (taskId: string) => Promise<string | undefined>, message: string) =>
+    (run: (taskId: string) => Promise<TextRef | undefined>, message: TextRef) =>
     async ({ rowKey }: { rowKey: string }) => {
       writable();
       const refused = await run(rowKey);
-      if (refused) throw new Error(refused);
+      if (refused) throw new TextError(refused);
       return message;
     };
-  async function cancelTask(taskId: string): Promise<string> {
+  async function cancelTask(taskId: string): Promise<TextRef> {
     writable();
     const result = await driver.cancel(taskId, 'webui');
-    if (!result.ok) throw new Error(result.error);
-    return result.message ?? '已取消';
+    if (!result.ok) throw new TextError(result.error);
+    return result.message ?? t('cancelled');
   }
-  const CANCEL_CONFIRM = '取消这件任务？运行中的会请远端取消这一轮，已发生的费用照常入账。';
   /** 创作日志的任务 id：只认宿主生成的形状，免得拼进存储路径 */
   const logTaskId = (id: string) => {
-    if (!/^t-[a-f0-9]{8}$/.test(id)) throw new Error('任务 ID 无效');
+    if (!/^t-[a-f0-9]{8}$/.test(id)) throw new TextError(t('badTaskId'));
     return id;
   };
   const logClearable = (taskId: string) => {
@@ -367,95 +414,91 @@ export function registerPaperPage(deps: {
 
   const page = webui.definePage({
     key: PAGE_KEY,
-    title: '白纸',
+    title: t('paper'),
     icon: 'file',
     actions: {
       rotatePaper: {
-        label: '换新',
+        label: t('rotate'),
         effect: 'destructive',
-        confirm: '下一件任务建新代理。换新只重置对话，工程包照常带到新代理；要清掉工作区用「清空」。继续？',
+        confirm: t('rotateConfirm'),
         row: true,
         handler: onPaper(async paperId => {
           await driver.rotate(paperId);
           return undefined;
-        }, '下一件任务建新代理'),
+        }, t('rotated')),
       },
       archivePaper: {
-        label: '归档代理',
+        label: t('archiveAgent'),
         effect: 'write',
         row: true,
-        handler: onPaper(paperId => driver.archive(paperId), '已归档'),
+        handler: onPaper(paperId => driver.archive(paperId), t('archived')),
       },
       clearPaper: {
-        label: '清空',
+        label: t('clear'),
         effect: 'destructive',
-        confirm:
-          '清空这块白纸：取消排队的任务，删除远端代理（连同它的对话与工作区）与本机的白纸目录（成品与工程包）。任务记录保留。继续？',
+        confirm: t('clearConfirm'),
         row: true,
-        handler: onPaper(paperId => driver.clear(paperId), '已清空'),
+        handler: onPaper(paperId => driver.clear(paperId), t('cleared')),
       },
       resumePaper: {
-        label: '恢复',
+        label: t('resume'),
         effect: 'write',
         row: true,
-        handler: onPaper(async paperId => ((await driver.resume(paperId)) ? undefined : '这块白纸没有停开'), '已恢复'),
+        handler: onPaper(async paperId => ((await driver.resume(paperId)) ? undefined : t('notHalted')), t('resumed')),
       },
       freshStartPaper: {
-        label: '不带旧工程继续',
+        label: t('freshStart'),
         effect: 'destructive',
-        confirm:
-          '旧工程包永久取不到时用：新代理不再等旧工程包，从它自己的工作区（或空工程）继续。白纸上的成品与任务记录保留，旧工程里没交接过来的进度丢失。继续？',
+        confirm: t('freshStartConfirm'),
         row: true,
-        handler: onPaper(paperId => driver.freshStart(paperId), '下一件任务不再等旧工程包'),
+        handler: onPaper(paperId => driver.freshStart(paperId), t('freshStarted')),
       },
       cancelTask: {
-        label: '取消任务',
+        label: t('cancelTask'),
         effect: 'destructive',
-        confirm: CANCEL_CONFIRM,
+        confirm: t('cancelConfirm'),
         row: true,
         handler: ({ rowKey }) => cancelTask(rowKey),
       },
       abandonTask: {
-        label: '放弃跟踪',
+        label: t('abandon'),
         effect: 'destructive',
-        confirm:
-          '这件任务判为失败，远端这一轮可能仍在运行或已开出，费用等列得出、结束之后补记；下一件任务建新代理。继续？',
+        confirm: t('abandonConfirm'),
         row: true,
-        handler: onTask(taskId => driver.abandon(taskId), '已放弃跟踪'),
+        handler: onTask(taskId => driver.abandon(taskId), t('abandoned')),
       },
       writeOffReserve: {
-        label: '核销预留',
+        label: t('writeOff'),
         effect: 'destructive',
-        confirm:
-          '费用一直取不到时用：这件已结束任务还没入账的费用按它的预留额记进当天花费，预留释放，之后不再补取。继续？',
+        confirm: t('writeOffConfirm'),
         row: true,
-        handler: onTask(taskId => driver.writeOff(taskId), '已核销'),
+        handler: onTask(taskId => driver.writeOff(taskId), t('writtenOff')),
       },
       acknowledgeAlert: {
-        label: '已读',
+        label: t('markRead'),
         effect: 'write',
         row: true,
         async handler({ rowKey }) {
           writable();
-          if (!(await driver.acknowledge(rowKey))) throw new Error('没有这条未读告警');
-          return '已标为已读';
+          if (!(await driver.acknowledge(rowKey))) throw new TextError(t('noUnreadAlert'));
+          return t('markedRead');
         },
       },
       clearTaskLog: {
-        label: '删除日志',
+        label: t('deleteLog'),
         effect: 'destructive',
-        confirm: '只删除这件任务的创作日志，不删除工程或作品。继续？',
+        confirm: t('deleteLogConfirm'),
         row: true,
         async handler({ rowKey }) {
           const id = logTaskId(rowKey);
-          if (!logClearable(id)) throw new Error('任务仍在创作或发布中，不能删除日志');
+          if (!logClearable(id)) throw new TextError(t('logBusy'));
           try {
             await driver.journal.remove(id);
           } catch (err) {
-            throw new Error(`删除创作日志失败：${describe(err)}`);
+            throw new TextError(t('deleteLogFailed', { error: textOf(err) }));
           }
           page.invalidate('logs');
-          return '已删除创作日志';
+          return t('logDeleted');
         },
       },
     },
@@ -463,18 +506,18 @@ export function registerPaperPage(deps: {
       tabs: [
         {
           key: 'papers',
-          title: '白纸',
+          title: t('papersTab'),
           content: [
             {
               type: 'table',
               id: 'papers',
               rowKey: 'paperId',
-              empty: '还没有白纸',
+              empty: t('noPapers'),
               columns: [
-                { key: 'name', label: '名字', primary: true },
-                { key: 'status', label: '状态', kind: 'status', primary: true },
-                { key: 'agent', label: '绑定代理' },
-                { key: 'spent', label: '今天花费（美分）' },
+                { key: 'name', label: t('nameLabel'), primary: true },
+                { key: 'status', label: t('status'), kind: 'status', primary: true },
+                { key: 'agent', label: t('boundAgent') },
+                { key: 'spent', label: t('spentToday') },
               ],
               rowActions: [
                 { action: 'resumePaper', visibleWhen: 'halted' },
@@ -491,7 +534,7 @@ export function registerPaperPage(deps: {
                     paperId,
                     name: paperLabel(paperId),
                     status: paperStatus(state?.halted),
-                    agent: agent ? `${agent.name}（${agent.state}）` : '',
+                    agent: agent ? t('annotated', { text: agent.name, note: named(AGENT_STATES, agent.state) }) : '',
                     spent: paperBudgetUsage(ledger.data, today(), paperId).spentCents,
                     halted: state?.halted !== undefined,
                   };
@@ -501,16 +544,16 @@ export function registerPaperPage(deps: {
                 {
                   type: 'table',
                   id: 'paperTasks',
-                  label: '任务',
+                  label: t('tasks'),
                   rowKey: 'id',
-                  empty: '这块白纸还没有任务',
+                  empty: t('noPaperTasks'),
                   columns: [
                     ...TASK_COLUMNS,
-                    { key: 'room', label: '房间' },
-                    { key: 'duration', label: '用时' },
-                    { key: 'cost', label: '花费（美分）' },
-                    { key: 'publication', label: '上线进度' },
-                    { key: 'text', label: '原文', kind: 'long-text' },
+                    { key: 'room', label: t('room') },
+                    { key: 'duration', label: t('duration') },
+                    { key: 'cost', label: t('costCents') },
+                    { key: 'publication', label: t('publication') },
+                    { key: 'text', label: t('request'), kind: 'long-text' },
                     { key: 'id', label: 'ID', kind: 'code' },
                   ],
                   rowActions: [
@@ -523,10 +566,10 @@ export function registerPaperPage(deps: {
                 {
                   type: 'table',
                   id: 'paperArtifacts',
-                  label: '成品',
+                  label: t('outputs'),
                   rowKey: 'key',
-                  empty: '这块白纸上没有成品',
-                  columns: [...ARTIFACT_COLUMNS, { key: 'rel', label: '远端给的路径', kind: 'long-text' }],
+                  empty: t('noPaperOutputs'),
+                  columns: [...ARTIFACT_COLUMNS, { key: 'rel', label: t('remotePath'), kind: 'long-text' }],
                   data: ({ rowKey }) => artifactRows(tasksOf(task => task.paperId === knownPaper(rowKey))),
                 },
               ],
@@ -534,27 +577,27 @@ export function registerPaperPage(deps: {
             {
               type: 'table',
               id: 'spend',
-              label: '今天的花费',
+              label: t('todaySpend'),
               rowKey: 'key',
               columns: [
-                { key: 'scope', label: '范围', primary: true },
-                { key: 'cents', label: '花费（美分）', primary: true },
-                { key: 'tasks', label: '件数' },
-                { key: 'reserved', label: '预留中（美分）' },
+                { key: 'scope', label: t('scope'), primary: true },
+                { key: 'cents', label: t('costCents'), primary: true },
+                { key: 'tasks', label: t('taskCount') },
+                { key: 'reserved', label: t('reservedColumn') },
               ],
               data: spendRows,
             },
             {
               type: 'table',
               id: 'alerts',
-              label: '告警',
+              label: t('alerts'),
               rowKey: 'id',
-              empty: '没有告警',
+              empty: t('noAlerts'),
               columns: [
-                { key: 'message', label: '说明', kind: 'long-text', primary: true },
-                { key: 'status', label: '状态', kind: 'status', primary: true },
-                { key: 'kind', label: '类别' },
-                { key: 'at', label: '时间', kind: 'time' },
+                { key: 'message', label: t('message'), kind: 'long-text', primary: true },
+                { key: 'status', label: t('status'), kind: 'status', primary: true },
+                { key: 'kind', label: t('kind') },
+                { key: 'at', label: t('time'), kind: 'time' },
               ],
               rowActions: [{ action: 'acknowledgeAlert', visibleWhen: 'unread' }],
               data: () =>
@@ -564,9 +607,9 @@ export function registerPaperPage(deps: {
                     id: alert.id,
                     message: alert.message,
                     status: alert.acknowledged
-                      ? { text: '已读', state: 'inactive' as const }
-                      : { text: '未读', state: 'attention' as const },
-                    kind: alert.kind,
+                      ? { text: t('read'), state: 'inactive' as const }
+                      : { text: t('unread'), state: 'attention' as const },
+                    kind: named(ALERT_KINDS, alert.kind),
                     at: alert.at,
                     unread: !alert.acknowledged,
                   })),
@@ -575,37 +618,40 @@ export function registerPaperPage(deps: {
         },
         {
           key: 'logs',
-          title: '创作日志',
+          title: t('logsTab'),
           content: [
             {
               type: 'table',
               id: 'logs',
               rowKey: 'taskId',
-              empty: '还没有创作日志',
+              empty: t('noLogs'),
               columns: [
-                { key: 'name', label: '任务名', primary: true },
-                { key: 'entries', label: '记录数', primary: true },
-                { key: 'taskId', label: '任务 ID', kind: 'code' },
+                { key: 'name', label: t('taskName'), primary: true },
+                { key: 'entries', label: t('entries'), primary: true },
+                { key: 'taskId', label: t('taskId'), kind: 'code' },
               ],
               rowActions: [{ action: 'clearTaskLog', visibleWhen: 'clearable' }],
               data: async () =>
                 (await driver.journal.list()).map(row => ({
                   taskId: row.taskId,
                   entries: row.entries,
-                  name: ledger.data.tasks[row.taskId]?.name ?? '（任务记录已归档）',
+                  name: ledger.data.tasks[row.taskId]?.name ?? t('taskArchived'),
                   clearable: logClearable(row.taskId),
                 })),
               detail: [
                 {
                   type: 'markdown',
                   id: 'logRecent',
-                  label: `最近 ${RECENT_LOG_RECORDS} 条记录`,
+                  label: t('recentRecords', { count: RECENT_LOG_RECORDS }),
                   async data({ rowKey }) {
-                    const id = logTaskId(rowKey);
-                    const recent = await driver.journal.recent(id, RECENT_LOG_RECORDS);
-                    const records = recent ? markdownCode(recent, 'json') : '尚未记录创作日志；旧任务不会补录。';
-                    return `${records}\n\n完整记录在 \`${driver.journal.uri(id)}\`。`;
+                    const recent = await driver.journal.recent(logTaskId(rowKey), RECENT_LOG_RECORDS);
+                    return recent ? markdownCode(recent, 'json') : t('noLogYet');
                   },
+                },
+                {
+                  type: 'markdown',
+                  id: 'logLocation',
+                  data: ({ rowKey }) => t('fullLogAt', { uri: driver.journal.uri(logTaskId(rowKey)) }),
                 },
               ],
             },
@@ -618,30 +664,30 @@ export function registerPaperPage(deps: {
   // 群会话里的白纸面板：只在开了白纸的房间出现，数据按会话 id 取
   const roomPage = webui.definePage({
     key: 'paper-room',
-    title: '白纸',
+    title: t('paper'),
     icon: 'file',
     placement: 'session',
     applies: ({ sessionId, kind }) => kind === 'room' && deps.fields.get(sessionId).paperEnabled === true,
     actions: {
       cancelTask: {
-        label: '取消任务',
+        label: t('cancelTask'),
         effect: 'destructive',
-        confirm: CANCEL_CONFIRM,
+        confirm: t('cancelConfirm'),
         row: true,
         handler({ rowKey, ctx }) {
-          if (ledger.data.tasks[rowKey]?.room !== ctx.sessionId) throw new Error('本群没有这件任务');
+          if (ledger.data.tasks[rowKey]?.room !== ctx.sessionId) throw new TextError(t('notInThisRoom'));
           return cancelTask(rowKey);
         },
       },
       resumeRoomPaper: {
-        label: '恢复白纸',
+        label: t('resumeRoomPaper'),
         effect: 'write',
         async handler({ ctx }) {
           writable();
           const paper = resolveRoomPaper(deps.sessionManager.use, deps.fields, cfg, ctx.sessionId, undefined);
-          if ('unavailable' in paper) throw new Error(paper.unavailable);
-          if (!(await driver.resume(paper.paperId))) throw new Error('这块白纸没有停开');
-          return '已恢复';
+          if ('unavailable' in paper) throw new TextError(paper.unavailable);
+          if (!(await driver.resume(paper.paperId))) throw new TextError(t('notHalted'));
+          return t('resumed');
         },
       },
     },
@@ -651,7 +697,7 @@ export function registerPaperPage(deps: {
         id: 'room',
         async data({ ctx }) {
           const paper = resolveRoomPaper(deps.sessionManager.use, deps.fields, cfg, ctx.sessionId, undefined);
-          if ('unavailable' in paper) return [{ label: '白纸', value: paper.unavailable }];
+          if ('unavailable' in paper) return [{ label: t('paper'), value: paper.unavailable }];
           const day = today();
           const usage = paperBudgetUsage(ledger.data, day, paper.paperId);
           const limit = paper.room.remoteAgentRoomDailyCents;
@@ -659,31 +705,35 @@ export function registerPaperPage(deps: {
             .filter(reserve => reserve.room === ctx.sessionId)
             .reduce((total, reserve) => total + reserve.cents, 0);
           return [
-            { label: '白纸', value: paperLabel(paper.paperId) },
-            { label: '状态', value: paperStatus(ledger.data.papers[paper.paperId]?.halted), kind: 'status' as const },
-            { label: '本群今天花费（美分）', value: ledger.data.spend[day]?.rooms[ctx.sessionId] ?? 0 },
-            { label: '本群预留中（美分）', value: roomReserved },
+            { label: t('paper'), value: paperLabel(paper.paperId) },
             {
-              label: '本群每天上限',
+              label: t('status'),
+              value: paperStatus(ledger.data.papers[paper.paperId]?.halted),
+              kind: 'status' as const,
+            },
+            { label: t('roomSpentToday'), value: ledger.data.spend[day]?.rooms[ctx.sessionId] ?? 0 },
+            { label: t('roomReserved'), value: roomReserved },
+            {
+              label: t('roomDailyLimit'),
               // 会话配置的原值：缺省不限，写坏了按 0，与受理时的判据一致
               value:
                 limit === undefined || limit === null
-                  ? '不限'
+                  ? t('roomUnlimited')
                   : typeof limit === 'number' && Number.isFinite(limit) && limit >= 0
-                    ? `${limit} 美分`
-                    : '写坏了，按 0 处理',
+                    ? t('roomLimitCents', { cents: limit })
+                    : t('roomLimitInvalid'),
             },
-            { label: '白纸今天花费（美分）', value: usage.spentCents },
-            { label: '白纸每天上限', value: budgetLimit(paper.spec) },
+            { label: t('paperSpentToday'), value: usage.spentCents },
+            { label: t('paperDailyLimit'), value: budgetLimit(paper.spec) },
           ];
         },
       },
       {
         type: 'table',
         id: 'tasks',
-        label: '进行中的任务',
+        label: t('roomTasks'),
         rowKey: 'id',
-        empty: '本群没有进行中的任务',
+        empty: t('noRoomTasks'),
         columns: [...TASK_COLUMNS],
         rowActions: [{ action: 'cancelTask', visibleWhen: 'cancellable' }],
         data: ({ ctx }) =>
@@ -692,9 +742,9 @@ export function registerPaperPage(deps: {
       {
         type: 'table',
         id: 'artifacts',
-        label: '最近的成品',
+        label: t('recentOutputs'),
         rowKey: 'key',
-        empty: '本群还没有成品',
+        empty: t('noRoomOutputs'),
         columns: [...ARTIFACT_COLUMNS],
         data: ({ ctx }) => artifactRows(tasksOf(task => task.room === ctx.sessionId)).slice(0, RECENT_ARTIFACTS),
       },
@@ -706,8 +756,8 @@ export function registerPaperPage(deps: {
     webui.notify({
       id: 'ledger',
       level: 'error',
-      title: '白纸记录读取失败',
-      detail: `${ledger.failure}；远端任务一律不开，原文件不覆盖，修复或移走后重启`,
+      title: t('ledgerDownTitle'),
+      detail: t('ledgerDownDetail', { failure: ledger.failure }),
       open: { page: PAGE_KEY },
     });
   }
@@ -725,7 +775,7 @@ export function registerPaperPage(deps: {
     unread = webui.notify({
       id: 'alerts',
       level: 'action',
-      title: `${count} 条白纸告警未读`,
+      title: t('unreadAlerts', { count }),
       open: { page: PAGE_KEY },
     });
   };

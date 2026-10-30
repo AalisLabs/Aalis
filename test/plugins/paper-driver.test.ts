@@ -5,6 +5,7 @@ import {
   type RunActivity,
 } from '../../packages/api-remote-agent/src/index.js';
 import type { PaperLedger } from '../../packages/plugin-paper/src/ledger.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { LEDGER_URI } from '../fixtures/paper.js';
 import {
   advance,
@@ -167,7 +168,7 @@ describe('开轮', () => {
     expect(hub.task(t2).state).toBe('starting');
     await advance(2 * MINUTE);
     await until(() => hub.task(t2).state === 'failed', '第二件判为失败');
-    expect(hub.task(t2).error).toMatch(/忙或不可用/);
+    expect(toSource(hub.task(t2).error)).toMatch(/忙或不可用/);
     expect(hub.store.data.reserves[t2]).toBeUndefined();
 
     delete a.intercept.startRun;
@@ -464,7 +465,7 @@ describe('出队复核', () => {
     const opened = a.count('createAgent') + a.count('startRun');
     a.finish(restarted.task(t1).runId ?? '');
     await until(() => restarted.task(t2).state === 'failed', '第二件出队时判为失败');
-    expect(restarted.task(t2).error).toMatch(/同一远端账号/);
+    expect(toSource(restarted.task(t2).error)).toMatch(/同一远端账号/);
     expect(a.count('createAgent') + a.count('startRun')).toBe(opened);
   });
 });
@@ -591,8 +592,8 @@ describe('认领失败的告警、诊断与出口', () => {
     expect(claimAlerts()).toEqual([
       expect.objectContaining({ subject: t2, providerType: REMOTE_A, acknowledged: false }),
     ]);
-    expect(claimAlerts()[0].message).toContain('提供者不可用');
-    expect(claimAlerts()[0].message).not.toContain(CLAIM_RAW);
+    expect(toSource(claimAlerts()[0].message)).toContain('提供者不可用');
+    expect(toSource(claimAlerts()[0].message)).not.toContain(CLAIM_RAW);
     expect(
       hub.logs.some(l => l.level === 'warn' && l.message.includes(CLAIM_RAW)),
       '原文进 warn',
@@ -600,9 +601,9 @@ describe('认领失败的告警、诊断与出口', () => {
     // 与放弃跟踪同一判据：认领失败过就报，报出时点「放弃跟踪」不会被拒
     const first = await hub.doctor();
     expect(first.level).toBe('warn');
-    expect(first.message).toContain(`白纸任务 ${t2} 认领失败后仍在开轮中`);
-    expect(first.message).toContain('放弃跟踪');
-    expect(first.message).not.toContain(CLAIM_RAW);
+    expect(toSource(first.message)).toContain(`白纸任务 ${t2} 认领失败后仍在开轮中`);
+    expect(toSource(first.message)).toContain('放弃跟踪');
+    expect(toSource(first.message)).not.toContain(CLAIM_RAW);
 
     expect(await hub.driver.acknowledge(claimAlerts()[0].id)).toBe(true);
     await advance(2 * RECONCILE_MS);
@@ -610,8 +611,8 @@ describe('认领失败的告警、诊断与出口', () => {
     expect(claimAlerts(), '只挂第一次').toHaveLength(1);
     const result = await hub.doctor();
     expect(result.level).toBe('warn');
-    expect(result.message, '告警标为已读后照报').toContain(`白纸任务 ${t2} 认领失败后仍在开轮中`);
-    expect(result.message).not.toContain(CLAIM_RAW);
+    expect(toSource(result.message), '告警标为已读后照报').toContain(`白纸任务 ${t2} 认领失败后仍在开轮中`);
+    expect(toSource(result.message)).not.toContain(CLAIM_RAW);
   });
 
   it('安全：放弃跟踪开轮中的任务：判为失败、写明远端可能已开出一轮，预留保留、下一件建新代理；列表恢复后那一轮记到它名下并请远端取消，白纸不停开，费用只入账一次', async () => {
@@ -619,7 +620,7 @@ describe('认领失败的告警、诊断与出口', () => {
     const before = spent(hub);
     expect(await hub.driver.abandon(t2)).toBeUndefined();
     expect(hub.task(t2)).toMatchObject({ state: 'failed', orphanRun: true, agentId });
-    expect(hub.task(t2).error).toContain('远端可能已开出一轮');
+    expect(toSource(hub.task(t2).error)).toContain('远端可能已开出一轮');
     expect(hub.task(t2).start).toBeUndefined();
     expect(hub.store.data.reserves[t2], '预留保留到核对确认').toBeDefined();
     expect(hub.store.data.papers[PAPER_A_ID].rotateNext).toBe(true);
@@ -740,11 +741,11 @@ describe('认领失败的告警、诊断与出口', () => {
   it('对照：没有认领失败过的开轮中任务、排队中与已结束的任务不能放弃跟踪', async () => {
     const { hub, t2 } = await stuck();
     const t3 = await hub.accept();
-    expect(await hub.driver.abandon(t3)).toMatch(/运行中与开轮中/);
+    expect(toSource(await hub.driver.abandon(t3))).toMatch(/运行中与开轮中/);
     expect(hub.task(t3).state).toBe('queued');
     // 认领失败的记录属于 t2：换一件开轮中、没有失败记录的任务
     hub.store.data.alerts = hub.store.data.alerts.filter(al => al.kind !== 'claim-failed');
-    expect(await hub.driver.abandon(t2)).toMatch(/认领/);
+    expect(toSource(await hub.driver.abandon(t2))).toMatch(/认领/);
     expect(hub.task(t2).state).toBe('starting');
   });
 });
@@ -802,8 +803,8 @@ describe('失败原因只写宿主撰写的类别', () => {
     await until(() => hub.task(t1).state === 'running', '开轮');
     a.finish(hub.task(t1).runId ?? '');
     await until(() => hub.task(t1).state === 'failed', '判为失败');
-    expect(hub.task(t1).error).toMatch(/^取回成品失败/);
-    expect(hub.task(t1).error).not.toContain(SENTINEL);
+    expect(toSource(hub.task(t1).error)).toMatch(/^取回成品失败/);
+    expect(toSource(hub.task(t1).error)).not.toContain(SENTINEL);
     expect(
       hub.logs.some(l => l.message.includes(SENTINEL)),
       '原文进日志',
@@ -826,9 +827,9 @@ describe('失败原因只写宿主撰写的类别', () => {
     };
     a.finish(hub.task(t1).runId ?? '');
     await until(() => hub.task(t2).state === 'failed', '第二件出队时判为失败');
-    expect(hub.task(t2).error).toMatch(/账号标识.*提供者不可用/);
-    expect(hub.task(t2).error).not.toContain(SENTINEL);
-    expect(hub.task(t2).error).not.toContain('127.0.0.1');
+    expect(toSource(hub.task(t2).error)).toMatch(/账号标识.*提供者不可用/);
+    expect(toSource(hub.task(t2).error)).not.toContain(SENTINEL);
+    expect(toSource(hub.task(t2).error)).not.toContain('127.0.0.1');
     expect(
       hub.logs.some(l => l.level === 'warn' && l.message.includes(SENTINEL)),
       '原文进日志',
@@ -846,8 +847,8 @@ describe('失败原因只写宿主撰写的类别', () => {
     };
     a.finish(hub.task(t1).runId ?? '');
     await until(() => hub.task(t2).state === 'failed', '第二件出队时判为失败');
-    expect(hub.task(t2).error).toMatch(/出网方式.*远端临时故障/);
-    expect(hub.task(t2).error).not.toContain(SENTINEL);
+    expect(toSource(hub.task(t2).error)).toMatch(/出网方式.*远端临时故障/);
+    expect(toSource(hub.task(t2).error)).not.toContain(SENTINEL);
   });
 
   it('安全：出队时提供者不可用而停开：停开说明、告警与 paper_task 的拒绝理由只写类别，原文只进日志', async () => {
@@ -866,10 +867,10 @@ describe('失败原因只写宿主撰写的类别', () => {
     await until(() => hub.store.data.papers[PAPER_A_ID].halted !== undefined, '停开');
     const halted = hub.store.data.papers[PAPER_A_ID].halted;
     expect(halted?.reason).toBe('provider');
-    expect(halted?.detail).toMatch(/提供者不可用/);
+    expect(toSource(halted?.detail)).toMatch(/提供者不可用/);
     expect(hub.task(t2).state, '任务留在队列里').toBe('queued');
     const alert = hub.store.data.alerts.find(x => x.kind === 'provider');
-    for (const shown of [halted?.detail, alert?.message]) {
+    for (const shown of toSource([halted?.detail, alert?.message])) {
       expect(shown).not.toContain(SENTINEL);
       expect(shown).not.toContain('127.0.0.1');
     }
@@ -894,8 +895,8 @@ describe('失败原因只写宿主撰写的类别', () => {
     });
     const t1 = await hub.accept();
     await until(() => hub.task(t1).state === 'failed', '建代理被拒');
-    expect(hub.task(t1).error).toMatch(/^建远端代理失败/);
-    expect(hub.task(t1).error).not.toContain(SENTINEL);
+    expect(toSource(hub.task(t1).error)).toMatch(/^建远端代理失败/);
+    expect(toSource(hub.task(t1).error)).not.toContain(SENTINEL);
 
     const t2 = await hub.accept();
     await until(() => hub.task(t2).state === 'running', '第二件开轮');
@@ -906,8 +907,8 @@ describe('失败原因只写宿主撰写的类别', () => {
     });
     const t3 = await hub.accept();
     await until(() => hub.task(t3).state === 'failed', '开轮被拒');
-    expect(hub.task(t3).error).toMatch(/^远端拒绝开轮/);
-    expect(hub.task(t3).error).not.toContain(SENTINEL);
+    expect(toSource(hub.task(t3).error)).toMatch(/^远端拒绝开轮/);
+    expect(toSource(hub.task(t3).error)).not.toContain(SENTINEL);
   });
 });
 
@@ -922,16 +923,16 @@ describe('放弃跟踪', () => {
     await until(() => hub.task(t1).state === 'running', '开轮');
     const t2 = await hub.accept();
     const { agentId, runId } = hub.task(t1);
-    expect(await hub.driver.abandon(t1), '取消还没判失败时不能放弃').toMatch(/取消失败/);
+    expect(toSource(await hub.driver.abandon(t1)), '取消还没判失败时不能放弃').toMatch(/取消失败/);
     a.bundles.set(agentId ?? '', new TextEncoder().encode('saved workspace'));
 
     await advance(20 * MINUTE + 101_000);
     await until(() => hub.store.data.papers[PAPER_A_ID].halted?.reason === 'cancel-failed', '停开');
-    expect(await hub.driver.clear(PAPER_A_ID)).toMatch(/在跑/);
+    expect(toSource(await hub.driver.clear(PAPER_A_ID))).toMatch(/在跑/);
 
     expect(await hub.driver.abandon(t1)).toBeUndefined();
     expect(hub.task(t1)).toMatchObject({ state: 'failed' });
-    expect(hub.task(t1).error).toMatch(/可能仍在运行/);
+    expect(toSource(hub.task(t1).error)).toMatch(/可能仍在运行/);
     expect(hub.store.data.reserves[t1], '预留按临时花费保留').toBeDefined();
     expect(hub.store.data.runs[runId ?? ''].cost.state).toBe('pending');
 

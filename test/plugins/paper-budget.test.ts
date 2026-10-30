@@ -10,6 +10,7 @@ import {
 import { configSchema } from '../../packages/plugin-paper/src/config.js';
 import paperPlugin from '../../packages/plugin-paper/src/index.js';
 import type { PaperLedger, TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { emptyLedger, human, PILOT_ROOM, ROOM, startPaperHub, stopPaperHubs } from '../fixtures/paper.js';
 import { storedRoom } from '../fixtures/rooms.js';
 import { fieldsPlugin, startSettings } from '../fixtures/session-settings.js';
@@ -81,7 +82,7 @@ describe('canStart：各层金额上限可选', () => {
     });
     const denied = canStart(emptyLedger(), DAY, 'n:zz-paper', ROOM_KEY, USER, limits({ roomCents: 0 }), 50);
     expect(denied.ok).toBe(false);
-    expect(denied.ok ? '' : denied.reason).toMatch(/本房间/);
+    expect(denied.ok ? '' : toSource(denied.reason)).toMatch(/本房间/);
   });
 
   it.each([-1, Number.NaN, Number.POSITIVE_INFINITY, '500'])('安全：按房间金额写成 %s 时按 0 拒绝', value => {
@@ -157,13 +158,13 @@ describe('canStart：各层金额上限可选', () => {
     });
     const res = canStart(spent(emptyLedger(), { room: 451 }), DAY, 'n:zz-paper', ROOM_KEY, USER, limits(), 50);
     expect(res.ok).toBe(false);
-    expect(res.ok ? '' : res.reason).toMatch(/本房间/);
+    expect(res.ok ? '' : toSource(res.reason)).toMatch(/本房间/);
   });
 
   it('安全：全局金额超出被拒；全局显式为 0 时一律不开', () => {
     const res = canStart(spent(emptyLedger(), { global: 9_990 }), DAY, 'n:zz-paper', ROOM_KEY, USER, limits(), 50);
     expect(res.ok).toBe(false);
-    expect(res.ok ? '' : res.reason).toMatch(/全局/);
+    expect(res.ok ? '' : toSource(res.reason)).toMatch(/全局/);
     expect(canStart(emptyLedger(), DAY, 'n:zz-paper', ROOM_KEY, USER, limits({ globalCents: 0 }), 50).ok).toBe(false);
   });
 
@@ -192,7 +193,7 @@ describe('canStart：按人两项可选', () => {
     expect(canStart(ledger, DAY, 'n:zz-paper', ROOM_KEY, USER, limits({ userCents: 130 }), 50)).toEqual({ ok: true });
     const res = canStart(ledger, DAY, 'n:zz-paper', ROOM_KEY, USER, limits({ userCents: 129 }), 50);
     expect(res.ok).toBe(false);
-    expect(res.ok ? '' : res.reason).toMatch(/你今天/);
+    expect(res.ok ? '' : toSource(res.reason)).toMatch(/你今天/);
   });
 
   it('安全：设了按人件数时按当天已受理的件数算', () => {
@@ -200,7 +201,7 @@ describe('canStart：按人两项可选', () => {
     expect(canStart(ledger, DAY, 'n:zz-paper', ROOM_KEY, USER, limits({ userTasks: 3 }), 50)).toEqual({ ok: true });
     const res = canStart(ledger, DAY, 'n:zz-paper', ROOM_KEY, USER, limits({ userTasks: 2 }), 50);
     expect(res.ok).toBe(false);
-    expect(res.ok ? '' : res.reason).toMatch(/件/);
+    expect(res.ok ? '' : toSource(res.reason)).toMatch(/件/);
   });
 
   it.each([-1, Number.NaN, '3'])('按人项写成 %s 时按 0 拒绝', value => {

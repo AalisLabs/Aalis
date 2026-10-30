@@ -6,6 +6,7 @@ import { configSchema } from '../../packages/plugin-paper/src/config.js';
 import paperPlugin from '../../packages/plugin-paper/src/index.js';
 import { CursorProvider, type CursorProviderOptions } from '../../packages/plugin-remote-agent-cursor/src/provider.js';
 import { isSessionField } from '../../packages/schema-config/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { selfInitiatedActor } from '../../packages/schema-message/src/index.js';
 import { type FakeCursor, startFakeCursor } from '../fixtures/fake-cursor.js';
 import {
@@ -39,10 +40,12 @@ afterEach(stopPaperHubs);
 const TASK = { text: '做一个会动的像素小猫 GIF', name: '像素小猫' };
 const PAPER_ID = `n:${PAPER}`;
 
-async function expectRefused(hub: PaperHub, reason: RegExp, ctx = human()) {
+/** paper_task 被拒：reason 是字符串时按整句比（交给模型的是原文） */
+async function expectRefused(hub: PaperHub, reason: RegExp | string, ctx = human()) {
   const res = await hub.call('paper_task', TASK, ctx);
   expect(res.ok, `应被拒，实际：${JSON.stringify(res)}`).toBe(false);
-  expect(String(res.error)).toMatch(reason);
+  if (typeof reason === 'string') expect(res.error).toBe(reason);
+  else expect(String(res.error)).toMatch(reason);
   expect(hub.outbound, '被拒时不回显').toEqual([]);
   expect(hub.files.has(LEDGER_URI), '被拒时不写记录').toBe(false);
 }
@@ -114,7 +117,7 @@ describe('发起者：真人、房间会话本身、入站回合', () => {
 describe('房间配置', () => {
   it('安全：房间没开 paperEnabled 被拒', async () => {
     const hub = await startPaperHub({ rooms: { [ROOM]: { ...PILOT_ROOM, paperEnabled: undefined } } });
-    await expectRefused(hub, /没有开启白纸/);
+    await expectRefused(hub, '本房间没有开启白纸');
   });
 
   it('安全：房间 remoteAgentTypes 不含白纸的远端类型被拒', async () => {
@@ -126,7 +129,7 @@ describe('房间配置', () => {
     const hub = await startPaperHub({
       config: { ...PILOT_CONFIG, papers: [{ ...PILOT_CONFIG.papers[0], remoteAgentEgress: 'wide-open' }] },
     });
-    await expectRefused(hub, /配置有误（出网上限不是可选值）/);
+    await expectRefused(hub, '白纸「zz-paper」的配置有误（出网上限不是可选值），改对之前不能用');
   });
 
   it('房间写的白纸名在插件配置里不存在时被拒', async () => {
@@ -145,7 +148,7 @@ describe('远端条件：提供者按名字精确在场、出网不超过上限'
     const hub = await startPaperHub({
       remotes: { [REMOTE]: fakeRemote({ egress: { mode, source: 'owner-config' } }) },
     });
-    await expectRefused(hub, /出网/);
+    await expectRefused(hub, `远端代理「${REMOTE}」的出网方式（${mode}）超过这块白纸的上限（allowlist）`);
   });
 
   it('对照：白纸上限为 open 时，出网 unknown 的提供者可用', async () => {
@@ -182,12 +185,13 @@ describe('同账号隔离：声明 shared 的提供者，同一账号下只给�
       config: { ...PILOT_CONFIG, papers: [...PILOT_CONFIG.papers, { name: 'zz-paper-b', remoteAgentType: REMOTE }] },
       rooms: { [ROOM]: PILOT_ROOM, [ROOM2]: { ...PILOT_ROOM, paperName: 'zz-paper-b' } },
     });
-    await expectRefused(hub, /同一远端账号/);
-    await expectRefused(hub, /同一远端账号/, human('30001', ROOM2));
+    const collision = '白纸 zz-paper、zz-paper-b 用的提供者在同一远端账号下（同账号的代理能互读对话）';
+    await expectRefused(hub, collision);
+    await expectRefused(hub, collision, human('30001', ROOM2));
     const [check] = await hub.doctor();
     expect(check.level).toBe('error');
-    expect(check.message).toContain(PAPER);
-    expect(check.message).toContain('zz-paper-b');
+    expect(toSource(check.message)).toContain(PAPER);
+    expect(toSource(check.message)).toContain('zz-paper-b');
   });
 
   it('安全：同一 accountKey 的两个实例各被一块具名白纸引用时两块都不开', async () => {
@@ -437,7 +441,7 @@ describe('取不到账号标识的原因（真实的 Cursor 提供者对本机�
     expect(String(again.error)).not.toMatch(cause);
     const [check] = await hub.doctor();
     expect(check.level).toBe('warn');
-    expect(check.message).toMatch(cause);
+    expect(toSource(check.message)).toMatch(cause);
 
     const warns = hub.logs.filter(l => l.level === 'warn' && l.message.includes('账号标识'));
     expect(warns, '受理两次、诊断一次，同一原因只记一次').toHaveLength(1);
@@ -445,7 +449,7 @@ describe('取不到账号标识的原因（真实的 Cursor 提供者对本机�
     expect(warns[0].message).toContain(REMOTE);
 
     const key = 'apiKey' in overrides ? overrides.apiKey : KEY;
-    const text = [String(again.error), check.message, ...hub.logs.map(l => l.message)].join('\n');
+    const text = [String(again.error), toSource(check.message), ...hub.logs.map(l => l.message)].join('\n');
     for (let i = 0; i + 8 <= key.length; i++) {
       expect(text.includes(key.slice(i, i + 8)), `出现了 key 的片段 ${key.slice(i, i + 8)}`).toBe(false);
     }

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RemoteAgentError } from '../../packages/api-remote-agent/src/index.js';
 import type { PaperLedger } from '../../packages/plugin-paper/src/ledger.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';
+import { renderIn } from '../fixtures/host-language.js';
 import { LEDGER_URI } from '../fixtures/paper.js';
 import {
   advance,
@@ -12,9 +13,11 @@ import {
   PAPER_A,
   PAPER_A_DIR,
   PAPER_A_ID,
+  PAPER_B,
   RECONCILE_MS,
   REMOTE_A,
   ROOM_A,
+  ROOM_B,
   startDriverHub,
   stopDriverHubs,
   until,
@@ -36,8 +39,8 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-async function runOne(hub: DriverHub, a: ScriptedRemote, status: 'finished' | 'error' = 'finished') {
-  const id = await hub.accept();
+async function runOne(hub: DriverHub, a: ScriptedRemote, status: 'finished' | 'error' = 'finished', room = ROOM_A) {
+  const id = await hub.accept(room);
   await until(() => hub.task(id).state === 'running', `任务 ${id} 开轮`);
   const agentId = hub.task(id).agentId ?? '';
   a.bundles.set(agentId, text(`bundle of ${agentId}`));
@@ -245,9 +248,13 @@ describe('核对时列表连续失败', () => {
     await advance(1000);
   }
 
-  it('列账号下的代理连续失败 3 次时诊断项报 warning，写类别与次数、不写原文；成功一次即清零', async () => {
+  it('列轮次与列账号下的代理连续失败 3 次时诊断项报 warning，写类别与次数、不写原文；成功一次即清零', async () => {
     const a = new ScriptedRemote();
     const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, config: CONFIG });
+    await runOne(hub, a);
+    a.intercept.listRuns = () => {
+      throw new RemoteAgentError('rejected', `GET /v1/agents/x/runs 返回 400：${RAW}`);
+    };
     a.intercept.listAgents = () => {
       throw new RemoteAgentError('unavailable', `GET /v1/agents 返回 401：${RAW}`);
     };
@@ -259,11 +266,13 @@ describe('核对时列表连续失败', () => {
     await pass(a);
     const result = await hub.doctor();
     expect(result.level).toBe('warn');
-    const warning = await listWarning(hub);
-    expect(warning).toContain(REMOTE_A);
-    expect(warning).toContain('3 次');
-    expect(warning).toContain('提供者不可用');
-    expect(result.message).not.toContain(RAW);
+    expect(await listWarning(hub)).toBe(
+      `核对时远端代理「${REMOTE_A}」的列表已连续 3 次取不全（列轮次：远端拒绝了请求、列代理：提供者不可用），这期间未登记的代理与轮次查不出来`,
+    );
+    expect(renderIn(result.message, 'en')).toContain(
+      `During reconciliation, listing for remote agent “${REMOTE_A}” has been incomplete 3 times in a row (listing runs: request rejected remotely, listing agents: provider unavailable); untracked agents and runs cannot be found meanwhile`,
+    );
+    expect(toSource(result.message)).not.toContain(RAW);
     expect(
       hub.logs.some(l => l.level === 'warn' && l.message.includes(RAW)),
       '原文进日志',
@@ -271,6 +280,7 @@ describe('核对时列表连续失败', () => {
     await pass(a);
     expect(await listWarning(hub)).toContain('4 次');
 
+    delete a.intercept.listRuns;
     delete a.intercept.listAgents;
     await pass(a);
     expect(await listWarning(hub), '成功一次即清零').toBeUndefined();
@@ -292,19 +302,24 @@ describe('核对时列表连续失败', () => {
     expect(await listWarning(hub), '停用后不再报').toBeUndefined();
   });
 
-  it('列代理的轮次失败同样计入：同一次核对时列账号下的代理成功不算恢复', async () => {
+  it('列代理的轮次失败同样计入：同一次核对时列账号下的代理成功不算恢复；几个代理同类失败，类别只写一次', async () => {
     const a = new ScriptedRemote();
-    const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, config: CONFIG });
+    // 两块白纸用同一个提供者，各有一个代理
+    const hub = await startDriverHub({
+      remotes: { [REMOTE_A]: a },
+      config: { ...CONFIG, papers: [...CONFIG.papers, { ...CONFIG.papers[0], name: PAPER_B }] },
+    });
     const first = await runOne(hub, a);
+    const second = await runOne(hub, a, 'finished', ROOM_B);
     a.intercept.listRuns = () => {
       throw new RemoteAgentError('rejected', `GET /v1/agents/x/runs 返回 400：${RAW}`);
     };
     for (let i = 0; i < 3; i++) await pass(a);
     expect(a.callsOn('listRuns', first.agentId).length).toBeGreaterThanOrEqual(3);
-    const warning = await listWarning(hub);
-    expect(warning).toContain('3 次');
-    expect(warning).toContain('远端拒绝了请求');
-    expect(warning).not.toContain(RAW);
+    expect(a.callsOn('listRuns', second.agentId).length).toBeGreaterThanOrEqual(3);
+    expect(await listWarning(hub)).toBe(
+      `核对时远端代理「${REMOTE_A}」的列表已连续 3 次取不全（列轮次：远端拒绝了请求），这期间未登记的代理与轮次查不出来`,
+    );
   });
 });
 
@@ -337,7 +352,7 @@ describe('任务记录保留与轮次记录', () => {
     await advance(24 * 60 * MINUTE + RECONCILE_MS);
     expect(hub.task(id).publication?.state).toBe('pending');
     expect([...files.keys()].filter(key => key.startsWith(`${PAPER_A_DIR}/`))).toEqual(before);
-    expect(await hub.driver.clear(PAPER_A_ID)).toMatch(/发布|提交/);
+    expect(toSource(await hub.driver.clear(PAPER_A_ID))).toMatch(/发布|提交/);
     expect(hub.task(id).artifactsCleared).not.toBe(true);
     await hub.store.exclusive(async () => {
       hub.task(id).publication = { ...hub.task(id).publication!, state: 'submitted', workId: 'abcdefghij' };
@@ -461,7 +476,7 @@ describe('清空', () => {
     const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
     const t1 = await hub.accept();
     await until(() => hub.task(t1).state === 'running', '开轮');
-    expect(await hub.driver.clear(PAPER_A_ID)).toMatch(/在跑/);
+    expect(toSource(await hub.driver.clear(PAPER_A_ID))).toMatch(/在跑/);
     expect(a.count('deleteAgent')).toBe(0);
   });
 
@@ -499,7 +514,10 @@ describe('删除代理前结清费用', () => {
     const ledger = hub.store.data;
     expect(todaySpend(ledger), '未登记轮次按本白纸一件任务的预留额估计入账').toBe(40 + 40);
     expect(ledger.runs[rogue]).toBeUndefined();
-    expect(ledger.alerts).toContainEqual(expect.objectContaining({ kind: 'cost-estimated', subject: rogue }));
+    const estimated = ledger.alerts.find(alert => alert.kind === 'cost-estimated' && alert.subject === rogue);
+    expect(toSource(estimated?.message)).toBe(
+      `代理 ${first.agentId} 已删除，轮次 ${rogue} 的费用取不到，按估计 40 美分入账；请在远端后台核对`,
+    );
   });
 
   it('安全：本白纸的任务在自唤醒的代理上、费用暂缺时，删除代理前按这件任务的预留入账并释放预留', async () => {

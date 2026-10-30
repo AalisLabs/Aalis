@@ -1,19 +1,21 @@
 import type { RunActivity } from '@aalis/api-remote-agent';
+import type { TextRef } from '@aalis/schema-i18n';
 import type { TaskRecord } from './ledger.js';
+import { t } from './texts.js';
 
-const ACTION: Record<RunActivity['action'], string> = {
-  planning: '规划',
-  responding: '回复',
-  reading: '读取',
-  writing: '写入',
-  command: '执行命令',
-  tool: '使用工具',
+const ACTION: Record<RunActivity['action'], TextRef> = {
+  planning: t('actionPlanning'),
+  responding: t('actionResponding'),
+  reading: t('actionReading'),
+  writing: t('actionWriting'),
+  command: t('actionCommand'),
+  tool: t('actionTool'),
 };
 
-const STATUS: Record<RunActivity['status'], string> = {
-  running: '进行中',
-  completed: '已完成',
-  failed: '失败',
+const STATUS: Record<RunActivity['status'], TextRef> = {
+  running: t('activityRunning'),
+  completed: t('activityCompleted'),
+  failed: t('activityFailed'),
 };
 
 /** 只投影声明的摘要字段；完整调用结果留在独立的管理端任务日志中。 */
@@ -36,26 +38,27 @@ export function normalizeActivity(activity: RunActivity): RunActivity | undefine
   return projected;
 }
 
-/** 默认只交出固定类别；详细文字只供宿主日志和管理界面。 */
-export function progressLabel(activity: RunActivity, detailed = false): string | undefined {
+/**
+ * 默认只交出固定类别（经 paper_status 交给模型时取原文）；详细的另带远端给的工具、对象、摘要与退出码，只供宿主日志和管理界面
+ */
+export function progressLabel(activity: RunActivity, detailed = false): TextRef | undefined {
   const action = Object.hasOwn(ACTION, activity.action) ? ACTION[activity.action] : undefined;
   const status = Object.hasOwn(STATUS, activity.status) ? STATUS[activity.status] : undefined;
   if (!action || !status) return;
-  const base = `${action}（${status}）`;
+  const base = t('annotated', { text: action, note: status });
   if (!detailed) return base;
   const safe = normalizeActivity(activity)!;
   return [
-    base,
     safe.tool,
     safe.target,
     safe.summary,
-    safe.exitCode === undefined ? undefined : `退出码 ${safe.exitCode}`,
+    safe.exitCode === undefined ? undefined : t('exitCode', { code: safe.exitCode }),
   ]
-    .filter(Boolean)
-    .join(' · ');
+    .filter((part): part is string | TextRef => Boolean(part))
+    .reduce<TextRef>((head, tail) => t('joined', { head, tail }), base);
 }
 
-export function currentProgress(task: TaskRecord, detailed = false): { activity: string; at: string } | undefined {
+export function currentProgress(task: TaskRecord, detailed = false): { activity: TextRef; at: string } | undefined {
   if (task.state !== 'running' || !task.progress) return undefined;
   const activity = progressLabel(task.progress.activity, detailed);
   if (!activity || !Number.isFinite(task.progress.at)) return undefined;

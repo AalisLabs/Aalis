@@ -212,7 +212,7 @@ describe('完成通知', () => {
     expect(content).toBe(`[白纸] 任务 ${taskId}「像素猫」失败：建远端代理失败（远端拒绝了请求）。\n没有取回成品。`);
     expect(content).not.toContain('REMOTE-TEXT-SENTINEL');
     expect(hostNotice?.text && resolveText(hostNotice.text, ['en'])).toBe(
-      `[Paper] Task ${taskId} “像素猫” failed: 建远端代理失败（远端拒绝了请求）.`,
+      `[Paper] Task ${taskId} “像素猫” failed: Creating the remote agent failed (request rejected remotely).`,
     );
   });
 

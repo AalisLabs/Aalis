@@ -1,12 +1,14 @@
 import type { PublishFile, PublishService, PublishSurfaceInfo } from '@aalis/api-publish';
 import type { StorageService } from '@aalis/api-storage';
 import type { Logger, ServiceSelection } from '@aalis/core';
+import { type TextRef, toSource } from '@aalis/schema-i18n';
 import { artifactUri } from './artifacts.js';
 import { type PaperConfig, specOf } from './config.js';
 import { failedBeforeSubmission } from './deliver.js';
 import type { LedgerStore, TaskRecord } from './ledger.js';
 import { actorKey, paperLabel } from './rooms.js';
 import type { TaskJournal } from './task-journal.js';
+import { t } from './texts.js';
 import { automaticPublicationArtifacts, pathsProblem, retryDelay } from './works.js';
 
 type Publication = NonNullable<TaskRecord['publication']>;
@@ -119,7 +121,7 @@ export class PaperPublication {
         await this.#d.journal?.record(taskId, undefined, {
           type: 'publication',
           target: expected.target,
-          ...patch,
+          ...toSource(patch),
         });
       this.#d.onChange?.();
     }
@@ -136,7 +138,7 @@ export class PaperPublication {
       if ((task.state === 'failed' || task.state === 'cancelled') && pub.state === 'pending') {
         await this.#update(task.id, pub, {
           state: 'failed',
-          reason: task.state === 'cancelled' ? '创作任务已取消，未提交发布' : '创作任务失败，未提交发布',
+          reason: task.state === 'cancelled' ? t('creationCancelled') : t('creationFailed'),
           nextAttemptAt: undefined,
         });
         continue;
@@ -147,7 +149,7 @@ export class PaperPublication {
         if (this.#now() >= deadline) {
           await this.#update(task.id, pub, {
             state: 'failed',
-            reason: '24 小时内没能提交发布（发布目标或发布服务一直不可用）',
+            reason: t('submitTimedOut'),
             nextAttemptAt: undefined,
             directSend: true,
           });
@@ -200,7 +202,7 @@ export class PaperPublication {
         !task.artifactsCleared &&
         !specOf(this.#d.cfg, task.paperId)?.publishTargets.includes(pub.target)
       ) {
-        await this.#update(task.id, pub, { state: 'failed', reason: '这块白纸未获准使用该发布目标', directSend: true });
+        await this.#update(task.id, pub, { state: 'failed', reason: t('targetNotAllowed'), directSend: true });
       }
       return false;
     }
@@ -209,7 +211,7 @@ export class PaperPublication {
       const item = service.get(pub.workId);
       if (!this.#valid(task, pub, publisher.id)) return false;
       if (!item || item.origin.producer !== this.#d.producer || item.origin.ref !== `${task.paperId}/${task.id}`) {
-        await this.#update(task.id, pub, { state: 'failed', reason: '发布回执无法核对来源' });
+        await this.#update(task.id, pub, { state: 'failed', reason: t('receiptUnverified') });
       } else if (item.live) {
         await this.#update(task.id, pub, { state: 'live', reason: undefined });
       } else if (
@@ -218,7 +220,8 @@ export class PaperPublication {
         item.state === 'failed' ||
         item.state === 'withdrawn'
       ) {
-        await this.#update(task.id, pub, { state: 'failed', reason: `发布处理${item.state}` });
+        // 处理状态照原值写：这句原因经完成通知与 paper_status 交给模型
+        await this.#update(task.id, pub, { state: 'failed', reason: t('publishOutcome', { state: item.state }) });
       }
       return false;
     }
@@ -230,18 +233,18 @@ export class PaperPublication {
     }
     if (!surface?.available) return true;
 
-    let selected: { artifacts: TaskRecord['artifacts']; paths: string[] } | { reason: string };
+    let selected: { artifacts: TaskRecord['artifacts']; paths: string[] } | { reason: TextRef };
     if (pub.artifactIds) {
       const artifacts = pub.artifactIds.map(id => task.artifacts.find(a => a.id === id));
       if (artifacts.some(a => !a)) {
-        await this.#update(task.id, pub, { state: 'failed', reason: '已选成品不再存在', directSend: true });
+        await this.#update(task.id, pub, { state: 'failed', reason: t('selectedGone'), directSend: true });
         return false;
       }
       if (pub.paths) {
         selected =
           pub.paths.length === artifacts.length && !pathsProblem(pub.paths)
             ? { artifacts: artifacts as TaskRecord['artifacts'], paths: pub.paths }
-            : { reason: '已选作品路径不符合发布要求' };
+            : { reason: t('selectedPathsBad') };
       } else {
         selected = automaticPublicationArtifacts({ ...task, artifacts: artifacts as TaskRecord['artifacts'] });
       }
@@ -271,7 +274,7 @@ export class PaperPublication {
       if (pub.coverArtifactId) {
         const artifact = task.artifacts.find(a => a.id === pub.coverArtifactId);
         if (!artifact || !['png', 'jpeg', 'gif', 'webp'].includes(artifact.type)) {
-          await this.#update(task.id, pub, { state: 'failed', reason: '已选封面不再存在', directSend: true });
+          await this.#update(task.id, pub, { state: 'failed', reason: t('coverGone'), directSend: true });
           return false;
         }
         cover = new Uint8Array(
@@ -292,7 +295,7 @@ export class PaperPublication {
         actorKey: actorKey(task.initiator),
       },
       group: task.paperId,
-      groupLabel: paperLabel(task.paperId),
+      groupLabel: toSource(paperLabel(task.paperId)),
       surfaces: [pub.target],
       title: pub.title,
       summary: pub.summary,
@@ -306,7 +309,7 @@ export class PaperPublication {
         await this.#update(task.id, pub, { state: 'pending', nextAttemptAt: this.#now() + retry, reason: undefined });
         return false;
       }
-      await this.#update(task.id, pub, { state: 'failed', reason: '作品未通过发布检查' });
+      await this.#update(task.id, pub, { state: 'failed', reason: t('publishCheckFailed') });
       return false;
     }
     await this.#update(task.id, pub, { state: 'submitted', workId: result.id, nextAttemptAt: undefined });

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import type {} from '../../packages/api-memory/src/index.js'; // declaration merging：memory:clear 钩子类型
 import type { PaperLedger, TaskRecord } from '../../packages/plugin-paper/src/ledger.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import {
   emptyLedger,
   human,
@@ -220,12 +221,12 @@ describe('重启接回（假时钟）', () => {
         config: { ...DRIVER_CONFIG, maxRunMinutes: 120 },
       });
       await advance(MINUTE);
-      expect((await hub.doctor()).message, '重启接回还在等提供者').not.toContain('t-000000aa');
-      expect(await hub.driver.abandon('t-000000aa')).toMatch(/认领失败/);
+      expect(toSource((await hub.doctor()).message), '重启接回还在等提供者').not.toContain('t-000000aa');
+      expect(toSource(await hub.driver.abandon('t-000000aa'))).toMatch(/认领失败/);
 
       await advance(10 * MINUTE);
       expect(hub.store.data.alerts.map(al => al.kind)).toContain('claim-failed');
-      expect((await hub.doctor()).message).toContain('白纸任务 t-000000aa 认领失败后仍在开轮中');
+      expect(toSource((await hub.doctor()).message)).toContain('白纸任务 t-000000aa 认领失败后仍在开轮中');
       expect(await hub.driver.abandon('t-000000aa')).toBeUndefined();
     });
 
@@ -242,7 +243,7 @@ describe('重启接回（假时钟）', () => {
       const hub = await startDriverHub({ remotes: { [REMOTE_A]: a }, files, absent: [REMOTE_A] });
       await advance(MINUTE);
       expect(hub.task('t-000000aa').state).toBe('starting');
-      expect((await hub.doctor()).message).not.toContain('t-000000aa');
+      expect(toSource((await hub.doctor()).message)).not.toContain('t-000000aa');
     });
 
     it('对照：path 为 create 的任务等满上限提供者仍不在场，照旧判失败', async () => {
