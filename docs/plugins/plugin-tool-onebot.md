@@ -58,7 +58,7 @@ export default definePlugin({
 | `onebot_set_group_special_title` | 设置专属头衔 |
 | `onebot_set_group_admin` | 设置/取消管理员 |
 | `onebot_delete_msg` | 撤回消息（需 message_id，撤回他人消息需管理员） |
-| `onebot_recall_self` | 撤回机器人自己最近发的消息（无需 message_id，可 count 撤回最近 N 条） |
+| `onebot_recall_self` | 撤回机器人自己最近发的消息（无需 message_id，可 count 撤回最近 N 条）；`group_id`、`user_id`、`self_id` 指到的目标会话按会话管理的跨会话规则判，与 `onebot_get_msg` 同样经 `approveFor` 逐个参与者判，不放行时在读发出记录之前回原因，不撤回 |
 
 ### 群信息查询（`groupInfo.enabled`）
 

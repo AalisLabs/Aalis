@@ -4,6 +4,7 @@ import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.j
 import { App, provide } from '../../packages/core/src/index.js';
 import toolOnebot from '../../packages/plugin-tool-onebot/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // tool-onebot 与可选依赖的上线顺序无关：OneBot 工具只在出现 OneBot 平台时注册，但适配器可能晚于 app:ready 上线，
@@ -104,12 +105,13 @@ describe('tool-onebot 在适配器缺非契约扩展时报错', () => {
         () => '',
         (err: Error) => err.message,
       );
-    const recalled = await failure(recallSelf({}, { sessionId: GROUP } as never));
+    const ctx = toolContext({ sessionId: GROUP, platform: 'onebot' });
+    const recalled = await failure(recallSelf({}, ctx));
     expect(actions).toEqual([]);
     expect(recalled).toContain('onebot_delete_msg');
     expect(recalled).not.toContain('版本');
 
-    const mutes = await failure(listSelfMutes({}, { sessionId: GROUP } as never));
+    const mutes = await failure(listSelfMutes({}, ctx));
     expect(mutes).toContain('getSelfMutes');
     expect(mutes).not.toContain('版本');
   });

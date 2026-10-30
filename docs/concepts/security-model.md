@@ -322,6 +322,7 @@ close_page）仍为 `sensitive`：会话里在场的人共用这个会话的页�
 只记了出生平台的旧房间记录判不出，取不到，从它们那里也取不了别的会话。
 
 它管 `session_get_history`、`onebot_get_session_history`（`onebot_resolve_session_id` 只拼会话 id、不读）、`onebot_get_msg`、
+`onebot_recall_self`（指到的目标会话：结果与报错带回她在那里发过的话的预览）、
 `recent_messages`、跨会话历史（`plugin-memory-history`）的被动注入，以及发媒体、看图取别的会话的媒体（`send_attachment`、
 `analyze_image` 与她回复里存储地址的媒体标记，按媒体所在的会话目录反查会话，见 §5「媒体工具的取用范围」）。工具按这一轮的
 授权身份认「自己的私聊」（几个人的一轮逐个参与者判，见「多人的一轮」）；被动注入不是谁要的，不传授权身份、不享受，所以默认只带同平台、同一机器人账号的群，别人的私聊、
@@ -629,7 +630,7 @@ ASR / ollama 探测本地文件等。现有消费者包括 onebot 适配器、as
 能改，某一层写坏了按最窄处理（[api-memory](../api/api-memory.md) 的「跨会话取料的范围」）：
 
 - `plugin-session-manager` 的取别的会话的范围 `takeScope` 设成 `session`：跨会话历史不注入别的会话，`recent_messages`、
-  `session_get_history`、`onebot_get_session_history`、`onebot_get_msg` 与发媒体、看图取别的会话一律拒绝（这个会话派出的
+  `session_get_history`、`onebot_get_session_history`、`onebot_get_msg`、`onebot_recall_self` 与发媒体、看图取别的会话一律拒绝（这个会话派出的
   子任务照常）；
 - `plugin-memory-vector` 的 `crossSessionMode` 设成 `isolated`：被动召回与 `memory_recall` 只取本会话。向量召回不经取别的
   会话的规则，默认全部打通：不设的话，群里的一轮仍可能召回别人私聊里的原文；
