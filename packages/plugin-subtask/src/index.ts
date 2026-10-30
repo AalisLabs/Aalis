@@ -192,11 +192,13 @@ const uses = {
   config,
   sessionManager: optional(sessionManager),
   messageArchive: optional(messageArchive),
-  /** 给子会话指定模型（工具参数或子任务模型）；不在时要指定模型的子任务不建 */
+  /**
+   * 给子会话写子任务模型（assignModel）；工具参数指定的模型按它的实例 id 认「模型」这一项。不在时要指定模型的子任务不建
+   */
   agent: optional(agent),
   /**
-   * 会话设置的管理面：建子会话之前取 childMetadata、父会话改子会话的设置（setAs）、读本插件的子任务模型。不在时不建子会话：
-   * 子会话没法写下父会话此刻的设置
+   * 会话设置的管理面：建子会话之前取 childMetadata、按调用者的身份写子会话的设置（setAs：工具参数指定的模型、父会话改子会话的
+   * 设置）、读本插件的子任务模型。不在时不建子会话：子会话没法写下父会话此刻的设置
    */
   sessionSettings: optional(sessionSettings),
   /** 追问经它送达（落定时知道）；不在时追问发不出 */
@@ -414,7 +416,18 @@ function registerSubtask(
         });
         if (model) {
           try {
-            await agent.use.assignModel(child.id, model);
+            // 工具参数按这次调用的授权身份写，与 set_subtask_setting 同一条路：agent「模型」这一项与本会话层的门槛都判，owner 在
+            // 操作门槛里调高的照算。子任务模型是能改它的人设下的，由 agent 直接写
+            if (argModel) {
+              const agentId = agent.list().find(entry => entry.selected)?.id;
+              const receipt = await sessionSettings.use.setAs(
+                actingIdentity(callCtx),
+                child.id,
+                `${agentId}/llm`,
+                text,
+              );
+              if (!receipt.ok) throw new Error(toSource(receipt.text));
+            } else await agent.use.assignModel(child.id, model);
           } catch (err) {
             await sm.deleteSession(child.id);
             throw new Error(`给子会话指定模型失败（${err instanceof Error ? err.message : String(err)}）`, {
