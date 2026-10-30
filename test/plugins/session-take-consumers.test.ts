@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { memory as memoryService } from '../../packages/api-memory/src/index.js';
-import { platform } from '../../packages/api-platform/src/index.js';
+import { type PlatformAdapter, platform } from '../../packages/api-platform/src/index.js';
 import {
   type RegisteredTool,
   type ToolCallContext,
@@ -27,6 +27,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 // - 读历史的两个工具都经会话历史服务的 getHistory，带这次调用的授权身份；拒绝时服务回 { error: 原因 }，session_get_history
 //   照交，onebot_get_session_history 报错
 // - onebot_get_msg 取到的消息按它所在的窗口拼出会话 id 过规则；判不出对端的（她自己发的私聊消息）按判不出拒绝，不放行时报错
+// - onebot_recall_self 指定的目标会话过规则，不放行时在读发出记录之前报错：报错里没有她在那里说的话，也不撤回
 // - 跨会话历史：被动注入不是谁要的，不传授权身份；recent_messages 带这次调用的授权身份。查询超取后逐条过规则，
 //   被拒的再多也不占名额
 // ════════════════════════════════════════════════════════════
@@ -135,6 +136,62 @@ describe('读历史的工具与 onebot_get_msg 过规则', () => {
     const own = await refused(104);
     expect(own).toContain('判不出');
     expect(own).not.toContain('<她发的私聊消息>');
+  });
+});
+
+describe('onebot_recall_self 过规则', () => {
+  /** 她在各会话里近期发出的消息 */
+  const SENT: Record<string, Array<{ messageId: string; ts: number; preview: string }>> = {
+    [G1]: [{ messageId: '201', ts: 0, preview: '<群里她说的>' }],
+    [PA]: [{ messageId: '202', ts: 0, preview: '<A 私聊里她说的>' }],
+    [PB]: [{ messageId: '203', ts: 0, preview: '<B 私聊里她说的>' }],
+  };
+
+  async function setup() {
+    const recorder = toolRecorder();
+    const deleted: unknown[] = [];
+    const asked: string[] = [];
+    // getSentMessages 是 OneBot 适配器的扩展方法，不在平台契约里
+    const adapter = {
+      platform: 'onebot',
+      sessionTypes: ONEBOT_TYPES,
+      callAction: async (_sessionId: string, action: string, params: Record<string, unknown>) => {
+        if (action !== 'delete_msg') throw new Error(`没有动作 ${action}`);
+        deleted.push(params.message_id);
+        return null;
+      },
+      getSentMessages: (sessionId: string) => {
+        asked.push(sessionId);
+        return SENT[sessionId] ?? [];
+      },
+    } as Partial<PlatformAdapter>;
+    const started = await startSettings({
+      adapters: [adapter],
+      owners: [OWNER],
+      stored: Object.fromEntries([G1, PA, PB].map(id => [id, storedRoom(id)])),
+      first: [recorder.plugin],
+      plugins: [toolOnebot],
+    });
+    apps.push(started.app);
+    await started.app.start();
+    await started.app.plugins.idle();
+    const ctx = toolContext({ sessionId: G1, platform: 'onebot', userId: A.userId });
+    return { deleted, asked, call: (args: Record<string, unknown>) => recorder.call('onebot_recall_self', args, ctx) };
+  }
+
+  it('本会话与 A 自己的私聊照常撤回；B 的私聊回原因，不读发出记录、不撤回，报错不带她在那里说的话', async () => {
+    const { call, deleted, asked } = await setup();
+    expect(await call({})).toContain('<群里她说的>');
+    expect(await call({ user_id: '30001' })).toContain('<A 私聊里她说的>');
+    expect(deleted).toEqual([201, 202]);
+    const refused = await call({ user_id: '30002' }).then(
+      () => '',
+      (err: Error) => err.message,
+    );
+    expect(refused).toContain('别人的私聊');
+    expect(refused).not.toContain('<B 私聊里她说的>');
+    expect(deleted).toEqual([201, 202]);
+    expect(asked).not.toContain(PB);
   });
 });
 

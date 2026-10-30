@@ -95,7 +95,7 @@ const uses = {
   platform: optional(platformService),
   media: optional(media),
   sessionHistory: optional(sessionHistory),
-  /** onebot_get_msg 取到的消息所在的会话按它的规则判（takeFrom）；不在时只能取当前会话里的 */
+  /** onebot_get_msg 取到的消息所在的会话、onebot_recall_self 的目标会话按它的规则判（takeFrom）；不在时只能取当前会话里的 */
   sessionManager: optional(sessionManager),
   events,
   logger,
@@ -107,6 +107,8 @@ type Caps = BoundOf<typeof uses>;
 type PlatformRef = Caps['platform'];
 /** 绝大多数工具只需要平台适配器与日志 */
 type ToolCaps = Pick<Caps, 'platform' | 'logger'>;
+/** 群管理另有撤回自己发的消息：目标会话按会话管理的规则判 */
+type GroupManagementCaps = ToolCaps & Pick<Caps, 'sessionManager'>;
 /** 合并转发展开还要识别其中的图片 */
 type ForwardCaps = Pick<Caps, 'platform' | 'logger' | 'media'>;
 /** 群信息查询另有按 id 取消息：取到的消息所在的会话按会话管理的规则判 */
@@ -615,8 +617,8 @@ export default definePlugin({
 
 // ===== 群管理工具 =====
 
-function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
-  const { platform, logger } = caps;
+function registerGroupManagementTools(caps: GroupManagementCaps, bundle: OneBotToolBundle): void {
+  const { platform, logger, sessionManager } = caps;
   const { group, personal } = bundle;
   // ---- 群禁言（单人）----
   group.register({
@@ -958,6 +960,11 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
         if (!parsed) throw new Error('当前不在 OneBot 会话中，请用 group_id 或 user_id 指定要撤回的目标会话。');
         targetSessionId = callCtx.sessionId;
       }
+      // 目标会话逐个参与者过会话管理的规则（同 onebot_get_msg）：不放行时在读发出记录之前报错，不撤回，报错里没有她在那里说的话
+      const verdict = await callCtx.approveFor(who =>
+        takeFrom(sessionManager, callCtx.sessionId, targetSessionId, who),
+      );
+      if (!verdict.ok) throw new Error(toSource(verdict.reason));
 
       // 发出记录在发消息的那个实例里：按目标会话路由
       const adapter = (await resolvePlatformBySession(platform, targetSessionId))?.use as
