@@ -10,6 +10,7 @@ import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { ref } from '../fixtures/service-ref.js';
@@ -148,6 +149,35 @@ describe('tools：没有守卫时 fail-closed', () => {
     expect((await registry.execute('take', {}, toolRequest({ ...inTurn, participants: [a, b] }))).content).toBe(
       'b 取不到',
     );
+  });
+
+  it('取用判定（approveFor）没有守卫或调用不在回合里时，参与者为空一律拒绝、不跑判定，与守卫判空参与者同一结论', async () => {
+    const registry = makeToolRegistry(silent);
+    let checks = 0;
+    registry.register(
+      {
+        definition: {
+          type: 'function',
+          function: { name: 'take', description: 'take', parameters: { type: 'object', properties: {} } },
+        },
+        handler: async (_args, ctx) => {
+          const verdict = await ctx.approveFor(() => {
+            checks++;
+            return { ok: true };
+          });
+          return verdict.ok ? 'taken' : toSource(verdict.reason);
+        },
+      },
+      'test',
+    );
+    const nobody = '这一轮的参与者里没有人能做这件事';
+    const inTurn = { sessionId: 's', inbound: {}, turnId: 't1', callId: 'c1', participants: [] };
+    expect((await registry.execute('take', {}, toolRequest(inTurn))).content).toBe(nobody);
+    registry.setExecutionGuard(async () => ({ ok: true }));
+    expect((await registry.execute('take', {}, toolRequest({ sessionId: 's', participants: [] }))).content).toBe(
+      nobody,
+    );
+    expect(checks).toBe(0);
   });
 });
 

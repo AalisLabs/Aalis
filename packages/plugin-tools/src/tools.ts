@@ -25,6 +25,7 @@ import type { Logger } from '@aalis/core';
 import { toSource } from '@aalis/schema-i18n';
 import { type BackgroundTasks, DEFAULT_YIELD_SECONDS, errorIn, exitCodeOf, inTurn, type Plan } from './background.js';
 import { backgroundTaskTools } from './background-tools.js';
+import { t } from './texts.js';
 
 /** 登记项：工具、发给模型的声明（可转后台的补上两项参数）与让出时限（秒，可转后台的才有） */
 interface Entry {
@@ -378,7 +379,8 @@ export class ToolRegistry implements ToolService {
 
   /**
    * 处理函数里的取用判定（ToolCallContext.approveFor）：按这次调用的参与者经执行守卫三分，可能等一道参与者审批，审批随 callCtx
-   * 的中止信号撤销。asks 为假（调用已转到后台）、守卫不在或调用不在回合里时只按参与者都过判、不出审批，过不了的回第一位的原因
+   * 的中止信号撤销。asks 为假（调用已转到后台）、守卫不在或调用不在回合里时只按参与者都过判、不出审批，过不了的回第一位的原因；
+   * 参与者为空的不判、直接拒绝，与守卫判空参与者同一结论
    */
   private async approveFor(
     tool: RegisteredTool,
@@ -388,7 +390,9 @@ export class ToolRegistry implements ToolService {
     asks: boolean,
   ): Promise<Verdict> {
     if (!asks || !this._guard || !inTurn(callCtx)) {
-      return callCtx.participants.map(check).find(verdict => !verdict.ok) ?? { ok: true };
+      const { participants } = callCtx;
+      if (participants.length === 0) return { ok: false, reason: t('nobodyCan') };
+      return participants.map(check).find(verdict => !verdict.ok) ?? { ok: true };
     }
     return this._guard({ ...this.guardContext(tool, args, callCtx), check });
   }
