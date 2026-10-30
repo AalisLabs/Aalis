@@ -159,17 +159,23 @@ describe('订阅不可作触发源的事件的定义', () => {
     expect(existsSync(defFile())).toBe(false);
   });
 
-  it('已在定义目录里的：照常载入，触发器不注册、记 warn 写明怎么办，文件不动；停用要重写定义，同样报错', async () => {
+  it('已在定义目录里的：照常载入，触发器不注册、记 warn 写明怎么办，文件不动；停用照常，再启用要重写定义，同样报错', async () => {
     writeFileSync(defFile(), BLOCKED_YAML);
     const { svc } = await boot();
     expect(svc.getWorkflow('zz-wf')).toBeDefined();
     expect(warnings).toContainEqual(
       expect.stringMatching(/"zz-wf" 的 event 触发器订阅的 "inbound:message".*；改掉触发器重新保存，或删掉这个定义$/),
     );
+    expect(readFileSync(defFile(), 'utf8')).toBe(BLOCKED_YAML);
     expect(toSource(await pages.act('workflows', 'disableWorkflow', { rowKey: 'zz-wf' }))).toEqual({
+      status: 200,
+      body: { message: '已停用 zz-wf' },
+    });
+    expect(readFileSync(defFile(), 'utf8')).toContain('enabled: false');
+    expect(toSource(await pages.act('workflows', 'enableWorkflow', { rowKey: 'zz-wf' }))).toEqual({
       status: 500,
       body: { error: REFUSED },
     });
-    expect(readFileSync(defFile(), 'utf8')).toBe(BLOCKED_YAML);
+    expect(svc.getWorkflow('zz-wf')?.enabled).toBe(false);
   });
 });

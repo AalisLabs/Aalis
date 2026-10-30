@@ -581,10 +581,14 @@ async function run(caps: Caps): Promise<void> {
 
   /**
    * 定义或覆盖：定义者写进记录，连同写进文件的文本的哈希；只在内存里的定义，定义者也只在内存。新定义的 id 不合规（它是新定义
-   * 文件的文件名；已载入的照原 id 改写它自己的文件）、图不合法、触发器写错的，报错、不保存
+   * 文件的文件名；已载入的照原 id 改写它自己的文件）、图不合法、启用的定义触发器写错的，报错、不保存。停用的定义不注册触发器，
+   * 不校验它（定义目录里载入的、触发器写错的要能停用），启用时再校验
    */
   async function define(def: WorkflowDef, persist: boolean, definer: UserIdentity | undefined) {
-    const err = (loader.get(def.id) ? null : validateId(def.id)) ?? validateGraph(def) ?? triggerError(def.trigger);
+    const err =
+      (loader.get(def.id) ? null : validateId(def.id)) ??
+      validateGraph(def) ??
+      (def.enabled === false ? null : triggerError(def.trigger));
     if (err) throw typeof err === 'string' ? new Error(err) : new TextError(err);
     if (persist) runStore.recordDefiner(def.id, definer, await loader.saveDef(def));
     loader.putMemory(def, definer);
