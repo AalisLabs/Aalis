@@ -6,6 +6,7 @@ import {
   linesOf,
   localize,
   resolveText,
+  sameText,
   TextError,
   type TextRef,
   textClauses,
@@ -128,6 +129,51 @@ describe('换成原文', () => {
     expect(JSON.stringify({ a: t('hello'), b: [t('saved', { count: 2 })] }, toSourceReplacer)).toBe(
       '{"a":"你好","b":["已保存 2 项"]}',
     );
+  });
+});
+
+describe('是不是同一句', () => {
+  /** 落盘读回的文字对象：参数键的先后与生成时不同，source 是旧的措辞 */
+  const stored = (text: TextRef, params: Record<string, unknown>): TextRef =>
+    ({ ...text, params, source: '<旧的措辞>' }) as TextRef;
+  /** 参数 item 取给定值的文字对象 */
+  const outer = (item: unknown) => ({ i18n: 'test/x', key: 'k', params: { item }, source: 'x' }) as TextRef;
+
+  it('文字对象之间按所属包、键与参数认：参数键的先后与 source 不算', () => {
+    const fresh = t('saved', { count: 2 });
+    expect(sameText(fresh, stored(fresh, { count: 2 }))).toBe(true);
+    expect(sameText(fresh, t('saved', { count: 3 }))).toBe(false);
+    expect(sameText(fresh, { ...fresh, i18n: 'test/other' })).toBe(false);
+    expect(sameText(t('hello'), { ...t('hello'), key: 'saved' })).toBe(false);
+    expect(sameText(t('hello'), { ...t('hello'), params: {} })).toBe(true);
+    const two = { i18n: 'test/x', key: 'k', params: { a: 1, b: 'x' }, source: 'x' };
+    expect(sameText(two, { ...two, params: { b: 'x', a: 1 } })).toBe(true);
+    expect(sameText(two, { ...two, params: { a: 1 } })).toBe(false);
+  });
+
+  it('参数里的文字对象同样按包、键与参数认，数组逐个按位置比', () => {
+    const inner = t('saved', { count: 2 });
+    expect(sameText(outer(inner), outer(stored(inner, { count: 2 })))).toBe(true);
+    expect(sameText(outer(inner), outer(t('saved', { count: 3 })))).toBe(false);
+    expect(sameText(outer(inner), outer(inner.source))).toBe(false);
+    expect(sameText(outer([inner, 'a', 1]), outer([stored(inner, { count: 2 }), 'a', 1]))).toBe(true);
+    expect(sameText(outer(['a', 'b']), outer(['b', 'a']))).toBe(false);
+    expect(sameText(outer(['a']), outer(['a', 'a']))).toBe(false);
+    expect(sameText(outer(1), outer('1'))).toBe(false);
+  });
+
+  it('参数值是 null 一类（手改的状态文件读回的）时按 === 比，不抛', () => {
+    expect(sameText(outer(null), outer(t('saved', { count: 2 })))).toBe(false);
+    expect(sameText(outer(t('saved', { count: 2 })), outer(null))).toBe(false);
+    expect(sameText(outer(null), outer(null))).toBe(true);
+    expect(sameText(outer(undefined), outer(false))).toBe(false);
+    expect(sameText(outer(true), outer(true))).toBe(true);
+  });
+
+  it('有一方是字符串（旧版写的、宿主原样的）时按原文比', () => {
+    expect(sameText('你好', '你好')).toBe(true);
+    expect(sameText('你好', t('hello'))).toBe(true);
+    expect(sameText(t('saved', { count: 2 }), '已保存 3 项')).toBe(false);
   });
 });
 

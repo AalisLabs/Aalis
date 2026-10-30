@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { Socket } from 'node:net';
 import { galleryHeaders, WORK_ID_PATTERN, WORK_IFRAME_SANDBOX, workHeaders } from '@aalis/api-publish';
 import type { StorageService } from '@aalis/api-storage';
+import { TextError } from '@aalis/schema-i18n';
 import type { QueueItem, ReviewStore } from './state.js';
 
 const SUBRESOURCE_ONLY = /\.(?:css|js|mjs|json|png|jpe?g|gif|webp|mp4|woff2)$/i;
@@ -47,7 +48,7 @@ export class ReviewPreviewServer {
 
   async open(id: string): Promise<string> {
     if (this.#closed || this.#signal?.aborted) throw new Error('预览服务已停止');
-    if (this.#store.failure) throw new Error(this.#store.failure);
+    if (this.#store.failure) throw new TextError(this.#store.failure);
     if (!WORK_ID_PATTERN.test(id)) throw new Error('没有这件待审核网页作品');
     const item = this.#store.data.queue[id];
     if (!item || item.state !== 'awaiting-owner' || item.kind !== 'html' || !item.outHashes)

@@ -2,6 +2,7 @@ import { type NominateInput, PUBLIC_CONTENT_TYPES, publicPathProblem, type WorkK
 import type { TextRef } from '@aalis/schema-i18n';
 import { decodeUtf8Text, detectMediaFormat, FILE_HEAD_BYTES, isAnimatedImage } from '@aalis/util-file-signature';
 import type { ReviewConfig } from './config.js';
+import { t } from './texts.js';
 
 const MIB = 1024 * 1024;
 const SURFACE_RETRY_MS = 30_000;
@@ -23,11 +24,11 @@ function signature(ext: string, bytes: Uint8Array): boolean {
   return true;
 }
 
-function fileProblem(path: string, bytes: Uint8Array): string | undefined {
+function fileProblem(path: string, bytes: Uint8Array): TextRef | undefined {
   const ext = extension(path);
-  if (!signature(ext, bytes)) return '文件内容与扩展名不符';
-  if (ext === 'png' && isAnimatedImage(bytes)) return '动态 PNG 暂不接收';
-  if (ext === 'webp' && isAnimatedImage(bytes)) return '动态 WebP 暂不接收';
+  if (!signature(ext, bytes)) return t('signatureMismatch');
+  if (ext === 'png' && isAnimatedImage(bytes)) return t('animatedImage', { format: 'PNG' });
+  if (ext === 'webp' && isAnimatedImage(bytes)) return t('animatedImage', { format: 'WebP' });
   return undefined;
 }
 
@@ -37,32 +38,32 @@ export function checkNomination(
   surfaces: ReadonlySet<string>,
 ):
   | { ok: true; kind: WorkKind; title: string; summary: string }
-  | { refused: string | TextRef; fileIndex?: number; retryAfterMs?: number } {
+  | { refused: TextRef; fileIndex?: number; retryAfterMs?: number } {
   const clean = (value: string) => value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '').trim();
   const title = clean(input.title);
   const summary = clean(input.summary);
-  if (!title || title.length > 40 || summary.length > 300) return { refused: '标题或简介不合规' };
-  if (!input.surfaces.length) return { refused: '展示面未登记' };
+  if (!title || title.length > 40 || summary.length > 300) return { refused: t('titleInvalid') };
+  if (!input.surfaces.length) return { refused: t('surfacesMissing') };
   // 展示面可能正在重载或重新挂上；名字暂缺按临时拒绝，由提名方稍后重试。
   if (input.surfaces.some(name => !surfaces.has(name)))
-    return { refused: '展示面暂未登记', retryAfterMs: SURFACE_RETRY_MS };
-  if (!input.files.length || input.files.length > cfg.limits.maxWorkFiles) return { refused: '文件数量超限' };
+    return { refused: t('surfaceNotYet'), retryAfterMs: SURFACE_RETRY_MS };
+  if (!input.files.length || input.files.length > cfg.limits.maxWorkFiles) return { refused: t('tooManyFiles') };
   const paths = new Set<string>();
   let bytesTotal = 0;
   for (const [i, file] of input.files.entries()) {
     const pathProblem = publicPathProblem(file.path);
     if (pathProblem) return { refused: pathProblem, fileIndex: i };
     const folded = file.path.toLowerCase();
-    if (paths.has(folded)) return { refused: '文件路径重复', fileIndex: i };
+    if (paths.has(folded)) return { refused: t('duplicatePath'), fileIndex: i };
     paths.add(folded);
     if (
       !(file.bytes instanceof Uint8Array) ||
       file.bytes.length === 0 ||
       file.bytes.length > cfg.limits.maxFileMB * MIB
     )
-      return { refused: '文件大小不合规', fileIndex: i };
+      return { refused: t('badFileSize'), fileIndex: i };
     bytesTotal += file.bytes.length;
-    if (bytesTotal > cfg.limits.maxWorkMB * MIB) return { refused: '作品总大小超限', fileIndex: i };
+    if (bytesTotal > cfg.limits.maxWorkMB * MIB) return { refused: t('workTooLarge'), fileIndex: i };
     const problem = fileProblem(file.path, file.bytes);
     if (problem) return { refused: problem, fileIndex: i };
   }
@@ -73,14 +74,14 @@ export function checkNomination(
       bytes.length > cfg.limits.maxFileMB * MIB ||
       !['png', 'jpg', 'jpeg', 'gif', 'webp'].some(ext => signature(ext, bytes) && !fileProblem(`cover.${ext}`, bytes))
     )
-      return { refused: '封面不是可接收的静态位图', fileIndex: -1 };
+      return { refused: t('badCover'), fileIndex: -1 };
   }
   const only = input.files.length === 1 ? extension(input.files[0].path) : undefined;
   if (only && media.has(only)) return { ok: true, kind: 'media', title, summary };
-  if (only === 'svg') return { refused: 'SVG 请放进网页作品里' };
-  if (!paths.has('index.html')) return { refused: '网页作品缺少 index.html' };
+  if (only === 'svg') return { refused: t('svgInPage') };
+  if (!paths.has('index.html')) return { refused: t('missingIndex') };
   if (input.files.some(file => extension(file.path) === 'html' && file.path !== 'index.html'))
-    return { refused: '网页文件只能是 index.html' };
+    return { refused: t('htmlOnlyIndex') };
   return { ok: true, kind: 'html', title, summary };
 }
 
@@ -90,9 +91,9 @@ export function contentType(path: string): string {
 
 /**
  * 按结构的保守提示，不替代内容分类：密码框记进原因（自动审核因此转人工），活动内容、外链、表单只作标记在审核页显示。
- * 返回固定标签，不能把文件中的指令写进宿主通知。
+ * 返回固定标签，不能把文件中的指令写进宿主通知。标记是落盘的值，审核页按显示名表显示
  */
-export function markContent(sources: readonly string[]): { flags: string[]; reasons: string[] } {
+export function markContent(sources: readonly string[]): { flags: string[]; reasons: TextRef[] } {
   const raw = sources
     .join('\n')
     .replace(/<!--[\s\S]*?-->/g, '')
@@ -107,7 +108,7 @@ export function markContent(sources: readonly string[]): { flags: string[]; reas
     .toLowerCase();
   const compact = decoded.replace(/[\t\r\n]/g, '');
   const flags: string[] = [];
-  const reasons: string[] = [];
+  const reasons: TextRef[] = [];
   if (
     /<script\b|\bon[a-z]+\s*=|javascript\s*:|\bsrcdoc\b|data\s*:\s*text\/html|<meta\b[^>]*http-equiv\s*=\s*["']?refresh/i.test(
       compact,
@@ -118,7 +119,7 @@ export function markContent(sources: readonly string[]): { flags: string[]; reas
   if (/<form\b/i.test(compact)) flags.push('表单');
   if (/<input\b[^>]*\btype\s*=\s*["']?password\b/i.test(compact)) {
     flags.push('密码框');
-    reasons.push('包含密码框');
+    reasons.push(t('passwordField'));
   }
   return { flags, reasons };
 }

@@ -3,6 +3,7 @@ import { type LLMModel, resolveLLMModel } from '@aalis/api-llm';
 import type { PublishFile } from '@aalis/api-publish';
 import type { BoundStorage } from '@aalis/api-storage';
 import type { ServiceSelection } from '@aalis/core';
+import type { TextRef } from '@aalis/schema-i18n';
 import type { OfflineRenderer } from '@aalis/util-offline-render';
 import { contentType, markContent } from './checks.js';
 import { type ClassificationVerdict, classifyImage, classifyText, combineVerdicts, reviewText } from './classify.js';
@@ -11,10 +12,12 @@ import { SandboxedMedia } from './media.js';
 import type { ReviewResult } from './policy.js';
 import { itemPath } from './state.js';
 import { stripEmbeddedDataUrls, stripStaticMedia } from './strip/index.js';
+import { t } from './texts.js';
 
 export interface ReviewEvidence {
   flags: string[];
-  reasons: string[];
+  /** 宿主写的原因（文字对象；替身流水线也可以交字符串） */
+  reasons: Array<string | TextRef>;
   images: Array<{ name: string; bytes: Uint8Array }>;
   render?: Uint8Array;
   classification?: string;
@@ -69,7 +72,7 @@ function exactModel(
 export function createReviewPipeline(deps: ReviewPipelineDeps): ReviewPipeline {
   return {
     async run(input) {
-      const reasons: string[] = [];
+      const reasons: TextRef[] = [];
       const evidence: ReviewEvidence = { flags: [], reasons, images: [] };
       const media = new SandboxedMedia({
         storage: deps.storage,
@@ -118,7 +121,7 @@ export function createReviewPipeline(deps: ReviewPipelineDeps): ReviewPipeline {
           files.push({ path: file.path, bytes });
         }
       } catch {
-        return { verdict: { verdict: 'failed', reasons: ['文件元数据无法安全剥离'] }, files: [] };
+        return { verdict: { verdict: 'failed', reasons: [t('stripFailed')] }, files: [] };
       }
 
       input.signal.throwIfAborted();
@@ -127,7 +130,7 @@ export function createReviewPipeline(deps: ReviewPipelineDeps): ReviewPipeline {
       const marked = markContent(textsForReview);
       evidence.flags.push(...marked.flags);
       reasons.push(...marked.reasons);
-      if (audio) reasons.push('含音轨，审核不听声音');
+      if (audio) reasons.push(t('hasAudio'));
       const isHtml = files.some(file => file.path === 'index.html');
       if (isHtml) {
         const base = `https://render.invalid/${input.id}/`;
@@ -155,7 +158,7 @@ export function createReviewPipeline(deps: ReviewPipelineDeps): ReviewPipeline {
           evidence.render = render;
           images.unshift({ bytes: render, type: 'png', name: 'render' });
         } catch {
-          reasons.push('离线渲染失败');
+          reasons.push(t('renderFailed'));
         }
       }
       if (input.cover) {
@@ -168,7 +171,7 @@ export function createReviewPipeline(deps: ReviewPipelineDeps): ReviewPipeline {
           }
         });
         if (format) images.push({ bytes: stripStaticMedia(format, input.cover), type: format, name: 'cover' });
-        else reasons.push('封面无法净化');
+        else reasons.push(t('coverUnclean'));
       }
 
       const values: ClassificationVerdict[] = [];
@@ -180,7 +183,7 @@ export function createReviewPipeline(deps: ReviewPipelineDeps): ReviewPipeline {
         files.map(file => file.path),
         textsForReview.join('\n'),
       );
-      if (text.truncated) reasons.push('文字太长，自动审核没看全');
+      if (text.truncated) reasons.push(t('textTruncated'));
       const deadline = AbortSignal.timeout(15 * 60_000);
       const signal = AbortSignal.any([input.signal, deadline]);
       const textResult = await classifyText(exactModel(deps.llm, deps.config.textClassifier), text.text, signal);
@@ -188,7 +191,7 @@ export function createReviewPipeline(deps: ReviewPipelineDeps): ReviewPipeline {
       if (textResult) {
         categories.push(...textResult.categories);
         notes.push(textResult.note);
-      } else reasons.push('文字分类不可用');
+      } else reasons.push(t('textClassifierDown'));
       const vision = exactModel(deps.llm, deps.config.imageClassifier ?? deps.config.textClassifier, true);
       const prepared: Array<{ png: Uint8Array; name: string; contact: boolean }> = [];
       const sourceDigests = new Set<string>();
@@ -203,7 +206,7 @@ export function createReviewPipeline(deps: ReviewPipelineDeps): ReviewPipeline {
           sourceDigests.add(sourceDigest);
           if (image.type === 'gif' || image.type === 'mp4') {
             const extracted = await media.extractFrames(image.bytes, image.type);
-            if (extracted.overflow) reasons.push('动画或视频较长，自动审核没看全');
+            if (extracted.overflow) reasons.push(t('framesOverflow'));
             const sheets = await media.contactSheets(extracted.frames);
             for (const png of sheets) prepared.push({ png, name: image.name, contact: true });
             if (!thumbnail || image.name === 'cover')
@@ -237,7 +240,7 @@ export function createReviewPipeline(deps: ReviewPipelineDeps): ReviewPipeline {
               thumbnail = await media.toPng(png, 'png', 480).catch(() => undefined);
           }
         } catch {
-          reasons.push(image.type === 'gif' || image.type === 'mp4' ? '抽帧失败' : '图像转换或分类失败');
+          reasons.push(image.type === 'gif' || image.type === 'mp4' ? t('framesFailed') : t('imageFailed'));
           values.push('unsure');
         }
       }
@@ -251,7 +254,7 @@ export function createReviewPipeline(deps: ReviewPipelineDeps): ReviewPipeline {
         seen.add(hash);
         unique.push(item);
       }
-      if (unique.length > 12) reasons.push('图像太多，自动审核没看全');
+      if (unique.length > 12) reasons.push(t('tooManyImages'));
       for (const item of unique.slice(0, 12)) {
         evidence.images.push({ name: `image-${evidence.images.length + 1}.png`, bytes: item.png });
         const result = await classifyImage(vision, item.png, signal, item.contact);
@@ -259,7 +262,7 @@ export function createReviewPipeline(deps: ReviewPipelineDeps): ReviewPipeline {
         if (result) {
           categories.push(...result.categories);
           notes.push(result.note);
-        } else reasons.push('图像分类不可用');
+        } else reasons.push(t('imageClassifierDown'));
       }
       evidence.classification = notes.filter(Boolean).join('；').slice(0, 2000);
       let verdict = combineVerdicts(values);

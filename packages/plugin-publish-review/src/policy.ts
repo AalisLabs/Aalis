@@ -35,11 +35,13 @@ export const reasonText = (reason: string | TextRef): string | TextRef =>
 /** 文件处理失败不能由人工批准覆盖；内容未通过自动审核时转人工裁决。 */
 export interface ReviewResult {
   verdict: 'allow' | 'unsure' | 'reject' | 'failed';
-  /** 宿主给出的固定原因；模型原话只在审核详情中展示。 */
-  reasons: readonly string[];
+  /** 宿主给出的固定原因（文字对象）或拒绝时的类别值；模型原话只在审核详情中展示。 */
+  reasons: readonly (string | TextRef)[];
 }
 
-type ReviewDecision = { state: 'approved' | 'awaiting-owner' } | { state: 'failed'; reasons: readonly string[] };
+type ReviewDecision =
+  | { state: 'approved' | 'awaiting-owner' }
+  | { state: 'failed'; reasons: readonly (string | TextRef)[] };
 
 export function decideReview(
   config: { manualReview: boolean; reviewEnabled?: boolean },

@@ -8,6 +8,7 @@
 
 import { WORK_ID_PATTERN } from '@aalis/api-publish';
 import type { BoundWebui, NoticeHandle } from '@aalis/api-webui';
+import { TextError, type TextRef, textLines } from '@aalis/schema-i18n';
 import { reasonText } from './policy.js';
 import type { ReviewPreviewServer } from './preview.js';
 import type { PublishReviewService } from './service.js';
@@ -15,6 +16,37 @@ import type { QueueItem, ReviewStore } from './state.js';
 import { t } from './texts.js';
 
 const PAGE_KEY = 'publish-review';
+
+/** 还没到待裁决的作品：审核中的步骤 */
+type InReview = QueueItem & { state: Exclude<QueueItem['state'], 'awaiting-owner'> };
+/** 审核中的步骤的显示名（存储里的值照旧；记录读回时只认这两种） */
+const STEPS: Record<InReview['state'], TextRef> = { queued: t('stepQueued'), checking: t('stepChecking') };
+/** 历史结论的显示名（存储里的值照旧） */
+const EVENTS: Readonly<Record<string, TextRef>> = {
+  nominated: t('eventNominated'),
+  'awaiting-owner': t('awaitingOwner'),
+  approved: t('eventApproved'),
+  published: t('published'),
+  rejected: t('eventRejected'),
+  expired: t('eventExpired'),
+  failed: t('eventFailed'),
+  withdrawn: t('eventWithdrawn'),
+  'integrity-failed': t('integrityCheckFailed'),
+  live: t('eventLive'),
+  'notice-delayed': t('eventNoticeDelayed'),
+  'notice-abandoned': t('eventNoticeAbandoned'),
+  'notice-retry': t('eventNoticeRetry'),
+};
+/** 审核标记的显示名（存储里的值照旧） */
+const FLAG_NAMES: Readonly<Record<string, TextRef>> = {
+  活动内容: t('flagActive'),
+  外链: t('flagExternalLink'),
+  表单: t('flagForm'),
+  密码框: t('flagPassword'),
+};
+/** 落盘值的显示名：记录读回时不核这些值，表里没有的显示原值 */
+const nameIn = (names: Readonly<Record<string, TextRef>>, value: string): string | TextRef =>
+  Object.hasOwn(names, value) ? names[value] : value;
 
 export function registerReviewPage(deps: {
   webui: BoundWebui;
@@ -29,11 +61,12 @@ export function registerReviewPage(deps: {
   const now = deps.now ?? Date.now;
   const queue = () => Object.values(store.data.queue);
   const pending = () => queue().filter(item => item.state === 'awaiting-owner');
+  const inReview = () => queue().filter((item): item is InReview => item.state !== 'awaiting-owner');
   /** 行动作与详情按 id 重新查：只认记录里待裁决的作品；记录读取失败时裁决与预览一律停用 */
   const pendingItem = (id: string): QueueItem => {
-    if (store.failure) throw new Error(store.failure);
+    if (store.failure) throw new TextError(store.failure);
     const item = WORK_ID_PATTERN.test(id) ? store.data.queue[id] : undefined;
-    if (item?.state !== 'awaiting-owner') throw new Error('没有这件待裁决作品');
+    if (item?.state !== 'awaiting-owner') throw new TextError(t('workNotPending'));
     return item;
   };
   const renderOf = (item: QueueItem) =>
@@ -45,58 +78,58 @@ export function registerReviewPage(deps: {
 
   const page = webui.definePage({
     key: PAGE_KEY,
-    title: '作品审核',
+    title: t('displayName'),
     icon: 'shield-check',
     actions: {
       approveWork: {
-        label: '批准',
+        label: t('approveLabel'),
         effect: 'write',
         row: true,
         async handler({ rowKey }) {
           const item = pendingItem(rowKey);
-          if (!(await service.approve(item.id))) throw new Error('作品已变更或发布失败');
+          if (!(await service.approve(item.id))) throw new TextError(t('approveFailed'));
           preview.revoke(item.id);
-          return `已批准 ${item.title}`;
+          return t('approvedWork', { title: item.title });
         },
       },
       rejectWork: {
-        label: '拒绝',
+        label: t('rejectLabel'),
         effect: 'destructive',
-        confirm: '拒绝这件作品？来源只会收到固定类别，不会收到审核理由。',
+        confirm: t('rejectConfirm'),
         row: true,
         async handler({ rowKey }) {
           const item = pendingItem(rowKey);
-          if (!(await service.reject(item.id))) throw new Error('作品已变更，无法拒绝');
+          if (!(await service.reject(item.id))) throw new TextError(t('rejectFailed'));
           preview.revoke(item.id);
-          return `已拒绝 ${item.title}`;
+          return t('rejectedWork', { title: item.title });
         },
       },
       openPreview: {
-        label: '隔离预览',
+        label: t('preview'),
         effect: 'write',
         row: true,
         async handler({ rowKey }) {
           const item = pendingItem(rowKey);
-          if (item.kind !== 'html') throw new Error('只有网页作品能隔离预览');
+          if (item.kind !== 'html') throw new TextError(t('previewHtmlOnly'));
           let url: string;
           try {
             url = await preview.open(item.id);
           } catch {
-            throw new Error('隔离预览无法启动或审核文件已变更');
+            throw new TextError(t('previewFailed'));
           }
           page.invalidate('previews');
-          return `隔离预览已打开：${url}`;
+          return t('previewOpened', { url });
         },
       },
       retryNotice: {
-        label: '重发',
+        label: t('retryLabel'),
         effect: 'write',
         row: true,
         async handler({ rowKey }) {
-          if (store.failure) throw new Error(store.failure);
+          if (store.failure) throw new TextError(store.failure);
           const refused = await service.retryNotice(rowKey);
-          if (refused) throw new Error(refused);
-          return '已重新排队发送';
+          if (refused) throw new TextError(refused);
+          return t('retryQueued');
         },
       },
     },
@@ -104,41 +137,38 @@ export function registerReviewPage(deps: {
       tabs: [
         {
           key: 'pending',
-          title: '待裁决',
+          title: t('awaitingOwner'),
           content: [
             {
               type: 'info',
               id: 'counts',
-              description: '撤下后，已打开页面且连接没断的人可能在十分钟以上仍能取到。',
+              description: t('countsDescription'),
               data: () => [
-                { label: '待裁决', value: pending().length },
-                { label: '审核中', value: queue().filter(item => item.state !== 'awaiting-owner').length },
+                { label: t('awaitingOwner'), value: pending().length },
+                { label: t('inReview'), value: inReview().length },
                 {
-                  label: '今天提名',
+                  label: t('nominatedToday'),
                   value: store.data.nominations.filter(entry => entry.at >= now() - 86_400_000).length,
                 },
                 {
-                  label: '已发布',
+                  label: t('published'),
                   value: Object.values(store.data.ledger).filter(item => item.state === 'published').length,
                 },
-                {
-                  label: '内容审核',
-                  value: deps.reviewEnabled ? '开启' : '已关闭：作品通过文件处理后自动发布，不运行模型或人工内容审核',
-                },
+                { label: t('contentReview'), value: deps.reviewEnabled ? t('on') : t('reviewOffDescription') },
               ],
             },
             {
               type: 'table',
               id: 'pending',
               rowKey: 'id',
-              empty: '没有待裁决的作品',
+              empty: t('pendingEmpty'),
               columns: [
-                { key: 'render', label: '渲染图', kind: 'image', primary: true },
-                { key: 'title', label: '标题', primary: true },
-                { key: 'kind', label: '类型' },
-                { key: 'source', label: '来源' },
-                { key: 'awaitingReason', label: '待人工原因' },
-                { key: 'deadline', label: '剩余时间', kind: 'countdown', primary: true },
+                { key: 'render', label: t('columnRender'), kind: 'image', primary: true },
+                { key: 'title', label: t('columnTitle'), primary: true },
+                { key: 'kind', label: t('columnKind') },
+                { key: 'source', label: t('columnSource') },
+                { key: 'awaitingReason', label: t('columnAwaitingReason') },
+                { key: 'deadline', label: t('columnDeadline'), kind: 'countdown', primary: true },
               ],
               rowActions: [
                 { action: 'approveWork' },
@@ -152,36 +182,41 @@ export function registerReviewPage(deps: {
                     id: item.id,
                     render: renderOf(item),
                     title: item.title,
-                    kind: item.kind === 'html' ? '网页' : '媒体',
+                    kind: item.kind === 'html' ? t('kindHtml') : t('kindMedia'),
                     html: item.kind === 'html',
                     source: item.origin.label,
-                    awaitingReason:
-                      item.awaitingReason === 'fallback' ? '自动审核未通过，需人工裁决' : '配置要求人工审核',
+                    awaitingReason: item.awaitingReason === 'fallback' ? t('awaitingFallback') : t('awaitingRequired'),
                     deadline: (item.awaitingSince ?? item.nominatedAt) + deps.ownerTimeoutHours * 3_600_000,
                   })),
               detail: [
                 {
                   type: 'info',
                   id: 'verdict',
-                  label: '自动审核',
+                  label: t('autoReview'),
                   data({ rowKey }) {
                     const review = pendingItem(rowKey).review;
                     return [
-                      { label: '分类结论', value: review?.classification ?? '' },
-                      { label: '标记', value: review?.flags.join('、') ?? '' },
-                      { label: '理由', value: review ? t('reasons', { items: review.reasons.map(reasonText) }) : '' },
+                      { label: t('classification'), value: review?.classification ?? '' },
+                      {
+                        label: t('flags'),
+                        value: review ? t('list', { items: review.flags.map(flag => nameIn(FLAG_NAMES, flag)) }) : '',
+                      },
+                      {
+                        label: t('reasons'),
+                        value: review ? t('list', { items: review.reasons.map(reasonText) }) : '',
+                      },
                     ];
                   },
                 },
                 {
                   type: 'table',
                   id: 'images',
-                  label: '图像件',
+                  label: t('images'),
                   rowKey: 'name',
-                  empty: '没有图像件',
+                  empty: t('imagesEmpty'),
                   columns: [
-                    { key: 'image', label: '图像', kind: 'image', primary: true },
-                    { key: 'name', label: '文件名' },
+                    { key: 'image', label: t('columnImage'), kind: 'image', primary: true },
+                    { key: 'name', label: t('columnFileName') },
                   ],
                   data({ rowKey }) {
                     const item = pendingItem(rowKey);
@@ -194,13 +229,13 @@ export function registerReviewPage(deps: {
                 {
                   type: 'table',
                   id: 'files',
-                  label: '文件',
-                  description: '网页作品只能通过「隔离预览」查看；在本机直接打开网页文件没有沙箱，可以联网。',
+                  label: t('files'),
+                  description: t('filesDescription'),
                   rowKey: 'path',
                   columns: [
-                    { key: 'path', label: '路径', primary: true },
-                    { key: 'contentType', label: '类型' },
-                    { key: 'size', label: '大小（字节）' },
+                    { key: 'path', label: t('columnPath'), primary: true },
+                    { key: 'contentType', label: t('columnKind') },
+                    { key: 'size', label: t('columnSize') },
                   ],
                   data: ({ rowKey }) =>
                     pendingItem(rowKey).files.map(file => ({
@@ -214,50 +249,49 @@ export function registerReviewPage(deps: {
             {
               type: 'markdown',
               id: 'previews',
-              label: '隔离预览',
+              label: t('preview'),
               data() {
                 const links = preview.active;
-                return `${links.length ? links.map(link => `- [${link.id}](${link.url})`).join('\n') : '目前没有打开的预览。'}\n\n只在 Aalis 所在机器的本机浏览器能打开；远程 WebUI 的 127.0.0.1 指向你的设备。裁决后自动关闭。作品里的脚本在预览里会运行，并可能通过 WebRTC/STUN 泄露这台机器的出口地址。`;
+                return t('previewsNote', {
+                  links: links.length ? textLines(links.map(link => t('previewLink', link))) : t('noPreviews'),
+                });
               },
             },
           ],
         },
         {
           key: 'checking',
-          title: '审核中',
+          title: t('inReview'),
           content: [
             {
               type: 'table',
               id: 'checking',
               rowKey: 'id',
-              empty: '没有审核中的作品',
+              empty: t('checkingEmpty'),
               columns: [
-                { key: 'title', label: '标题', primary: true },
-                { key: 'state', label: '步骤', primary: true },
-                { key: 'id', label: '编号', kind: 'code' },
+                { key: 'title', label: t('columnTitle'), primary: true },
+                { key: 'state', label: t('columnStep'), primary: true },
+                { key: 'id', label: t('columnId'), kind: 'code' },
               ],
-              data: () =>
-                queue()
-                  .filter(item => item.state !== 'awaiting-owner')
-                  .map(item => ({ id: item.id, title: item.title, state: item.state })),
+              data: () => inReview().map(item => ({ id: item.id, title: item.title, state: STEPS[item.state] })),
             },
           ],
         },
         {
           key: 'notices',
-          title: '没发出的通知',
+          title: t('noticesTab'),
           content: [
             {
               type: 'table',
               id: 'notices',
               rowKey: 'key',
-              empty: '没有放弃发送的通知',
+              empty: t('noticesEmpty'),
               columns: [
-                { key: 'at', label: '放弃时间', kind: 'time' },
-                { key: 'title', label: '标题', primary: true },
-                { key: 'room', label: '来源房间' },
-                { key: 'content', label: '通知内容', kind: 'long-text', primary: true },
-                { key: 'id', label: '作品编号', kind: 'code' },
+                { key: 'at', label: t('columnAbandonedAt'), kind: 'time' },
+                { key: 'title', label: t('columnTitle'), primary: true },
+                { key: 'room', label: t('columnRoom') },
+                { key: 'content', label: t('columnNoticeContent'), kind: 'long-text', primary: true },
+                { key: 'id', label: t('columnWorkId'), kind: 'code' },
               ],
               rowActions: [{ action: 'retryNotice' }],
               data: () => service.abandonedNotices(),
@@ -266,21 +300,28 @@ export function registerReviewPage(deps: {
         },
         {
           key: 'history',
-          title: '历史',
+          title: t('historyTab'),
           content: [
             {
               type: 'table',
               id: 'history',
               rowKey: 'key',
-              empty: '还没有裁决记录',
+              empty: t('historyEmpty'),
               columns: [
-                { key: 'at', label: '时间', kind: 'time', primary: true },
-                { key: 'event', label: '结论', primary: true },
-                { key: 'detail', label: '裁决者与理由' },
-                { key: 'id', label: '编号', kind: 'code' },
+                { key: 'at', label: t('columnTime'), kind: 'time', primary: true },
+                { key: 'event', label: t('columnVerdict'), primary: true },
+                { key: 'detail', label: t('columnDetail') },
+                { key: 'id', label: t('columnId'), kind: 'code' },
               ],
-              // 记录没有自己的 id，按从新到旧的次序标识
-              data: () => [...store.data.history].reverse().map((entry, i) => ({ key: String(i), ...entry })),
+              // 记录没有自己的 id，按从新到旧的次序标识；只取显示的几栏，撤下的一方与理由不发到前端
+              data: () =>
+                [...store.data.history].reverse().map((entry, i) => ({
+                  key: String(i),
+                  at: entry.at,
+                  id: entry.id,
+                  event: nameIn(EVENTS, entry.event),
+                  detail: entry.detail,
+                })),
             },
           ],
         },
@@ -301,7 +342,7 @@ export function registerReviewPage(deps: {
     waiting = webui.notify({
       id: 'pending',
       level: 'action',
-      title: `${count} 件作品待裁决`,
+      title: t('pendingNotice', { count }),
       open: { page: PAGE_KEY },
     });
   };
@@ -311,8 +352,8 @@ export function registerReviewPage(deps: {
     webui.notify({
       id: 'ledger',
       level: 'error',
-      title: '作品记录读取失败',
-      detail: '裁决与隔离预览都已停用；修好插件数据里的记录文件后重新启用本插件',
+      title: t('ledgerNoticeTitle'),
+      detail: t('ledgerNoticeDetail'),
       open: { page: PAGE_KEY },
     });
   }
