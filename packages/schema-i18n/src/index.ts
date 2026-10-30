@@ -40,6 +40,7 @@ export {
   type Localized,
   type LocalizeSkip,
   localize,
+  sameText,
   type TextParam,
   type TextRef,
   toSource,

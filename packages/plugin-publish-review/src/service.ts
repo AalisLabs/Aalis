@@ -12,13 +12,13 @@ import {
   WORK_ID_PATTERN,
 } from '@aalis/api-publish';
 import type { StorageService } from '@aalis/api-storage';
-import { type TextRef, toSource, truncateParams } from '@aalis/schema-i18n';
+import { sameText, type TextRef, toSource, truncateParams } from '@aalis/schema-i18n';
 import { checkNomination, contentType } from './checks.js';
 import type { ReviewConfig } from './config.js';
 import { isNoticeUndelivered, type NoticeBody } from './notices.js';
 import type { ReviewPipeline } from './pipeline.js';
 import { decideReview } from './policy.js';
-import { type LedgerItem, PUBLIC_ROOT, type QueueItem, type ReviewStore } from './state.js';
+import { type LedgerItem, PUBLIC_ROOT, type QueueItem, type ReviewStore, type Withdrawal } from './state.js';
 import { t } from './texts.js';
 
 const alphabet = 'abcdefghijklmnopqrstuvwxyz234567';
@@ -29,8 +29,8 @@ const QUOTA_RETRY_MS = 30_000;
 const NOTICE_RETRY_MS = 30_000;
 /** 一条通知连续发不出去这么久就放弃，等 owner 手动重发 */
 const NOTICE_GIVE_UP_MS = 24 * 3_600_000;
-/** 待发通知里给人看的那句：参数截到这么多字再落盘 */
-const NOTICE_TEXT_MAX = 200;
+/** 落盘的给人看的文字（待发通知里的那句、历史里的说明）：参数截到这么多字 */
+const TEXT_PARAM_MAX = 200;
 /** 宿主撰写的通知：交给她转述的正文是给人看的那句的原文 */
 const hostSaid = (text: TextRef) => ({ content: toSource(text), text });
 const bytes = (value: string | Buffer) => new Uint8Array(typeof value === 'string' ? Buffer.from(value) : value);
@@ -85,6 +85,13 @@ async function nominationFingerprint(input: NominateInput, oldCredit?: string): 
   );
 }
 
+/** 撤下这一条历史的说明：按撤下的一方取整句，来源撤下写作品的来源房间（撤下的一方与理由另存在这一条的 withdrawn 里） */
+function withdrawnBy(by: Withdrawal['by'], room: string): TextRef {
+  if (by === 'owner') return t('withdrawnByOwner');
+  if (by === 'integrity') return t('integrityCheckFailed');
+  return t('withdrawnByOrigin', { room });
+}
+
 function newId(): string {
   const random = crypto.getRandomValues(new Uint8Array(10));
   return Array.from(random, value => alphabet[value & 31]).join('');
@@ -136,7 +143,7 @@ export class PublishReviewService implements PublishService {
   async nominate(input: NominateInput): Promise<NominateResult> {
     const { store, storage, config } = this.#d;
     return store.exclusive(async () => {
-      if (this.#stopped) return { refused: '作品审核已停止', retryAfterMs: QUOTA_RETRY_MS };
+      if (this.#stopped) return { refused: t('stopped'), retryAfterMs: QUOTA_RETRY_MS };
       if (store.failure) return { refused: store.failure };
       // 验证与异步落盘必须读同一份字节；调用方仍可持有并修改原 Uint8Array。
       const snapshot: NominateInput = {
@@ -147,7 +154,7 @@ export class PublishReviewService implements PublishService {
         cover: input.cover ? new Uint8Array(input.cover) : undefined,
       };
       if (snapshot.submissionKey !== undefined && !SUBMISSION_KEY.test(snapshot.submissionKey))
-        return { refused: '提交键不合规' };
+        return { refused: t('badSubmissionKey') };
       const slot =
         snapshot.submissionKey === undefined
           ? undefined
@@ -165,22 +172,21 @@ export class PublishReviewService implements PublishService {
             previous.fingerprint === (await nominationFingerprint(snapshot, oldCredit))
           )
             return { id: previous.id };
-          return { refused: '提交键对应的作品内容已变更' };
+          return { refused: t('submissionChanged') };
         }
       }
       const checked = checkNomination(snapshot, config, new Set(this.#surfaces.keys()));
       if ('refused' in checked) return checked;
       const queued = Object.values(store.data.queue);
       const originKey = sourceKey(snapshot.origin);
-      if (queued.length >= config.limits.maxPending)
-        return { refused: '待审总数已达上限', retryAfterMs: QUOTA_RETRY_MS };
+      if (queued.length >= config.limits.maxPending) return { refused: t('pendingFull'), retryAfterMs: QUOTA_RETRY_MS };
       if (queued.filter(item => sourceKey(item.origin) === originKey).length >= config.limits.maxPendingPerOrigin)
-        return { refused: '这个来源待审作品已达上限', retryAfterMs: QUOTA_RETRY_MS };
+        return { refused: t('originPendingFull'), retryAfterMs: QUOTA_RETRY_MS };
       const now = this.#now();
       const recent = store.data.nominations.filter(entry => entry.source === originKey && entry.at >= now - DAY);
       if (recent.length >= config.limits.maxDailyPerOrigin) {
         const expiry = [...recent].sort((a, b) => a.at - b.at)[recent.length - config.limits.maxDailyPerOrigin].at;
-        return { refused: '这个来源今天提名数已达上限', retryAfterMs: Math.max(1, expiry + DAY - now + 1) };
+        return { refused: t('originDailyFull'), retryAfterMs: Math.max(1, expiry + DAY - now + 1) };
       }
       let id = newId();
       while (store.data.queue[id] || store.data.ledger[id] || store.data.terminal[id]) id = newId();
@@ -214,7 +220,7 @@ export class PublishReviewService implements PublishService {
         await store.save(next, this.#event(id, 'nominated'));
       } catch {
         await storage.delete(store.item(id)).catch(() => {});
-        return { refused: '提名快照无法保存', retryAfterMs: QUOTA_RETRY_MS };
+        return { refused: t('snapshotUnsaved'), retryAfterMs: QUOTA_RETRY_MS };
       }
       return { id };
     });
@@ -262,7 +268,7 @@ export class PublishReviewService implements PublishService {
         const health = surface.health();
         return health.ok ? { ...info, available: true } : { ...info, available: false, reason: health.reason };
       } catch {
-        return { ...info, available: false, reason: '发布目标状态暂不可核对' };
+        return { ...info, available: false, reason: t('targetUnverifiable') };
       }
     });
   }
@@ -324,13 +330,13 @@ export class PublishReviewService implements PublishService {
       });
     } catch {
       if (this.#stopped) return;
-      await this.#finishWithoutPublish(item.id, '审核步骤不可用');
+      await this.#finishWithoutPublish(item.id, t('stepUnavailable'));
       return;
     }
     if (this.#stopped || this.#d.store.data.queue[item.id]?.state !== 'checking') return;
     const decision = decideReview(this.#d.config, result.verdict);
     if (decision.state === 'failed') {
-      await this.#finishWithoutPublish(item.id, decision.reasons[0] ?? '审核步骤不可用');
+      await this.#finishWithoutPublish(item.id, decision.reasons[0] ?? t('stepUnavailable'));
       return;
     }
     // 出来的字节只接受原提名的路径集合；不能让步骤替身或未来模型增删未审文件。
@@ -355,7 +361,7 @@ export class PublishReviewService implements PublishService {
       [...actualPaths].some(path => !expectedPaths.has(path)) ||
       'refused' in outputCheck
     ) {
-      await this.#finishWithoutPublish(item.id, '审核输出文件集合不符');
+      await this.#finishWithoutPublish(item.id, t('outputMismatch'));
       return;
     }
     const hashes: Record<string, string> = {};
@@ -371,7 +377,7 @@ export class PublishReviewService implements PublishService {
             image.bytes.length > 25 * 1024 * 1024,
         ))
     ) {
-      await this.#finishWithoutPublish(item.id, '审核图像集合不符');
+      await this.#finishWithoutPublish(item.id, t('imagesMismatch'));
       return;
     }
     try {
@@ -390,7 +396,7 @@ export class PublishReviewService implements PublishService {
         await storage.writeFile(store.item(item.id, 'out/_thumb.png'), Buffer.from(result.thumbnail));
       }
     } catch {
-      await this.#finishWithoutPublish(item.id, '审核输出无法保存');
+      await this.#finishWithoutPublish(item.id, t('outputUnsaved'));
       return;
     }
     const accepted = await store.exclusive(async () => {
@@ -399,9 +405,13 @@ export class PublishReviewService implements PublishService {
       next.queue[item.id].outHashes = hashes;
       next.queue[item.id].outputPolicy = outputPolicy(this.#d.config);
       next.queue[item.id].thumbnailHash = hashes['_thumb.png'];
+      // 两路原因合并去重：文字对象按所属包、键与参数认（替身流水线交来的是不同引用）
+      const reasons: Array<string | TextRef> = [];
+      for (const reason of [...(review?.reasons ?? []), ...result.verdict.reasons])
+        if (!reasons.some(seen => sameText(seen, reason))) reasons.push(reason);
       next.queue[item.id].review = {
         flags: [...(review?.flags ?? [])],
-        reasons: [...new Set([...(review?.reasons ?? []), ...result.verdict.reasons])],
+        reasons,
         images: review?.images.map(image => image.name) ?? [],
         hasRender: !!review?.render,
         classification: review?.classification,
@@ -441,7 +451,7 @@ export class PublishReviewService implements PublishService {
       delete next.queue[id];
       this.#rememberTerminal(next, item, 'rejected');
       this.#queueNotice(next, item.origin, hostSaid(t('noticeRejected')), id, item.title);
-      await store.save(next, this.#event(id, 'rejected', '人工拒绝'));
+      await store.save(next, this.#event(id, 'rejected', t('manualRejection')));
       await storage.delete(store.item(id)).catch(() => {});
       return true;
     });
@@ -608,10 +618,10 @@ export class PublishReviewService implements PublishService {
           id,
           'published',
           item.state === 'awaiting-owner'
-            ? '人工批准'
+            ? t('manualApproval')
             : this.#d.config.reviewEnabled
-              ? '自动审核通过'
-              : '内容审核关闭，文件校验通过',
+              ? t('autoApproved')
+              : t('reviewOffApproved'),
         ),
       );
       await storage.delete(store.item(id)).catch(() => {});
@@ -620,7 +630,7 @@ export class PublishReviewService implements PublishService {
     });
   }
 
-  async #finishWithoutPublish(id: string, reason: string): Promise<void> {
+  async #finishWithoutPublish(id: string, reason: string | TextRef): Promise<void> {
     const { store, storage } = this.#d;
     await store.exclusive(async () => {
       const item = store.data.queue[id];
@@ -674,15 +684,17 @@ export class PublishReviewService implements PublishService {
     by: { kind: 'origin' | 'owner' | 'integrity'; actorKey?: string },
     reason: string,
   ): Promise<{ ok: true; degraded?: string | TextRef } | { refused: string | TextRef }> {
-    if (!WORK_ID_PATTERN.test(id)) return { refused: '作品编号不合法' };
+    if (!WORK_ID_PATTERN.test(id)) return { refused: t('badWorkId') };
     const { store, storage } = this.#d;
     return store.exclusive(async () => {
-      if (this.#stopped) return { refused: '作品审核已停止' };
+      if (this.#stopped) return { refused: t('stopped') };
       if (store.failure) return { refused: store.failure };
       const queued = store.data.queue[id];
       const published = store.data.ledger[id];
-      if (!queued && !published) return { refused: '作品不存在' };
+      const item = queued ?? published;
+      if (!item) return { refused: t('workNotFound') };
       if (published?.state === 'withdrawn') return { ok: true };
+      const withdrawal: Withdrawal = { by: by.kind, actorKey: by.actorKey, reason };
       const next = store.copy();
       if (queued) {
         delete next.queue[id];
@@ -692,17 +704,14 @@ export class PublishReviewService implements PublishService {
         next.ledger[id].state = 'withdrawn';
         next.ledger[id].live = false;
         next.ledger[id].liveSurfaces = {};
-        next.ledger[id].withdrawn = { at: this.#now(), by: by.kind, actorKey: by.actorKey, reason };
+        next.ledger[id].withdrawn = { at: this.#now(), ...withdrawal };
       }
       this.#clearNotices(next, id);
-      await store.save(
-        next,
-        this.#event(
-          id,
-          by.kind === 'integrity' ? 'integrity-failed' : 'withdrawn',
-          JSON.stringify({ by: by.kind, actorKey: by.actorKey, reason }),
-        ),
-      );
+      const event = by.kind === 'integrity' ? 'integrity-failed' : 'withdrawn';
+      await store.save(next, {
+        ...this.#event(id, event, withdrawnBy(by.kind, item.origin.label)),
+        withdrawn: withdrawal,
+      });
       await storage.delete(queued ? store.item(id) : `${PUBLIC_ROOT}/${id}`).catch(() => {});
       if (published) this.#changed();
       let degraded: string | TextRef | undefined;
@@ -714,7 +723,7 @@ export class PublishReviewService implements PublishService {
             break;
           }
         } catch {
-          degraded = '展示面状态暂不可核对';
+          degraded = t('surfaceUnverifiable');
           break;
         }
       }
@@ -849,8 +858,13 @@ export class PublishReviewService implements PublishService {
     await this.#d.store.exclusive(async () => {});
   }
 
-  #event(id: string, event: string, detail = '') {
-    return { at: this.#now(), id, event, detail };
+  #event(id: string, event: string, detail: string | TextRef = '') {
+    return {
+      at: this.#now(),
+      id,
+      event,
+      detail: typeof detail === 'string' ? detail : truncateParams(detail, TEXT_PARAM_MAX),
+    };
   }
 
   #rememberTerminal(
@@ -881,7 +895,7 @@ export class PublishReviewService implements PublishService {
       id,
       origin: structuredClone(origin),
       content: notice.content,
-      text: truncateParams(notice.text, NOTICE_TEXT_MAX),
+      text: truncateParams(notice.text, TEXT_PARAM_MAX),
       ...(title ? { title } : {}),
       live,
     };
@@ -976,10 +990,7 @@ export class PublishReviewService implements PublishService {
         next.notices[key].failingSince = since;
         if (markNarrated) next.notices[key].narrated = true;
         if (giveUp) next.notices[key].abandoned = now;
-        await store.save(
-          next,
-          giveUp ? this.#event(current.id, 'notice-abandoned', '通知 24 小时都没发出去，已放弃') : undefined,
-        );
+        await store.save(next, giveUp ? this.#event(current.id, 'notice-abandoned', t('noticeGivenUp')) : undefined);
         if (giveUp) this.#noticeRetry.delete(key);
       })
       .catch(() => {});
@@ -1007,16 +1018,16 @@ export class PublishReviewService implements PublishService {
   }
 
   /** owner 手动重发一条已放弃的通知：从头计失败时长 */
-  async retryNotice(key: string): Promise<string | undefined> {
+  async retryNotice(key: string): Promise<TextRef | undefined> {
     const { store } = this.#d;
     const refused = await store.exclusive(async () => {
       if (store.failure) return store.failure;
       const current = store.data.notices[key];
-      if (current?.abandoned === undefined) return '没有这条已放弃的通知';
+      if (current?.abandoned === undefined) return t('noticeNotAbandoned');
       const next = store.copy();
       delete next.notices[key].abandoned;
       delete next.notices[key].failingSince;
-      await store.save(next, this.#event(current.id, 'notice-retry', 'owner 手动重发'));
+      await store.save(next, this.#event(current.id, 'notice-retry', t('noticeRetried')));
       return undefined;
     });
     if (refused) return refused;

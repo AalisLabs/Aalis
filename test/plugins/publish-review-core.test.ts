@@ -9,6 +9,7 @@ import { PublishReviewService } from '../../packages/plugin-publish-review/src/s
 import { ReviewStore } from '../../packages/plugin-publish-review/src/state.js';
 import { t } from '../../packages/plugin-publish-review/src/texts.js';
 import { defineTexts, isTextRef, resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
+import { renderIn } from '../fixtures/host-language.js';
 import { boundStorage } from '../fixtures/own-storage.js';
 import { memoryStorage } from '../fixtures/paper.js';
 
@@ -150,6 +151,109 @@ describe('作品审核核心', () => {
     expect(reloaded.data.history.at(-1)?.detail).toEqual(reason);
   });
 
+  it('合并审核理由时按所属包、键与参数去重：内容相同、引用不同的只留一条，参数不同的都留', async () => {
+    const blurry = defineTexts({
+      ns: '@zz/publish-review-dedup',
+      language: 'zh-CN',
+      source: { blurry: '第 {n} 张图像太糊' } as const,
+    });
+    const h = await setup(
+      {
+        run: async () => ({
+          verdict: { verdict: 'unsure', reasons: [blurry('blurry', { n: 1 }), blurry('blurry', { n: 2 })] },
+          files: input().files,
+          evidence: { flags: [], reasons: [blurry('blurry', { n: 1 })], images: [] },
+        }),
+      },
+      true,
+    );
+    const result = await h.service.nominate(input());
+    if (!('id' in result)) throw new Error(toSource(result.refused));
+    await h.service.processNext();
+    expect(toSource(h.store.data.queue[result.id].review?.reasons)).toEqual(['第 1 张图像太糊', '第 2 张图像太糊']);
+  });
+
+  it('撤下的历史按撤下的一方写成句子（文字对象），撤下的一方与理由另存不显示：落盘，重启读回仍在；审核记录里是原文', async () => {
+    const seed = new Map<string, string | Uint8Array>();
+    const h = await setup(
+      { run: async () => ({ verdict: { verdict: 'allow', reasons: [] }, files: input().files }) },
+      false,
+      seed,
+    );
+    const ids: string[] = [];
+    for (const title of ['甲', '乙', '丙', '丁']) {
+      const result = await h.service.nominate({ ...input(), title });
+      if (!('id' in result)) throw new Error(toSource(result.refused));
+      await h.service.processNext();
+      ids.push(result.id);
+    }
+    // 还在待审的作品：账本没有它，撤下的一方与理由只在历史这一条里
+    const queued = await h.service.nominate({
+      ...input(),
+      title: '戊',
+      origin: { ...input().origin, label: '另一个房间' },
+    });
+    if (!('id' in queued)) throw new Error(toSource(queued.refused));
+    ids.push(queued.id);
+    await h.service.withdraw(ids[0], { kind: 'owner' }, 'owner 在作品页撤下');
+    await h.service.withdraw(ids[1], { kind: 'origin', actorKey: 'onebot:10001' }, '来源房间撤下');
+    await h.service.withdraw(ids[2], { kind: 'origin' }, '来源房间撤下');
+    await h.service.withdraw(ids[3], { kind: 'integrity' }, '公开根完整性核对失败');
+    await h.service.withdraw(ids[4], { kind: 'origin', actorKey: 'onebot:10002' }, 'zz 第三方的撤下理由');
+    const written = h.store.data.history.slice(-5);
+    expect(written.map(entry => [entry.id, entry.event])).toEqual([
+      [ids[0], 'withdrawn'],
+      [ids[1], 'withdrawn'],
+      [ids[2], 'withdrawn'],
+      [ids[3], 'integrity-failed'],
+      [ids[4], 'withdrawn'],
+    ]);
+    const zh = [
+      'owner 撤下',
+      '来源房间撤下：测试房间',
+      '来源房间撤下：测试房间',
+      '完整性核对失败',
+      '来源房间撤下：另一个房间',
+    ];
+    expect(written.map(entry => isTextRef(entry.detail) && renderIn(entry.detail, 'en'))).toEqual([
+      'Withdrawn by the owner',
+      'Withdrawn by the source room: 测试房间',
+      'Withdrawn by the source room: 测试房间',
+      'Integrity check failed',
+      'Withdrawn by the source room: 另一个房间',
+    ]);
+    expect(written.map(entry => toSource(entry.detail))).toEqual(zh);
+    const withdrawals = [
+      { by: 'owner', reason: 'owner 在作品页撤下' },
+      { by: 'origin', actorKey: 'onebot:10001', reason: '来源房间撤下' },
+      { by: 'origin', reason: '来源房间撤下' },
+      { by: 'integrity', reason: '公开根完整性核对失败' },
+      { by: 'origin', actorKey: 'onebot:10002', reason: 'zz 第三方的撤下理由' },
+    ];
+    expect(written.map(entry => entry.withdrawn)).toEqual(withdrawals);
+    const reloaded = new ReviewStore(boundStorage(memoryStorage(seed), 'publish-review'));
+    await reloaded.load();
+    expect(reloaded.failure).toBeUndefined();
+    expect(reloaded.data.history.slice(-5)).toEqual(written);
+    const audit = String(seed.get('pluginData:/publish-review/audit.jsonl')).trim().split('\n').slice(-5);
+    expect(audit.map(line => JSON.parse(line))).toEqual(
+      written.map((entry, i) => ({
+        at: entry.at,
+        id: entry.id,
+        event: entry.event,
+        detail: zh[i],
+        withdrawn: withdrawals[i],
+      })),
+    );
+    // 另存的撤下记录形状坏了同样失败关闭
+    const broken = JSON.parse(String(seed.get('pluginData:/publish-review/state.json')));
+    broken.history.at(-1).withdrawn = { by: 'zz', reason: 1 };
+    seed.set('pluginData:/publish-review/state.json', JSON.stringify(broken));
+    const rejected = new ReviewStore(boundStorage(memoryStorage(seed), 'publish-review'));
+    await rejected.load();
+    expect(rejected.failure).toBeTruthy();
+  });
+
   it('旧账本多余署名可读，相同提交键按旧指纹重试且新公开契约不返回署名', async () => {
     const seed = new Map<string, string | Uint8Array>();
     const h = await setup(
@@ -185,7 +289,7 @@ describe('作品审核核心', () => {
       seed,
     );
     expect(await resumed.service.nominate(keyed)).toEqual({ id: result.id });
-    expect(await resumed.service.nominate({ ...keyed, title: '改过的标题' })).toEqual({
+    expect(toSource(await resumed.service.nominate({ ...keyed, title: '改过的标题' }))).toEqual({
       refused: '提交键对应的作品内容已变更',
     });
     expect(resumed.store.data.queue[result.id]).toHaveProperty('credit', legacyCredit);
@@ -207,7 +311,7 @@ describe('作品审核核心', () => {
     const resumed = await setup({ run: vi.fn() }, false, seed);
     expect(await resumed.service.nominate(keyed)).toEqual({ id });
     expect(resumed.store.data.nominations).toHaveLength(1);
-    expect(await resumed.service.nominate({ ...keyed, origin: { ...keyed.origin, ref: 'task-2' } })).toEqual({
+    expect(toSource(await resumed.service.nominate({ ...keyed, origin: { ...keyed.origin, ref: 'task-2' } }))).toEqual({
       refused: '提交键对应的作品内容已变更',
     });
     expect(
@@ -653,7 +757,7 @@ describe('作品审核核心', () => {
       }),
     ]);
 
-    expect(await service.retryNotice('nope')).toBe('没有这条已放弃的通知');
+    expect(toSource(await service.retryNotice('nope'))).toBe('没有这条已放弃的通知');
     muted = false;
     expect(await service.retryNotice('blocked')).toBeUndefined();
     await vi.waitFor(() => expect(store.data.notices).toEqual({}));
@@ -745,7 +849,7 @@ describe('作品审核核心', () => {
     const seed = new Map<string, string | Uint8Array>([['pluginData:/publish-review/state.json', '{bad-json']]);
     const h = await setup({ run: vi.fn() }, false, seed);
     expect(h.store.failure).toBeTruthy();
-    expect(await h.service.nominate(input())).toMatchObject({ refused: expect.any(String) });
+    expect(toSource(await h.service.nominate(input()))).toMatchObject({ refused: '作品账本读取失败，等 owner 处理' });
     expect(seed.get('pluginData:/publish-review/state.json')).toBe('{bad-json');
   });
 
@@ -898,6 +1002,8 @@ describe('作品审核核心', () => {
     const second = await invalid.service.nominate(input());
     if (!('id' in second)) throw new Error(toSource(second.refused));
     await invalid.service.processNext();
+    const failure = invalid.store.data.history.at(-1)?.detail;
+    expect([isTextRef(failure), toSource(failure)]).toEqual([true, '审核输出文件集合不符']);
     expect(invalid.service.get(second.id)).toBeUndefined();
     expect(await invalid.service.approve(second.id)).toBe(false);
     expect(invalid.service.listPublished('works')).toEqual([]);
@@ -968,7 +1074,7 @@ describe('作品审核核心', () => {
   it('待审配额按来源限制，撤回后释放待审槽', async () => {
     const h = await setup({ run: vi.fn() });
     for (let i = 0; i < 3; i++) expect(await h.service.nominate(input())).toHaveProperty('id');
-    expect(await h.service.nominate(input())).toEqual({
+    expect(toSource(await h.service.nominate(input()))).toEqual({
       refused: '这个来源待审作品已达上限',
       retryAfterMs: 30_000,
     });
@@ -987,7 +1093,10 @@ describe('作品审核核心', () => {
     }
     const another = input();
     another.origin.notify!.sessionId = 'room-extra';
-    expect(await global.service.nominate(another)).toEqual({ refused: '待审总数已达上限', retryAfterMs: 30_000 });
+    expect(toSource(await global.service.nominate(another))).toEqual({
+      refused: '待审总数已达上限',
+      retryAfterMs: 30_000,
+    });
 
     const daily = await setup({ run: vi.fn() }, false, new Map(), clock);
     for (let index = 0; index < 10; index++) {
@@ -997,7 +1106,7 @@ describe('作品审核核心', () => {
       if (!('id' in accepted)) throw new Error(toSource(accepted.refused));
       await daily.service.withdraw(accepted.id, { kind: 'origin' }, 'test');
     }
-    expect(await daily.service.nominate(input())).toEqual({
+    expect(toSource(await daily.service.nominate(input()))).toEqual({
       refused: '这个来源今天提名数已达上限',
       retryAfterMs: 86_400_001,
     });
@@ -1005,16 +1114,26 @@ describe('作品审核核心', () => {
     expect(await daily.service.nominate(input())).toMatchObject({ retryAfterMs: 1 });
     clock.now++;
     expect(await daily.service.nominate(input())).toHaveProperty('id');
-    expect(await daily.service.nominate({ ...input(), title: '' })).toEqual({ refused: '标题或简介不合规' });
+    expect(toSource(await daily.service.nominate({ ...input(), title: '' }))).toEqual({ refused: '标题或简介不合规' });
   });
 
-  it('选中的展示面暂未登记是临时拒绝；未选展示面仍是永久拒绝', async () => {
+  it('选中的展示面暂未登记是临时拒绝；未选展示面仍是永久拒绝；交给提名方的原因是文字对象', async () => {
     const h = await setup({ run: vi.fn() });
-    expect(await h.service.nominate({ ...input(), surfaces: ['works', 'draw'] })).toEqual({
-      refused: '展示面暂未登记',
-      retryAfterMs: 30_000,
-    });
-    expect(await h.service.nominate({ ...input(), surfaces: [] })).toEqual({ refused: '展示面未登记' });
+    const refusals = [
+      await h.service.nominate({ ...input(), surfaces: ['works', 'draw'] }),
+      await h.service.nominate({ ...input(), surfaces: [] }),
+      await h.service.nominate({ ...input(), title: '' }),
+    ];
+    expect(toSource(refusals)).toEqual([
+      { refused: '展示面暂未登记', retryAfterMs: 30_000 },
+      { refused: '展示面未登记' },
+      { refused: '标题或简介不合规' },
+    ]);
+    expect(refusals.map(result => 'refused' in result && renderIn(result.refused, 'en'))).toEqual([
+      'A selected publish surface is not registered yet',
+      'No publish surface is registered',
+      'The title or summary is invalid',
+    ]);
     expect(h.store.data.queue).toEqual({});
     expect(h.store.data.nominations).toEqual([]);
   });
@@ -1027,13 +1146,13 @@ describe('作品审核核心', () => {
       return original(uri, value);
     };
     const keyed = { ...input(), submissionKey: 'retryable-write' };
-    expect(await h.service.nominate(keyed)).toEqual({ refused: '提名快照无法保存', retryAfterMs: 30_000 });
+    expect(toSource(await h.service.nominate(keyed))).toEqual({ refused: '提名快照无法保存', retryAfterMs: 30_000 });
     expect(h.store.data.submissions).toEqual({});
     expect(h.store.data.queue).toEqual({});
     h.storage.writeFile = original;
     expect(await h.service.nominate(keyed)).toHaveProperty('id');
     await h.service.close();
-    expect(await h.service.nominate({ ...input(), submissionKey: 'after-stop' })).toEqual({
+    expect(toSource(await h.service.nominate({ ...input(), submissionKey: 'after-stop' }))).toEqual({
       refused: '作品审核已停止',
       retryAfterMs: 30_000,
     });
@@ -1054,7 +1173,9 @@ describe('作品审核核心', () => {
         expect(await h.service.reject(result.id)).toBe(true);
       }
     }
-    expect(await h.service.nominate(noRoom('task-11'))).toMatchObject({ refused: expect.stringContaining('今天') });
+    expect(toSource(await h.service.nominate(noRoom('task-11')))).toMatchObject({
+      refused: expect.stringContaining('今天'),
+    });
   });
 
   it('get 返回来源快照，不能经引用改写账本与通知归宿', async () => {
@@ -1363,7 +1484,7 @@ describe('作品审核核心', () => {
         throw new Error('unavailable');
       },
     });
-    expect(await h.service.withdraw(result.id, { kind: 'owner' }, '撤下')).toEqual({
+    expect(toSource(await h.service.withdraw(result.id, { kind: 'owner' }, '撤下'))).toEqual({
       ok: true,
       degraded: '展示面状态暂不可核对',
     });

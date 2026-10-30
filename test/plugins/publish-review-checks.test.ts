@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { NominateInput } from '../../packages/api-publish/src/index.js';
 import { checkNomination, markContent } from '../../packages/plugin-publish-review/src/checks.js';
 import type { ReviewConfig } from '../../packages/plugin-publish-review/src/config.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
+import { renderIn } from '../fixtures/host-language.js';
 
 const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 const jpeg = new Uint8Array([255, 216, 255]);
@@ -40,20 +42,31 @@ describe('发布提名同步检查', () => {
     expect(path).toMatchObject({ refused: { i18n: '@aalis/api-publish' }, fileIndex: 0 });
     expect(JSON.stringify(path)).not.toContain('secret.png');
     expect(
-      check([
-        { path: 'index.html', bytes: html },
-        { path: 'a.PNG', bytes: png },
-        { path: 'a.png', bytes: png },
-      ]),
-    ).toMatchObject({ refused: expect.stringContaining('重复'), fileIndex: 2 });
+      toSource(
+        check([
+          { path: 'index.html', bytes: html },
+          { path: 'a.PNG', bytes: png },
+          { path: 'a.png', bytes: png },
+        ]),
+      ),
+    ).toMatchObject({ refused: '文件路径重复', fileIndex: 2 });
   });
 
   it('用媒体签名分清扩展名，拒绝假 PNG、MOV 与 AVIF', () => {
-    expect(check([{ path: 'work.png', bytes: jpeg }])).toMatchObject({ refused: expect.any(String), fileIndex: 0 });
+    expect(toSource(check([{ path: 'work.png', bytes: jpeg }]))).toMatchObject({
+      refused: '文件内容与扩展名不符',
+      fileIndex: 0,
+    });
     const mov = new Uint8Array([0, 0, 0, 16, 102, 116, 121, 112, 113, 116, 32, 32]);
-    expect(check([{ path: 'work.mp4', bytes: mov }])).toMatchObject({ refused: expect.any(String), fileIndex: 0 });
+    expect(toSource(check([{ path: 'work.mp4', bytes: mov }]))).toMatchObject({
+      refused: '文件内容与扩展名不符',
+      fileIndex: 0,
+    });
     const avif = new Uint8Array([0, 0, 0, 16, 102, 116, 121, 112, 97, 118, 105, 102]);
-    expect(check([{ path: 'work.mp4', bytes: avif }])).toMatchObject({ refused: expect.any(String), fileIndex: 0 });
+    expect(toSource(check([{ path: 'work.mp4', bytes: avif }]))).toMatchObject({
+      refused: '文件内容与扩展名不符',
+      fileIndex: 0,
+    });
   });
 
   it('HTML 须为文档起始，字体须有 wOF2；单 SVG 不作媒体作品', () => {
@@ -69,11 +82,15 @@ describe('发布提名同步检查', () => {
 
   it('APNG 与动态 WebP 的两种标记都被拒，GIF 封面可用', () => {
     const apng = new Uint8Array([...png, 0, 0, 0, 0, 97, 99, 84, 76, 0, 0, 0, 0]);
-    expect(check([{ path: 'work.png', bytes: apng }])).toMatchObject({ refused: expect.stringContaining('动态 PNG') });
     const webp = new Uint8Array([82, 73, 70, 70, 20, 0, 0, 0, 87, 69, 66, 80, 65, 78, 73, 77, 0, 0, 0, 0]);
-    expect(check([{ path: 'work.webp', bytes: webp }])).toMatchObject({
-      refused: expect.stringContaining('动态 WebP'),
-    });
+    const refused = [check([{ path: 'work.png', bytes: apng }]), check([{ path: 'work.webp', bytes: webp }])].map(
+      result => ('refused' in result ? result.refused : undefined),
+    );
+    expect(toSource(refused)).toEqual(['动态 PNG 暂不接收', '动态 WebP 暂不接收']);
+    expect(refused.map(text => renderIn(text, 'en'))).toEqual([
+      'Animated PNG is not accepted yet',
+      'Animated WebP is not accepted yet',
+    ]);
     const gif = new Uint8Array([71, 73, 70, 56, 57, 97]);
     expect(
       checkNomination({ ...input([{ path: 'work.png', bytes: png }]), cover: gif }, config, surfaces),
@@ -121,7 +138,7 @@ describe('静态审核标记', () => {
   it('密码框转成固定原因；正文像密钥的不标记，不回显内容', () => {
     const found = markContent(['<form><input type=password></form> API_KEY="zz-placeholder-0000000000"']);
     expect(found.flags).toEqual(['表单', '密码框']);
-    expect(found.reasons).toEqual(['包含密码框']);
+    expect(toSource(found.reasons)).toEqual(['包含密码框']);
     expect(JSON.stringify(found)).not.toContain('zz-placeholder');
   });
 });

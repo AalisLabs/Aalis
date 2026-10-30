@@ -31,10 +31,7 @@ import { compilerOptions, fixtureProgram, holdsTextRef, ROOT, sourceFiles } from
 // ════════════════════════════════════════════════════════════
 
 /** 包级名单：包目录名 → 理由 */
-const PACKAGE_ALLOWLIST = new Map([
-  ['plugin-paper', '单元 D'],
-  ['plugin-publish-review', '单元 D'],
-]);
+const PACKAGE_ALLOWLIST = new Map([['plugin-paper', '单元 D']]);
 
 /** 位置级名单：长期不翻的位置，reason 写依据 */
 const POSITION_ALLOWLIST: readonly (Position & { reason: string })[] = [

@@ -1,7 +1,6 @@
-import { isDeepStrictEqual } from 'node:util';
 import { isIntegrityError, type PublishedItem } from '@aalis/api-publish';
 import type { Logger, ServiceSelection } from '@aalis/core';
-import { isTextRef, type TextRef, toSource, truncateParams } from '@aalis/schema-i18n';
+import { isTextRef, sameText, type TextRef, toSource, truncateParams } from '@aalis/schema-i18n';
 import type { PagesClient, PagesDeployment } from './cloudflare/client.js';
 import { PagesApiError } from './cloudflare/client.js';
 import type { WorksSiteConfig } from './config.js';
@@ -29,11 +28,6 @@ const CLEANUP_INTERVAL = 24 * 60 * 60_000;
 /** 单个线上核对请求的上限，与 Pages API 请求一致。 */
 const REQUEST_TIMEOUT = 60_000;
 const nonce = () => crypto.randomUUID().replaceAll('-', '');
-/** 两条告警的说明是不是同一条：文字对象按字典、键与参数认（原文的措辞变了也还是同一条），字符串（旧版写的）按原文认 */
-const sameDetail = (a: string | TextRef, b: string | TextRef) =>
-  typeof a === 'string' || typeof b === 'string'
-    ? toSource(a) === toSource(b)
-    : a.i18n === b.i18n && a.key === b.key && isDeepStrictEqual(a.params, b.params);
 /** 暂停是不是这一种说明的告警引起的（按字典的键认；旧版写的字符串原因不认） */
 const pausedBy = (state: WorksState | undefined, key: keyof Source) => {
   const reason = state?.paused?.reason;
@@ -923,7 +917,7 @@ export class WorksDeployer {
     if (this.#signal.aborted) return;
     const text = truncateParams(detail, 200);
     await this.#store.update(state => {
-      if (!state.alerts.some(a => !a.acknowledged && a.kind === kind && sameDetail(a.detail, text))) {
+      if (!state.alerts.some(a => !a.acknowledged && a.kind === kind && sameText(a.detail, text))) {
         state.alerts.unshift({ id: nonce(), kind, detail: text, at: this.#now() });
         state.alerts = state.alerts.slice(0, 100);
       }

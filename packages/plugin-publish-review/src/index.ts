@@ -18,11 +18,12 @@ import { createReviewPipeline } from './pipeline.js';
 import { ReviewPreviewServer } from './preview.js';
 import { PublishReviewService } from './service.js';
 import { ReviewStore } from './state.js';
+import { t } from './texts.js';
 import { registerReviewPage } from './webui.js';
 
 export default definePlugin({
   name: '@aalis/plugin-publish-review',
-  displayName: '作品审核',
+  displayName: t('displayName'),
   subsystem: 'agent',
   configSchema,
   provides: [publish],

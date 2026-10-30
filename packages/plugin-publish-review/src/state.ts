@@ -7,7 +7,8 @@ import {
   type WorkKind,
 } from '@aalis/api-publish';
 import { type BoundStorage, isStorageNotFound } from '@aalis/api-storage';
-import { asText, type TextRef } from '@aalis/schema-i18n';
+import { asText, TextError, type TextRef, toSourceReplacer } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 
 // 账本、审核记录与各作品条目在本插件的私有目录里；审核通过的文件在公开根里
 const STATE = 'state.json';
@@ -56,6 +57,12 @@ export interface QueueItem {
     classification?: string;
   };
 }
+/** 撤下的一方与理由：理由是撤下方给的原话，只留作排查，页面不显示 */
+export interface Withdrawal {
+  by: 'origin' | 'owner' | 'integrity';
+  actorKey?: string;
+  reason: string;
+}
 export interface LedgerItem extends PublishedItem {
   state: 'published' | 'withdrawn';
   origin: PublishOrigin;
@@ -67,7 +74,7 @@ export interface LedgerItem extends PublishedItem {
   /** 已完成线上核验的展示面及其核验过的公开地址；旧账本可缺省。 */
   liveSurfaces?: Record<string, string>;
   nominatedAt: number;
-  withdrawn?: { at: number; by: 'origin' | 'owner' | 'integrity'; actorKey?: string; reason: string };
+  withdrawn?: Withdrawal & { at: number };
 }
 interface ReviewState {
   version: 1;
@@ -82,8 +89,11 @@ interface ReviewState {
     string,
     { state: Extract<ItemState, 'rejected' | 'expired' | 'failed' | 'withdrawn'>; origin: PublishOrigin; title: string }
   >;
-  /** detail 是裁决者与理由：新记录可以是文字对象，旧记录是字符串 */
-  history: Array<{ at: number; id: string; event: string; detail: string | TextRef }>;
+  /**
+   * detail 是裁决者与理由：新记录可以是文字对象，旧记录是字符串。撤下与完整性撤下的新记录另带 withdrawn（撤下的一方与理由，
+   * 页面不显示）；旧记录没有
+   */
+  history: Array<{ at: number; id: string; event: string; detail: string | TextRef; withdrawn?: Withdrawal }>;
   notices: Record<
     string,
     {
@@ -125,6 +135,11 @@ const string = (value: unknown) => typeof value === 'string';
 const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every(string);
 const text = (value: unknown) => asText(value) !== undefined;
 const digest = (value: unknown) => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+/** 撤下的一方与理由（账本与历史同形） */
+const withdrawal = (value: Record<string, unknown>) =>
+  ['origin', 'owner', 'integrity'].includes(String(value.by)) &&
+  string(value.reason) &&
+  (value.actorKey === undefined || string(value.actorKey));
 function liveUrl(value: unknown, id: string): boolean {
   if (!string(value) || Array.from(value).some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127))
     return false;
@@ -228,7 +243,13 @@ function valid(value: unknown): value is ReviewState {
     value.history !== undefined &&
     (!Array.isArray(value.history) ||
       value.history.some(
-        entry => !record(entry) || !time(entry.at) || !string(entry.id) || !string(entry.event) || !text(entry.detail),
+        entry =>
+          !record(entry) ||
+          !time(entry.at) ||
+          !string(entry.id) ||
+          !string(entry.event) ||
+          !text(entry.detail) ||
+          (entry.withdrawn !== undefined && (!record(entry.withdrawn) || !withdrawal(entry.withdrawn))),
       ))
   )
     return false;
@@ -311,11 +332,7 @@ function valid(value: unknown): value is ReviewState {
       return false;
     if (
       entry.withdrawn !== undefined &&
-      (!record(entry.withdrawn) ||
-        !time(entry.withdrawn.at) ||
-        !['origin', 'owner', 'integrity'].includes(String(entry.withdrawn.by)) ||
-        !string(entry.withdrawn.reason) ||
-        (entry.withdrawn.actorKey !== undefined && !string(entry.withdrawn.actorKey)))
+      (!record(entry.withdrawn) || !time(entry.withdrawn.at) || !withdrawal(entry.withdrawn))
     )
       return false;
   }
@@ -351,8 +368,8 @@ function valid(value: unknown): value is ReviewState {
 /** 写入由 StorageService 的本地实现保证单文件原子替换；内存只在写成功后换代。 */
 export class ReviewStore {
   data: ReviewState = empty();
-  failure?: string;
-  auditFailure?: string;
+  failure?: TextRef;
+  auditFailure?: TextRef;
   readonly #listeners = new Set<() => void>();
   #queue: Promise<void> = Promise.resolve();
   /** 作品条目的总目录（完整的存储地址） */
@@ -381,7 +398,7 @@ export class ReviewStore {
       for (const item of Object.values(this.data.queue)) if (item.state === 'checking') item.state = 'queued';
     } catch (err) {
       if (isStorageNotFound(err)) return;
-      this.failure = '作品账本读取失败，等 owner 处理';
+      this.failure = t('ledgerUnreadable');
     }
   }
 
@@ -405,7 +422,7 @@ export class ReviewStore {
     next: ReviewState,
     event?: ReviewState['history'][number] | Array<ReviewState['history'][number]>,
   ): Promise<void> {
-    if (this.failure) throw new Error(this.failure);
+    if (this.failure) throw new TextError(this.failure);
     const entries = event ? (Array.isArray(event) ? event : [event]) : [];
     if (entries.length) next.history = [...next.history, ...entries].slice(-100);
     await this.storage.own.writeFile(STATE, JSON.stringify(next));
@@ -425,10 +442,14 @@ export class ReviewStore {
         } catch (err) {
           if (!isStorageNotFound(err)) throw err;
         }
-        await this.storage.own.writeFile(AUDIT, previous + entries.map(entry => `${JSON.stringify(entry)}\n`).join(''));
+        // 审核记录照日志的写法：文字对象写原文
+        await this.storage.own.writeFile(
+          AUDIT,
+          previous + entries.map(entry => `${JSON.stringify(entry, toSourceReplacer)}\n`).join(''),
+        );
         this.auditFailure = undefined;
       } catch {
-        this.auditFailure = '审核记录追加失败';
+        this.auditFailure = t('auditAppendFailed');
       }
     }
   }

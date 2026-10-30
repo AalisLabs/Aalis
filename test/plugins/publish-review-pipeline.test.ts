@@ -3,6 +3,7 @@ import type { ChatModelRequest } from '../../packages/api-llm/src/index.js';
 import type { ReviewConfig } from '../../packages/plugin-publish-review/src/config.js';
 import { createReviewPipeline } from '../../packages/plugin-publish-review/src/pipeline.js';
 import { decideReview } from '../../packages/plugin-publish-review/src/policy.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import type { RenderRequest } from '../../packages/util-offline-render/src/index.js';
 import { boundStorage } from '../fixtures/own-storage.js';
 import { ref } from '../fixtures/service-ref.js';
@@ -145,6 +146,6 @@ describe('publish review pipeline', () => {
     );
     const animation = await pipeline.run({ ...input, files: [{ path: 'animation.gif', bytes: gif }] });
     expect(animation.verdict.verdict).toBe('unsure');
-    expect(animation.verdict.reasons).toContain('抽帧失败');
+    expect(toSource(animation.verdict.reasons)).toContain('抽帧失败');
   });
 });

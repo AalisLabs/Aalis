@@ -35,6 +35,32 @@ export function asText(value: unknown): string | TextRef | undefined {
   return typeof value === 'string' || isTextRef(value) ? value : undefined;
 }
 
+/**
+ * 两段文字是不是同一句：有一方是字符串（旧版写的、宿主原样的）时按原文比；文字对象之间按所属包、键与参数认，原文的措辞
+ * 变了也还是同一句。参数按结构比：参数键的先后不算，参数里的文字对象同样按包、键与参数认，数组逐个按位置比，
+ * 别的值（落盘读回的 null 一类）按 === 比
+ */
+export function sameText(a: string | TextRef, b: string | TextRef): boolean {
+  if (typeof a === 'string' || typeof b === 'string') return toSource(a) === toSource(b);
+  if (a.i18n !== b.i18n || a.key !== b.key) return false;
+  const left = a.params ?? {};
+  const right = b.params ?? {};
+  const keys = Object.keys(left);
+  return (
+    keys.length === Object.keys(right).length &&
+    keys.every(key => Object.hasOwn(right, key) && sameParam(left[key], right[key]))
+  );
+}
+
+const isList = (value: TextParam): value is readonly (string | number | TextRef)[] => Array.isArray(value);
+
+function sameParam(a: TextParam, b: TextParam): boolean {
+  if (isList(a) || isList(b)) {
+    return isList(a) && isList(b) && a.length === b.length && a.every((item, i) => sameParam(item, b[i]));
+  }
+  return isTextRef(a) && isTextRef(b) ? sameText(a, b) : a === b;
+}
+
 /** 值里的文字对象换成字符串之后的类型（出口渲染的结果、前端读到的线上类型） */
 export type Localized<T> = T extends TextRef
   ? string

@@ -3,6 +3,7 @@ import { request as httpRequest } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ReviewPreviewServer } from '../../packages/plugin-publish-review/src/preview.js';
 import { ReviewStore } from '../../packages/plugin-publish-review/src/state.js';
+import { t } from '../../packages/plugin-publish-review/src/texts.js';
 import { boundStorage } from '../fixtures/own-storage.js';
 
 const id = 'abcdefgabc';
@@ -120,7 +121,7 @@ describe('publish review local preview', () => {
     expect(preview.active).toEqual([]);
     await expect(fetch(first)).rejects.toThrow();
     const again = await preview.open(id);
-    store.failure = '作品账本读取失败';
+    store.failure = t('ledgerUnreadable');
     preview.prune();
     expect(preview.active).toEqual([]);
     await expect(fetch(again)).rejects.toThrow();
