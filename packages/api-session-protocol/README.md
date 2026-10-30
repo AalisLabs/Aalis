@@ -10,7 +10,7 @@
 - `RequestFrameSchema`、`ResultFrameSchema`、`ErrorFrameSchema`、`NotificationFrameSchema`，`RPC_ERROR_CODES` 与业务错误码 `ErrorCodeSchema`。
 - `sessionProtocol`：服务描述符，接口为 `connect(peer, send) → { receive(frame), close() }`。传输层（WebUI 的 WebSocket 等）认证之后把连接接到这里，对端带着传输层经 `@aalis/api-approval` 登记的审批面。
 
-第一版标 experimental：终端客户端接入之前允许不兼容的修改，之后只做加法，加字段升次版本。
+标 experimental。不兼容的修改升主版本，只做加法升次版本；对象 schema 不拒多余的键，旧客户端读到新加的字段照常解析。
 
 ## 安装
 

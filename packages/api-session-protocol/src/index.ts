@@ -10,8 +10,7 @@
  * 本包只有 schema、协议版本与服务描述符 `sessionProtocol`；实现由提供 `sessionProtocol` 的插件给出，
  * 传输（WebSocket 等）由宿主插件接到 `sessionProtocol.connect`。
  *
- * 第一版标 experimental：终端客户端接入之前允许不兼容的修改，之后只做加法，加字段升次版本。
- * 对象 schema 不拒多余的键，旧客户端读到新加的字段照常解析。
+ * 标 experimental。不兼容的修改升主版本，只做加法升次版本；对象 schema 不拒多余的键，旧客户端读到新加的字段照常解析。
  *
  * 给人看的文字字段写成产出方的形状：服务端交出字符串或文字对象（@aalis/schema-i18n 的 TextRef），发出前按全局默认层的
  * 语言（读者是 owner 自己）渲染成字符串，日期与时间按服务进程的时区，线上一律是字符串；读线上的一方（客户端）按
@@ -26,7 +25,7 @@ import { asText, isTextRef, type TextRef } from '@aalis/schema-i18n';
 import { z } from 'zod';
 
 /** 协议版本 `<主>.<次>`：握手时主版本不同即断开 */
-export const SESSION_PROTOCOL_VERSION = '1.1';
+export const SESSION_PROTOCOL_VERSION = '2.0';
 
 /** 给人看的文字：服务端交出字符串或文字对象，发出前按全局默认层的语言渲染成字符串 */
 const TextSchema = z.union([z.string(), z.custom<TextRef>(isTextRef)]);
