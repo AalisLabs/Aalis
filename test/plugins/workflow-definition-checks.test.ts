@@ -23,8 +23,9 @@ import { toolRequest } from '../fixtures/tool-call.js';
 //    已经存在、存的是另一个 id 的定义（另一条定义的文件，或不分大小写与字形的卷上另一个 id 的文件）的同样拒收。定义目录里的定义
 //    按文件载入，只拒空 id 与带 / \ NUL 的；改写与删除对的都是载入时的文件，不按 id 拼路径；删除只对已载入的定义动存储，
 //    别的 id 回 false、不碰文件。
-// 二、触发器写错的当场拒收、不保存：cron 交 cron-engine 校验；interval 的 seconds 要是大于 0、不超过上限（约 24.8 天）的数，
-//    超过的交给 setInterval 会溢出成每毫秒触发；once 的 runAt 要能解析。定义目录里超上限的 interval 照常载入，订阅不上、不触发。
+// 二、启用的定义触发器写错的当场拒收、不保存：cron 交 cron-engine 校验；interval 的 seconds 要是大于 0、不超过上限（约 24.8 天）
+//    的数，超过的交给 setInterval 会溢出成每毫秒触发；once 的 runAt 要能解析。停用的不注册触发器，不校验它，启用时再校验。
+//    定义目录里超上限的 interval 照常载入，订阅不上、不触发。
 // 真 storage-local（workspace 根指向临时目录、可删）、真 tools 与 cron-engine；工具调用经放行一切的执行守卫。
 // ════════════════════════════════════════════════════════════
 
@@ -290,6 +291,31 @@ describe('写错的触发器当场拒收', () => {
         ok: true,
       });
     }
+  });
+
+  it('触发器写错的定义能停用：停用的不注册触发器、不校验它，启用时再报原因', async () => {
+    writeFileSync(join(defsDir(), 'zz-month.yaml'), yamlOf('zz-month', '  type: interval\n  seconds: 2592000'));
+    writeFileSync(join(defsDir(), 'zz-cron.yaml'), yamlOf('zz-cron', '  type: cron\n  expr: "61 * * * *"'));
+    const svc = await boot();
+    for (const id of ['zz-month', 'zz-cron']) {
+      expect(toSource(await pages.act('workflows', 'disableWorkflow', { rowKey: id })), id).toEqual({
+        status: 200,
+        body: { message: `已停用 ${id}` },
+      });
+      expect(readFileSync(join(defsDir(), `${id}.yaml`), 'utf-8'), id).toContain('enabled: false');
+    }
+    expect(toSource(await pages.act('workflows', 'enableWorkflow', { rowKey: 'zz-month' }))).toEqual({
+      status: 500,
+      body: { error: badInterval('2592000') },
+    });
+    expect(svc.getWorkflow('zz-month')?.enabled).toBe(false);
+    await svc.defineWorkflow({
+      id: 'zz-off',
+      enabled: false,
+      trigger: { type: 'interval', seconds: 2592000 },
+      nodes: NODES,
+    });
+    expect(svc.getWorkflow('zz-off')?.enabled).toBe(false);
   });
 
   // 假时钟同 Node：setInterval 的延时超过 2^31-1 毫秒按 1 毫秒处理；只假 setInterval（interval 触发器经 cron-engine 的 @every 用它）
