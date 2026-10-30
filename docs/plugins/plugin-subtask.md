@@ -21,8 +21,8 @@ export default definePlugin({
     config,
     sessionManager: optional(sessionManager),
     messageArchive: optional(messageArchive),
-    agent: optional(agent),                       // 给子会话指定模型（assignModel）
-    sessionSettings: optional(sessionSettings),   // 会话设置的管理面：建子会话写下设置、父会话改子会话的设置
+    agent: optional(agent),                       // 给子会话写子任务模型（assignModel）；工具参数的模型按它的实例认「模型」这一项
+    sessionSettings: optional(sessionSettings),   // 会话设置的管理面：建子会话写下设置、按调用者的身份写子会话的设置（setAs）
     document: optional(ownHostConfig),            // 「子任务模型」的全局层
     backgroundTasks: optional(backgroundTasks),   // 子会话在跑的后台任务：有的不到期销毁
   },
@@ -47,7 +47,7 @@ export default definePlugin({
 
 ## 工作方式
 
-1. `create_subtask` 在 `session-manager` 中创建子会话，建之前调会话设置管理面的 `childMetadata`，把父会话此刻每一项适用于子会话的生效值写进子会话自己那一层（见 [plugin-session-settings](./plugin-session-settings.md) 的「子会话」），之后父会话与上面各层再改都不影响它。子会话的模型按「工具参数 `model` › 父会话此刻生效的「子任务模型」 › 父会话此刻实际在用的模型」取：前两者有值时建好后经 agent 的 `assignModel` 写进子会话那一层（写失败就删掉刚建的子会话、回错误），都没有时就是随设置写下的那一个。然后发送 `inbound:message` 事件触发子任务 agent 处理。子会话中不能再调用 `create_subtask`
+1. `create_subtask` 在 `session-manager` 中创建子会话，建之前调会话设置管理面的 `childMetadata`，把父会话此刻每一项适用于子会话的生效值写进子会话自己那一层（见 [plugin-session-settings](./plugin-session-settings.md) 的「子会话」），之后父会话与上面各层再改都不影响它。子会话的模型按「工具参数 `model` › 父会话此刻生效的「子任务模型」 › 父会话此刻实际在用的模型」取：前两者有值时建好后写进子会话那一层：工具参数按这次调用的授权身份经会话设置管理面的 `setAs` 写，与 `set_subtask_setting` 同一条路（判 agent「模型」这一项 `setting:<agent 实例 id>/llm` 与本会话层的门槛，owner 在操作门槛里调高的照算，权限服务不在时写不进）；子任务模型是能改它的人设下的，经 agent 的 `assignModel` 写。门槛没过或写失败就删掉刚建的子会话、回错误。都没有时就是随设置写下的那一个。然后发送 `inbound:message` 事件触发子任务 agent 处理。子会话中不能再调用 `create_subtask`
    - 会话设置不在时回错误、不建；要指定模型而 agent 不在时回错误、不建。`model` 写法不对（不是 `<提供者实例 id>/<模型 id>`）时回错误；指向的模型之后被删掉，这个子任务的回合报「配置指向的模型不存在」
    - 派发与 `send_to_subtask` 的追问都是内部注入：`source` 为 `subtask`，`userId` 为 `parent:<父会话 id>`（归档用的来源标记，authority 查不到，等价匿名）。在入站回合里派出的带着派它的那一轮（`fromTurn`，见 [schema-message](../api/schema-message.md#起它的那一轮-fromturn)），不带 `actor`：子任务那一轮的参与者取派它的那次调用的参与者（批过的是批的人，几个人都能做、没经审批的是那几个人，子任务里照同样的逐动作规则判），权限服务按那一轮判这一轮的类别与主体（[plugin-authority](./plugin-authority.md#这一轮的主体)），不按父会话里别的哪一轮；不在入站回合里派出的（编排的工具节点、mcp-server）不带 `fromTurn`，授权身份走 `actor`（调用的唯一参与者，即 api-tools 的 `actingIdentity`；匿名或几个参与者时不带，子任务同样匿名）。它们不经触发判定、不查回复后冷却；带着 `source`，正文写成指令的也不执行，当普通消息交给子任务，指令的意图确认也不认它们；要求真人当面发起的工具（白纸的交任务与取消）拒绝子任务回合。派发与追问各自成一轮：追问经网关送达（不等），排在子任务在跑的那一轮之后；网关不在时 `send_to_subtask` 回错误
    - 子任务里需要审批的工具调用按派它的那一轮上浮，规则与主会话相同（[plugin-session-server](./plugin-session-server.md#审批)）：派它的是人亲手那一轮时能产生审批，推送范围按根会话。要 owner 确认的推到她的 WebUI、终端与 IM 私聊（她用这个机器人账号派的）；几个人派出的子任务里有人自己做不了的动作，参与者审批发在父会话所在的群里，能批的人引用它回复。卡与审批消息多写一行「子任务：<名字>」（审批对象的来源链；没取名的显示默认名，见 api-session-manager 的 [`sessionLabel`](../api/api-session-manager.md#会话)）；WebUI 的卡挂在子会话的工具卡上，父会话的会话列表行与「后台」标签、运行状况里的这个子任务写「等你批准」。定时任务、编排、mcp-server 派的子任务照旧产生不了审批，回「这一轮里没有 owner 的话」那句。子任务等审批时，父会话的 `wait_subtasks` 可能先等满时限（默认 300 秒）回 `timedOut`

@@ -2,21 +2,22 @@ import { expect, vi } from 'vitest';
 import { agent } from '../../packages/api-agent/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
-import type { AalisConfig } from '../../packages/api-host-config/src/index.js';
+import { type AalisConfig, ownHostConfig } from '../../packages/api-host-config/src/index.js';
+import { type SessionFieldReader, sessionFields } from '../../packages/api-session-settings/src/index.js';
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { definePlugin, type PluginDefinition, provide } from '../../packages/core/src/index.js';
+import { config, definePlugin, optional, type PluginDefinition, provide } from '../../packages/core/src/index.js';
 import subtask from '../../packages/plugin-subtask/src/index.js';
 import type { IncomingMessage, Message } from '../../packages/schema-message/src/index.js';
 import { deferred } from '../helpers/deferred.js';
-import { fieldsPlugin, SCHEMA, startSettings } from './session-settings.js';
+import { SCHEMA, startSettings } from './session-settings.js';
 import { type RequestDraft, toolContext } from './tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 子任务插件的测试台：真的会话管理与会话设置（startSettings）装上子任务插件；工具服务的替身记下登记的工具（含风险与确认的
-// 声明），按名字调处理器；zz-agent 是声明 SCHEMA 那几项的 agent 替身（模型一项的全局层是本插件偏好），agent 服务的替身实现
-// assignModel：与 agent 同一做法，经 zz-agent 的读取器写本会话层，可让它抛错；clearing 直接跑清理（会话管理删子会话时经它清
-// 数据），没有回合要停。记下派发与追问的入站消息，派发那一刻读一次子会话
+// 声明），按名字调处理器；zz-agent 是 agent 的替身，与 agent 一样同一个实例声明 SCHEMA 那几项（模型一项的全局层是本插件偏好）
+// 并提供 agent 服务：assignModel 经自己的读取器写本会话层，可让它抛错；clearing 直接跑清理（会话管理删子会话时经它清数据），
+// 没有回合要停。记下派发与追问的入站消息，派发那一刻读一次子会话
 // 的设置。回合按 agent 的顺序在 agent:turn:before 的 next 里跑完、发 agent:turn:after。网关的替身收下追问，等用例让它落定：
 // 跑完追问开的那一轮（在送达它的那次调用的异步上下文里跑，与 agent 一样），或不开轮就落定（在网关相位被挡下、被放掉）。
 // ════════════════════════════════════════════════════════════
@@ -30,7 +31,7 @@ export interface SubtaskHubOptions {
   config?: Record<string, unknown>;
   /** 不装会话设置 */
   withoutSettings?: boolean;
-  /** 不装 agent 服务的替身 */
+  /** zz-agent 只声明字段、不提供 agent 服务 */
   withoutAgent?: boolean;
   /** assignModel 抛错 */
   assignFails?: boolean;
@@ -54,19 +55,23 @@ export async function startSubtaskHub(opts: SubtaskHubOptions = {}) {
       } as never);
     },
   });
-  const agentFields = fieldsPlugin('zz-agent', SCHEMA);
   /** 依次记下 assign（指定模型）与 dispatch（派发），看先后 */
   const order: string[] = [];
+  let agentReader: SessionFieldReader<typeof SCHEMA> | undefined;
   const agentPlugin = definePlugin({
-    name: 'zz-agent-service',
-    provides: [agent],
-    uses: { provide },
-    apply: ({ provide }) => {
-      provide.use(agent, {
+    name: 'zz-agent',
+    configSchema: SCHEMA,
+    provides: opts.withoutAgent ? [] : [agent],
+    uses: { provide, sessionFields: optional(sessionFields), document: optional(ownHostConfig), config },
+    apply: caps => {
+      const reader = caps.sessionFields.use.fields(SCHEMA, caps);
+      agentReader = reader;
+      if (opts.withoutAgent) return;
+      caps.provide.use(agent, {
         async assignModel(sessionId: string, model: { provider: string; model: string }) {
           order.push(`assign ${sessionId}`);
           if (opts.assignFails) throw new Error('<写不进>');
-          await agentFields.reader().set(sessionId, 'llm', model);
+          await reader.set(sessionId, 'llm', model);
         },
         async clearing(_sessionIds: readonly string[] | undefined, clear: () => Promise<unknown>) {
           await clear();
@@ -74,6 +79,13 @@ export async function startSubtaskHub(opts: SubtaskHubOptions = {}) {
       } as never);
     },
   });
+  const agentFields = {
+    /** zz-agent 的读取器 */
+    reader(): SessionFieldReader<typeof SCHEMA> {
+      if (!agentReader) throw new Error('zz-agent 没有激活');
+      return agentReader;
+    },
+  };
   /** 网关收下、还没落定的追问：用例交给它这一条怎么落定（跑一轮或直接落定） */
   const ingressed: Array<{ message: IncomingMessage; settle: (run: () => Promise<unknown>) => void }> = [];
   const gatewayPlugin = definePlugin({
@@ -96,8 +108,8 @@ export async function startSubtaskHub(opts: SubtaskHubOptions = {}) {
     doc: { ...opts.doc, plugins: { ...opts.doc?.plugins, [subtask.name]: opts.config ?? {} } },
     settings: !opts.withoutSettings,
     first: [toolsPlugin, gatewayPlugin],
-    plugins: [...(opts.withoutAgent ? [] : [agentPlugin]), ...(opts.plugins ?? []), subtask],
-    fields: opts.withoutSettings ? [] : [agentFields.definition],
+    plugins: [...(opts.plugins ?? []), subtask],
+    fields: [agentPlugin],
     stored: opts.stored,
   });
   const host = started.app.bind({ hooks });
