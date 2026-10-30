@@ -676,7 +676,7 @@ function registerTools(
 
   tools.register({
     // 编排定义/触发/删除：可定义向任意 sessionId 发消息/跑 agent 的工作流，挡住不受信任访客经 LLM 驱动，三个都是 sensitive(L1)；
-    // 只读 list/get_runs 保持 public。定义另加确认：定义出的编排此后按定义者的身份长期运行，与建定时任务、别的要确认的操作同一
+    // 只读的 list 保持 public，get_runs 见它自己的注释。定义另加确认：定义出的编排此后按定义者的身份长期运行，与建定时任务、别的要确认的操作同一
     // 规则，审批卡上是原文；参与者都是 owner 且在免确认白名单里（或确认覆盖设为 off）时免，批过的调用按批的人执行、定义者随之是他
     risk: 'sensitive',
     confirm: 'session',
@@ -806,6 +806,9 @@ function registerTools(
   });
 
   tools.register({
+    // 读类：运行的出错原因带会话 id（agent 节点的几句都写目标会话，私聊会话的 id 带对方账号），与 scheduler_list_jobs 同为信息
+    // 暴露向量；不弹确认
+    risk: 'sensitive',
     groups: ['workflow'],
     definition: {
       type: 'function',

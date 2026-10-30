@@ -372,3 +372,15 @@ describe('定义编排要 owner 审批', () => {
     expect((await s.tool('workflow_define', { yaml: MANUAL }, OWNER)).ok).toBe(true);
   });
 });
+
+// 运行的出错原因带会话 id（agent 节点的几句都写「会话=…」，私聊会话的 id 带对方的账号）：交给模型的运行历史与定时任务列表
+// 同一档，0 级的群友让她列不出来
+describe('运行历史要 1 级', () => {
+  it('0 级的成员调 workflow_get_runs 被拒，owner 照常', async () => {
+    const s = await boot();
+    await s.tool('workflow_define', { yaml: MANUAL }, OWNER);
+    await s.tool('workflow_run', { id: ID }, OWNER);
+    expect((await s.tool('workflow_get_runs', {}, MEMBER)).error).toContain('"tool:workflow_get_runs" 需等级 1');
+    expect((await s.tool('workflow_get_runs', {}, OWNER)).runs).toHaveLength(1);
+  });
+});
