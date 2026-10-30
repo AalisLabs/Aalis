@@ -311,8 +311,8 @@ describe('安装链（真实 npm）', () => {
         // react-dom@19.0.0 的 peer 要 react@^19.0.0
         const r = await makePm(p, [], passKindGate(['aalis', 'aalis-plugin'])).install('react-dom@19.0.0');
         expect(r.ok).toBe(false);
-        expect(r.message).toContain('legacy-peer-deps');
-        expect(r.message).toContain('react-dom');
+        expect(toSource(r.message)).toContain('legacy-peer-deps');
+        expect(toSource(r.message)).toContain('react-dom');
         expect(readFileSync(join(p, 'package.json'), 'utf-8')).toBe(before);
         expect(existsSync(join(p, 'node_modules/react-dom'))).toBe(false);
       } finally {
@@ -433,7 +433,7 @@ describe('安装链（真实 npm）', () => {
       expect(npmCalls, '安装被护栏拦在任何 npm 调用之前').toEqual([]);
       const upd = await pm.update([{ name: 'is-odd', version: '3.0.1' }]);
       expect(upd.ok).toBe(false);
-      expect(upd.message).toContain('workspace:');
+      expect(toSource(upd.message)).toContain('workspace:');
       expect(npmCalls).toEqual([]);
     } finally {
       rmSync(p, { recursive: true, force: true });
@@ -456,8 +456,8 @@ describe('安装链（真实 npm）', () => {
       writeFileSync(join(p, 'pnpm-workspace.yaml'), "packages:\n  - 'packages/*'\n");
       const r = await makePm(p).update([{ name: 'is-odd', version: '3.0.1' }]);
       expect(r.ok).toBe(false);
-      expect(r.message, '不该再出现形态类拒绝').not.toContain('工作区');
-      expect(r.message).toContain('未知'); // 本地版本读不到 → 版本守卫拒绝
+      expect(toSource(r.message), '不该再出现形态类拒绝').not.toContain('工作区');
+      expect(toSource(r.message)).toContain('未知'); // 本地版本读不到 → 版本守卫拒绝
     } finally {
       rmSync(p, { recursive: true, force: true });
     }
