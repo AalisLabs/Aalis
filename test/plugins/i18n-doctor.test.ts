@@ -10,11 +10,10 @@ import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import { fingerprint } from '../../packages/schema-i18n/src/index.js';
 import { pageHost } from '../fixtures/page-host.js';
 import { startSettings } from '../fixtures/session-settings.js';
-import { withSystemLocale } from '../fixtures/system-locale.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-i18n 的诊断 i18n.languages：各层（全局即本插件配置、平台档、平台类型档、场所）写的语言列表里有没有任何字典或
-// 语言包提供的语言（含跟随系统解析出的）时给 warn，写明是哪一层、实际用的语言与怎么办；都有提供时给 ok。结论与详情是本插件
+// 语言包提供的语言时给 warn，写明是哪一层、实际用的语言与怎么办；都有提供时给 ok。结论与详情是本插件
 // 字典的文字对象，出口按读者语言渲染。同一份结论另进 WebUI 的「需要处理」：激活时、会话设置或宿主配置变了、插件变了（语言包
 // 随之交付或撤回）时重算，都有提供时撤回。本文件的进程里只有第一方字典（中文原文、英文译文），没有语言包
 // ════════════════════════════════════════════════════════════
@@ -28,20 +27,17 @@ afterEach(async () => {
 
 /**
  * 真的会话管理与会话设置、i18n 与诊断，WebUI 是页面测试台；language 是本插件配置里的语言，sessionConfig 是宿主配置文档里的
- * 那一段；系统语言固定成 system
+ * 那一段
  */
-async function boot(
-  system: string,
-  {
-    language,
-    sessionConfig,
-    places,
-  }: {
-    language?: string[];
-    sessionConfig?: AalisConfig['sessionConfig'];
-    places?: Record<string, Record<string, unknown>>;
-  },
-) {
+async function boot({
+  language,
+  sessionConfig,
+  places,
+}: {
+  language?: string[];
+  sessionConfig?: AalisConfig['sessionConfig'];
+  places?: Record<string, Record<string, unknown>>;
+}) {
   const pages = pageHost();
   const webui = definePlugin({
     name: 'zz-webui',
@@ -51,14 +47,12 @@ async function boot(
       provide.use(webuiServer, pages.service);
     },
   });
-  const started = await withSystemLocale(system, () =>
-    startSettings({
-      doc: { ...(language ? { plugins: { [I18N]: { language } } } : {}), sessionConfig },
-      places,
-      first: [webui],
-      fields: [i18nPlugin, doctorPlugin],
-    }),
-  );
+  const started = await startSettings({
+    doc: { ...(language ? { plugins: { [I18N]: { language } } } : {}), sessionConfig },
+    places,
+    first: [webui],
+    fields: [i18nPlugin, doctorPlugin],
+  });
   apps.push(started.app);
   const registry = started.app.bind({ services }).services.use.get(doctor) as DoctorService;
   const svc = started.app.bind({ i18n }).i18n.use;
@@ -76,15 +70,15 @@ async function boot(
 }
 
 describe('诊断 i18n.languages', () => {
-  it('语言列表里有没有插件提供的语言时 warn：跟随系统与写明的各一条，结论按读者语言渲染', async () => {
-    const { svc, check, setGlobal } = await boot('ja-JP', { language: ['auto', 'zh-CN', 'en'] });
-    const [auto, ...rest] = await check();
+  it('语言列表里有没有插件提供的语言时 warn，结论按读者语言渲染', async () => {
+    const { svc, check, setGlobal } = await boot({ language: ['ja-JP', 'zh-CN', 'en'] });
+    const [first, ...rest] = await check();
     expect(rest).toEqual([]);
-    expect(auto).toMatchObject({ category: 'config', level: 'warn' });
-    expect(svc.render(auto.message, { host: true })).toBe(
-      '跟随系统当前是 日本語 (日本)，没有插件提供，实际用 中文（中国）',
+    expect(first).toMatchObject({ category: 'config', level: 'warn' });
+    expect(svc.render(first.message, { host: true })).toBe(
+      '语言列表里的 日本語 (日本) 没有插件提供，实际用 中文（中国）',
     );
-    expect(svc.render(auto.detail, { host: true })).toBe(
+    expect(svc.render(first.detail, { host: true })).toBe(
       '装上提供这种语言的语言包（在插件市场或 npm 按关键词 aalis-lang-ja-jp或aalis-lang-ja 找），或在设置「会话默认」里调整全局（插件配置）层的「语言」一行',
     );
 
@@ -99,8 +93,8 @@ describe('诊断 i18n.languages', () => {
     );
   });
 
-  it('列表里的语言都有插件提供时 ok：跟随系统解析出的 en-US 按基础语言 en 认', async () => {
-    const { check } = await boot('en-US', { language: ['auto', 'zh-CN', 'en'] });
+  it('列表里的语言都有插件提供时 ok：en-US 按基础语言 en 认', async () => {
+    const { check } = await boot({ language: ['en-US', 'zh-CN'] });
     const results = await check();
     expect(results.map(({ level }) => level)).toEqual(['ok']);
   });
@@ -115,11 +109,11 @@ describe('诊断 i18n.languages', () => {
       updatedAt: 1,
       metadata: { 'session-settings': { values: [{ plugin: I18N, key: 'language', value: language }] } },
     });
-    const { svc, check } = await boot('ja-JP', {
+    const { svc, check } = await boot({
       language: ['zh-CN'],
       sessionConfig: {
         platforms: { onebot: { [I18N]: { language: ['ja'] } } },
-        platformTypes: { onebot: { group: { [I18N]: { language: ['auto', 'en'] } } } },
+        platformTypes: { onebot: { group: { [I18N]: { language: ['ja-JP', 'en'] } } } },
       },
       places: {
         'onebot:group:20001': place('onebot:group:20001', 'window', ['fr']),
@@ -135,7 +129,7 @@ describe('诊断 i18n.languages', () => {
           '装上提供这种语言的语言包（在插件市场或 npm 按关键词 aalis-lang-ja 找），或在会话设置的平台档 onebot里调整「语言」列表',
       },
       {
-        message: '平台类型档 onebot · group里的跟随系统当前是 日本語 (日本)，没有插件提供，实际用 English',
+        message: '平台类型档 onebot · group里的 日本語 (日本) 没有插件提供，实际用 English',
         detail:
           '装上提供这种语言的语言包（在插件市场或 npm 按关键词 aalis-lang-ja-jp或aalis-lang-ja 找），或在会话设置的平台类型档 onebot · group里调整「语言」列表',
       },
@@ -150,7 +144,7 @@ describe('诊断 i18n.languages', () => {
 
 describe('「需要处理」', () => {
   it('不跑诊断也在，结论与详情同诊断；改了语言列表、交付了语言包都重算，都有提供时撤回', async () => {
-    const { app, svc, check, notices, setGlobal } = await boot('zh-CN', { language: ['ja', 'zh-CN'] });
+    const { app, svc, check, notices, setGlobal } = await boot({ language: ['ja', 'zh-CN'] });
     const shown = notices();
     expect(shown).toEqual([
       {

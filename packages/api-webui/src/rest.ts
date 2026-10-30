@@ -421,7 +421,7 @@ export interface UpdateRequest {
 /**
  * GET /api/i18n/languages：界面的语言与时区。languages 是有文字可用的语言（i18n 服务的 languages()），供可选项与第三方客户端
  * 用，每项的形状同 api-i18n 的 LanguageInfo（tag 是规范化的语言标签，name 是该语言的自称），第一方前端只读 chain 与 timeZone；
- * chain 是全局默认层的语言链（i18n 的 chainOf({ host: true })，跟随系统已换成系统语言），界面的文字按它渲染，数字、日期与排序
+ * chain 是全局默认层的语言链（i18n 的 chainOf({ host: true })），界面的文字按它渲染，数字、日期与排序
  * 按渲染时选中的语言；timeZone 是服务进程的时区，界面的时间按它。i18n 缺席时 languages 与 chain 为空，timeZone 照给
  */
 export interface I18nLanguagesResponse {

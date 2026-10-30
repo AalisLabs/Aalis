@@ -5,7 +5,6 @@ import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import { defineTexts, type LocalizeSkip } from '../../packages/schema-i18n/src/index.js';
 import { provideHostLanguage } from '../fixtures/host-language.js';
 import { expectProcessTimeZoneDistinct } from '../fixtures/process-time-zone.js';
-import { withSystemLocale } from '../fixtures/system-locale.js';
 
 // ════════════════════════════════════════════════════════════
 // localizeFor：出口的统一写法。i18n 在场时交给服务的 render，缺席时按原文语言重新渲染（带转义，时间按服务进程的时区）；
@@ -85,14 +84,12 @@ describe('outputLanguageFor', () => {
     for (const app of apps.splice(0)) await app.stop();
   });
 
-  it('i18n 在场：取读者语言链的第一项，写成「自称（标签）」；跟随系统解析出的、没有语言包的语言照取', async () => {
+  it('i18n 在场：取读者语言链的第一项，写成「自称（标签）」；没有语言包的语言照取', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
-    const setLanguage = provideHostLanguage(app, ['auto', 'zh-CN']);
-    await withSystemLocale('ja-JP', async () => {
-      await app.plugin(i18nPlugin);
-      await app.plugins.idle();
-    });
+    const setLanguage = provideHostLanguage(app, ['ja-JP', 'zh-CN']);
+    await app.plugin(i18nPlugin);
+    await app.plugins.idle();
     const selection = app.bind({ i18n }).i18n;
     expect(outputLanguageFor(selection, { host: true }, 'zh-CN')).toBe('日本語 (日本)（ja-JP）');
     setLanguage(['en', 'zh-CN']);

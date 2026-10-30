@@ -239,19 +239,19 @@ describe('终端提问', () => {
   it('排序：回车照原顺序；输入的序号排到前面，没输入的照原顺序接在后面；坏输入说明原因后重问', async () => {
     const t = terminal();
     const languages = [
-      { name: 'auto', label: '跟随系统' },
       { name: 'zh-CN', label: '中文（中国）' },
       { name: 'en', label: 'English' },
+      { name: 'ja', label: '日本語' },
     ];
     const kept = t.prompter.order('语言列表', languages);
     await t.type('');
-    expect(await kept).toEqual(['auto', 'zh-CN', 'en']);
+    expect(await kept).toEqual(['zh-CN', 'en', 'ja']);
     expect(t.shown()).toContain('按优先顺序输入序号，没输入的照原顺序接在后面（回车 = 照原顺序）: ');
     const moved = t.prompter.order('语言列表', languages);
     await t.type('3,3');
     expect(t.shown()).toContain('  注意：序号 3 重复了。');
     await t.type('3');
-    expect(await moved).toEqual(['en', 'auto', 'zh-CN']);
+    expect(await moved).toEqual(['ja', 'zh-CN', 'en']);
     t.prompter.close();
   });
 

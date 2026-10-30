@@ -26,14 +26,10 @@ export default defineLocale<Source>()({
     'Contribute it to i18n:pack; only keys without a translation in the dictionary are listed, missing and stale entries are filled with the source text, and from is the fingerprint of the source',
   settingLabel: 'Language',
   settingDescription:
-    'Languages for text shown to people, in order of preference; when a translation is missing, the next one is used. "Follow system" uses the system language of the machine running the service, not the reader’s',
-  followSystem: 'Follow system (currently: {current})',
+    'Languages for text shown to people, in order of preference; when a translation is missing, the next one is used',
   badLanguage: '{tag} is not a valid language tag',
   languagesProvided: 'Every language in the language list is provided by a plugin',
-  followedUnprovided: 'Follow system is currently {language}, which no plugin provides; {used} is used instead',
   languageUnprovided: '{language} in the language list is not provided by any plugin; {used} is used instead',
-  layerFollowedUnprovided:
-    'Follow system in {layer} is currently {language}, which no plugin provides; {used} is used instead',
   layerLanguageUnprovided: '{language} in {layer} is not provided by any plugin; {used} is used instead',
   layerPlatform: '{layer} {platform}',
   layerPlatformType: '{layer} {platform} · {type}',

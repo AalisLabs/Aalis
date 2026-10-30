@@ -47,7 +47,7 @@ type Audience = { sessionId: string; platform?: string } | { host: true };
 | `{ sessionId, platform? }` | 会话设置的 `language`，按会话解析（`platform` 是入口平台）；会话种类是 owner 的（WebUI 与终端的会话）与 `{ host: true }` 相同 | 聊天平台上的读者：网关出站、指令回复 |
 | `{ host: true }` | 全局层的设置 | owner 自己看的出口：WebUI 的 REST、会话协议、插件前端、终端、access.txt |
 
-各层怎么解析、子会话按谁、跟随系统怎么取，见 [plugin-i18n](../plugins/plugin-i18n.md#语言链)。语言只从这里来，出口与插件不自己找语言来源（浏览器语言、`Accept-Language`、对话所用的语言）；日期与时间一律按服务进程的时区。
+各层怎么解析、子会话按谁，见 [plugin-i18n](../plugins/plugin-i18n.md#语言链)。语言只从这里来，出口与插件不自己找语言来源（浏览器语言、`Accept-Language`、对话所用的语言）；日期与时间一律按服务进程的时区。
 
 ## 出口：localizeFor
 
@@ -96,7 +96,7 @@ function outputLanguageFor(
 ): string;
 ```
 
-模型生成、给人看的文字（会话标题、合并转发摘要、档案事实）用哪种语言写，写进提示词：i18n 在场时取读者语言链的第一项，可以是跟随系统解析出的、没有语言包的语言，模型照样能写；缺席时用 `source`（调用方提示词原文的语言）。写成「自称（标签）」，如 `日本語 (日本)（ja-JP）`、`English（en）`。提示词里不写死语言，也不让模型跟对话所用的语言；读者按谁看这段文字定，owner 自己看的用 `{ host: true }`。
+模型生成、给人看的文字（会话标题、合并转发摘要、档案事实）用哪种语言写，写进提示词：i18n 在场时取读者语言链的第一项，可以是没有语言包的语言，模型照样能写；缺席时用 `source`（调用方提示词原文的语言）。写成「自称（标签）」，如 `日本語 (日本)（ja-JP）`、`English（en）`。提示词里不写死语言，也不让模型跟对话所用的语言；读者按谁看这段文字定，owner 自己看的用 `{ host: true }`。
 
 ```ts
 const system = `……生成一个简短的标题，用 ${outputLanguageFor(caps.i18n, { host: true }, 'zh-CN')}。`;

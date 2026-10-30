@@ -8,7 +8,7 @@ Aalis 快速初始化脚手架：交互式选插件，生成独立项目与它�
 npm create aalis@latest my-bot                 # 问对话模型（可当场粘贴 key）、接入平台与要不要长期语义记忆
 npm create aalis@latest my-bot -- --advanced   # 另问模板档、记忆后端、embedding 与向量库
 npm create aalis@latest my-bot -- --yes        # 全取默认，不提问
-npm create aalis@latest my-bot -- --yes --lang auto,zh-CN,en   # 指定 Aalis 的语言列表，安装界面也按它显示
+npm create aalis@latest my-bot -- --yes --lang zh-CN,en        # 指定 Aalis 的语言列表，安装界面也按它显示
 ```
 
 终端里的文字按系统语言显示（中文或英文，别的语言按英文）；没给 `--lang` 时第一问选安装界面的语言，最后一问排 Aalis 的语言列表。

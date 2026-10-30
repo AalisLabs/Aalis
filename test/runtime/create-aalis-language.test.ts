@@ -24,9 +24,9 @@ import { withSystemLocale } from '../fixtures/system-locale.js';
 
 // ════════════════════════════════════════════════════════════
 // create-aalis 的语言：建项目时识别一次系统语言（Node 的 Intl 默认 locale）。安装界面的语言在脚手架字典有的中文、英文里选，
-// 识别结果预选；--lang 是写进配置的 Aalis 语言列表，安装界面取其中第一个字典有的语言（auto 按识别），给了它就不问两步语言。
-// 这批插件里有 plugin-i18n 时，最后一步排语言列表写进它的配置；列表跟随系统、系统语言又没有插件提供时，交互模式去源上找语言包，
-// 非交互只提示。
+// 识别结果预选；--lang 是写进配置的 Aalis 语言列表，安装界面取其中第一个字典有的语言，给了它就不问两步语言。
+// 这批插件里有 plugin-i18n 时，最后一步排语言列表写进它的配置，项都是明确的语言标签：识别到的系统语言有插件提供时排第一，其后是
+// 安装界面的语言与其余。没给 --lang、系统语言又没有插件提供时，交互模式去源上找语言包，非交互只提示。
 // ════════════════════════════════════════════════════════════
 
 const run = promisify(execFile);
@@ -143,7 +143,7 @@ describe('安装界面的语言', () => {
     const answers = await collect(prompter, { ...BASE, tier: 'minimal', system: 'zh-CN' });
     expect(asked.slice(0, 3).map(a => a.title)).toEqual(['安装界面的语言', 'Project directory name', 'Chat model']);
     expect(answers.ui).toBe('en');
-    expect(answers.languages).toEqual(['auto', 'en', 'zh-CN']);
+    expect(answers.languages).toEqual(['zh-CN', 'en']);
   });
 
   it('第一问选了另一种语言：生成的 README 与 package.json 描述跟选的语言，配置写排好的语言列表', async () => {
@@ -155,7 +155,7 @@ describe('安装界面的语言', () => {
       await writeProject(answers, { dir, registry: BASE.registry, host: BASE.host });
       const config = await readFile(join(dir, 'home', 'aalis.config.yaml'), 'utf-8');
       expect(await readFile(join(dir, 'README.md'), 'utf-8')).toContain('An AI assistant project based on [Aalis]');
-      expect(parse(config).plugins[I18N]).toEqual({ language: ['auto', 'en', 'zh-CN'] });
+      expect(parse(config).plugins[I18N]).toEqual({ language: ['zh-CN', 'en'] });
       expect(JSON.parse(await readFile(join(dir, 'package.json'), 'utf-8')).description).toBe(
         'my-aalis-bot — an AI assistant based on Aalis',
       );
@@ -177,10 +177,9 @@ describe('安装界面的语言', () => {
     ['en-US', undefined, 'en'],
     ['ja-JP', undefined, 'en'],
     ['zh-CN', ['en'], 'en'],
-    ['ja-JP', ['auto', 'zh-CN'], 'zh-CN'],
-    ['zh-CN', ['auto', 'en'], 'zh-CN'],
+    ['ja-JP', ['ja', 'zh-CN'], 'zh-CN'],
     ['zh-CN', ['ja'], 'zh-CN'],
-  ])('系统 %s、--lang %j：安装界面用 %s（列表里第一个字典有的，auto 按识别；都没有时按识别，识别不到为英文）', (system, languages, ui) => {
+  ])('系统 %s、--lang %j：安装界面用 %s（列表里第一个字典有的；都没有时按识别，识别不到为英文）', (system, languages, ui) => {
     expect(uiLanguage(system, languages)).toBe(ui);
   });
 
@@ -188,72 +187,74 @@ describe('安装界面的语言', () => {
     ['zh-CN', 'zh-CN'],
     ['ja-JP', 'ja-JP'],
     ['und', 'en-US'],
-  ])('识别系统语言：Intl 默认 locale 为 %s 时得 %s（认不出的按 en-US，同 plugin-i18n 的跟随系统）', async (locale, tag) => {
+  ])('识别系统语言：Intl 默认 locale 为 %s 时得 %s（认不出的按 en-US）', async (locale, tag) => {
     expect(await withSystemLocale(locale, async () => systemLanguage())).toBe(tag);
   });
 });
 
 describe('--lang', () => {
-  it('逗号分隔，每项是 auto 或认得的语言标签，规范化后照顺序写', () => {
-    expect(parseLanguages('auto,zh_CN,en')).toEqual({ ok: true, languages: ['auto', 'zh-CN', 'en'] });
+  it('逗号分隔，每项是认得的语言标签，规范化后照顺序写', () => {
+    expect(parseLanguages('ja_JP,zh_CN,en')).toEqual({ ok: true, languages: ['ja-JP', 'zh-CN', 'en'] });
   });
 
   it('各项去掉两头的空白，规范化后重复的只留第一次', () => {
-    expect(parseLanguages(' auto , zh_CN,zh-CN, en ')).toEqual({ ok: true, languages: ['auto', 'zh-CN', 'en'] });
+    expect(parseLanguages(' zh_CN,zh-CN, en ')).toEqual({ ok: true, languages: ['zh-CN', 'en'] });
   });
 
-  it('不合法的一项：报错写明是哪一项，按显示语言', () => {
-    const result = parseLanguages('auto,zz_!!');
+  it.each([
+    ['en,zz_!!', 'zz_!!'],
+    ['auto,en', 'auto'],
+  ])('不合法的一项（%s）：报错写明是哪一项，按显示语言', (raw, item) => {
+    const result = parseLanguages(raw);
     if (result.ok) throw new Error('应当不合法');
     expect([resolveText(result.error, ['zh-CN']), resolveText(result.error, ['en'])]).toEqual([
-      '--lang 里的「zz_!!」不是语言标签：写 auto（跟随系统）或 zh-CN、en 这类标签，多项用逗号分隔',
-      '“zz_!!” in --lang is not a language tag: write auto (follow the system) or tags such as zh-CN and en, separated by commas',
+      `--lang 里的「${item}」不是语言标签：写 zh-CN、en 这类标签，多项用逗号分隔`,
+      `“${item}” in --lang is not a language tag: write tags such as zh-CN and en, separated by commas`,
     ]);
   });
 });
 
 describe('语言列表', () => {
-  it('交互：最后一问列出跟随系统与第一方插件提供的语言，回车用默认顺序（跟随系统、安装界面的语言、其余），显示排好的链再确认', async () => {
+  it('交互：最后一问列出第一方插件提供的语言，回车用默认顺序（系统语言、其余），显示排好的链再确认', async () => {
     const { prompter, asked } = scripted('zh-CN');
     const answers = await collect(prompter, { ...BASE, tier: 'minimal', system: 'zh-CN' });
     expect(asked.slice(-2)).toEqual([
       {
         kind: 'order',
         title: 'Aalis 的语言列表（排在前面的先用，缺译文时依次用后面的）',
-        labels: ['跟随系统（当前：中文（中国））', '中文（中国）', 'English'],
+        labels: ['中文（中国）', 'English'],
         def: undefined,
       },
       {
         kind: 'confirm',
-        title: 'Aalis 的语言列表：跟随系统（当前：中文（中国）） → 中文（中国） → English。就按这个顺序吗？',
+        title: 'Aalis 的语言列表：中文（中国） → English。就按这个顺序吗？',
         labels: undefined,
         def: true,
       },
     ]);
-    expect(answers.languages).toEqual(['auto', 'zh-CN', 'en']);
+    expect(answers.languages).toEqual(['zh-CN', 'en']);
   });
 
   it('交互：不确认就重排，确认后照排好的写', async () => {
-    const replies = [undefined, undefined, undefined, undefined, undefined, ['en', 'auto', 'zh-CN'], false];
-    const { prompter, asked } = scripted('zh-CN', [...replies, ['zh-CN', 'auto', 'en'], true]);
+    const replies = [undefined, undefined, undefined, undefined, undefined, ['zh-CN', 'en'], false];
+    const { prompter, asked } = scripted('zh-CN', [...replies, ['en', 'zh-CN'], true]);
     const answers = await collect(prompter, { ...BASE, tier: 'minimal', system: 'zh-CN' });
     expect(asked.filter(a => a.kind === 'order')).toHaveLength(2);
-    expect(answers.languages).toEqual(['zh-CN', 'auto', 'en']);
+    expect(answers.languages).toEqual(['en', 'zh-CN']);
   });
 
-  it('非交互：没给 --lang 时按识别写默认顺序；给了照写', async () => {
-    expect((await collect(undefined, { ...BASE, tier: 'minimal', system: 'en-US' })).languages).toEqual([
-      'auto',
-      'en',
-      'zh-CN',
-    ]);
-    const given = await collect(undefined, {
-      ...BASE,
-      tier: 'minimal',
-      system: 'en-US',
-      languages: ['auto', 'zh-CN', 'en'],
-    });
-    expect(given).toMatchObject({ ui: 'en', languages: ['auto', 'zh-CN', 'en'] });
+  it.each([
+    ['zh-CN', ['zh-CN', 'en']],
+    ['zh-TW', ['zh-CN', 'en']],
+    ['en-GB', ['en', 'zh-CN']],
+    ['ja-JP', ['en', 'zh-CN']],
+  ])('非交互、没给 --lang：系统语言 %s 时写 %j（中文系统中文在前，别的英文在前）', async (system, languages) => {
+    expect((await collect(undefined, { ...BASE, tier: 'minimal', system })).languages).toEqual(languages);
+  });
+
+  it('非交互、给了 --lang：照写，安装界面取列表里第一个字典有的语言', async () => {
+    const given = await collect(undefined, { ...BASE, tier: 'minimal', system: 'en-US', languages: ['zh-CN', 'en'] });
+    expect(given).toMatchObject({ ui: 'zh-CN', languages: ['zh-CN', 'en'] });
   });
 
   it('bare 档没有 plugin-i18n：只问安装界面的语言，不排语言列表，不写这一段', async () => {
@@ -292,7 +293,7 @@ describe('找语言包', () => {
     return { url: `http://127.0.0.1:${address.port}`, searched };
   }
 
-  const UNPROVIDED = 'No plugin provides 日本語 (日本) (ja-JP); Aalis shows the next language in the list';
+  const UNPROVIDED = 'No plugin provides 日本語 (日本) (ja-JP), so it is left out of the language list';
 
   it('交互、源上没有：先按完整标签、再按基础语言检索，提示可能是源不支持检索与没有插件提供，列表照第一方的语言', async () => {
     const source = await registry();
@@ -303,12 +304,8 @@ describe('找语言包', () => {
       `No language pack for 日本語 (日本) (ja-JP) was found on ${source.url}; this registry may not support search, so you can retry with --registry https://registry.npmjs.org`,
       UNPROVIDED,
     ]);
-    expect(asked.find(a => a.kind === 'order')?.labels).toEqual([
-      'Follow the system (now: 日本語 (日本))',
-      'English',
-      '中文（中国）',
-    ]);
-    expect(answers.languages).toEqual(['auto', 'en', 'zh-CN']);
+    expect(asked.find(a => a.kind === 'order')?.labels).toEqual(['English', '中文（中国）']);
+    expect(answers.languages).toEqual(['en', 'zh-CN']);
   });
 
   it('交互、连不上源：写明没能检索，不说源上没有', async () => {
@@ -331,7 +328,7 @@ describe('找语言包', () => {
     ]);
   });
 
-  it('交互、找到了：只收确实带这个关键词的包，问是否一起装；装了的进依赖与可选的语言，不再提示', async () => {
+  it('交互、找到了：只收确实带这个关键词的包，问是否一起装；装了的进依赖，它的语言排在列表最前，不再提示', async () => {
     const pack = 'zz-aalis-plugin-lang-ja';
     const source = await registry({
       'aalis-lang-ja-jp': [{ package: { name: 'zz-unrelated', keywords: ['aalis-plugin'] } }],
@@ -348,8 +345,8 @@ describe('找语言包', () => {
       def: '',
     });
     expect(answers.enabled.has(pack)).toBe(true);
-    expect(answers.languages).toEqual(['auto', 'en', 'zh-CN', 'ja']);
-    expect(asked.find(a => a.kind === 'order')?.labels).toContain('日本語');
+    expect(answers.languages).toEqual(['ja', 'en', 'zh-CN']);
+    expect(asked.find(a => a.kind === 'order')?.labels).toEqual(['日本語', 'English', '中文（中国）']);
     expect(warned()).toEqual([]);
   });
 
@@ -369,10 +366,10 @@ describe('找语言包', () => {
     const answers = await collect(undefined, { ...BASE, registry: source.url, tier: 'minimal', system: 'ja-JP' });
     expect(source.searched).toEqual([]);
     expect(warned()).toEqual([UNPROVIDED]);
-    expect(answers.languages).toEqual(['auto', 'en', 'zh-CN']);
+    expect(answers.languages).toEqual(['en', 'zh-CN']);
   });
 
-  it('列表不跟随系统（--lang 里没有 auto）：系统语言用不上，不找也不提示', async () => {
+  it('给了 --lang：照它写，系统语言用不上，不找也不提示', async () => {
     const source = await registry();
     const { prompter } = scripted('en');
     await collect(prompter, { ...BASE, registry: source.url, tier: 'minimal', system: 'ja-JP', languages: ['en'] });
@@ -451,14 +448,14 @@ describe('真 CLI 的终端文字', () => {
     expect(result.stdout).toContain('Next steps:');
     expect(`${result.stdout}${result.stderr}`).not.toMatch(CJK);
     const config = parse(await readFile(join(dir, 'my-bot', 'home', 'aalis.config.yaml'), 'utf-8'));
-    expect(config.plugins[I18N]).toEqual({ language: ['auto', 'en', 'zh-CN'] });
+    expect(config.plugins[I18N]).toEqual({ language: ['en', 'zh-CN'] });
   });
 
-  it('--lang 里有不合法的一项：退出码 1，写明是哪一项', async () => {
+  it('--lang 里有不合法的一项（auto 不是语言标签）：退出码 1，写明是哪一项', async () => {
     const result = await create('en_US.UTF-8', ['my-bot', '--yes', '--no-install', '--lang', 'auto,zz_!!']);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain(
-      '“zz_!!” in --lang is not a language tag: write auto (follow the system) or tags such as zh-CN and en, separated by commas',
+      '“auto” in --lang is not a language tag: write tags such as zh-CN and en, separated by commas',
     );
   });
 });
