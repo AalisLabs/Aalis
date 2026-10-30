@@ -503,6 +503,19 @@ describe('install（只有一条路径：写根依赖）', () => {
     });
   });
 
+  it('主实例激活失败的原因与插件页同一说法：core 自己的失败按 code 给说明，英文读者看到英文', async () => {
+    const h = makeHarness({ registered: ['@scope/foo'], json: { [rootPkg]: {} } });
+    const failure = Object.assign(new Error('core 的诊断句'), { code: 'exclusive-conflict', service: 'llm' });
+    h.deps.pluginStatus = () => [{ ...entry('@scope/foo', 'error', 'core 的诊断句'), failure }];
+    const r = await createPackageManager(h.deps).install('@scope/foo');
+    expect(toSource(r.message)).toBe(
+      '已安装 @scope/foo，但激活失败，已转为 error 态（服务 llm 为独占登记，不能再添加提供者）',
+    );
+    expect(isTextRef(r.message) && resolveText(r.message, ['en'])).toBe(
+      'Installed @scope/foo, but activation failed and it is now in the error state (Service llm is registered exclusively; no other provider can be added)',
+    );
+  });
+
   it('读主实例状态前等重算落定；落定后仍在后台激活或在等依赖的，如实说明尚未激活', async () => {
     const h = makeHarness({ registered: ['@scope/foo'], json: { [rootPkg]: {} } });
     // rescan 撞上在飞的重算时登记只排队：落定之前主实例是 pending，落定之后才转 error
