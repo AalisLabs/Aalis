@@ -480,7 +480,7 @@ describe('动作', () => {
     expect(alert.textContent).toContain('执行失败：任务 周报 不存在');
   });
 
-  it('destructive：宿主弹确认框，写插件给的确认文案，焦点在「取消」；取消不调，确认后调', async () => {
+  it('destructive：宿主弹确认框，写插件给的确认文案，焦点在「返回」；返回不调，确认后调', async () => {
     app = await renderApp(
       pagePath(JOBS),
       {},
@@ -492,8 +492,8 @@ describe('动作', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: '删除' }));
     const dialog = within(screen.getByRole('dialog', { name: '删除？' }));
     expect(dialog.getByText('删除这个任务？删除后不能恢复。')).toBeTruthy();
-    expect(document.activeElement).toBe(dialog.getByRole('button', { name: '取消' }));
-    fireEvent.click(dialog.getByRole('button', { name: '取消' }));
+    expect(document.activeElement).toBe(dialog.getByRole('button', { name: '返回' }));
+    fireEvent.click(dialog.getByRole('button', { name: '返回' }));
     expect(posts(actionPath(JOBS, 'remove'))).toHaveLength(0);
 
     fireEvent.click(rowOf('周报').getAllByRole('button', { name: '更多' })[0]);
@@ -601,7 +601,7 @@ describe('动作', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: '删除' }));
     fireEvent.click(within(screen.getByRole('dialog', { name: '删除？' })).getByRole('button', { name: '删除' }));
     await vi.waitFor(() => expect(posts(actionPath(JOBS, 'remove'))).toHaveLength(1));
-    fireEvent.click(within(screen.getByRole('dialog', { name: '删除？' })).getByRole('button', { name: '取消' }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: '删除？' })).getByRole('button', { name: '返回' }));
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(rowOf('周报').getByRole('status', { name: '进行中' })).toBeTruthy();
     expect(rowOf('周报').queryByRole('button', { name: '更多' }), '删除还在进行，同一行不能再发一次').toBeNull();
@@ -614,13 +614,13 @@ describe('动作', () => {
     expect(screen.getByRole('dialog', { name: '新建' }), '先发出的删除回来时把后打开的表单关掉了').toBeTruthy();
     expect((form.getByLabelText('名称') as HTMLInputElement).value).toBe('晨报');
     expect(rowOf('周报').queryByRole('status', { name: '进行中' })).toBeNull();
-    fireEvent.click(form.getByRole('button', { name: '取消' }));
+    fireEvent.click(form.getByRole('button', { name: '返回' }));
 
     fireEvent.click(rowOf('备份').getAllByRole('button', { name: '更多' })[0]);
     fireEvent.click(screen.getByRole('menuitem', { name: '编辑' }));
     fireEvent.click(within(screen.getByRole('dialog', { name: '编辑' })).getByRole('button', { name: '编辑' }));
     await vi.waitFor(() => expect(posts(actionPath(JOBS, 'edit'))).toHaveLength(1));
-    fireEvent.click(within(screen.getByRole('dialog', { name: '编辑' })).getByRole('button', { name: '取消' }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: '编辑' })).getByRole('button', { name: '返回' }));
     act(() => held.edit());
     const failed = await screen.findByRole('alert');
     expect(failed.textContent).toContain('编辑失败：任务 备份 不存在');

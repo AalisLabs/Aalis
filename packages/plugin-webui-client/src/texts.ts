@@ -582,6 +582,7 @@ const SOURCE = {
   closeDetail: '关闭详情',
   actionInProgress: '进行中',
   pinnedFailed: '固定的页面没取到：{error}（点按重试）',
+  placesFailed: '别处的设置没取到：{error}（点按重试）',
   pinnedPages: '固定的页面',
   pageHeading: '页面',
   pageGoneTitle: '这个页面所属的插件已停用',

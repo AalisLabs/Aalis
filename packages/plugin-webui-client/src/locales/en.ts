@@ -597,6 +597,7 @@ export default defineLocale<Source>()({
   closeDetail: 'Close details',
   actionInProgress: 'In progress',
   pinnedFailed: 'Couldn’t load the pinned pages: {error} (click to retry)',
+  placesFailed: 'Couldn’t load the settings made elsewhere: {error} (click to retry)',
   pinnedPages: 'Pinned pages',
   pageHeading: 'Page',
   pageGoneTitle: 'The plugin this page belongs to is disabled',

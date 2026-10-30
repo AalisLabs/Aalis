@@ -254,7 +254,7 @@ function ActionDialog({
         action && (
           <>
             <Button data-autofocus={action.input ? undefined : true} onClick={onClose}>
-              {tr('cancel')}
+              {tr('back')}
             </Button>
             <Button
               variant="primary"

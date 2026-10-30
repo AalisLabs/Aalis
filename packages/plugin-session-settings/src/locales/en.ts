@@ -39,7 +39,8 @@ export default defineLocale<Source>()({
   atDescription: 'Which layer to write: session (this session, default), place, platformType, platform, global',
   nameDescription: 'Session display name',
   itemArgument: 'Setting: the field name, written as <instance id>/<key> when several plugins share it',
-  valueArgument: 'Value: the rest of the line; write [] for an empty list or map and "" for empty text',
+  valueArgument:
+    'Value: the rest of the command, split by the command rules: quote it if it has spaces, line breaks or quotes; write every backslash twice; put -- before a value that starts with -. Write [] for an empty list or map and "" for empty text',
   authorityAbsent: 'Changing settings in chat needs the authority plugin',
   notFiled: 'This session has not been recorded yet, so it has no place layer',
   noPlatformType: 'This session has no chat window, so it belongs to no platform-type profile',

@@ -299,6 +299,7 @@ async function setup({
     participants: Array<{ platform: string; userId: string }>,
     sessionId: string,
     inbound: ToolCallRequest['inbound'] = {},
+    signal?: AbortSignal,
   ) => {
     seq++;
     const [first] = participants;
@@ -310,6 +311,7 @@ async function setup({
       inbound,
       turnId: `turn-${seq}`,
       callId: `call-${seq}`,
+      ...(signal && { signal }),
     };
     const box: { content?: string } = {};
     const result = host.tools.use.execute(name, args, ctx).then(r => {
@@ -888,6 +890,18 @@ describe('接入与在场', () => {
     expect(await r.result).toContain('300 秒');
     await vi.waitFor(() => expect(s.lines('已过期')).toHaveLength(1));
     expect(s.lines('已过期')[0]).toContain(PROBE);
+  });
+
+  it('发起的回合被停下而撤销：送达过的私聊收到一行撤销', async () => {
+    const s = await setup();
+    await s.say('帮我清一下');
+    const stop = new AbortController();
+    const r = s.run(PROBE, { command: 'rm -rf build' }, [OWNER_QQ], OWNER_DM, {}, stop.signal);
+    await s.requested();
+    stop.abort();
+    await r.result;
+    await vi.waitFor(() => expect(s.lines('审批已撤销')).toHaveLength(1));
+    expect(s.lines('审批已撤销')[0]).toContain(PROBE);
   });
 
   it('末行的剩余分钟数按审批的到期时刻算：推出两分半之后才补推到私聊的写 3 分钟', async () => {

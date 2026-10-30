@@ -24,6 +24,7 @@ const SOURCE = {
   alreadySettled: '这张已经处理过。',
   answerRefused: '应答没有生效：{reason}',
   expired: '{tool} 的审批已过期。',
+  cancelled: '{tool} 的审批已撤销。',
 } as const;
 export type Source = typeof SOURCE;
 
