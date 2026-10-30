@@ -40,8 +40,9 @@ import { storedRoom } from '../fixtures/rooms.js';
 // ════════════════════════════════════════════════════════════
 // onebot 出站的文件附件与内联前的文件头核对。
 //
-// file 附件经 upload_group_file / upload_private_file 发出，内容只收 base64://：超过内联上限时
-// attachmentToOneBotFile 会退回 file://<宿主路径> 或原 http 链接，容器里的 NapCat 读不到，一律拒发。
+// file 附件经 upload_group_file / upload_private_file 发出，内容只收 base64://：超过内联上限的存储文件
+// attachmentToOneBotFile 会退回 file://<宿主路径>，容器里的 NapCat 读不到，一律拒发。超过内联上限的网址附件（不论类型）
+// 一律拒发，原网址不交给实现端去拉。
 // image、audio、video 按文件头分流：NapCat 能内联的格式走消息段；send_attachment 白名单里其余的媒体
 // （BMP、AVIF、HEIC 图片，MKV、AVI 视频）改经文件上传，不静默丢弃；不是媒体的（如配置文本）拒发，
 // 免得任意可读文件冒充媒体发出。没发出去的附件，agent 发出的消息在会话记忆里留投递失败记录。
@@ -1536,16 +1537,17 @@ describe('onebot 出站：安全', () => {
     expect(t.sent().some(a => a.action.startsWith('upload_'))).toBe(false);
   });
 
-  it('超过内联上限、退回原网址的图片附件：网址里带引号也只成一个媒体段，实现端收不到网址以外的地址', async () => {
+  it('超过内联上限的网址图片附件：不发，原网址不交给实现端去拉，投递报超过内联上限', async () => {
     const t = await boot();
-    const url = `${httpBase}/big.html#"/><image url="file:///zz/placeholder.png`;
-    await t.send({ sessionId: GROUP, content: '', attachments: [{ kind: 'image', data: url }] });
+    const message: OutgoingMessage = {
+      sessionId: GROUP,
+      content: '',
+      attachments: [{ kind: 'image', data: `${httpBase}/big.html` }],
+    };
+    await t.send(message);
+    expect(reasonOf(await message.delivery)).toContain('超过内联上限');
     await t.flush();
-    const media = t
-      .sent()
-      .flatMap(a => a.params.message as Array<{ type: string; data: { file?: string } }>)
-      .filter(s => s.type !== 'text');
-    expect(media.map(s => s.data.file)).toEqual([url]);
+    expect(JSON.stringify(t.actions)).not.toContain(httpBase);
   });
 
   it('不是对应格式的文件（占位的配置文本）以 image、audio、video 发出：不内联、不发出，并有 warn', async () => {
