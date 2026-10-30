@@ -6,7 +6,7 @@
 //   npm create aalis@latest my-bot -- --advanced  → 另问模板档、记忆后端、embedding 与向量库
 //   npm create aalis@latest my-bot -- --yes       → 非交互：上面几问全取默认
 //   npm create aalis@latest my-bot -- --tier minimal --no-install
-//   npm create aalis@latest my-bot -- --yes --lang auto,zh-CN,en → 指定 Aalis 的语言列表（安装界面也按它显示）
+//   npm create aalis@latest my-bot -- --yes --lang zh-CN,en → 指定 Aalis 的语言列表（安装界面也按它显示）
 //
 // 产出一个独立项目目录：package.json（依赖 @aalis/core + @aalis/runtime + 所选插件）、
 // index.mjs（一行 startAalis 启动）、家目录 home/（aalis.config.yaml 与 secrets.yaml）、README、.gitignore，
@@ -164,14 +164,11 @@ export type UiLanguage = (typeof UI_LANGUAGES)[number];
 /** 第一方插件提供的语言：第一方字典都是原文 zh-CN、带 en */
 const FIRST_PARTY_LANGUAGES = ['zh-CN', 'en'];
 
-/** 语言列表里的「跟随系统」：取服务进程的系统语言，与 plugin-i18n 认的同一个字面量 */
-const AUTO = 'auto';
-
 /** 按读者语言显示的插件：这批插件里有它时才排语言列表、写它的配置段 */
 const I18N = '@aalis/plugin-i18n';
 
 /**
- * 识别系统语言：Node 的 Intl 默认 locale（跟 LANG），规范化；认不出（und）时按 en-US，同 plugin-i18n 的跟随系统。
+ * 识别系统语言：Node 的 Intl 默认 locale（跟 LANG），规范化；认不出（und）时按 en-US。
  * 建项目时取一次：安装界面的语言、默认的语言列表与找语言包都按它
  */
 export function systemLanguage(): string {
@@ -179,27 +176,21 @@ export function systemLanguage(): string {
   return tag === undefined || tag.split('-')[0] === 'und' ? 'en-US' : tag;
 }
 
-/** --lang 的值：逗号分隔的语言列表，每项是 auto 或认得的语言标签（判据同 plugin-i18n），规范化、去重；不合法时写明是哪一项 */
+/** --lang 的值：逗号分隔的语言列表，每项是认得的语言标签（判据同 plugin-i18n），规范化、去重；不合法时写明是哪一项 */
 export function parseLanguages(raw: string): { ok: true; languages: string[] } | { ok: false; error: TextRef } {
   const languages: string[] = [];
   for (const item of raw.split(',').map(part => part.trim())) {
-    const tag = item === AUTO ? AUTO : normalizeLanguages([item])[0];
+    const [tag] = normalizeLanguages([item]);
     if (tag === undefined) return { ok: false, error: t('badLanguage', { item }) };
     if (!languages.includes(tag)) languages.push(tag);
   }
   return { ok: true, languages };
 }
 
-/** 安装界面的语言：语言列表里第一个本包字典有的语言（auto 按系统语言），都没有时按系统语言，再没有时为英文 */
+/** 安装界面的语言：语言列表里第一个本包字典有的语言，都没有时按系统语言，再没有时为英文 */
 export function uiLanguage(system: string, languages: readonly string[] = []): UiLanguage {
-  const chain = [...languages.map(tag => (tag === AUTO ? system : tag)), system];
-  const at = pickLanguage(chain, UI_LANGUAGES);
+  const at = pickLanguage([...languages, system], UI_LANGUAGES);
   return at === undefined ? 'en' : UI_LANGUAGES[at];
-}
-
-/** 默认的语言列表：跟随系统在前，其后是安装界面的语言与插件提供的其余语言。没装语言包时与 runtime 的 --init 一致 */
-export function defaultLanguages(ui: UiLanguage, provided: readonly string[] = FIRST_PARTY_LANGUAGES): string[] {
-  return [AUTO, ui, ...provided.filter(tag => tag !== ui)];
 }
 
 // 要密钥的插件与它的键：提问时当场粘贴，没粘贴的写成空桩，由用户在 WebUI 或配置文件里填。直接写进
@@ -1149,7 +1140,7 @@ export interface Answers {
 }
 
 /**
- * 逐项定下装什么：安装界面的语言（没给 --lang 时第一问）、项目名、档与各档的所选；这批插件里有 plugin-i18n 时，列表跟随系统而
+ * 逐项定下装什么：安装界面的语言（没给 --lang 时第一问）、项目名、档与各档的所选；这批插件里有 plugin-i18n 时，没给 --lang 而
  * 系统语言没有插件提供的，交互模式去源上找语言包、非交互只提示，最后排语言列表（给了 --lang 时照它写）。没有终端提问时一律取默认
  */
 export async function collect(
@@ -1211,10 +1202,10 @@ export async function collect(
   const enabled = pluginSet(plan, o.lancedb);
   if (!enabled.has(I18N)) return { projectName, plan, enabled, keys, probe, ui };
 
-  // 列表跟随系统、系统语言又没有插件提供时：交互模式按关键词找语言包，问是否一起装；非交互不检索，只提示
+  // 没给 --lang、系统语言又没有插件提供时：交互模式按关键词找语言包，问是否一起装；非交互不检索，只提示
   const provided = [...FIRST_PARTY_LANGUAGES];
   const language = { name: selfName(o.system), tag: o.system };
-  if ((o.languages ?? [AUTO]).includes(AUTO) && matchLanguage([o.system], provided) === undefined) {
+  if (!o.languages && matchLanguage([o.system], provided) === undefined) {
     if (prompter) {
       const found = await findLanguagePacks(o.registry, o.system);
       if (!found || found.names.length === 0) {
@@ -1230,23 +1221,19 @@ export async function collect(
     }
     if (matchLanguage([o.system], provided) === undefined) console.warn(show(t('languageUnprovided', language)));
   }
-  const defaults = defaultLanguages(ui, provided);
-  const languages = o.languages
-    ? [...o.languages]
-    : prompter
-      ? await orderLanguages(prompter, defaults, o.system)
-      : defaults;
+  // 默认的语言列表：系统语言有插件提供时排第一（写成提供它的那种，如 zh-TW 写 zh-CN），其后是安装界面的语言与其余
+  const at = matchLanguage([o.system], provided);
+  const defaults = [...new Set([...(at === undefined ? [] : [provided[at]]), ui, ...provided])];
+  const languages = o.languages ? [...o.languages] : prompter ? await orderLanguages(prompter, defaults) : defaults;
   return { projectName, plan, enabled, keys, probe, ui, languages };
 }
 
-/** 排语言列表：列出跟随系统（写明当前识别到的语言）与各语言的自称，排好后显示整条链再确认，不确认就重排 */
-async function orderLanguages(p: Prompter, defaults: readonly string[], system: string): Promise<string[]> {
-  const labelOf = (tag: string) =>
-    shown(tag === AUTO ? t('followSystem', { name: selfName(system) }) : selfName(tag), p.language);
-  const options = defaults.map(tag => ({ name: tag, label: labelOf(tag) }));
+/** 排语言列表：列出各语言的自称，排好后显示整条链再确认，不确认就重排 */
+async function orderLanguages(p: Prompter, defaults: readonly string[]): Promise<string[]> {
+  const options = defaults.map(tag => ({ name: tag, label: selfName(tag) }));
   while (true) {
     const order = await p.order(t('languagesTitle'), options);
-    if (await p.confirm(t('languageChain', { chain: order.map(labelOf).join(' → ') }), true)) return order;
+    if (await p.confirm(t('languageChain', { chain: order.map(tag => selfName(tag)).join(' → ') }), true)) return order;
   }
 }
 

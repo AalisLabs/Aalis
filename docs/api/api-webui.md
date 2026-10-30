@@ -726,7 +726,7 @@ interface LogQuery extends LogFilter { limit?: number } // 默认 200，上限 5
 |---|---|---|
 | `GET /api/models/:service` | 查询参数 `dependency?` | `LLMModelsResponse`（`:service` 是 `llm`）或 `OptionsResponse`（其余） |
 | `POST /api/llm-providers/:contextId/refresh` | — | `{ ok: true, added, removed, total }` |
-| `GET /api/i18n/languages` | — | `{ languages, chain, timeZone }`：有文字可用的语言（`{ tag, name }`，标签与自称）、解析过跟随系统的全局层语言链、服务进程的时区；i18n 缺席时 `languages` 与 `chain` 为空 |
+| `GET /api/i18n/languages` | — | `{ languages, chain, timeZone }`：有文字可用的语言（`{ tag, name }`，标签与自称）、全局层的语言链、服务进程的时区；i18n 缺席时 `languages` 与 `chain` 为空 |
 | `GET /api/i18n/messages` | 查询参数 `ns`，逗号分隔 | `{ entries }`：语言包给这些 ns 补的译文（ns → 键 → 各包给的 `{ language, text, from }`），只留全局层语言链用得上的语言（与链里某种语言相同的，以及 en）；i18n 缺席时为空 |
 
 - 先找贡献点 `webui:options` 里同名的来源：插件经它交自己的可选项来源（`{ id, list(dependency?) }`，`id` 就是字段的 `dynamicOptions`），同名的有几家时取全局键最前的那家，`dependency` 原样交给它，回 `{ models, details }`。可选项（`OptionDetail`）带名字与说明，可以带成员 `members`（选上这一项会带上的成员的名字，界面在这一项下面写「包含 N 项」、点开列出）；插件的选项来源交得了 `members`、交不了 `others`。第一方的来源：plugin-i18n 的 `i18n-languages`、plugin-skills 的 `skills`、plugin-authority 的 `authority-operations` 与 `authority-groups`、两个向量化提供者的 `embedding-openai` 与 `embedding-ollama`。来源名按插件定，同一个插件开了几个实例时各实例的字段都取最前那家。

@@ -31,7 +31,6 @@ const SOURCE = {
   vectorstoreFlat: 'Flat（内置，零依赖）',
   vectorstoreLancedb: 'LanceDB（高性能）',
   pasteKey: '粘贴 {plugin} 的 {key}（输入不显示，回车跳过）',
-  followSystem: '跟随系统（当前：{name}）',
   languagesTitle: 'Aalis 的语言列表（排在前面的先用，缺译文时依次用后面的）',
   languageChain: 'Aalis 的语言列表：{chain}。就按这个顺序吗？',
   packTitle: '找到提供 {name}（{tag}）的语言包，要一起装吗',
@@ -40,8 +39,8 @@ const SOURCE = {
   packSearchEmpty: '{registry} 上没有 {name}（{tag}）的语言包',
   packSearchEmptyMirror:
     '{registry} 上没有检索到 {name}（{tag}）的语言包；这个源可能不支持检索，可以加 --registry https://registry.npmjs.org 重试',
-  languageUnprovided: '没有插件提供 {name}（{tag}），Aalis 会按语言列表里的下一项显示',
-  badLanguage: '--lang 里的「{item}」不是语言标签：写 auto（跟随系统）或 zh-CN、en 这类标签，多项用逗号分隔',
+  languageUnprovided: '没有插件提供 {name}（{tag}），语言列表里不写它',
+  badLanguage: '--lang 里的「{item}」不是语言标签：写 zh-CN、en 这类标签，多项用逗号分隔',
   optionsTitle: '{title}：',
   chooseOne: '选一个（序号，回车 = {shown}）: ',
   chooseMany: '选若干（逗号或空格分隔序号，回车 = {shown}）: ',

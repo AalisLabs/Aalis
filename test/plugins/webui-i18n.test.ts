@@ -23,7 +23,6 @@ import { catalogEntries, defineTexts, fingerprint, TextError } from '../../packa
 import { provideHostLanguage } from '../fixtures/host-language.js';
 import { HUB_PLUGINS } from '../fixtures/hubs.js';
 import { expectProcessTimeZoneDistinct } from '../fixtures/process-time-zone.js';
-import { withSystemLocale } from '../fixtures/system-locale.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -717,12 +716,11 @@ describe('webui-server 自己的文字按全局层的语言', () => {
 });
 
 describe('可选项来源与 /api/i18n 的两条路由', () => {
-  it('/api/models/i18n-languages 经贡献点 webui:options 给出可选项：先是跟随系统，再是各语言（值是语言标签，标签是自称）', async () => {
-    const { request } = await withSystemLocale('ja-JP', () => setup({ withHubs: true, language: ['en'] }));
+  it('/api/models/i18n-languages 经贡献点 webui:options 给出可选项：有文字可用的各语言（值是语言标签，标签是自称）', async () => {
+    const { request } = await setup({ withHubs: true, language: ['en'] });
     expect(await json(request('/api/models/i18n-languages'))).toEqual({
-      models: ['auto', 'en', 'ja', 'zh-CN'],
+      models: ['en', 'ja', 'zh-CN'],
       details: [
-        { value: 'auto', label: 'Follow system (currently: 日本語 (日本))' },
         { value: 'en', label: 'English' },
         { value: 'ja', label: '日本語' },
         { value: 'zh-CN', label: '中文（中国）' },
@@ -730,9 +728,9 @@ describe('可选项来源与 /api/i18n 的两条路由', () => {
     });
   });
 
-  it('GET /api/i18n/languages 给有文字可用的语言、全局层的语言链（跟随系统换成系统语言）与服务进程的时区；i18n 缺席时语言与链为空，时区照给', async () => {
+  it('GET /api/i18n/languages 给有文字可用的语言、全局层的语言链与服务进程的时区；i18n 缺席时语言与链为空，时区照给', async () => {
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const present = await withSystemLocale('ja-JP', () => setup({ withHubs: true, language: ['auto', 'en'] }));
+    const present = await setup({ withHubs: true, language: ['ja-JP', 'en'] });
     expect(await json(present.request('/api/i18n/languages'))).toEqual({
       languages: [
         { tag: 'en', name: 'English' },

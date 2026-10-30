@@ -135,7 +135,7 @@ export interface FrameTexts {
 
 /**
  * 握手时随端口交出；sessionId 只给会话面板，换会话时宿主重新挂载。languages 与 timeZone 与宿主界面同一份：全局默认层的
- * 语言链（跟随系统已换成系统语言；空的是 i18n 不在，文字按原文）与服务进程的时区。全局语言变了宿主重新挂载
+ * 语言链（空的是 i18n 不在，文字按原文）与服务进程的时区。全局语言变了宿主重新挂载
  */
 export interface FrameInit extends FrameTexts {
   type: 'init';

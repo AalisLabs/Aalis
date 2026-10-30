@@ -31,16 +31,8 @@ import { compilerOptions, fixtureProgram, ROOT, sourceFiles } from '../helpers/p
 /** 名单：「文件 写法」→ 理由 */
 const ALLOWED = new Map([
   [
-    'packages/plugin-i18n/src/index.ts resolvedOptions().locale',
-    '跟随系统：语言列表里的 auto 取服务进程的系统语言（Node 的 Intl 默认 locale），插件激活时取一次（3.2，owner 10-17）',
-  ],
-  [
     'packages/create-aalis/src/cli.ts resolvedOptions().locale',
     '安装界面识别：建项目时取一次系统语言，定安装界面的语言、默认的语言列表与要找的语言包；脚手架跑在插件体系之外（4.7，owner 10-17）',
-  ],
-  [
-    'packages/runtime/src/start.ts resolvedOptions().locale',
-    '--init 识别：初始化家目录时取一次系统语言，定写给 plugin-i18n 的默认语言列表；宿主跑在插件体系之外（与 create-aalis 一致，负责核心的会话 10-30）',
   ],
   [
     'packages/create-aalis-plugin/src/cli.ts resolvedOptions().locale',

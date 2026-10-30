@@ -55,7 +55,7 @@ import { i18n, outputLanguageFor } from '@aalis/api-i18n';
 const system = `……生成一个简短的标题，用 ${outputLanguageFor(caps.i18n, { host: true }, 'zh-CN')}。`;
 ```
 
-i18n 在场时取读者语言链的第一项，写成「自称（标签）」，如 `日本語 (日本)（ja-JP）`、`English（en）`；第一项可以是跟随系统解析出的、没有语言包的语言，模型照样能写。缺席时用第三个参数：调用方提示词原文的语言。读者按谁看这段文字定，owner 自己看的用 `{ host: true }`。
+i18n 在场时取读者语言链的第一项，写成「自称（标签）」，如 `日本語 (日本)（ja-JP）`、`English（en）`；第一项可以是没有语言包的语言，模型照样能写。缺席时用第三个参数：调用方提示词原文的语言。读者按谁看这段文字定，owner 自己看的用 `{ host: true }`。
 
 ## 语言包
 

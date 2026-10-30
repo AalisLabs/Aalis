@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
-import { type I18nService, i18n, outputLanguageFor } from '../../packages/api-i18n/src/index.js';
+import { type I18nService, i18n } from '../../packages/api-i18n/src/index.js';
 import { isSessionSettingsError } from '../../packages/api-session-settings/src/index.js';
 import { App, definePlugin } from '../../packages/core/src/index.js';
 import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
@@ -16,7 +16,6 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { expectProcessTimeZoneDistinct } from '../fixtures/process-time-zone.js';
 import { storedRoom } from '../fixtures/rooms.js';
 import { sessionValuesPlugin, startSettings } from '../fixtures/session-settings.js';
-import { withSystemLocale } from '../fixtures/system-locale.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-i18n 的 i18n 服务：两种读者的语言链（会话读者按会话设置的 language，宿主读者取全局层即本插件配置里的 language，
@@ -122,8 +121,6 @@ describe('按会话设的 language', () => {
     return { ...started, svc, set, setGlobal };
   }
 
-  const withSystem = (locale: string, language?: string[]) => withSystemLocale(locale, () => withSessions(language));
-
   it('字段：有序多选，可选项来自 i18n-languages，common，只适用于房间，1 级可改，作者默认 en', () => {
     expect((i18nPlugin.configSchema as Record<string, unknown>).language).toMatchObject({
       type: 'multiselect',
@@ -134,48 +131,14 @@ describe('按会话设的 language', () => {
     });
   });
 
-  it('列表里的 auto 是服务进程的系统语言（激活时取一次），排在哪里就在哪里生效，与重复项合并', async () => {
-    const ja = await withSystem('ja-JP', ['zh-CN', 'auto', 'en']);
-    expect(ja.svc.chainOf(host)).toEqual(['zh-CN', 'ja-JP', 'en']);
-    // Docker 里没设 LANG 时 Node 报 en-US：auto 就是英语
-    const docker = await withSystem('en-US', ['auto', 'zh-CN', 'en']);
-    expect(docker.svc.chainOf(host)).toEqual(['en-US', 'zh-CN', 'en']);
-    const zh = await withSystem('zh-CN', ['auto', 'zh-CN', 'en']);
-    expect(zh.svc.chainOf({ sessionId: ROOM })).toEqual(['zh-CN', 'en']);
-  });
-
-  /** 可选项来源 i18n-languages 的第一项 */
-  const firstOption = async (app: App) => {
-    const source = app
-      .bind({ contributions })
-      .contributions.use.collect('webui:options')
-      .find(handle => handle.spec.id === 'i18n-languages')?.spec;
-    const [first] = (await source?.list()) ?? [];
-    return first;
-  };
-
-  it('收 auto；可选项第一项是「跟随系统（当前：系统语言的自称）」，按全局层的语言显示', async () => {
-    const { app, admin, svc, set, setGlobal } = await withSystem('ja-JP');
-    await set(ROOM, ['auto', 'en']);
-    expect(admin.rows({ sessionId: ROOM }).find(row => row.key === 'language')?.value).toEqual(['auto', 'en']);
-    const first = await firstOption(app);
-    expect(first?.value).toBe('auto');
-    expect(svc.render(first?.label, host)).toBe('Follow system (currently: 日本語 (日本))');
-    await setGlobal(['zh-CN']);
-    expect(svc.render(first?.label, host)).toBe('跟随系统（当前：日本語 (日本)）');
-  });
-
-  it('系统语言是 und（LANG 或 LC_ALL 设成空串）时当作 en-US：跟随系统写 American English，写给模型的语言也是它', async () => {
-    const { app, svc } = await withSystem('und', ['auto']);
-    expect(svc.render((await firstOption(app))?.label, host)).toBe('Follow system (currently: American English)');
-    expect(outputLanguageFor(app.bind({ i18n }).i18n, host, 'zh-CN')).toBe('American English（en-US）');
-  });
-
-  it('规范化后不合法的标签与不是字符串的项被拒，重复项去掉，系统写法收下、读时整理', async () => {
+  it('规范化后不合法的标签（auto 也是）与不是字符串的项被拒，重复项去掉，系统写法收下、读时整理', async () => {
     const { admin, svc, set } = await withSessions();
     const refused = await set(ROOM, ['en', 'bad tag!']).catch(err => err);
     expect(isSessionSettingsError(refused)).toBe(true);
     expect(svc.render(textOf(refused), host)).toBe('Invalid value for language: bad tag! is not a valid language tag');
+    const auto = await set(ROOM, ['auto', 'en']).catch(err => err);
+    expect(isSessionSettingsError(auto)).toBe(true);
+    expect(svc.render(textOf(auto), host)).toBe('Invalid value for language: auto is not a valid language tag');
     await set(ROOM, ['zh-CN', 'en', 'zh-CN']);
     expect(admin.rows({ sessionId: ROOM }).find(row => row.key === 'language')?.value).toEqual(['zh-CN', 'en']);
     await set(ROOM, ['zh_CN']);

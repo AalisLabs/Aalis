@@ -35,7 +35,6 @@ export default defineLocale<Source>()({
   vectorstoreFlat: 'Flat (built in, no dependencies)',
   vectorstoreLancedb: 'LanceDB (high performance)',
   pasteKey: 'Paste the {key} for {plugin} (input is hidden; press Enter to skip)',
-  followSystem: 'Follow the system (now: {name})',
   languagesTitle: "Aalis's language list (earlier ones are used first; missing translations fall back to the next)",
   languageChain: "Aalis's language list: {chain}. Use this order?",
   packTitle: 'Found language packs for {name} ({tag}). Install one as well?',
@@ -44,9 +43,8 @@ export default defineLocale<Source>()({
   packSearchEmpty: 'No language pack for {name} ({tag}) was found on {registry}',
   packSearchEmptyMirror:
     'No language pack for {name} ({tag}) was found on {registry}; this registry may not support search, so you can retry with --registry https://registry.npmjs.org',
-  languageUnprovided: 'No plugin provides {name} ({tag}); Aalis shows the next language in the list',
-  badLanguage:
-    '“{item}” in --lang is not a language tag: write auto (follow the system) or tags such as zh-CN and en, separated by commas',
+  languageUnprovided: 'No plugin provides {name} ({tag}), so it is left out of the language list',
+  badLanguage: '“{item}” in --lang is not a language tag: write tags such as zh-CN and en, separated by commas',
   optionsTitle: '{title}:',
   chooseOne: 'Choose one (number; Enter = {shown}): ',
   chooseMany: 'Choose any (numbers separated by commas or spaces; Enter = {shown}): ',

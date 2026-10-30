@@ -15,7 +15,6 @@ import {
   derivePaths,
   HomeArgsError,
   initHome,
-  initLanguages,
   isFullyAbsolute,
   isHomeInitialized,
   parseHostArgs,
@@ -159,26 +158,14 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   }
   const appDir = normalize(opts.appDir);
   const declared = derivePaths(home.home, appDir, home.profile);
-  const loader = opts.pluginLoader ?? createNodeModulesPluginLoader(appDir);
   if (hostArgs.init) {
-    let unprovided: string | undefined;
     try {
-      // 安装集里有 plugin-i18n 才写它的语言列表：没有插件认领的配置段每次启动都要告警
-      const withI18n = (await loader.discover()).some(d => d.name === '@aalis/plugin-i18n');
-      const locale = Intl.DateTimeFormat().resolvedOptions().locale;
-      const system = withI18n ? initLanguages(locale) : undefined;
-      initHome(declared, system?.languages);
-      if (system?.provided === false) unprovided = locale;
+      initHome(declared);
     } catch (err) {
       console.error(`[aalis] ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);
     }
     console.log(`[aalis] Initialized the home directory: ${declared.home}`);
-    if (unprovided) {
-      console.log(
-        `[aalis] No first-party plugin provides the system language ${unprovided}; unless an installed language pack provides it, Aalis shows English.`,
-      );
-    }
     process.exit(0);
   }
   if (!isHomeInitialized(declared)) {
@@ -330,7 +317,12 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   host.provide.use(hostLogs, createHostLogs(LogHub.default, fileLogger, app.logger), { exclusive: true });
   installHostConfig(app, store, opts.configSync);
   // 默认值从 configSchema 派生（唯一声明来源），导入定义后、登记前深合并进文档；登记时原样交给 core
-  const configLoader = withPluginConfigSync(loader, app, store, opts.configSync);
+  const configLoader = withPluginConfigSync(
+    opts.pluginLoader ?? createNodeModulesPluginLoader(paths.app),
+    app,
+    store,
+    opts.configSync,
+  );
   const discovery = createPluginDiscovery(app, configLoader.loader, store);
   host.provide.use(pluginSource, { rescan: () => discovery.rescan() }, { exclusive: true });
   // 不变量①：App 构造完成后再让 sink 监听终端归属事件——此前没有事件总线可订阅。
