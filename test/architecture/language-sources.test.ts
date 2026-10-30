@@ -39,6 +39,10 @@ const ALLOWED = new Map([
     '安装界面识别：建项目时取一次系统语言，定安装界面的语言、默认的语言列表与要找的语言包；脚手架跑在插件体系之外（4.7，owner 10-17）',
   ],
   [
+    'packages/runtime/src/start.ts resolvedOptions().locale',
+    '--init 识别：初始化家目录时取一次系统语言，定写给 plugin-i18n 的默认语言列表；宿主跑在插件体系之外（与 create-aalis 一致，负责核心的会话 10-30）',
+  ],
+  [
     'packages/create-aalis-plugin/src/cli.ts resolvedOptions().locale',
     '安装界面识别：没给 --lang 时取一次系统语言，定终端的显示语言与缺省的原文语言；脚手架跑在插件体系之外（4.7，owner 10-17）',
   ],

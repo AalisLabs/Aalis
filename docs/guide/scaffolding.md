@@ -151,7 +151,7 @@ startAalis({ appDir: here, defaultHome: join(here, 'home') }).catch(err => {
 });
 ```
 
-`startAalis()` 是 `@aalis/runtime` 的总入口（`packages/runtime/src/start.ts`）：`appDir` 是安装集（这个项目目录），`defaultHome` 是兜底的家目录（项目里的 `home/`）；设 `AALIS_HOME` 或用 `npm start -- --home <目录>` 启动可以把家目录放到别处（规则见 [runtime 的「家目录」](../architecture/runtime.md#家目录)）；新位置第一次要加 `--init` 初始化，如 `npm start -- --home <目录> --init`，它写的平台档与脚手架写的一致（见下文「配置约定」）。经 npm 启动时这些参数要放在 `--` 之后，并写在子命令之前，如 `npm start -- --home <目录> status`。它读家目录里的 `aalis.config.yaml`，用 node_modules 加载器扫项目依赖、按 `keywords` 含 `aalis-plugin` 发现插件并加载。
+`startAalis()` 是 `@aalis/runtime` 的总入口（`packages/runtime/src/start.ts`）：`appDir` 是安装集（这个项目目录），`defaultHome` 是兜底的家目录（项目里的 `home/`）；设 `AALIS_HOME` 或用 `npm start -- --home <目录>` 启动可以把家目录放到别处（规则见 [runtime 的「家目录」](../architecture/runtime.md#家目录)）；新位置第一次要加 `--init` 初始化，如 `npm start -- --home <目录> --init`，它写的平台档与脚手架写的一致，项目里装了 plugin-i18n 时写的语言列表与脚手架不带 `--lang` 时的默认列表一致（见下文「配置约定」）。经 npm 启动时这些参数要放在 `--` 之后，并写在子命令之前，如 `npm start -- --home <目录> status`。它读家目录里的 `aalis.config.yaml`，用 node_modules 加载器扫项目依赖、按 `keywords` 含 `aalis-plugin` 发现插件并加载。
 
 `package.json` 的依赖版本由脚手架逐包向源查：能查到最新版就写 `^<最新版>`，查不到的写 `"latest"`（`npm install` 时再取最新）。
 

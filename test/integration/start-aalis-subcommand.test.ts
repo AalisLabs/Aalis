@@ -305,6 +305,40 @@ describe('startAalis 家目录（真实子进程）', () => {
     expect(started.stdout).toContain('probe ok');
   }, 30_000);
 
+  it.each([
+    ['zh_CN.UTF-8', ['auto', 'zh-CN', 'en'], false],
+    ['ja_JP.UTF-8', ['auto', 'en', 'zh-CN'], true],
+  ])(
+    '--init：安装集里有 plugin-i18n 时按系统语言（%s）写它的语言列表，第一方插件不提供时打一行提示',
+    async (locale, language, hinted) => {
+      const dir = tempDir();
+      const home = join(dir, 'home');
+      const app = join(dir, 'install');
+      const i18n = join(app, 'node_modules', '@aalis', 'plugin-i18n');
+      mkdirSync(i18n, { recursive: true });
+      writeFileSync(join(app, 'package.json'), '{"name":"x","private":true,"dependencies":{"@aalis/plugin-i18n":"*"}}');
+      writeFileSync(
+        join(i18n, 'package.json'),
+        '{"name":"@aalis/plugin-i18n","keywords":["aalis-plugin"],"main":"index.js"}',
+      );
+      writeFileSync(join(i18n, 'index.js'), 'export default {};\n');
+      const r = await run(dir, ['--init'], {
+        AALIS_E2E_MODE: 'default-loader',
+        AALIS_E2E_APP_DIR: app,
+        AALIS_HOME: home,
+        LC_ALL: locale,
+      });
+      expect(r.code).toBe(0);
+      expect(parse(readFileSync(join(home, 'aalis.config.yaml'), 'utf-8')).plugins).toEqual({
+        '@aalis/plugin-i18n': { language },
+      });
+      const hint = 'No first-party plugin provides the system language ja-JP';
+      if (hinted) expect(r.stdout).toContain(hint);
+      else expect(r.stdout).not.toContain('No first-party plugin');
+    },
+    30_000,
+  );
+
   it('--init 遇到已初始化的家目录：拒绝并 exit 1，不覆盖', async () => {
     const dir = tempDir();
     writeFileSync(join(dir, 'aalis.config.yaml'), 'name: mine\nlogLevel: info\nplugins: {}\n');

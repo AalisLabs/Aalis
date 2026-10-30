@@ -197,6 +197,11 @@ export function uiLanguage(system: string, languages: readonly string[] = []): U
   return at === undefined ? 'en' : UI_LANGUAGES[at];
 }
 
+/** 默认的语言列表：跟随系统在前，其后是安装界面的语言与插件提供的其余语言。没装语言包时与 runtime 的 --init 一致 */
+export function defaultLanguages(ui: UiLanguage, provided: readonly string[] = FIRST_PARTY_LANGUAGES): string[] {
+  return [AUTO, ui, ...provided.filter(tag => tag !== ui)];
+}
+
 // 要密钥的插件与它的键：提问时当场粘贴，没粘贴的写成空桩，由用户在 WebUI 或配置文件里填。直接写进
 // home/aalis.config.yaml（home/ 不入库，见 renderGitignore），首次启动时宿主把密钥移进 secrets.yaml、配置里换成引用。
 // 不走 `.env` + `${VAR}` 插值：配置文件本身已被 ignore，那一层纯属多余。
@@ -1225,7 +1230,7 @@ export async function collect(
     }
     if (matchLanguage([o.system], provided) === undefined) console.warn(show(t('languageUnprovided', language)));
   }
-  const defaults = [AUTO, ui, ...provided.filter(tag => tag !== ui)];
+  const defaults = defaultLanguages(ui, provided);
   const languages = o.languages
     ? [...o.languages]
     : prompter
