@@ -480,7 +480,7 @@ describe('真实写入方产出的路径判据都接受', () => {
     expect(await mediaInScope(uri, { sessionId }, deps())).toBe(true);
   });
 
-  it('媒体识别把入站的图落盘', async () => {
+  it('媒体识别把入站的图落盘，地址写在附件的 ref 上（存档的附件清单按它记）', async () => {
     const { files, storage } = memStorage();
     setMediaRuntime({ proc: {} as never, storage });
     const cfg = {
@@ -501,6 +501,7 @@ describe('真实写入方产出的路径判据都接受', () => {
     await svc.processMessage(msg);
     const [uri] = [...files.keys()];
     expect(uri.startsWith(`data:/images/${sessionDirName(OWNER_PRIVATE)}/media/`), uri).toBe(true);
+    expect(msg.attachments?.[0]?.ref).toBe(uri);
     expect(await mediaInScope(uri, { sessionId: OWNER_PRIVATE }, deps())).toBe(true);
   });
 });

@@ -159,12 +159,15 @@ export async function computeFileId(sessionId: string, buffer: Buffer): Promise<
 }
 
 /**
- * 文件名里的控制字符（含 \r \n \t）与 Unicode 行、段分隔符一律换成空格。
- * 文件名会拼进附件描述和 system 块里的文件清单，这些文本按行排版：名字里带换行，就能把文字
- * 排到文件块之外冒充用户原话，甚至伪造出一段格式完整的文件块。
+ * 文件名里的控制字符（含 \r \n \t）与 Unicode 行、段分隔符一律换成空格，`|`、`]` 照 formatAttachmentRef 净化描述的写法
+ * 换成全角。文件名会拼进附件描述和 system 块里的文件清单，这些文本按行排版：名字里带换行，就能把文字排到文件块之外冒充
+ * 用户原话，甚至伪造出一段格式完整的文件块；带 `|`、`]` 就能在描述里拼出附件引用（`[图片 | ref:…]`）。
  */
 function sanitizeFileName(name: string): string {
-  return name.replace(/[\p{Cc}\u2028\u2029]/gu, ' ');
+  return name
+    .replace(/[\p{Cc}\u2028\u2029]/gu, ' ')
+    .replace(/\|/g, '丨')
+    .replace(/\]/g, '］');
 }
 
 // ===== 插件入口 =====
@@ -838,13 +841,16 @@ async function run(caps: Caps): Promise<void> {
         logger.use.debug(`文件已存储: ${entry.name} (ID: ${entry.id}, ${(entry.size / 1024).toFixed(1)} KB)`);
 
         // 来源是地址的（QQ 发来的文件落盘的存储地址，落盘失败时的网址）描述里带上它，正文里已有同一个引用（适配器按文件段写下的）
-        // 也照写：data 随后换成文件引用，存档的附件清单只按 data 与描述取地址、不读正文。媒体识别不换 data，存档按 data 就取得到
-        // 地址，所以它在正文已有引用时不写重
+        // 也照写，给模型看。data 随后换成文件引用，这个地址另写在附件的 ref 上：存档的附件清单按 data 与 ref 取地址，不读描述
         const address = isStorageUri(att.data) || isWebUrl(att.data) ? att.data : undefined;
         own.set(i, buildAttachmentDesc(entry, await known(entry, content), inline, address));
         // 替换原始 data 为 ID 引用，避免下游链路重复携带大 buffer。按写回这一刻的附件展开：存盘期间
         // 并发的媒体识别可能已补上 mimeType，展开开头取的 att 会把它丢掉
-        msg.attachments[i] = { ...msg.attachments[i], data: `${FILE_REF}${entry.id}` };
+        msg.attachments[i] = {
+          ...msg.attachments[i],
+          data: `${FILE_REF}${entry.id}`,
+          ...(address ? { ref: address } : {}),
+        };
       } catch (err) {
         const errMsg = errorText(err);
         logger.use.warn(`文件处理失败 (${fileName}):`, errMsg);

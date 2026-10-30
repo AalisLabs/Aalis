@@ -155,8 +155,9 @@ export interface MessageAttachment {
    */
   description?: string;
   /**
-   * 出站附件：稳定的地址（网址或存储地址），出站记进会话历史时用它；没有时取 data 里的地址（见 recordOutbound）。
-   * 与平台落盘后改写的 data 无关
+   * 稳定的地址（网址或存储地址）。出站：记进会话历史时用它，没有时取 data 里的地址（见 api-message-archive 的
+   * outboundAddress），与平台落盘后改写的 data 无关。入站：预处理器把附件落了盘或换掉 data 时写的地址（媒体识别落盘上传的
+   * 图片、文件读取换成文件引用前的地址），存档的附件清单在 data 不是地址时按它记；适配器不填
    */
   ref?: string;
 }
@@ -657,7 +658,7 @@ export interface ArchivedAttachment {
   kind: MessageAttachment['kind'];
   /** 入站附件带的文件名 */
   name?: string;
-  /** 地址：存储地址（`<根>:/路径`）或网址；入站附件的 data 不是地址（内联数据、本机路径、预处理器的私有引用）、预处理器也没给出引用的没有 */
+  /** 地址：存储地址（`<根>:/路径`）或网址；入站附件的 data 不是地址（内联数据、本机路径、预处理器的私有引用）、预处理器也没在它的 ref 上写地址的没有 */
   ref?: string;
 }
 
