@@ -85,6 +85,17 @@ interface SchedulerConfig {
 /** setTimeout 的 delay 上限（32 位有符号毫秒，约 24.8 天）；超过即溢出成立即触发 */
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
+/** 固定间隔的下限（秒）：挡住 interval:0.5 这类会占满调度、耗尽资源的高频任务 */
+const MIN_INTERVAL_SECONDS = 5;
+
+/**
+ * 固定间隔（含 cron 的 `@every`）无效的原因，所有入口与配置、存量文件同一条：要是大于 0、不超过定时器能排的上限（超过的溢出成
+ * 每毫秒触发）的数，且不小于 MIN_INTERVAL_SECONDS
+ */
+function intervalProblem(seconds: number): TextRef | null {
+  return validateIntervalSeconds(seconds) ?? (seconds < MIN_INTERVAL_SECONDS ? t('intervalTooShort') : null);
+}
+
 // ──────────── 运行时状态 ────────────
 
 interface JobRuntime {
@@ -335,8 +346,6 @@ async function run(caps: Caps): Promise<void> {
     const runAt = delaySeconds !== undefined ? new Date(Date.now() + delaySeconds * 1000).toISOString() : rawRunAt;
     // 一次性任务被暂停时到点的定时器直接跳过，之后既不重排也不自删，任务就永久卡死在那里
     if (input.paused && runAt) throw new TextError(t('pauseOneShot'));
-    // 防误填高频任务：挡住 interval:0.5 这类会占满调度的间隔
-    if (interval !== undefined && interval < 5) throw new TextError(t('intervalTooShort'));
     const sessionId = input.sessionId.trim();
     if (!sessionId) throw new TextError(t('sessionIdEmpty'));
     const content = input.content.trim();
@@ -659,7 +668,7 @@ async function run(caps: Caps): Promise<void> {
     }
     if (job.interval) {
       // 间隔无效的任务没有排上（见 initJob），不知道下次
-      return validateIntervalSeconds(job.interval) ? 0 : (lastRun || Date.now()) + job.interval * 1000;
+      return intervalProblem(job.interval) ? 0 : (lastRun || Date.now()) + job.interval * 1000;
     }
     if (job.cron) {
       const tz = job.timeZone?.trim() || undefined;
@@ -732,10 +741,9 @@ async function run(caps: Caps): Promise<void> {
       paused: jobCfg.paused === true || !jobCfg.enabled,
     };
 
-    // 固定间隔调度。间隔无效（不是大于 0 的数，或超过定时器能排的上限、溢出成每毫秒触发）的不排、发提示：服务入口已当场
-    // 拒收，这里只剩配置文件与存量文件里的任务
+    // 固定间隔调度。间隔无效（见 intervalProblem）的不排、发提示：服务入口已当场拒收，这里只剩配置文件与存量文件里的任务
     if (jobCfg.interval !== undefined && jobCfg.enabled) {
-      const problem = validateIntervalSeconds(jobCfg.interval);
+      const problem = intervalProblem(jobCfg.interval);
       if (problem) {
         logger.use.warn(`任务 ${jobCfg.name} 的固定间隔无效: ${toSource(problem)}`);
         markUnscheduled(jobCfg.name, problem);
@@ -885,16 +893,18 @@ async function run(caps: Caps): Promise<void> {
   }
 
   /**
-   * 无效的 cron 与固定间隔当场拒收：收下了也订阅不上、永远不会运行，或者间隔超过定时器能排的上限、溢出成每毫秒触发，还会落进
-   * 持久化文件。页面、工具与别的插件都经服务新建与修改
+   * 无效的 cron 与固定间隔（含 cron 的 `@every`，见 intervalProblem）当场拒收：收下了也订阅不上、永远不会运行，或者间隔太短、
+   * 超过定时器能排的上限溢出成每毫秒触发，还会落进持久化文件。页面、工具与别的插件都经服务新建与修改
    */
   function rejectInvalidSchedule(job: SchedulerJobConfig): void {
     if (job.cron) {
       const checked = cronEngine.use.validate(job.cron);
       if (!checked.ok) throw typeof checked.text === 'string' ? new Error(checked.text) : new TextError(checked.text);
     }
-    if (job.interval !== undefined) {
-      const problem = validateIntervalSeconds(job.interval);
+    const every = job.cron ? parseEverySeconds(job.cron) : 0;
+    const interval = every > 0 ? every : job.interval;
+    if (interval !== undefined) {
+      const problem = intervalProblem(interval);
       if (problem) throw new TextError(problem);
     }
   }
