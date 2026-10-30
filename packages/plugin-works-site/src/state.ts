@@ -1,9 +1,10 @@
 import type { PublishedItem } from '@aalis/api-publish';
 import { isStorageNotFound, type OwnStorage } from '@aalis/api-storage';
-import { asText, type TextRef } from '@aalis/schema-i18n';
+import { asText, TextError, type TextRef } from '@aalis/schema-i18n';
 import { newAssetSalt } from './cloudflare/hash.js';
 import type { WorksSiteConfig } from './config.js';
 import type { Tombstone } from './site/build.js';
+import { t } from './texts.js';
 import { sha256 } from './verify.js';
 
 const DEFAULT_INSTANCE = '@aalis/plugin-works-site';
@@ -186,7 +187,7 @@ function valid(v: unknown): v is WorksState {
 
 export class WorksStore {
   data?: WorksState;
-  failure?: string;
+  failure?: TextRef;
   #writing: Promise<void> = Promise.resolve();
   #closed = false;
   readonly #listeners = new Set<() => void>();
@@ -224,7 +225,7 @@ export class WorksStore {
         await this.save(this.data);
         return;
       }
-      this.failure = '作品站状态文件读取失败';
+      this.failure = t('stateUnreadable');
     }
   }
 
@@ -235,10 +236,10 @@ export class WorksStore {
     await this.update(state => {
       if (hasRemoteHistory(state)) {
         if (state.scope) {
-          if (state.scope !== next) throw new Error('作品站发布范围与已部署账本不符');
+          if (state.scope !== next) throw new TextError(t('scopeMismatch'));
         } else if (this.#defaultInstance && (config.targetId !== 'works' || config.basePath !== '/')) {
           // Before scope was persisted, the only instance was the default root target.
-          throw new Error('作品站发布范围与旧版根目录账本不符');
+          throw new TextError(t('legacyScopeMismatch'));
         }
       }
       state.scope = next;
@@ -260,7 +261,7 @@ export class WorksStore {
   /** One serialized whole-state write; memory advances only after durable write succeeds. */
   save(next: WorksState): Promise<void> {
     if (this.#closed) return Promise.reject(new Error('作品站状态实例已停止'));
-    if (this.failure) return Promise.reject(new Error(this.failure));
+    if (this.failure) return Promise.reject(new TextError(this.failure));
     const run = this.#writing.then(async () => {
       if (this.#closed) throw new Error('作品站状态实例已停止');
       await this.storage.writeFile(this.#path, JSON.stringify(next));
@@ -274,7 +275,7 @@ export class WorksStore {
   /** Serial read-modify-write: concurrent WebUI, timer and deploy callbacks never commit stale snapshots. */
   update<T>(change: (draft: WorksState) => T): Promise<T> {
     if (this.#closed) return Promise.reject(new Error('作品站状态实例已停止'));
-    if (this.failure) return Promise.reject(new Error(this.failure));
+    if (this.failure) return Promise.reject(new TextError(this.failure));
     const run = this.#writing.then(async () => {
       if (this.#closed) throw new Error('作品站状态实例已停止');
       if (!this.data) throw new Error('作品站状态尚未加载');
@@ -299,7 +300,8 @@ export class WorksStore {
   }
 
   copy(): WorksState {
-    if (this.failure || !this.data) throw new Error(this.failure ?? '作品站状态尚未加载');
+    if (this.failure) throw new TextError(this.failure);
+    if (!this.data) throw new Error('作品站状态尚未加载');
     return structuredClone(this.data);
   }
 }

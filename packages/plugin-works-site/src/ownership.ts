@@ -1,5 +1,7 @@
 import type { AppService } from '@aalis/core';
+import { TextError } from '@aalis/schema-i18n';
 import type { WorksSiteConfig } from './config.js';
+import { t } from './texts.js';
 
 interface Claims {
   targets: Map<string, symbol>;
@@ -17,7 +19,7 @@ export function claimWorksTarget(app: AppService, config: WorksSiteConfig): () =
   }
   const project = JSON.stringify([config.accountId, config.projectName]);
   if (claims.targets.has(config.targetId) || claims.projects.has(project)) {
-    throw new Error('作品站目标或项目已由本宿主的另一实例管理');
+    throw new TextError(t('targetClaimed'));
   }
   const token = Symbol(config.targetId);
   claims.targets.set(config.targetId, token);

@@ -7,7 +7,9 @@ import { readConfig } from '../../packages/plugin-works-site/src/config.js';
 import worksSite from '../../packages/plugin-works-site/src/index.js';
 import { claimWorksTarget } from '../../packages/plugin-works-site/src/ownership.js';
 import { statePathForInstance, WorksStore } from '../../packages/plugin-works-site/src/state.js';
+import { type TextRef, toSource } from '../../packages/schema-i18n/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { renderIn } from '../fixtures/host-language.js';
 import { ownView } from '../fixtures/own-storage.js';
 import { pageHost } from '../fixtures/page-host.js';
 import { memoryStorage } from '../fixtures/paper.js';
@@ -72,12 +74,13 @@ describe('works-site target ownership', () => {
       await app.plugin(worksSite, baseConfig);
       await app.plugin(worksSite, { ...baseConfig, siteTitle: 'dup' }, '@aalis/plugin-works-site:dup');
       await app.plugins.idle();
-      expect(
-        app.plugins
-          .getStatus()
-          .filter(item => item.name === worksSite.name)
-          .map(item => item.state),
-      ).toEqual(['active', 'error']);
+      const status = app.plugins.getStatus().filter(item => item.name === worksSite.name);
+      expect(status.map(item => item.state)).toEqual(['active', 'error']);
+      const failure = status[1].failure as Error & { text?: TextRef };
+      expect([renderIn(failure.text, 'en'), failure.message]).toEqual([
+        'The works site target or project is already managed by another instance on this host',
+        '作品站目标或项目已由本宿主的另一实例管理',
+      ]);
     } finally {
       await app.stop();
     }
@@ -114,7 +117,7 @@ describe('works-site target ownership', () => {
           .map(item => item.state),
       ).toEqual(['active', 'active']);
       expect(pages.logs).toEqual([]);
-      expect(pages.pages().map(page => [page.instance, page.key, page.title])).toEqual([
+      expect(pages.pages().map(page => [page.instance, page.key, toSource(page.title)])).toEqual([
         ['@aalis/plugin-works-site', 'works-site', '作品站'],
         ['@aalis/plugin-works-site:draw', 'works-site', '作品站'],
       ]);

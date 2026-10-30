@@ -4,16 +4,41 @@
 // 动作要求作品站在运行：状态读不出或已停止时一律回错误。
 // ============================================================
 
-import { type BoundPublish, WORK_ID_PATTERN } from '@aalis/api-publish';
+import { type BoundPublish, type PublishedItem, WORK_ID_PATTERN } from '@aalis/api-publish';
 import type { BoundWebui, NoticeHandle } from '@aalis/api-webui';
 import type { ServiceSelection } from '@aalis/core';
-import { TextError } from '@aalis/schema-i18n';
+import { TextError, type TextRef } from '@aalis/schema-i18n';
 import type { WorksSiteConfig } from './config.js';
 import type { WorksDeployer } from './deploy.js';
-import type { WorksStore } from './state.js';
+import type { SiteAlert, WorksStore } from './state.js';
 import { t } from './texts.js';
 
 const PAGE_KEY = 'works-site';
+
+/** 作品类型的显示名（存储里的值照旧；状态文件读回时只认这两种） */
+const WORK_KINDS: Record<PublishedItem['kind'], TextRef> = { html: t('kindHtml'), media: t('kindMedia') };
+/** 部署结果的显示名（存储里的值照旧） */
+const RESULTS: Readonly<Record<string, TextRef>> = {
+  live: t('resultLive'),
+  failed: t('resultFailed'),
+  'rolled-back': t('resultRolledBack'),
+};
+/** 告警类型的显示名（存储里的值照旧） */
+const ALERT_KINDS: Record<SiteAlert['kind'], TextRef> = {
+  'unknown-deployment': t('alertUnknownDeployment'),
+  settings: t('alertSettings'),
+  domains: t('alertDomains'),
+  probe: t('alertProbe'),
+  content: t('alertContent'),
+  'cache-lag': t('alertCacheLag'),
+  alias: t('alertAlias'),
+  auth: t('alertAuth'),
+  integrity: t('alertIntegrity'),
+  'deploy-failed': t('alertDeployFailed'),
+};
+/** 落盘值的显示名：状态文件读回时不核这两种值，表里没有的照旧显示原值 */
+const nameIn = (names: Readonly<Record<string, TextRef>>, value: string): string | TextRef =>
+  Object.hasOwn(names, value) ? names[value] : value;
 
 export function registerWorksPage(deps: {
   webui: BoundWebui;
@@ -25,18 +50,18 @@ export function registerWorksPage(deps: {
   const { config, deployer, store } = deps;
   const state = () => store.data;
   const ready = () => {
-    if (store.failure) throw new Error(store.failure);
-    if (!deployer.active) throw new Error('作品站尚未启动或已停止');
+    if (store.failure) throw new TextError(store.failure);
+    if (!deployer.active) throw new TextError(t('notRunning'));
   };
   const page = deps.webui.definePage({
     key: PAGE_KEY,
-    title: '作品站',
+    title: t('displayName'),
     icon: 'images',
     actions: {
       withdrawWork: {
-        label: '撤下',
+        label: t('withdrawLabel'),
         effect: 'destructive',
-        confirm: '撤下后站点与缓存会在几分钟内不再返回它；已保持的连接可能更久。',
+        confirm: t('withdrawConfirm'),
         row: true,
         async handler({ rowKey }) {
           ready();
@@ -44,8 +69,8 @@ export function registerWorksPage(deps: {
             !WORK_ID_PATTERN.test(rowKey) ||
             !state()?.current[config.productionBranch]?.works.some(work => work.id === rowKey)
           )
-            throw new Error('作品不存在');
-          if (!deps.publish.present) throw new Error('发布服务不在场');
+            throw new TextError(t('workNotFound'));
+          if (!deps.publish.present) throw new TextError(t('publishAbsent'));
           const result = await deps.publish.use.withdraw(rowKey, { kind: 'owner' }, 'owner 在作品页撤下');
           if ('refused' in result) {
             const { refused } = result;
@@ -56,58 +81,58 @@ export function registerWorksPage(deps: {
         },
       },
       acknowledgeAlert: {
-        label: '标为已读',
+        label: t('acknowledgeLabel'),
         effect: 'write',
         row: true,
         async handler({ rowKey }) {
           ready();
-          if (!(await deployer.acknowledge(rowKey))) throw new Error('告警不存在');
-          return '已标为已读';
+          if (!(await deployer.acknowledge(rowKey))) throw new TextError(t('alertNotFound'));
+          return t('acknowledged');
         },
       },
       retryDeploy: {
-        label: '重试部署',
+        label: t('retryLabel'),
         effect: 'write',
         handler() {
           ready();
           deployer.retry();
-          return '已安排重试部署';
+          return t('retryScheduled');
         },
       },
       resumeDeploy: {
-        label: '恢复自动部署',
+        label: t('resumeLabel'),
         effect: 'write',
         async handler() {
           ready();
-          if (!(await deployer.resume())) throw new Error('请先把未读告警标为已读');
-          return '已恢复自动部署';
+          if (!(await deployer.resume())) throw new TextError(t('acknowledgeFirst'));
+          return t('resumed');
         },
       },
       alignSettings: {
-        label: '对齐项目设置',
+        label: t('alignLabel'),
         effect: 'write',
         async handler() {
           ready();
           try {
             await deployer.alignSettings();
           } catch {
-            throw new Error('项目设置对齐失败');
+            throw new TextError(t('alignFailed'));
           }
-          return '项目设置已对齐';
+          return t('aligned');
         },
       },
       cleanupUnknown: {
-        label: '重新部署并清理账外部署',
+        label: t('cleanupLabel'),
         effect: 'destructive',
-        confirm: '先重新部署我方分支与主站，再删除账外部署。继续？',
+        confirm: t('cleanupConfirm'),
         async handler() {
           ready();
           try {
             await deployer.cleanupUnknown();
           } catch {
-            throw new Error('重新部署与清理未完成');
+            throw new TextError(t('cleanupIncomplete'));
           }
-          return '已重新部署并清理账外部署';
+          return t('cleanedUp');
         },
       },
     },
@@ -115,61 +140,64 @@ export function registerWorksPage(deps: {
       tabs: [
         {
           key: 'overview',
-          title: '概况',
+          title: t('tabOverview'),
           content: [
             {
               type: 'info',
               id: 'health',
-              description: '已打开的连接在撤下后可能继续取到旧内容十分钟以上。',
+              description: t('healthDescription'),
               data() {
                 const snapshot = state();
                 const health = deployer.health();
                 const last = snapshot?.history[0];
                 return [
-                  { label: '发布目标', value: config.targetId },
-                  { label: '主站', value: `${config.siteOrigin}${config.basePath}`, kind: 'link' as const },
+                  { label: t('publishTarget'), value: config.targetId },
+                  { label: t('mainSite'), value: `${config.siteOrigin}${config.basePath}`, kind: 'link' as const },
                   {
-                    label: '健康',
-                    value: health.ok ? { text: '正常' } : { text: health.reason, state: 'error' as const },
+                    label: t('health'),
+                    value: health.ok ? { text: t('healthy') } : { text: health.reason, state: 'error' as const },
                     kind: 'status' as const,
                   },
-                  { label: '上次部署', value: last ? last.result : '尚无' },
-                  ...(last ? [{ label: '上次部署时间', value: last.at, kind: 'time' as const }] : []),
-                  { label: '暂停', value: snapshot?.paused?.reason ?? '否' },
+                  { label: t('lastDeployment'), value: last ? nameIn(RESULTS, last.result) : t('noneYet') },
+                  ...(last ? [{ label: t('lastDeployedAt'), value: last.at, kind: 'time' as const }] : []),
+                  { label: t('pausedLabel'), value: snapshot?.paused?.reason ?? t('no') },
                   {
                     label: 'fail_open',
-                    value: `期望 ${config.failOpen}，线上 ${deployer.onlineFailOpen ?? '未核对'}`,
+                    value: t('failOpenState', {
+                      expected: String(config.failOpen),
+                      live: deployer.onlineFailOpen == null ? t('unchecked') : String(deployer.onlineFailOpen),
+                    }),
                   },
                   deployer.tokenExpiresOn
-                    ? { label: 'token 到期', value: deployer.tokenExpiresOn, kind: 'time' as const }
-                    : { label: 'token 到期', value: '未知或不过期' },
+                    ? { label: t('tokenExpiry'), value: deployer.tokenExpiresOn, kind: 'time' as const }
+                    : { label: t('tokenExpiry'), value: t('tokenNoExpiry') },
                 ];
               },
             },
             {
               type: 'actions',
-              description: '对齐项目设置只按配置更新两套 fail_open，其他设置要去控制台改。',
+              description: t('actionsDescription'),
               actions: ['retryDeploy', 'resumeDeploy', 'alignSettings', 'cleanupUnknown'],
             },
           ],
         },
         {
           key: 'works',
-          title: '作品',
+          title: t('tabWorks'),
           content: [
             {
               type: 'table',
               id: 'works',
               rowKey: 'id',
-              empty: '主站上还没有作品',
+              empty: t('worksEmpty'),
               columns: [
-                { key: 'thumbnail', label: '缩略图', kind: 'image', primary: true },
-                { key: 'title', label: '标题', primary: true },
-                { key: 'kind', label: '类型' },
-                { key: 'branch', label: '分支' },
-                { key: 'alias', label: '别名' },
-                { key: 'url', label: '网址', kind: 'link' },
-                { key: 'at', label: '上线时刻', kind: 'time' },
+                { key: 'thumbnail', label: t('columnThumbnail'), kind: 'image', primary: true },
+                { key: 'title', label: t('columnTitle'), primary: true },
+                { key: 'kind', label: t('columnKind') },
+                { key: 'branch', label: t('columnBranch') },
+                { key: 'alias', label: t('columnAlias') },
+                { key: 'url', label: t('columnUrl'), kind: 'link' },
+                { key: 'at', label: t('columnLiveAt'), kind: 'time' },
               ],
               rowActions: [{ action: 'withdrawWork' }],
               data: () =>
@@ -181,8 +209,8 @@ export function registerWorksPage(deps: {
                       thumbnail:
                         work.hasThumbnail && deps.publish.present ? deps.publish.use.thumbnailUri(work.id) : undefined,
                       title: work.title,
-                      kind: work.kind,
-                      branch: state()?.groups[work.group]?.branch ?? '主站',
+                      kind: WORK_KINDS[work.kind],
+                      branch: state()?.groups[work.group]?.branch ?? t('mainSite'),
                       alias: state()?.groups[work.group]?.alias ?? '',
                       url: `${config.siteOrigin}${config.basePath}w/${work.id}/`,
                       at: item.at,
@@ -193,20 +221,20 @@ export function registerWorksPage(deps: {
         },
         {
           key: 'deployments',
-          title: '部署',
+          title: t('tabDeployments'),
           content: [
             {
               type: 'table',
               id: 'deployments',
-              label: '当前部署',
+              label: t('currentDeployments'),
               rowKey: 'id',
-              empty: '还没有部署',
+              empty: t('deploymentsEmpty'),
               columns: [
-                { key: 'branch', label: '分支', primary: true },
-                { key: 'deployment', label: '部署', kind: 'code' },
+                { key: 'branch', label: t('columnBranch'), primary: true },
+                { key: 'deployment', label: t('columnDeployment'), kind: 'code' },
                 { key: 'nonce', label: 'nonce', kind: 'code' },
-                { key: 'at', label: '时刻', kind: 'time', primary: true },
-                { key: 'count', label: '作品数' },
+                { key: 'at', label: t('columnTime'), kind: 'time', primary: true },
+                { key: 'count', label: t('columnWorkCount') },
               ],
               data: () =>
                 Object.values(state()?.current ?? {}).map(item => ({
@@ -221,14 +249,14 @@ export function registerWorksPage(deps: {
             {
               type: 'table',
               id: 'history',
-              label: '部署历史',
+              label: t('history'),
               rowKey: 'key',
-              empty: '还没有部署历史',
+              empty: t('historyEmpty'),
               columns: [
-                { key: 'at', label: '时刻', kind: 'time', primary: true },
-                { key: 'branch', label: '分支' },
-                { key: 'deployment', label: '部署', kind: 'code' },
-                { key: 'result', label: '结果', primary: true },
+                { key: 'at', label: t('columnTime'), kind: 'time', primary: true },
+                { key: 'branch', label: t('columnBranch') },
+                { key: 'deployment', label: t('columnDeployment'), kind: 'code' },
+                { key: 'result', label: t('columnResult'), primary: true },
               ],
               // 历史没有自己的 id，按从新到旧的次序标识
               data: () =>
@@ -237,30 +265,35 @@ export function registerWorksPage(deps: {
                   at: item.at,
                   branch: item.branch,
                   deployment: item.deployment.slice(0, 8),
-                  result: item.result,
+                  result: nameIn(RESULTS, item.result),
                 })),
             },
           ],
         },
         {
           key: 'alerts',
-          title: '告警',
+          title: t('tabAlerts'),
           content: [
             {
               type: 'table',
               id: 'alerts',
               rowKey: 'id',
-              empty: '没有未读告警',
+              empty: t('alertsEmpty'),
               columns: [
-                { key: 'kind', label: '类型' },
-                { key: 'detail', label: '详情', kind: 'long-text', primary: true },
-                { key: 'at', label: '时刻', kind: 'time', primary: true },
+                { key: 'kind', label: t('columnKind') },
+                { key: 'detail', label: t('columnDetail'), kind: 'long-text', primary: true },
+                { key: 'at', label: t('columnTime'), kind: 'time', primary: true },
               ],
               rowActions: [{ action: 'acknowledgeAlert' }],
               data: () =>
                 (state()?.alerts ?? [])
                   .filter(item => !item.acknowledged)
-                  .map(item => ({ id: item.id, kind: item.kind, detail: item.detail, at: item.at })),
+                  .map(item => ({
+                    id: item.id,
+                    kind: nameIn(ALERT_KINDS, item.kind),
+                    detail: item.detail,
+                    at: item.at,
+                  })),
             },
           ],
         },
@@ -281,7 +314,7 @@ export function registerWorksPage(deps: {
     unhealthy = deps.webui.notify({
       id: 'health',
       level: 'error',
-      title: `作品站：${health.reason}`,
+      title: t('healthNotice', { reason: health.reason }),
       open: { page: PAGE_KEY },
     });
   };

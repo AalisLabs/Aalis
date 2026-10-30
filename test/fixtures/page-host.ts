@@ -98,3 +98,7 @@ export function pageHost(opts: PageHostOptions = {}) {
 }
 
 export type PageHost = ReturnType<typeof pageHost>;
+
+/** 页面动作的回执或报错 */
+export const replyOf = ({ body }: { body: object }) =>
+  'message' in body ? body.message : (body as { error: unknown }).error;

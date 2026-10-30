@@ -8,7 +8,9 @@ import { registerWorksDoctor } from '../../packages/plugin-works-site/src/doctor
 import { buildGallery } from '../../packages/plugin-works-site/src/site/build.js';
 import { WorksStore } from '../../packages/plugin-works-site/src/state.js';
 import { hashFiles, sha256 } from '../../packages/plugin-works-site/src/verify.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { type FakePages, startFakePages } from '../fixtures/fake-pages.js';
+import { renderIn } from '../fixtures/host-language.js';
 import { ownView } from '../fixtures/own-storage.js';
 import { memoryStorage } from '../fixtures/paper.js';
 import { fixedRef, ref } from '../fixtures/service-ref.js';
@@ -206,7 +208,7 @@ describe('作品站独立故障交接审计', () => {
     } as unknown as WorksDeployer;
     const config = { failOpen: false } as WorksSiteConfig;
     registerWorksDoctor({ doctor, config, deployer, store, now: () => now });
-    expect(run()).toMatchObject({
+    expect(toSource(run())).toMatchObject({
       id: 'works-site.config',
       level: 'warn',
       message: 'Cloudflare token 将在 14 天内过期',
@@ -230,7 +232,51 @@ describe('作品站独立故障交接审计', () => {
     } as unknown as WorksDeployer;
     const config = { failOpen: false } as WorksSiteConfig;
     registerWorksDoctor({ doctor, config, deployer, store, now: () => now });
-    expect(run()).toMatchObject({ id: 'works-site.config', level: 'error', message: 'Cloudflare token 已过期' });
+    expect(toSource(run())).toMatchObject({
+      id: 'works-site.config',
+      level: 'error',
+      message: 'Cloudflare token 已过期',
+    });
+  });
+
+  it.each([
+    [
+      'en',
+      [
+        'The online fail_open does not match the configuration',
+        'The works site has 1 unread alert',
+        'The works site has 2 unread alerts',
+        'The works site configuration and checked state are OK',
+      ],
+    ],
+    [
+      'zh-CN',
+      ['线上 fail_open 与配置不符', '作品站有 1 条未读告警', '作品站有 2 条未读告警', '作品站配置与已核对状态正常'],
+    ],
+  ])('%s：doctor 检查的线上 fail_open 不符、未读告警 1 条与 2 条、正常', async (language, expected) => {
+    const store = new WorksStore(ownView(memoryStorage(new Map()), 'works-site'));
+    await store.load();
+    let run!: () => CheckResult;
+    const doctor = {
+      registerCheck: (check: { run: () => CheckResult }) => {
+        run = check.run;
+      },
+    } as never;
+    const deployer = { health: () => ({ ok: true }), onlineFailOpen: true } as unknown as WorksDeployer;
+    registerWorksDoctor({ doctor, config: { failOpen: false } as WorksSiteConfig, deployer, store });
+    const messages = [run().message];
+    deployer.onlineFailOpen = false;
+    for (const id of ['a', 'b']) {
+      await store.update(state => {
+        state.alerts.push({ id, kind: 'settings', detail: 'test', at: 1 });
+      });
+      messages.push(run().message);
+    }
+    await store.update(state => {
+      for (const alert of state.alerts) alert.acknowledged = true;
+    });
+    messages.push(run().message);
+    expect(messages.map(message => renderIn(message, language))).toEqual(expected);
   });
 
   it('无 id 的在飞部署没有 nonce 匹配时清掉旧计划并重做空主站', async () => {

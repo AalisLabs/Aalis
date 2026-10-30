@@ -2,6 +2,7 @@ import type { BoundDoctor, CheckResult } from '@aalis/api-doctor';
 import type { WorksSiteConfig } from './config.js';
 import type { WorksDeployer } from './deploy.js';
 import type { WorksStore } from './state.js';
+import { t } from './texts.js';
 
 export function registerWorksDoctor(deps: {
   doctor: BoundDoctor;
@@ -23,18 +24,13 @@ export function registerWorksDoctor(deps: {
       const health = deps.deployer.health();
       if (!health.ok) return { id, category: 'config', level: 'error', message: health.reason };
       if (deps.deployer.onlineFailOpen !== undefined && deps.deployer.onlineFailOpen !== deps.config.failOpen) {
-        return { id, category: 'config', level: 'error', message: '线上 fail_open 与配置不符' };
+        return { id, category: 'config', level: 'error', message: t('onlineFailOpenMismatch') };
       }
       if (deps.deployer.tokenExpiresOn !== undefined) {
         if (deps.deployer.tokenExpiresOn <= now)
-          return { id, category: 'config', level: 'error', message: 'Cloudflare token 已过期' };
+          return { id, category: 'config', level: 'error', message: t('tokenExpired') };
         if (deps.deployer.tokenExpiresOn - now < 14 * 24 * 60 * 60_000) {
-          return {
-            id,
-            category: 'config',
-            level: 'warn',
-            message: 'Cloudflare token 将在 14 天内过期',
-          };
+          return { id, category: 'config', level: 'warn', message: t('tokenExpiring') };
         }
       }
       const state = deps.store.data;
@@ -43,7 +39,7 @@ export function registerWorksDoctor(deps: {
         id,
         category: 'config',
         level: unread.length ? 'warn' : 'ok',
-        message: unread.length ? `作品站有 ${unread.length} 条未读告警` : '作品站配置与已核对状态正常',
+        message: unread.length ? t('unreadAlerts', { count: unread.length }) : t('configHealthy'),
       };
     },
   });
