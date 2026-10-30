@@ -1258,15 +1258,21 @@ function runAdapter(caps: Caps): void {
         throw new Error(`OneBot 连接不可用: selfId=${parsed.selfId}`);
       }
 
-      // 合并转发：优先走缓存（消息到达时已抓过一次），没命中再按 id 拉
+      // 合并转发：先查收到时记下的条目（展开结果与收到它的会话），没展开过的交给工具过了取用判定再按 id 拉
       if (action === 'get_forward_msg') {
         const id = String(params.id ?? '');
         if (id) {
           // 内存缓存，落空再读持久化层（重启后场景）
           const entry = await getOrLoadForward(id);
-          // 返回完整原文 + 摘要（如果有）、截断标志与收到它的会话。工具层按这些会话过取用判定，再用 fullText 渲染。
-          if (entry) return { __aalisForwardEntry: true, ...entry };
-          return fetchForward(state, id);
+          // 展开过的返回完整原文 + 摘要（如果有）、截断标志与收到它的会话。工具层按这些会话过取用判定，再用 fullText 渲染。
+          if (entry?.fullText !== undefined) return { __aalisForwardEntry: true, ...entry };
+          // 没展开过的（关掉展开、拉不到、什么也没展开出来、嵌套的）返回收到它的会话与按 id 现拉的办法：工具层过了取用判定才拉。
+          // 从没收到过的会话为空
+          return {
+            __aalisForwardReceipt: true,
+            sessionIds: entry?.sessionIds ?? [],
+            fetch: () => fetchForward(state, id),
+          };
         }
       }
 

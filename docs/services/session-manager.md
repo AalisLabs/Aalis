@@ -186,7 +186,7 @@ interface SessionInfo {
 
 范围（`takeScope`）与三个开关（`takeOtherGroups`、`takeOthersPrivate`、`takeCrossBot`）是参考实现 configSchema 里的按会话字段（[plugin-session-manager](../plugins/plugin-session-manager.md#配置)），按当前会话取生效值，对所有人一样，owner 也不例外；只看目标，不看当前会话的种类与有没有聊天窗口。
 
-消费方一律调契约的包装函数 `takeFrom(sessionManager, currentId, targetId, principal?)`，不直接调方法、不各写退路：会话管理在时转调 `canTake`，不在时只放行同一会话 id，其余回 `TAKE_UNKNOWN`。第一方消费方：session-history 服务的 `getHistory`（`session_get_history`、`onebot_get_session_history` 都经它）、plugin-tool-onebot 的 `onebot_get_msg`、`onebot_recall_self`（目标会话）与 `onebot_get_forward_msg`（命中适配器缓存的转发按收到它的会话）、plugin-memory-history 的被动注入与 `recent_messages`，以及 plugin-image-sender 与 plugin-media 取别的会话的媒体（`send_attachment`、`analyze_image` 与她回复里存储地址的媒体标记，经 api-media 的 `mediaScopeOf` 按媒体所在的会话目录反查会话，见 [media 服务](./media.md#媒体判据)）。向量记忆的召回与关系图不经这条规则，各有自己的范围（[安全模型](../concepts/security-model.md)）。
+消费方一律调契约的包装函数 `takeFrom(sessionManager, currentId, targetId, principal?)`，不直接调方法、不各写退路：会话管理在时转调 `canTake`，不在时只放行同一会话 id，其余回 `TAKE_UNKNOWN`。第一方消费方：session-history 服务的 `getHistory`（`session_get_history`、`onebot_get_session_history` 都经它）、plugin-tool-onebot 的 `onebot_get_msg`、`onebot_recall_self`（目标会话）与 `onebot_get_forward_msg`（取的转发按收到它的会话）、plugin-memory-history 的被动注入与 `recent_messages`，以及 plugin-image-sender 与 plugin-media 取别的会话的媒体（`send_attachment`、`analyze_image` 与她回复里存储地址的媒体标记，经 api-media 的 `mediaScopeOf` 按媒体所在的会话目录反查会话，见 [media 服务](./media.md#媒体判据)）。向量记忆的召回与关系图不经这条规则，各有自己的范围（[安全模型](../concepts/security-model.md)）。
 
 ## 3. 谁提供 / 谁消费
 
