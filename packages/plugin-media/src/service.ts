@@ -19,6 +19,7 @@ import {
 import type { MemoryService } from '@aalis/api-memory';
 import { isStorageUri, isWebUrl } from '@aalis/api-storage';
 import type { Logger, ServiceSelection } from '@aalis/core';
+import { asText } from '@aalis/schema-i18n';
 import type { IncomingMessage, MessageAttachment } from '@aalis/schema-message';
 import {
   ATTACHMENT_REF_KINDS,
@@ -60,6 +61,7 @@ import {
 } from './llm-adapter.js';
 import { normalizeAttachments } from './normalize.js';
 import { getMediaRuntime } from './runtime.js';
+import { t } from './texts.js';
 
 /** 附件取不到或识别失败（含识别返回空串）时写进描述位的实话 */
 const UNRECOGNIZED = '获取或识别失败，内容未知';
@@ -198,7 +200,7 @@ export class MediaServiceImpl implements MediaService {
       return {
         name,
         capabilities: ['audio'],
-        displayName: `Whisper/ASR · ${e.label ?? e.id}`,
+        displayName: t('asrLabel', { label: asText(e.label) ?? e.id }),
         priority: e.priority,
         // asr-api 的 meta.processor 可选、media-api 必填 → 显式映射并盖上桥接器名。
         transcribe: async input => {

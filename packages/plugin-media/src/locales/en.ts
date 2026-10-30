@@ -94,4 +94,6 @@ export default defineLocale<Source>()({
     "Cleared this session's {kind} description cache ({count, plural, one {# entry} other {# entries}})",
   descriptionsFailed: 'Failed to clear the {kind} description cache: {error}',
   cutOff: '{text} (cut off at the length limit)',
+  processorLabel: '{label} ({cap})',
+  asrLabel: 'Whisper/ASR · {label}',
 });

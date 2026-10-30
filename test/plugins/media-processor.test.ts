@@ -11,7 +11,9 @@ import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
 import type { MediaConfigResolved, MediaServiceCaps } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import { type ConfigSchema, parseConfig } from '../../packages/schema-config/src/index.js';
+import { defineTexts, type TextRef } from '../../packages/schema-i18n/src/index.js';
 import type { IncomingMessage, MessageAttachment } from '../../packages/schema-message/src/index.js';
+import { renderIn } from '../fixtures/host-language.js';
 import { fixedRef, ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
@@ -324,5 +326,38 @@ describe('LLM 识别在长度上限处停下', () => {
       audio: { maxTokens: number };
     };
     expect([parsed.vision.maxTokens, parsed.audio.maxTokens]).toEqual([2048, 2048]);
+  });
+});
+
+describe('处理器的显示名', () => {
+  /** 第三方提供者交来的称呼是文字对象 */
+  const third = defineTexts({
+    ns: '@zz/third-provider',
+    language: 'zh-CN',
+    source: { label: '第三方模型' },
+    locales: { en: { label: 'Third-party model' } },
+  });
+  const shown = (name: string | TextRef | undefined) => [renderIn(name, 'zh-CN'), renderIn(name, 'en')];
+
+  it('识图处理器：提供者的称呼是文字对象时按读者的语言写出它，不成 [object Object]', () => {
+    const model = { capabilities: ['vision'], chat: async () => ({ content: '', finishReason: 'stop' }) };
+    const [vision] = scanLLMProcessors(
+      {
+        llm: ref([{ instance: model as unknown as LLMModel, contextId: 'zz-third/eyes', label: third('label') }]),
+        logger,
+      },
+      { vision: { maxTokens: 2048 }, audio: { maxTokens: 2048 } },
+    );
+    expect(shown(vision?.displayName)).toEqual(['第三方模型 (vision)', 'Third-party model (vision)']);
+  });
+
+  it('转写处理器（asr 桥）：同上', () => {
+    const asrSvc: ASRService = { transcribe: async () => ({ text: '' }) };
+    const s = new MediaServiceImpl(
+      caps({ asr: ref([{ instance: asrSvc, contextId: 'zz-third/ears', label: third('label') }]) }),
+      cfg,
+    );
+    const [asr] = s.listProcessors('audio');
+    expect(shown(asr?.displayName)).toEqual(['Whisper/ASR · 第三方模型', 'Whisper/ASR · Third-party model']);
   });
 });

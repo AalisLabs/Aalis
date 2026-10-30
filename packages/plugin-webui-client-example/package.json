@@ -4,7 +4,7 @@
   "private": true,
   "license": "MIT",
   "description": "Aalis 示例前端（演示忒修斯之船「换前端」可热切换；private，永不发布到 npm）",
-  "displayName": "示例前端（演示换前端）",
+  "displayName": "Example frontend",
   "type": "module",
   "files": [
     "dist"
