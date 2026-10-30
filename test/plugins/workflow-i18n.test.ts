@@ -155,13 +155,14 @@ describe('工作流运行的错误原因', () => {
     ]);
     setLanguage(['zh-CN']);
     expect(await runs()).toEqual([{ runId: 'zz-text', status: { text: '失败', state: 'error' }, error: '额度用完了' }]);
-    const forModel = await app
-      .bind({ tools })
-      .tools.use.execute(
-        'workflow_get_runs',
-        {},
-        toolRequest({ sessionId: 'zz', platform: 'webui', userId: 'console' }),
-      );
+    // 运行历史要 1 级：没装权限插件，经放行一切的执行守卫调
+    const toolSvc = app.bind({ tools }).tools.use;
+    toolSvc.setExecutionGuard(async () => ({ ok: true }));
+    const forModel = await toolSvc.execute(
+      'workflow_get_runs',
+      {},
+      toolRequest({ sessionId: 'zz', platform: 'webui', userId: 'console' }),
+    );
     const listed = JSON.parse(forModel.content).runs as Array<{ runId: string; error?: unknown }>;
     expect(listed.filter(r => r.runId.startsWith('zz-'))).toMatchObject([{ runId: 'zz-text', error: '额度用完了' }]);
   });

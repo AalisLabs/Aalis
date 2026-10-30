@@ -334,10 +334,14 @@ describe('工作流页', () => {
         running: false,
       }),
     ]);
-    // 交给模型的运行历史同样不写用时
-    const result = await app
-      .bind({ tools: toolsService })
-      .tools.use.execute('workflow_get_runs', {}, toolRequest({ sessionId: 'internal', platform: 'internal' }));
+    // 交给模型的运行历史同样不写用时（它要 1 级：没装权限插件，经放行一切的执行守卫调）
+    const toolSvc = app.bind({ tools: toolsService }).tools.use;
+    toolSvc.setExecutionGuard(async () => ({ ok: true }));
+    const result = await toolSvc.execute(
+      'workflow_get_runs',
+      {},
+      toolRequest({ sessionId: 'internal', platform: 'internal' }),
+    );
     const [run] = (JSON.parse(result.content) as { runs: Array<Record<string, unknown>> }).runs;
     expect(run).toMatchObject({ runId: 'zz-crashed', status: 'cancelled', error: '进程退出时中断' });
     expect(run).not.toHaveProperty('durationMs');

@@ -153,6 +153,8 @@ nodes:
 | `workflow_get_runs` | 查询最近运行历史 |
 | `workflow_remove` | 删除定义（含磁盘文件） |
 
+以上工具均属 `workflow` 工具组。`workflow_list` 为 `public`；`workflow_get_runs` 为 `sensitive`（运行的出错原因带会话 id，私聊会话的 id 带对方账号，与 plugin-scheduler 的 `scheduler_list_jobs` 同一档）；`workflow_define`、`workflow_run`、`workflow_remove` 为 `sensitive`。
+
 `workflow_define` 声明 `confirm: 'session'`，与 plugin-scheduler 的 `scheduler_create_job` 和别的要确认的操作同一规则：定义出的编排此后按定义者的身份运行，审批卡上是原文。参与者都是 owner 的回合里免了确认时（在免确认白名单 `restrictedPolicy` 里，或 `confirmOverrides` 把 `tool:workflow_define` 设为 `off`），定义不经审批，原文没经 owner 过目。不能产生审批的回合（定时任务、编排节点、mcp-server、空闲触发与主动发言等）里，要审批的定义一律被拒。工作流页「新建或覆盖」是 owner 亲手保存，不问。
 
 ## 工作流页
