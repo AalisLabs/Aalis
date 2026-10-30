@@ -15,7 +15,7 @@ import { createLocalizer } from '../../packages/plugin-webui-server/src/localize
 // webui-server auth — 单 token（单 owner）
 //
 // 认证挂到一个按登记先后分派的假 app 上（只认方法与完整路径），用最小 req/res mock 走登录/识别/注销流程、token 比较、
-// 来源判定与登录失败限速，不起 HTTP 服务器。没有 i18n：登录页与回应里的文字是原文（按读者语言的见 webui-i18n.test.ts）。
+// 主机名与来源判定、登录失败限速，不起 HTTP 服务器。没有 i18n：登录页与回应里的文字是原文（按读者语言的见 webui-i18n.test.ts）。
 // 固定 token 的长度校验在插件激活时做，那一组只激活插件、不启动应用，同样不监听端口。
 // ════════════════════════════════════════════════════════════
 
@@ -73,8 +73,8 @@ function makeReq(over: {
   query?: Record<string, string>;
   /** 来源地址，默认本机回环 */
   address?: string;
-  /** 其余请求头（origin、host、sec-fetch-site） */
-  headers?: Record<string, string>;
+  /** 其余请求头（origin、host、sec-fetch-site）；host 默认本机回环的 3000 端口，与浏览器一样总带着 */
+  headers?: Record<string, string | undefined>;
 }) {
   const path = over.path ?? '/';
   const search = new URLSearchParams(over.query).toString();
@@ -83,7 +83,7 @@ function makeReq(over: {
     originalUrl: search ? `${path}?${search}` : path,
     method: over.method ?? 'GET',
     query: over.query ?? {},
-    headers: { cookie: over.cookie, ...over.headers },
+    headers: { host: '127.0.0.1:3000', cookie: over.cookie, ...over.headers },
     body: over.body,
     socket: { remoteAddress: over.address ?? '127.0.0.1' },
   };
@@ -102,8 +102,9 @@ const TOKEN = 'test-token-abc';
 /** i18n 缺席的出口：回应里的文字按原文渲染 */
 const LOCALIZER = createLocalizer({ present: false } as never, {} as Logger);
 
-function makeAuth() {
-  return createAuthSystem(() => TOKEN, LOCALIZER);
+/** hostNames：IP 地址与 localhost 之外认的主机名（监听地址与 allowedHosts） */
+function makeAuth(hostNames: readonly string[] = []) {
+  return createAuthSystem(() => TOKEN, LOCALIZER, hostNames);
 }
 
 type Handler = (req: unknown, res: unknown, next: () => Promise<void>) => unknown;
@@ -376,6 +377,60 @@ describe('登录失败限速', () => {
     // 后来的照常计数
     for (let i = 0; i < 9; i++) await login(auth, 'wrong', last);
     expect((await login(auth, TOKEN, last)).res.statusCode).toBe(429);
+  });
+});
+
+describe('主机名核对', () => {
+  const loginAt = (auth: ReturnType<typeof makeAuth>, host: string | undefined, token: string) =>
+    run(
+      auth,
+      makeReq({
+        path: '/api/auth/login',
+        method: 'POST',
+        body: { token },
+        headers: { host, ...(host && { origin: `http://${host}` }) },
+      }),
+    );
+
+  it('DNS 重绑定的网页（Host 是别的主机名）与没有 Host 的请求回 421：登录不比对也不计数，带着 cookie 也不放行', async () => {
+    const auth = makeAuth(['aalis.example.com']);
+    for (const host of ['rebind.example.test:3000', 'rebind.example.test', 'aalis.example.com.evil.test', undefined]) {
+      for (let i = 0; i < 10; i++) {
+        const { res, nexted } = await loginAt(auth, host, 'wrong');
+        expect([host, res.statusCode, nexted]).toEqual([host, 421, false]);
+        expect(res.jsonBody).toEqual({ error: expect.stringContaining('主机白名单') });
+      }
+      const right = await loginAt(auth, host, TOKEN);
+      expect(right.res.statusCode, '正确的 token 也不登录').toBe(421);
+      expect(extractCookie(right.res, 'aalis_webui_token')).toBeUndefined();
+      const urlToken = await run(auth, makeReq({ path: '/', query: { token: 'x' }, headers: { host } }));
+      expect(urlToken.res.statusCode, '?token= 同样不比对').toBe(421);
+      const authed = await run(
+        auth,
+        makeReq({ path: '/api/plugins', cookie: `aalis_webui_token=${TOKEN}`, headers: { host } }),
+      );
+      expect([authed.res.statusCode, authed.nexted]).toEqual([421, false]);
+    }
+    // 都没计数：owner 从本机照常登录
+    expect((await loginAt(auth, '127.0.0.1:3000', TOKEN)).res.statusCode).toBe(200);
+  });
+
+  it('IP 地址（含 IPv6）、localhost 与给出的主机名（监听地址、allowedHosts）照常：不分大小写，带不带端口都认', async () => {
+    const auth = makeAuth(['mybox.lan', 'Aalis.Example.com']);
+    for (const host of [
+      '127.0.0.1:3000',
+      '192.168.1.5:3000',
+      '[::1]:3000',
+      '[fe80::1]',
+      'localhost:3000',
+      'LOCALHOST',
+      'mybox.lan:3000',
+      'aalis.example.com',
+      'AALIS.example.COM:443',
+    ]) {
+      const { res } = await run(auth, makeReq({ path: '/api/auth/status', headers: { host } }));
+      expect([host, res.statusCode]).toEqual([host, 200]);
+    }
   });
 });
 

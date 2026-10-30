@@ -142,6 +142,15 @@ const configSchema = defineConfig({
     onInvalid: 'error',
     description: t('hostDescription'),
   },
+  allowedHosts: {
+    type: 'multiselect',
+    label: t('allowedHostsLabel'),
+    default: [],
+    onInvalid: 'error',
+    // 主机名由使用者填写，静态选项无法穷举。
+    allowCustom: true,
+    description: t('allowedHostsDescription'),
+  },
   autoOpen: {
     type: 'boolean',
     label: t('autoOpenLabel'),
@@ -360,7 +369,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   });
   // storage 已在线时 follow 是同步首挂：等读回完成再继续，认证从第一个请求起就用持久化的 token
   if (tokenLoading) await tokenLoading;
-  const auth = createAuthSystem(() => authToken, localizer);
+  const auth = createAuthSystem(() => authToken, localizer, [uiConfig.host, ...uiConfig.allowedHosts]);
 
   const expressApp = express();
   // 回应里的文字按全局默认层的语言渲染：中间件最早挂上，之后的路由与中间件回的 JSON 都经过它

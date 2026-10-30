@@ -7,6 +7,9 @@ export default defineLocale<Source>()({
   portDescription: 'HTTP port of the web admin interface',
   hostLabel: 'Listen address',
   hostDescription: 'IP address to bind; 0.0.0.0 makes it reachable from other machines',
+  allowedHostsLabel: 'Host allowlist',
+  allowedHostsDescription:
+    'Host names in the browser address bar when the WebUI is reached through a reverse proxy or a domain name, without scheme or port. IP addresses, localhost and the listen address are always accepted; requests for any other host name get 421, which keeps out DNS rebinding pages',
   autoOpenLabel: 'Open the browser on startup',
   autoOpenDescription:
     'Opens the default browser the first time the app starts listening; reloading the plugin with the same token does not open it again, while a newly generated token opens it again so you can sign in. Turn this off over SSH or in headless environments',
@@ -41,6 +44,8 @@ export default defineLocale<Source>()({
   tooManyFailures: 'Too many failed sign-ins; try again in {minutes, plural, one {# minute} other {# minutes}}.',
   crossOrigin:
     'The request comes from a different origin than this service (behind a reverse proxy, the proxy must forward the original Host)',
+  hostNotAllowed:
+    'The host name of the request is not one this service accepts (when accessing through a reverse proxy or a domain name, add it to the Host allowlist in the WebUI server settings)',
   ownerRequired: 'Owner permission required',
   unauthenticated: 'Not signed in',
   switchTitle: 'Switch frontend · Aalis',
