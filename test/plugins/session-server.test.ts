@@ -229,6 +229,13 @@ describe('握手', () => {
     expect(d.disconnects).toEqual([]);
   });
 
+  it('协议 1.x 的客户端（0.20 的 WebUI 与终端）握手被拒：这一版的设置、审批与回合控制有不兼容的修改，升了主版本', async () => {
+    const { server } = await setup();
+    const c = client(server());
+    expect((await c.fail('initialize', { protocolVersion: '1.0', client: CLIENT })).data?.code).toBe('unsupported');
+    expect(c.disconnects).toHaveLength(1);
+  });
+
   it('握手之前别的请求被拒，握手不能重复', async () => {
     const { server } = await setup();
     const c = client(server());

@@ -14,7 +14,7 @@ owner 的客户端（WebUI，以后还有终端）与守护进程之间的线上
 
 与 [api-platform](../services/platform.md) 的分工：平台契约管 Aalis 接入外部聊天平台（连接、账号、按会话发消息），每个 IM 适配器一个实例；会话协议管 owner 自己的客户端怎么看到和操作会话，IM 房间经平台契约产生会话，owner 经会话协议看到同一批会话。
 
-**版本**：`SESSION_PROTOCOL_VERSION` 为 `<主>.<次>`。第一版标 experimental：终端客户端接入之前允许不兼容的修改，之后只做加法，加字段升次版本。对象 schema 不拒多余的键，旧客户端读到新加的字段照常解析。
+**版本**：`SESSION_PROTOCOL_VERSION` 为 `<主>.<次>`，标 experimental。不兼容的修改升主版本，只做加法升次版本；对象 schema 不拒多余的键，旧客户端读到新加的字段照常解析。
 
 ## 帧
 

@@ -233,7 +233,7 @@ socket.onopen = () =>
     jsonrpc: '2.0',
     id: 1,
     method: 'initialize',
-    params: { protocolVersion: '1.0', client: { name: 'my-client', version: '0.1.0' } },
+    params: { protocolVersion: '2.0', client: { name: 'my-client', version: '0.1.0' } },
   }));
 socket.onmessage = event => {
   const frame = JSON.parse(event.data); // 带 id 的是回应，不带 id 的是推送
