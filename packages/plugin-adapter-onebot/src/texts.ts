@@ -136,7 +136,7 @@ const SOURCE = {
   notMedia: '内容不是可发送的 {kind} 格式（文件头不符），已拒发',
   noHead: '读不出文件头，已拒发',
   tooLargeToUpload: '{size}B 超过内联上限，不能以文件上传',
-  uploadBase64Only: '文件上传只收 base64://（超过内联上限或来源是宿主路径、原链接时 NapCat 读不到）',
+  uploadBase64Only: '文件上传只收 base64://（超过内联上限或来源是宿主路径时 NapCat 读不到）',
   notUrl: '地址不是网址，不交给实现端，已拒发',
   cannotInline: '{format} 格式不能内联，已拒发',
   tooLargeToInline: '超过内联上限，不交给实现端去拉，已拒发',

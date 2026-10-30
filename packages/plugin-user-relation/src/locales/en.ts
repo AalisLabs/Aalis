@@ -118,7 +118,7 @@ export default defineLocale<Source>()({
   groupOnlyDescription: 'Private chats rarely need relation graph context',
   recallScopeLabel: 'Relation graph scope',
   recallScopeDescription:
-    'Which sessions’ events the injected relation graph and the relation graph tools draw on: with this session only, the injection leaves out events extracted in other sessions, cross-session topics and global trends while relationships between people stay, and the tools’ session scope can only be this session. An invalid value counts as this session only',
+    'Which sessions’ events the injected relation graph, the relation graph tools and the /relation viewing commands draw on: with this session only, the injection leaves out events extracted in other sessions, cross-session topics and global trends while relationships between people stay, the tools’ session scope can only be this session, and /relation show and orphans list only this session’s events. An invalid value counts as this session only',
   recallScopeSession: 'This session only',
   recallScopeAll: 'All',
   toolsLabel: 'Expose the dig tools to the agent',

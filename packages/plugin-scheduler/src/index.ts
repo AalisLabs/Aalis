@@ -17,7 +17,7 @@ import {
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { TextError, type TextRef, textClauses, textOf, toSource } from '@aalis/schema-i18n';
 import type { IncomingMessage } from '@aalis/schema-message';
-import { parseEverySeconds, validateIntervalSeconds } from '@aalis/util-cron';
+import { MAX_INTERVAL_SECONDS, parseEverySeconds, validateIntervalSeconds } from '@aalis/util-cron';
 import { t } from './texts.js';
 
 // ════════════════════════════════════════════════════════════
@@ -238,7 +238,11 @@ const JOB_FIELDS = defineConfig({
     label: t('cronLabel'),
     description: t('fieldCronDescription'),
   },
-  interval: { type: 'number', label: t('fieldIntervalLabel'), description: t('fieldIntervalDescription') },
+  interval: {
+    type: 'number',
+    label: t('fieldIntervalLabel'),
+    description: t('fieldIntervalDescription', { max: MAX_INTERVAL_SECONDS }),
+  },
   runAt: {
     type: 'string',
     label: t('runAtLabel'),
