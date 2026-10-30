@@ -51,6 +51,7 @@ export default definePlugin({
 |---|---|---|---|
 | `port` | number | `3000` | 端口：Web 管理界面的 HTTP 端口，0–65535 的整数 |
 | `host` | string | `'127.0.0.1'` | 监听地址：绑定的 IP 地址，0.0.0.0 可对外访问，不能为空。**改绑非回环地址前先读下文「登录身份与权限」**——持有 token 的人等同 owner |
+| `allowedHosts` | multiselect | `[]` | 主机白名单：经反向代理或域名访问时浏览器地址栏里的主机名，不带协议与端口。IP 地址、localhost 与监听地址总是认；其余主机名的请求回 421，挡住 DNS 重绑定的网页（见下文「主机名核对」） |
 | `autoOpen` | boolean | `true` | 每次应用启动后首次监听成功时打开默认浏览器；同一应用内沿用 token 的插件重载不重复打开，重新生成 token 时再次打开以便登录。SSH/headless 环境建议关闭 |
 | `tokenMode` | select | `'persist'` | Token 策略：ephemeral=每次启动随机；persist=token 写入 data:/webui/token，读取复用；fixed=使用 fixedToken 字段。所有模式都会写出便利文件 data:/webui/access.txt 含访问 URL。 |
 | `fixedToken` | string | `''` | 固定 Token（仅 tokenMode=fixed 生效）：至少 32 个字符的随机字符串（去掉首尾空白后计），短了插件不启动；留空按 persist 处理（secret，值存进 `secrets.yaml`，WebUI 不回显）。配置文件不支持环境变量插值，写 ${VAR} 会被当作字面量。 |
@@ -91,7 +92,7 @@ persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（
 
 `?token=` 与 POST `/api/auth/login` 按来源地址（TCP 连接的对端地址）记失败次数：从这个地址第一次失败算起的 10 分钟内失败满 10 次，到这 10 分钟结束前它的这两种登录一律回 429，带 `Retry-After`（秒），正确的 token 也不收；窗口结束后自动解除，计数从零重来。登录成功时这个地址的计数清零。
 
-- **别的网页发起的登录不比对、不计数。** 带 `Origin` 而与本服务不同源的 POST `/api/auth/login` 回 403（与所有改状态的请求一样，见下文「改状态的请求校验来源」），不带 `Origin` 的（脚本、命令行）照常比对。`Sec-Fetch-Site` 为 `cross-site` 或 `same-site` 的 `?token=`，即别的网页里的链接或图片，不认 URL 里的 token，按没带 token 处理：已登录的照常放行，没登录的回登录页。粘贴链接、书签与启动时自动打开的一键登录链接是 `none`，照常登录。这样同一台机器其他端口上的网页，或 owner 打开的任意网页，都没法借她的浏览器替她把来源地址锁住。
+- **别的网页发起的登录不比对、不计数。** 带 `Origin` 而与本服务不同源的 POST `/api/auth/login` 回 403（与所有改状态的请求一样，见下文「改状态的请求校验来源」），不带 `Origin` 的（脚本、命令行）照常比对。`Sec-Fetch-Site` 为 `cross-site` 或 `same-site` 的 `?token=`，即别的网页里的链接或图片，不认 URL 里的 token，按没带 token 处理：已登录的照常放行，没登录的回登录页。粘贴链接、书签与启动时自动打开的一键登录链接是 `none`，照常登录。这样同一台机器其他端口上的网页，或 owner 打开的任意网页，都没法借她的浏览器替她把来源地址锁住。DNS 重绑定的网页发来的登录在「主机名核对」一关就回 421，同样不比对、不计数。
 - **带 cookie 的请求不计数，也不受锁定。** 已登录的页面照常使用。按 cookie 逐个猜 token 不现实：自动生成的 token 是 24 字节随机数，`fixedToken` 至少 32 个字符。反过来，对 cookie 也锁定的话，共用一个来源地址（同一个反向代理）的已登录页面会被别人一起锁住。所以防猜靠 token 的长度，限速只是登录入口的又一道关。
 - **本机回环地址同样计数。** 经同一台机器上的反向代理来的请求，对端地址都是回环地址，豁免回环就等于不限速。owner 在本机输错满额，等到窗口结束即可，不会被一直锁住。
 - **经反向代理时所有访问者共用代理的地址。** 本插件不读 `X-Forwarded-For`：没有反向代理时这个头由访问者任意填写，按它计数等于让人自报地址。代价是一个人连续输错，会让经同一代理登录的其他人也等到窗口结束。
@@ -106,9 +107,15 @@ persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（
 而默认 `tokenMode=persist` 下 token 长期不变、且明文写在 `data:/webui/access.txt` 里。因此把 `host` 改成 `0.0.0.0`（或经反代暴露到公网）之前：
 
 - 确认处在可信网络，或在前面加一层独立鉴权（反代 Basic Auth / mTLS / 只对内网开放）；
-- 经反向代理访问时，代理要把原始的 `Host` 转给本插件，WebSocket 与登录请求的来源校验按它比对（见下文「WebSocket」）；
+- 经反向代理访问时，代理要把原始的 `Host` 转给本插件，WebSocket 与登录请求的来源校验按它比对（见下文「WebSocket」），并把这个主机名加进 `allowedHosts`（见下文「主机名核对」）；
 - 改用 `tokenMode=fixed` 配一个至少 32 个字符的随机 token，并妥善保管 `access.txt`；
 - 权限语义详见 [plugin-authority](./plugin-authority.md)。
+
+### 主机名核对
+
+认证最先核请求的 `Host`：主机名是 IP 地址（IPv4 或 IPv6）、`localhost`、监听地址 `host` 或 `allowedHosts` 里的一项（不分大小写，不看端口）才往下走；其余的与没有 `Host` 的回 421，不进登录的比对与计数，带着 cookie 也不放行。DNS 重绑定的网页把自己的域名解析到本机后，借 owner 的浏览器发来的请求 `Origin` 与 `Host` 都是它的域名，同源校验拦不住；不核 `Host` 的话，它能连发错 token，把本机回环地址的登录锁住。IP 地址重绑定不了，局域网按 IP 访问照常；经反向代理或域名访问时，把浏览器地址栏里的主机名加进 `allowedHosts`。
+
+插件前端的文件（注册在认证之前，凭页面登记时的 token 取）与 WebSocket 握手不经这一关：前者不需登录，后者只认 cookie，重绑定的网页拿不到本服务的 cookie。
 
 ### 改状态的请求校验来源
 

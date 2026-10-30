@@ -8,6 +8,9 @@ const SOURCE = {
   portDescription: 'Web 管理界面的 HTTP 端口',
   hostLabel: '监听地址',
   hostDescription: '绑定的 IP 地址，0.0.0.0 可对外访问',
+  allowedHostsLabel: '主机白名单',
+  allowedHostsDescription:
+    '经反向代理或域名访问时浏览器地址栏里的主机名，不带协议与端口。IP 地址、localhost 与监听地址总是认；其余主机名的请求回 421，挡住 DNS 重绑定的网页',
   autoOpenLabel: '启动时自动打开浏览器',
   autoOpenDescription:
     '每次应用启动后首次监听成功时打开默认浏览器；同一应用内沿用 token 的插件重载不重复打开，重新生成 token 时再次打开以便登录。SSH/headless 环境建议关闭',
@@ -41,6 +44,8 @@ const SOURCE = {
   urlTokenWrong: 'URL 中的 token 不正确，请手动输入。',
   tooManyFailures: '登录失败次数过多，请 {minutes, number} 分钟后再试。',
   crossOrigin: '请求来源与本服务不同源（经反向代理访问时，代理要转发原始的 Host）',
+  hostNotAllowed:
+    '请求的主机名不在本服务认的名单里（经反向代理或域名访问时，把它加进 WebUI 服务端配置里的「主机白名单」）',
   ownerRequired: '需要 owner 权限',
   unauthenticated: '未登录',
   switchTitle: '切换前端 · Aalis',
