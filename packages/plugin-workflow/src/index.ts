@@ -580,11 +580,11 @@ async function run(caps: Caps): Promise<void> {
   }
 
   /**
-   * 定义或覆盖：定义者写进记录，连同写进文件的文本的哈希；只在内存里的定义，定义者也只在内存。id 不合规（它是定义文件的文件名）、
-   * 图不合法、触发器写错的，报错、不保存
+   * 定义或覆盖：定义者写进记录，连同写进文件的文本的哈希；只在内存里的定义，定义者也只在内存。新定义的 id 不合规（它是新定义
+   * 文件的文件名；已载入的照原 id 改写它自己的文件）、图不合法、触发器写错的，报错、不保存
    */
   async function define(def: WorkflowDef, persist: boolean, definer: UserIdentity | undefined) {
-    const err = validateId(def.id) ?? validateGraph(def) ?? triggerError(def.trigger);
+    const err = (loader.get(def.id) ? null : validateId(def.id)) ?? validateGraph(def) ?? triggerError(def.trigger);
     if (err) throw typeof err === 'string' ? new Error(err) : new TextError(err);
     if (persist) runStore.recordDefiner(def.id, definer, await loader.saveDef(def));
     loader.putMemory(def, definer);
@@ -608,7 +608,7 @@ async function run(caps: Caps): Promise<void> {
       return define(def, opts?.persist !== false, undefined);
     },
     async removeWorkflow(id) {
-      // 只动已载入的定义：id 拼进定义文件的路径，别的 id（借 ../ 指到定义目录之外的、载入失败的）不碰存储
+      // 只动已载入的定义，删的是它载入时的文件：别的 id（借 ../ 指到定义目录之外的、载入失败的）不碰存储
       if (!loader.get(id)) return false;
       // 先删文件，删不掉就抛错、触发器与 once 记录原样保留：先清掉记录的话，重启后定义被重新载入，过期 once 会重放
       await loader.removeDef(id);
