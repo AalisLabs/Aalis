@@ -4,7 +4,7 @@ import { authority } from '@aalis/api-authority';
 import { contributions } from '@aalis/api-contributions';
 import { media } from '@aalis/api-media';
 import { roomClass, sessionManager } from '@aalis/api-session-manager';
-import { isStorageNotFound, isStorageUri, storage } from '@aalis/api-storage';
+import { isStorageNotFound, isStorageUri, isWebUrl, storage } from '@aalis/api-storage';
 import { type ToolCallContext, tools } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
@@ -107,8 +107,6 @@ type Content = { format: string } & ({ extraction: Extraction } | { parse(): Pro
 
 /** 取附件字节的结果：字节，超过大小上限（知道多大时带上），或读不出的原因 */
 type Source = { bytes: Buffer } | { tooLarge: number | undefined } | { unreadable: string };
-
-const isWebUrl = (value: string) => /^https?:\/\//i.test(value);
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 

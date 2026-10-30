@@ -81,6 +81,7 @@ export interface BoundStorage extends StorageMethods {
 | 函数 | 用途 |
 | --- | --- |
 | `isStorageUri(s)` | **权威文法判定**。 |
+| `isWebUrl(s)` | 网址判定：`http://`、`https://`，协议名不分大小写（URL 规范）。判「是不是网址」一律用它，不各写一份。 |
 | `parseUriRoot(uri)` / `toStorageUri(input, fallbackRoot='data')` / `parseStorageUri` / `resolveAgainstCwd` | 契约级路径文法。`toStorageUri` 遇本机路径（宿主机绝对路径与 `~/…`）抛配置错误，写明要填 storage URI 并举例。 |
 | `isHostAbsolutePath(input)` | 宿主机绝对路径（`/abs`、`C:\path`、`C:/path`）判据。 |
 | `isStorageNotFound(err)` | 「目标不存在」判据：有 `code` 时只认 `'ENOENT'`，没有 `code` 才退回文案正则。整份读入再整份回写的消费者据它区分「全新」与「读不出」：后者应拒写，免得一次回写冲掉读不懂的原文件。 |

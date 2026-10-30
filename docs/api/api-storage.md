@@ -117,7 +117,7 @@ export default definePlugin({
 
 纯函数，不吃服务：
 
-- `isStorageUri` / `parseUriRoot` / `toStorageUri` / `parseStorageUri` / `resolveAgainstCwd` — 契约级路径文法
+- `isStorageUri` / `isWebUrl` / `parseUriRoot` / `toStorageUri` / `parseStorageUri` / `resolveAgainstCwd` — 契约级路径文法
 - `isHostAbsolutePath(input)` — 宿主机绝对路径（`/abs`、`C:\path`、`C:/path`）判据：不是存储地址，`toStorageUri` 抛配置错误、`resolveAgainstCwd` 拒绝
 - `isStorageNotFound(err)` — 「目标不存在」判据：有 `code` 时只认 `ENOENT`，没有 `code` 才看错误文案
 - `canIssueFileHandle(roots, uri)` — 能不能给这个存储地址签发界面下载用的句柄：是存储地址、根在 `roots` 里，且根的种类不是 `data`（映射到家目录的 `state/`，里面有 WebUI 的 token 与审计）或 `pluginData`。按根的种类判、不按路径。会话条目的文件句柄（plugin-session-server）与页面单元格的文件句柄（plugin-webui-server）共用这一条

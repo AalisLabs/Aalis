@@ -1,4 +1,5 @@
 import type { MediaService } from '@aalis/api-media';
+import { isWebUrl } from '@aalis/api-storage';
 
 // ============================================================
 // 描述缓存别名（原始 URL → 落盘 ref）的登记与查询。
@@ -34,7 +35,7 @@ export function rememberLandedAlias(
   source: string | undefined,
   landedRef: string,
 ): void {
-  if (!media || kind === 'audio' || !source || !/^https?:\/\//.test(source)) return;
+  if (!media || kind === 'audio' || !source || !isWebUrl(source)) return;
   media.rememberDescriptionAlias(source, landedRef);
   const stripped = stripRkey(source);
   if (stripped !== source) media.rememberDescriptionAlias(stripped, landedRef);

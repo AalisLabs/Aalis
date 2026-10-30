@@ -168,6 +168,14 @@ export function isStorageUri(s: string): boolean {
 }
 
 /**
+ * 判定字符串是否为网址（`http://`、`https://`）—— 与 isStorageUri 同一份文法的另一半，全体消费者复用，勿各自重抄。
+ * 协议名按 URL 规范不分大小写（`HTTPS://…` 也是网址，与保留 scheme 按小写比同一口径）；不去首尾空白，由调用方先规整
+ */
+export function isWebUrl(s: string): boolean {
+  return /^https?:\/\//i.test(s);
+}
+
+/**
  * 判定 storage 操作抛出的错误是否表示「目标不存在」—— 契约级判据，全体消费者复用，勿各自重抄。
  *
  * 先看 `code`：有 code 时只认 `'ENOENT'`，文案里带 not found 的其它错误（EACCES 等）不算；

@@ -25,7 +25,7 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
-import { isStorageUri, type StorageService } from '@aalis/api-storage';
+import { isStorageUri, isWebUrl, type StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
 import { TextError } from '@aalis/schema-i18n';
 import type { MessageAttachment } from '@aalis/schema-message';
@@ -108,7 +108,7 @@ async function attachmentToOneBotFile(
   }
 
   // http(s):// → 下载后 base64 内联
-  if (data.startsWith('http://') || data.startsWith('https://')) {
+  if (isWebUrl(data)) {
     logger?.debug?.(`OneBot 下载远程附件: ${data.slice(0, 120)}`);
     // 与入站缓存同一上限：慢源不能把发送这条消息的回合拖住几分钟。
     const res = await safeFetch(data, { signal: AbortSignal.timeout(30_000) });

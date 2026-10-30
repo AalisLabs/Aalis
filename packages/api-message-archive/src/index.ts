@@ -1,5 +1,5 @@
 import { roomClass, rootSessionOf, type SessionInfo } from '@aalis/api-session-manager';
-import { isStorageUri } from '@aalis/api-storage';
+import { isStorageUri, isWebUrl } from '@aalis/api-storage';
 import { defineService } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message, MessageAttachment, OutgoingMessage } from '@aalis/schema-message';
@@ -88,7 +88,7 @@ export interface MessageArchiveService {
  * 旁观出站的一方（如会话服务的实时推送）按它给出与历史相同的附件
  */
 export function outboundAddress(att: MessageAttachment): string | undefined {
-  return att.ref ?? (/^https?:\/\//i.test(att.data) || isStorageUri(att.data) ? att.data : undefined);
+  return att.ref ?? (isWebUrl(att.data) || isStorageUri(att.data) ? att.data : undefined);
 }
 
 /** 没有地址的出站附件记成的那一句（recordOutbound 第 2 条）：「[种类] 名字」，没有名字时只写种类 */

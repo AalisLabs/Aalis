@@ -16,7 +16,7 @@
 import { Buffer } from 'node:buffer';
 import { sessionMediaUri } from '@aalis/api-media';
 import type { ProcessService } from '@aalis/api-process';
-import { isStorageUri, type StorageService } from '@aalis/api-storage';
+import { isStorageUri, isWebUrl, type StorageService } from '@aalis/api-storage';
 import { detectMediaFormat, FILE_HEAD_BYTES } from '@aalis/util-file-signature';
 import { safeFetch } from '@aalis/util-network-guard';
 
@@ -100,7 +100,7 @@ async function loadAttachmentBuffer(
       if (!m) return null;
       return Buffer.from(m[1], 'base64');
     }
-    if (source.startsWith('http://') || source.startsWith('https://')) {
+    if (isWebUrl(source)) {
       const res = await safeFetch(source, { signal: AbortSignal.timeout(30000) });
       if (!res.ok) return null;
       return readBodyCapped(res, maxBytes);
