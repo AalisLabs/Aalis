@@ -144,11 +144,14 @@ describe('远端条件：提供者按名字精确在场、出网不超过上限'
     await expectRefused(hub, /不在场/);
   });
 
-  it.each(['open', 'unknown'] as const)('安全：提供者出网为 %s、白纸上限为 allowlist 时被拒', async mode => {
+  it.each([
+    ['open', '不限'],
+    ['unknown', '未知'],
+  ] as const)('安全：提供者出网为 %s、白纸上限为 allowlist 时被拒，原因写显示名', async (mode, shown) => {
     const hub = await startPaperHub({
       remotes: { [REMOTE]: fakeRemote({ egress: { mode, source: 'owner-config' } }) },
     });
-    await expectRefused(hub, `远端代理「${REMOTE}」的出网方式（${mode}）超过这块白纸的上限（allowlist）`);
+    await expectRefused(hub, `远端代理「${REMOTE}」的出网方式（${shown}）超过这块白纸的上限（只限白名单）`);
   });
 
   it('对照：白纸上限为 open 时，出网 unknown 的提供者可用', async () => {

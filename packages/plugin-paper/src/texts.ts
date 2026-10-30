@@ -55,7 +55,7 @@ const SOURCE = {
   egressDescription: '提供者报告的出网方式超过它时不开远端任务；报告「未知」按不限计',
   egressDefault: '取默认属性',
   egressNone: '不出网',
-  egressAllowlist: '只到白名单',
+  egressAllowlist: '只限白名单',
   egressOpen: '不限',
   egressUnknown: '未知',
   maxWaitingLabel: '未结束任务上限',

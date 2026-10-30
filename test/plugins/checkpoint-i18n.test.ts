@@ -206,10 +206,7 @@ describe('/clear 清检查点的结果行按房间的语言', () => {
         'Cleared all checkpoints (1 session)',
       ],
     ],
-    [
-      'zh-CN',
-      ['当前会话无 checkpoint', '当前会话 checkpoint 已清空（1 个 turn）', '所有 checkpoint 已清空（1 个 session）'],
-    ],
+    ['zh-CN', ['当前会话无检查点', '当前会话的检查点已清空（1 轮）', '所有检查点已清空（1 个会话）']],
   ])('%s 房间：没有检查点、清本会话、清全部', async (language, expected) => {
     const paths = home();
     const { app } = hostedApp(doc(), { logger: silent });

@@ -167,7 +167,7 @@ describe('工具插件的分组带文字对象的概述', () => {
     }
     expect(summaries).toEqual([
       [
-        '让 agent 列出和切换已配置的 MCP server（不能新增/删除条目）',
+        '让 agent 列出和切换已配置的 MCP 服务器（不能新增/删除条目）',
         'Let the agent list configured MCP servers and turn them on or off (entries cannot be added or removed)',
       ],
       ['查询已经积累的某人事实档案', 'Look up the fact profile built up for a person'],

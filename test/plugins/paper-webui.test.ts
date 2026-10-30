@@ -489,7 +489,7 @@ describe('跑完一件任务后的几张表', () => {
     const detail = await info(hub);
     expect(String(detail.get('共用的房间'))).toContain(ROOM);
     expect(detail.get('远端类型')).toBe(REMOTE);
-    expect(String(detail.get('出网'))).toContain('只到白名单');
+    expect(String(detail.get('出网'))).toContain('只限白名单');
     expect(String(detail.get('出网'))).toContain('未核实');
     expect(String(detail.get('目录占用 / 上限'))).toContain('2048');
     expect(detail.get('停开原因')).toBe('');
@@ -636,11 +636,11 @@ describe('跑完一件任务后的几张表', () => {
         durations: ['40 秒', '7 分 20 秒'],
         progress: '执行命令（失败） · bash · src/app.ts · npm test · 退出码 1',
         egress: [
-          '不出网（owner 配置，未核实）；上限 只到白名单',
-          '只到白名单（owner 配置，未核实）；上限 只到白名单',
-          '不限；上限 只到白名单',
-          '未知（owner 配置，未核实）；上限 只到白名单',
-          'zz-mode（owner 配置，未核实）；上限 只到白名单',
+          '不出网（owner 配置，未核实）；上限 只限白名单',
+          '只限白名单（owner 配置，未核实）；上限 只限白名单',
+          '不限；上限 只限白名单',
+          '未知（owner 配置，未核实）；上限 只限白名单',
+          'zz-mode（owner 配置，未核实）；上限 只限白名单',
           '读取失败：EGRESS-SENTINEL',
         ],
       },
@@ -934,7 +934,7 @@ describe('白纸的管理动作', () => {
         'Only running and starting tasks can stop being tracked',
         'No task t-0000b0ff',
         'This task holds no reserve',
-        'This task has already ended (done)',
+        'This task has already ended (Done)',
         'No task t-0000b0ff',
       ],
     ],
@@ -947,7 +947,7 @@ describe('白纸的管理动作', () => {
         '只有运行中与开轮中的任务能放弃跟踪',
         '没有任务 t-0000b0ff',
         '这件任务没有占着预留',
-        '这件任务已经结束（done）',
+        '这件任务已经结束（完成）',
         '没有任务 t-0000b0ff',
       ],
     ],
@@ -973,7 +973,7 @@ describe('白纸的管理动作', () => {
     expect(replies.map(reply => saidIn(reply, language))).toEqual(expected);
     expect(await hub.call('paper_cancel', { task_id: 't-0000b001' })).toEqual({
       ok: false,
-      error: '这件任务已经结束（done）',
+      error: '这件任务已经结束（完成）',
     });
   });
 });
@@ -1117,7 +1117,7 @@ describe('告警与提示', () => {
         agent: (name: string, state: string) => `${name}（${state}）`,
         active: '在用',
         doctor:
-          '白纸 zz-paper 已停开（远端代理「zz-remote-a」不可用（远端拒绝了请求）），等 owner 在 WebUI 恢复；远端代理「zz-remote-a」的出网方式（只到白名单）取自 owner 配置，未核实',
+          '白纸 zz-paper 已停开（远端代理「zz-remote-a」不可用（远端拒绝了请求）），等 owner 在 WebUI 恢复；远端代理「zz-remote-a」的出网方式（只限白名单）取自 owner 配置，未核实',
       },
     ],
   ])('%s：提供者拒绝时停开：停开说明落盘为文字对象、只带类别，重启读回后状态栏、停开原因、会话面板与诊断项按读者语言；白纸表的绑定代理写代理状态（不在表里的显示原值）；paper_task 的拒绝是原文', async (language, expected) => {
