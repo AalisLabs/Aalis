@@ -128,7 +128,7 @@ export default defineLocale<Source>()({
   alertDeployFailed: 'Deployment failed',
   productionBranch: 'The production branch does not match the configuration',
   failOpenMismatch: 'fail_open of {name} does not match the configuration',
-  binding: '{name} has a {key} binding',
+  binding: '{name} has a binding of type {key}',
   unknownSetting: '{name} has an unknown setting {key}',
   domains: 'The domain list does not match the configuration',
   unknownDeployment: 'Found an untracked deployment {id}',

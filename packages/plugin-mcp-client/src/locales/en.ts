@@ -26,10 +26,10 @@ export default defineLocale<Source>()({
   visibilityPublic: 'public (level 0, open to everyone)',
   visibilitySensitive: 'sensitive (level 1)',
   visibilityRestricted: 'restricted (level 2)',
-  connectFailedTitle: 'Cannot connect to MCP server "{id}"',
+  connectFailedTitle: 'Cannot connect to MCP server “{id}”',
   connectFailedDetail:
     "Check this server's command, args and env (the environment variables it needs); saving the configuration after fixing them reconnects it. Reason: {reason}",
-  serverGroupSummary: 'Remote MCP server "{id}" bridged by plugin-mcp-client',
+  serverGroupSummary: 'Remote MCP server “{id}” bridged by plugin-mcp-client',
   metaGroup: 'MCP / metadata',
   metaGroupSummary:
     'Let the agent list configured MCP servers and turn them on or off (entries cannot be added or removed)',

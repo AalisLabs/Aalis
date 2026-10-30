@@ -61,7 +61,7 @@ describe('诊断项 paper.config', () => {
         `Paper zz-paper is shared by several rooms (${ROOM}, ${ROOM2}): the long-lived agent’s conversation and workspace are visible to all of them`,
         'Remote agent “zz-remote-gone” referenced by paper zz-ghost is not present',
         'globalDailyCents is 0, so remote tasks will not start',
-        `Paper task t-0000c001 is still starting after claiming failed (room ${ROOM}): the run start is unknown and the run may be going remotely; if the provider stays unavailable, use “Stop tracking” in the task table`,
+        `Paper task t-0000c001 is still starting after claiming failed (room ${ROOM}): it is unknown whether the run started, and the run may be going remotely; if the provider stays unavailable, use “Stop tracking” in the task table`,
       ].join('; '),
     ],
     [

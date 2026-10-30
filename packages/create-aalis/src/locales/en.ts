@@ -124,7 +124,7 @@ export default defineLocale<Source>()({
     '  or leave out the plugins that use a browser for now: remove them from dependencies in package.json and npm install again (npm ls puppeteer shows which).',
   nativeReason: 'Building the native module {pkg} failed: this machine lacks C/C++ build tools.',
   nativeTools:
-    '  Install build tools and install again: on macOS run xcode-select --install; on Linux install build-essential and python3; on Windows install the "Desktop development with C++" workload of Visual Studio.',
+    '  Install build tools and install again: on macOS run xcode-select --install; on Linux install build-essential and python3; on Windows install the “Desktop development with C++” workload of Visual Studio.',
   nativeReplace: '  Or generate again with --advanced and replace the plugin that uses it (npm ls {pkg} shows which).',
   nativeReasonUnknown: 'Building a native module failed: this machine lacks C/C++ build tools.',
   nativeReplaceUnknown: '  Or generate again with --advanced and replace the plugin that uses it.',

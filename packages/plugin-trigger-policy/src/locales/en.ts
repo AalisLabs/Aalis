@@ -32,7 +32,7 @@ export default defineLocale<Source>()({
   idleTriggerMinutesLabel: 'Idle trigger minutes',
   idleTriggerStyleLabel: 'Idle trigger style',
   idleStyleExponential: 'exponential (exponential backoff)',
-  idleStyleFixed: 'fixed (fixed)',
+  idleStyleFixed: 'fixed',
   idleTriggerMaxMinutesLabel: 'Idle trigger maximum minutes',
   idleTriggerJitterLabel: 'Idle trigger jitter',
   idleTriggerPromptLabel: 'Idle trigger system prompt',

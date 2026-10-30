@@ -37,6 +37,6 @@ export default defineLocale<Source>()({
   animMaxOutputMBDescription:
     'Exceeding it is an error (OneBot inline delivery is limited to 10MB; this leaves headroom)',
   clearType: 'Image cache',
-  cleared: 'Drawings cleared ({count, plural, one {# file} other {# files}})',
+  cleared: 'Cleared drawings ({count, plural, one {# file} other {# files}})',
   clearFailed: 'Failed to clear drawings: {error}',
 });

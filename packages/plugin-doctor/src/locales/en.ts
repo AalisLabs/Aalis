@@ -59,7 +59,7 @@ export default defineLocale<Source>()({
   inUseId: 'Actually in use: {id}',
   noProvider: 'This service has no provider right now',
   fixPreference:
-    'Choose another preference: servicePreferences.{name} in the config file, or the service preferences under WebUI Settings "System"; to use the original one, enable the plugin that provides {preferred}',
+    'Choose another preference: servicePreferences.{name} in the config file, or the service preferences under WebUI Settings “System”; to use the original one, enable the plugin that provides {preferred}',
   fixPluginPreference:
     'Choose another preference: the service preferences in the WebUI plugin details ({plugin}), or pluginServicePreferences in the config file; to use the original one, enable the plugin that provides {preferred}',
   preferencesInEffect: 'All service preferences are in effect',

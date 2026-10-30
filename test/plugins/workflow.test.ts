@@ -161,7 +161,7 @@ describe('workflow validateGraph', () => {
     expect(toSource(validateGraph(wrap({ id: 'a', type: 'tool' })))).toMatch(/tool/);
     const missingContent = validateGraph(wrap({ id: 'a', type: 'send-message', sessionId: 's' }));
     expect(toSource(missingContent)).toBe('节点 "a"(send-message) 缺少 content 字段');
-    expect(resolveText(missingContent!, ['en'])).toBe('Node "a" (send-message) is missing the content field');
+    expect(resolveText(missingContent!, ['en'])).toBe('Node “a” (send-message) is missing the content field');
     expect(toSource(validateGraph(wrap({ id: 'a', type: 'send-message', content: 'x' })))).toMatch(/sessionId/);
     expect(toSource(validateGraph(wrap({ id: 'a', type: 'wait' })))).toMatch(/seconds/);
     const unknownType = validateGraph(wrap({ id: 'a', type: 'mystery' }));

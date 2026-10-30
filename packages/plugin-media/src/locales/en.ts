@@ -85,13 +85,13 @@ export default defineLocale<Source>()({
   visionReady: 'Image recognition is available; recognition model: {model}',
   clearTypeImage: 'Image cache',
   clearTypeVideo: 'Video cache',
-  uploadsCleared: 'Uploaded images cleared ({count, plural, one {# file} other {# files}})',
+  uploadsCleared: 'Cleared uploaded images ({count, plural, one {# file} other {# files}})',
   uploadsFailed: 'Failed to clear uploaded images: {error}',
   kindImage: 'image',
   kindVideo: 'video',
-  descriptionsClearedAll: 'All {kind} description caches cleared ({count, plural, one {# entry} other {# entries}})',
+  descriptionsClearedAll: 'Cleared all {kind} description caches ({count, plural, one {# entry} other {# entries}})',
   descriptionsClearedSession:
-    "This session's {kind} description cache cleared ({count, plural, one {# entry} other {# entries}})",
+    "Cleared this session's {kind} description cache ({count, plural, one {# entry} other {# entries}})",
   descriptionsFailed: 'Failed to clear the {kind} description cache: {error}',
   cutOff: '{text} (cut off at the length limit)',
 });

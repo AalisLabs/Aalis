@@ -145,7 +145,7 @@ describe('工作流运行的错误原因', () => {
       signal: new AbortController().signal,
     });
     expect(result.error).toMatchObject({ i18n: '@aalis/plugin-workflow', key: 'nodeFailed' });
-    expect(resolveText(result.error as never, ['en'])).toBe(`Node "a" failed: ${'x'.repeat(200)}`);
+    expect(resolveText(result.error as never, ['en'])).toBe(`Node “a” failed: ${'x'.repeat(200)}`);
   });
 
   it('落盘的原因重启读回：文字对象仍在、按全局层的语言渲染；交给模型的取原文', async () => {
@@ -172,7 +172,7 @@ describe('工作流运行的错误原因', () => {
     // 工具服务不在：tool 节点失败，这一次运行以失败收尾
     await app.plugins.unload(toolsPlugin.name);
     expect(await request('actions/runWorkflow', 'POST', { rowKey: 'zz-manual' })).toEqual({
-      error: 'Run did not succeed (Failed): Node "a" failed: The \'tools\' service is unavailable',
+      error: "Run did not succeed (Failed): Node “a” failed: The 'tools' service is unavailable",
     });
     setLanguage(['zh-CN']);
     expect(await request('actions/runWorkflow', 'POST', { rowKey: 'zz-manual' })).toEqual({

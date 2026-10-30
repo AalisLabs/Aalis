@@ -111,7 +111,7 @@ describe('执行守卫的拒绝语', () => {
   it('指令一路：en 房间的回复是英文，zh-CN 房间是原文', async () => {
     const s = await setup();
     expect(await s.ask(['en'], '/zz-admin')).toBe(
-      'Insufficient permission: "command:zz-admin" needs level 2 (current 0)',
+      'Insufficient permission: “command:zz-admin” needs level 2 (current 0)',
     );
     expect(await s.ask(['zh-CN'], '/zz-admin')).toBe(DENIED);
   });

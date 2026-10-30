@@ -84,7 +84,7 @@ describe('authorize（deny > owner > level>=minLevel）', () => {
     );
     const denied = m.authorize(onebot('1'), { capability: 'tool:weather', visibility: 'public' }) as TextRef;
     expect(denied.source).toBe('权限不足："tool:weather" 只限 owner');
-    expect(resolveText(denied, ['en'])).toBe('Insufficient permission: "tool:weather" is owner-only');
+    expect(resolveText(denied, ['en'])).toBe('Insufficient permission: “tool:weather” is owner-only');
   });
 
   it('全局 deniedCapabilities 连 owner 都压过', () => {

@@ -209,8 +209,8 @@ describe('/model 与 /persona 的分页回复按会话的语言', () => {
     en: [
       ['Showing available models (21 in total · page 1/2):', 22, '—— Next page: /model -p 2  Search: /model <keyword>'],
       ['Showing available models (21 in total · page 2/2):', 3, '—— Next page: /model -p 1  Search: /model <keyword>'],
-      ['Showing available models containing "zz" (21 in total · page 1/2):', 22, '—— Next page: /model zz -p 2'],
-      ['No available models match "zz-none"', 1, 'No available models match "zz-none"'],
+      ['Showing available models containing “zz” (21 in total · page 1/2):', 22, '—— Next page: /model zz -p 2'],
+      ['No available models match “zz-none”', 1, 'No available models match “zz-none”'],
       ['(No available personas)', 1, '(No available personas)'],
     ],
     'zh-CN': [

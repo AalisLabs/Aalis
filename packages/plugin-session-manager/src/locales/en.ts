@@ -18,11 +18,11 @@ export default defineLocale<Source>()({
   takeCrossBotLabel: 'Across bot accounts',
   takeCrossBotDescription:
     "Whether sessions under the assistant's other bot accounts on the same platform can be taken within the scope. An invalid value counts as no",
-  childrenDeleted: '{count, plural, one {Deleted # subsession} other {Deleted # subsessions}}',
+  childrenDeleted: '{count, plural, one {Deleted # child session} other {Deleted # child sessions}}',
   scopeSession: 'Taking from other sessions is limited to this session',
   scopePlatform: 'Taking from other sessions is limited to the same platform',
-  crossBot: '"Across bot accounts" is off, so sessions under the assistant\'s other bot accounts cannot be taken from',
-  otherGroups: '"Read other groups" is off, so other group chats cannot be taken from',
-  othersPrivate: '"Read others\' private chats" is off, so other people\'s private chats cannot be taken from',
+  crossBot: "“Across bot accounts” is off, so sessions under the assistant's other bot accounts cannot be taken from",
+  otherGroups: '“Read other groups” is off, so other group chats cannot be taken from',
+  othersPrivate: "“Read others' private chats” is off, so other people's private chats cannot be taken from",
   deleteFailed: '{count, plural, one {# error} other {# errors}} while deleting sessions',
 });

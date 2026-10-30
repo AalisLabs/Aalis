@@ -15,11 +15,11 @@ export default defineLocale<Source>()({
   factParams: 'Parameters: {value}',
   clipped: '{head}…({count, plural, one {# character} other {# characters}} omitted)…{tail}',
   howToAnswer:
-    'Quote this message and reply "approve", or "deny" followed by a reason. It expires if there is no answer within {minutes, plural, one {# minute} other {# minutes}}.',
+    'Quote this message and reply “approve”, or “deny” followed by a reason. It expires if there is no answer within {minutes, plural, one {# minute} other {# minutes}}.',
   windowRequest: 'Needs approval: {tool}',
   windowWhy: 'Someone in this turn cannot do this themselves.',
   windowHowToAnswer:
-    'Anyone who can do this themselves may quote this message and reply "approve", or "deny" followed by a reason. It expires if there is no answer within {minutes, plural, one {# minute} other {# minutes}}.',
+    'Anyone who can do this themselves may quote this message and reply “approve”, or “deny” followed by a reason. It expires if there is no answer within {minutes, plural, one {# minute} other {# minutes}}.',
   answerElsewhere: 'This approval cannot be answered here; handle it in the WebUI or the terminal.',
   alreadySettled: 'This approval has already been handled.',
   answerRefused: 'The answer did not take effect: {reason}',

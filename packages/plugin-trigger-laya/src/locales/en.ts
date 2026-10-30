@@ -50,7 +50,8 @@ export default defineLocale<Source>()({
   unreachable: 'sidecar unreachable ({error})',
   starting:
     'sidecar starting ({seconds}s so far); until it is ready, judging falls back to replying only when mentioned',
-  restartingFor: 'sidecar restarting ({seconds}s so far; it failed to start {count} times in a row before)',
+  restartingFor:
+    'sidecar restarting ({seconds}s so far; it failed to start {count, plural, one {once} other {# times in a row}} before)',
   restarting: '{reason}, restarting in {wait}s ({count} in a row)',
   external:
     'the sidecar is not managed by this plugin: another sidecar was already running on the port before the first launch; to have this plugin manage it, stop that one first (uninstall it if it is a system service), then restart Aalis or switch the trigger preference away and back',

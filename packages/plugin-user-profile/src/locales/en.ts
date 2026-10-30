@@ -37,7 +37,7 @@ export default defineLocale<Source>()({
     'The lowest increment, added for every incoming message whether or not the agent replies. If the agent replies, one of direct/immediate/interval is added on top. 0 means watching adds nothing; the interaction count and the last interaction time are still recorded (the only source for the decay baseline and for sorting by recent interaction)',
   backfillLabel: 'Fill in background profiles from other sessions',
   backfillDescription:
-    'When the current group or session has too few candidates, whether users who interacted recently in other groups, private chats and other sessions may fill up the "other participants" background summaries. When off, only users seen in the current context are used',
+    'When the current group or session has too few candidates, whether users who interacted recently in other groups, private chats and other sessions may fill up the “other participants” background summaries. When off, only users seen in the current context are used',
   categoryInterests: 'Interests',
   categoryOccupation: 'Occupation',
   categoryRelationships: 'Relationships',

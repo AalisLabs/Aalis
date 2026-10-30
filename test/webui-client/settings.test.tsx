@@ -658,7 +658,7 @@ describe('外观', () => {
 
   it('英文界面导入被拒：主题文件的校验原因与界面自己的原因都按英文', async () => {
     app = await renderApp('/settings/appearance', {}, settingsRest(language(['en'])));
-    await section().findByRole('switch', { name: 'Follow the system' });
+    await section().findByRole('switch', { name: 'Follow system' });
     const refused = async (file: File, reasons: string[]) => {
       await act(async () => {
         fireEvent.change(section().getByLabelText('Import a theme file'), { target: { files: [file] } });

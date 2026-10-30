@@ -60,7 +60,7 @@ export default defineLocale<Source>()({
     'Each time capacity eviction runs, consolidate (dedup / tidy-up / hierarchy inference) runs first, then the eviction. The same order as /relation maintain, so PageRank sees more complete in- and out-degrees.',
   evictionLabel: 'Automatic aging',
   evictionDescription:
-    'After each extraction the graph is scanned: orphan nodes (with no edges) are deleted first, then, for each kind over its quota, the "old + low-weight + peripheral by PageRank" people, events, entities and edges are deleted. There are no hard exemptions; importance comes only from PageRank, weight decay and mentionCount. A quota of 0 lets that kind of node grow without limit.',
+    'After each extraction the graph is scanned: orphan nodes (with no edges) are deleted first, then, for each kind over its quota, the “old + low-weight + peripheral by PageRank” people, events, entities and edges are deleted. There are no hard exemptions; importance comes only from PageRank, weight decay and mentionCount. A quota of 0 lets that kind of node grow without limit.',
   maxPersonsLabel: 'Maximum people',
   maxPersonsDescription:
     'Beyond this, people are sorted by (now - lastMentionedAt) / (mentionCount · PR) and the old, least active ones are deleted first. 0 = no limit (people grow without limit).',
@@ -190,7 +190,7 @@ export default defineLocale<Source>()({
   eventEntity: 'Events and entities',
   entityEntity: 'Between entities',
   entityTopic: 'Topic',
-  entityPlace: 'Place',
+  entityPlace: 'Location',
   entityThing: 'Thing',
   entityWork: 'Work',
   categoryDiscussion: 'Discussion',
@@ -200,7 +200,7 @@ export default defineLocale<Source>()({
   categoryMilestone: 'Milestone',
   categoryOther: 'Other',
   graphDescription:
-    'Click a node to see its properties and relations; the raw data and deletion are on the "Relation graph raw data" page.',
+    'Click a node to see its properties and relations; the raw data and deletion are on the “Relation graph raw data” page.',
   graphEmpty: 'The relation graph is empty',
   relations: 'Relations',
   relationsEmpty: 'Nothing is connected to it',
@@ -329,7 +329,7 @@ export default defineLocale<Source>()({
     'Running a checkup on the relation graph: consolidating, then compressing (autoLink={autoLink}, LLM={llm}), please wait…',
   maintained: 'Relation graph checkup done:',
   maintainConsolidated:
-    '[1/2] Consolidate: people {persons0, number}→{persons1, number}, events {events0, number}→{events1, number}, entities {entities0, number}→{entities1, number}, edges {edges0, number}→{edges1, number}; aliases {aliasCandidates, number} candidates/{aliasEdges, number} edges, event edges rewritten {eventEdges, number}, hierarchy {hierarchyCandidates, number} candidates/{hierarchyEdges, number} edges, lateral parents {lateralCandidates, number} clusters/{lateralParents, number} created/{lateralEdges, number} edges',
+    '[1/2] Consolidate: people {persons0, number}→{persons1, number}, events {events0, number}→{events1, number}, entities {entities0, number}→{entities1, number}, edges {edges0, number}→{edges1, number}; aliases {aliasCandidates, plural, one {# candidate} other {# candidates}}/{aliasEdges, plural, one {# edge} other {# edges}}, event edges rewritten {eventEdges, number}, hierarchy {hierarchyCandidates, plural, one {# candidate} other {# candidates}}/{hierarchyEdges, plural, one {# edge} other {# edges}}, lateral parents {lateralCandidates, plural, one {# cluster} other {# clusters}}/{lateralParents, number} created/{lateralEdges, plural, one {# edge} other {# edges}}',
   maintainCompressed:
     '[2/2] Compress: people {persons1, number}→{persons2, number}, events {events1, number}→{events2, number}, entities {entities1, number}→{entities2, number}, edges {edges1, number}→{edges2, number}',
   maintainOrphansOnly:

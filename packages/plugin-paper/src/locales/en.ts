@@ -215,7 +215,7 @@ export default defineLocale<Source>()({
   doctorUnlimited:
     'The global daily budget is empty, so there is no limit: remote tasks are billed at actual cost; fill in an amount to set a limit',
   doctorClaimFailed:
-    'Paper task {id} is still starting after claiming failed (room {room}): the run start is unknown and the run may be going remotely; if the provider stays unavailable, use “Stop tracking” in the task table',
+    'Paper task {id} is still starting after claiming failed (room {room}): it is unknown whether the run started, and the run may be going remotely; if the provider stays unavailable, use “Stop tracking” in the task table',
   doctorListing:
     'During reconciliation, listing for remote agent “{type}” has been incomplete {count, plural, one {# time} other {# times}} in a row ({categories, list}); untracked agents and runs cannot be found meanwhile',
   doctorEgressUnverified:
@@ -245,7 +245,7 @@ export default defineLocale<Source>()({
   abandonRunning:
     'A running task can only stop being tracked after its timed cancellation failed and the paper was halted; try “Cancel task” first',
   abandonStarting:
-    'A starting task can only stop being tracked after its run start became unknown and claiming it failed',
+    'A starting task can only stop being tracked after it became unknown whether its run started and claiming it failed',
   abandonOther: 'Only running and starting tasks can stop being tracked',
   writeOffUnfinished: 'This task has not ended yet; its reserve is booked at actual cost once it ends',
   writeOffNoReserve: 'This task holds no reserve',
@@ -254,7 +254,7 @@ export default defineLocale<Source>()({
   abandonedRunning:
     'The remote run could not be cancelled and the owner stopped tracking it; it may still be running remotely, and its costs will be booked after the run ends',
   abandonedStarting:
-    'The run start was unknown and could not be claimed, so the owner stopped tracking it; a run may have started remotely, and its costs will be booked to this task once runs can be listed',
+    'It was unknown whether the run started and it could not be claimed, so the owner stopped tracking it; a run may have started remotely, and its costs will be booked to this task once runs can be listed',
   remoteBusy: 'The remote side is busy or unavailable',
   paperUnconfigured: 'This paper is no longer in the config, or has no remote agent type configured',
   dequeueRefused: 'Checks failed when leaving the queue: {reason}',
@@ -282,11 +282,11 @@ export default defineLocale<Source>()({
     'Runs not in the ledger appeared on agent {name} ({agent}): {runs, list}; handled as a self-wake: the agent is cancelled and deleted, and the next new agent starts without the old project bundle',
   waitedTooLong: 'waited past the limit',
   claimFailedAlert:
-    'The run start was unknown and paper task {id} could not be claimed ({cause}); it stays starting with its reserve held, and the run may be going remotely. If the provider stays unavailable, use “Stop tracking” in the task table',
+    'It was unknown whether the run started and paper task {id} could not be claimed ({cause}); it stays starting with its reserve held, and the run may be going remotely. If the provider stays unavailable, use “Stop tracking” in the task table',
   claimUnverified:
-    'The run start was unknown, so paper task {id} claimed the only untracked run {run} on agent {agent}; there is no telling whether this task started it or the agent woke itself, so check in the remote console',
+    'It was unknown whether the run started, so paper task {id} claimed the only untracked run {run} on agent {agent}; there is no telling whether this task started it or the agent woke itself, so check in the remote console',
   orphanClaimed:
-    'Paper task {id} was no longer tracked and its run start was unknown; the only untracked run {run} on agent {agent} was booked to it. There is no telling whether this task started it or the agent woke itself, so check in the remote console',
+    'Paper task {id} was no longer tracked and it was unknown whether its run started; the only untracked run {run} on agent {agent} was booked to it. There is no telling whether this task started it or the agent woke itself, so check in the remote console',
   untrackedCancelFailed: 'Untracked run {run} could not be cancelled (it ends when the agent is deleted): {error}',
   deleteFailed: 'Deleting remote agent {name} ({agent}) failed; retrying at the next reconciliation: {error}',
   costEstimated:

@@ -20,7 +20,7 @@ export default defineLocale<Source>()({
   modeAuto: 'Automatic (enforce isolation when a sandbox is available, otherwise refuse to run)',
   modeNone: 'No isolation (bare process, dangerous, trusted environments only)',
   modeDescription:
-    'auto: through the code-sandbox service (Linux bubblewrap / macOS sandbox-exec), code is confined to "the workspace + this run\'s temporary directory", has no network by default, and only allowlisted environment variables are passed; with no sandbox backend available, it refuses to run (fail-closed). none: falls back to a bare process without isolation, warning every time. Note: v1 leaves reads open (interpreters need system libraries); it guards against writing outside the workspace, exfiltrating over the network and tampering with the system, not against reading other files on this machine.',
+    "auto: through the code-sandbox service (Linux bubblewrap / macOS sandbox-exec), code is confined to “the workspace + this run's temporary directory”, has no network by default, and only allowlisted environment variables are passed; with no sandbox backend available, it refuses to run (fail-closed). none: falls back to a bare process without isolation, warning every time. Note: v1 leaves reads open (interpreters need system libraries); it guards against writing outside the workspace, exfiltrating over the network and tampering with the system, not against reading other files on this machine.",
   networkLabel: 'Child process network',
   networkDeny: 'No network (recommended)',
   networkAllow: 'Allowed (coarse, cannot filter by domain)',

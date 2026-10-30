@@ -9,9 +9,9 @@ export default defineLocale<Source>()({
   jobNameLabel: 'Task name',
   cronLabel: 'Cron expression',
   cronDescription:
-    '5-field format: minute hour day month weekday (e.g. "0 9 * * *" = every day at 9:00). Use either this or "Fixed interval".',
+    '5-field format: minute hour day month weekday (e.g. "0 9 * * *" = every day at 9:00). Use either this or “Fixed interval”.',
   intervalLabel: 'Fixed interval (seconds)',
-  intervalDescription: 'Run once every N seconds. Use either this or "Cron expression".',
+  intervalDescription: 'Run once every N seconds. Use either this or “Cron expression”.',
   runAtLabel: 'One-time run at',
   runAtDescription: 'An ISO string; disabled automatically after running once.',
   sessionIdLabel: 'Target session ID',
@@ -56,7 +56,7 @@ export default defineLocale<Source>()({
     'The fixed interval cannot be less than 5 seconds (so high-frequency tasks do not use up resources)',
   sessionIdEmpty: 'The target session ID cannot be empty',
   contentEmpty: 'The message content cannot be empty',
-  duplicateName: 'A task named {name} already exists; use "Edit" to change it',
+  duplicateName: 'A task named {name} already exists; use “Edit” to change it',
   tooManyJobs:
     'This session has reached the limit of {max, number} scheduled tasks; delete some tasks before creating a new one',
   pageTitle: 'Scheduled tasks',
@@ -99,14 +99,14 @@ export default defineLocale<Source>()({
     'Make sure the local storage plugin is running, the root name in the persistPath setting is right and this file can be read, then reload this plugin. Until it is fixed, tasks created or changed only take effect for this run. Reason: {error}',
   loadFailedContent:
     "Fix this file, then reload this plugin: its content must be an array of tasks; if you don't want the tasks in it, move it away and reload. Until it is fixed, tasks created or changed only take effect for this run. Reason: {error}",
-  unscheduledTitle: 'Scheduled task "{name}" could not be scheduled and will not run',
+  unscheduledTitle: 'Scheduled task “{name}” could not be scheduled and will not run',
   unscheduledInConfig:
     "Fix this task's cron or timeZone in the configuration file; it takes effect once saved. Reason: {error}",
   unscheduledOnPage: 'Edit this task on the scheduled task page, fix its cron and save. Reason: {error}',
-  halfActorTitle: 'Scheduled task "{name}" was not loaded: only half of the run-as identity is filled in',
+  halfActorTitle: 'Scheduled task “{name}” was not loaded: only half of the run-as identity is filled in',
   halfActorDetail:
     "In the configuration file, write this task's actorPlatform and actorUserId as a pair, or delete both (to run as the owner); it takes effect once saved.",
-  fromConfig: 'Task "{name}" comes from the configuration file; change it there',
+  fromConfig: 'Task “{name}” comes from the configuration file; change it there',
   jobSaved: 'Saved task {name}',
   notPersisted:
     'only effective for this run, not written to {uri}: it could not be read; see Needs attention for how to fix it',
