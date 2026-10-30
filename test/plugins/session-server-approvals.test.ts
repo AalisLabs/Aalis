@@ -391,6 +391,25 @@ describe('在场才问', () => {
     ]);
   });
 
+  it('报某一张没送到：只这一张对它算没收到、不因它在场，宽限过后按没人在场结；推给它的别的卡照旧；变为在场时只补推这一张', async () => {
+    const { mine, surfaces, request, flush } = await setup();
+    const got: Approval[] = [];
+    const attendance = surfaces.webui.attend(OWNER, { requested: a => void got.push(a), settled() {} });
+    attendance.presence(true);
+    const a = request(mine);
+    const b = request(OWNER_DM, { origin: originOf('hand', OWNER_QQ) });
+    await flush();
+    const [first, second] = got;
+    attendance.undelivered(second.id);
+    await vi.advanceTimersByTimeAsync(GRACE_MS - 1);
+    attendance.presence(true);
+    expect(got.map(approval => approval.id)).toEqual([first.id, second.id, second.id]);
+    attendance.undelivered(second.id);
+    await vi.advanceTimersByTimeAsync(GRACE_MS);
+    expect(b.outcome).toMatchObject({ approved: false, source: 'absent' });
+    expect(a.outcome).toBeUndefined();
+  });
+
   it('审批面的登记撤回（登记它的插件停用）：它的连接都不算在场，等待中的等完宽限后结算', async () => {
     const { app, mine, connect, request, flush } = await setup();
     await connect();

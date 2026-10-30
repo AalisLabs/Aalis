@@ -6,9 +6,10 @@
 // 推给谁、算谁在场、认谁的应答是一条规则：客户端的身份能批这一张，且它的接入覆盖这张审批：没限定的（WebUI、终端）全部覆盖；
 // 限定了群窗口的覆盖根会话是这个窗口的（连同它的子会话）、不是只有 owner 能批的；IM 私聊只覆盖只有 owner 能批的、这一轮的
 // 参与者里有它、审批所在会话的根会话经这个机器人账号的。最近一次活动在 10 分钟内、或推给它的卡还没结的算在场；上报离开时推给
-// 它、还没结的卡对它算没收到，变为在场时补推。发起时没人在场直接拒绝。同一会话的审批排队，一次只推出一张卡，等待从推出那一刻
-// 算起；频率上限按根会话连同它的子会话合计，只有 owner 能批的与参与者审批各算各的。子会话里的审批对象带来源链（根会话以下的
-// 各级子会话）。等满 300 秒、覆盖它的在场客户端都离开且 30 秒内没有回来、回合结束或中止、服务停止时结算。
+// 它、还没结的卡对它算没收到，报某一张没送到时只这一张对它算没收到，变为在场时补推。发起时没人在场直接拒绝。同一会话的审批
+// 排队，一次只推出一张卡，等待从推出那一刻算起；频率上限按根会话连同它的子会话合计，只有 owner 能批的与参与者审批各算各的。
+// 子会话里的审批对象带来源链（根会话以下的各级子会话）。等满 300 秒、覆盖它的在场客户端都离开且 30 秒内没有回来、回合结束或
+// 中止、服务停止时结算。
 // 应答先答先得：已结算的一律回已结算；还在等的，id 由本服务签发、归这个接入覆盖（否则不认识），应答人能批这一张，内容哈希一致。
 // 请求与决定成对追加到家目录的 state/audit/approvals.jsonl，不进模型上下文；每个结算另记一行 info 日志（会话、工具、结局、原因）。
 // ════════════════════════════════════════════════════════════
@@ -72,8 +73,10 @@ interface Attendee {
   scope?: AttendScope;
   /** 在场到这个时刻为止；离开或从没上报过活动为 0 */
   until: number;
-  /** 推给它、还没结、它也没上报过离开的：有就算它在场 */
+  /** 推给它、还没结、它也没上报过离开或没送到的：有就算它在场 */
   held: Set<Pending>;
+  /** 推给它、它报了没送到的：它不因这些算在场，变为在场时补推 */
+  missed: Set<Pending>;
 }
 
 interface Pending {
@@ -227,10 +230,12 @@ export function createApprovals(deps: ApprovalDeps) {
     covers(attendee, pending) && pending.req.canAnswer(attendee.who);
   /** 它此刻在场：最近一次活动在时限内，或推给它的卡还没结 */
   const isPresent = (attendee: Attendee, now: number) => now < attendee.until || attendee.held.size > 0;
-  /** 此刻在场、覆盖这张的客户端 */
+  /** 此刻在场、覆盖这张、没报过这张没送到的客户端 */
   const present = (now: number, pending: Pending) =>
     [...surfaces].flatMap(surface =>
-      [...surface.attendees].filter(attendee => isPresent(attendee, now) && attends(attendee, pending)),
+      [...surface.attendees].filter(
+        attendee => isPresent(attendee, now) && !attendee.missed.has(pending) && attends(attendee, pending),
+      ),
     );
   /** 已推出、还没结的 */
   const shown = () => [...queues.values()].flatMap(queue => (queue[0]?.approval ? [queue[0]] : []));
@@ -301,6 +306,7 @@ export function createApprovals(deps: ApprovalDeps) {
       settledIds.set(approval.id, true);
       for (const attendee of pending.delivered) {
         attendee.held.delete(pending);
+        attendee.missed.delete(pending);
         if (attendee.surface.attendees.has(attendee))
           tell('结算', () => attendee.sink.settled(approval.id, settlement));
       }
@@ -453,9 +459,18 @@ export function createApprovals(deps: ApprovalDeps) {
     return {
       presence(active) {
         attendee.until = active ? Date.now() + PRESENCE_WINDOW_MS : 0;
-        // 变为在场：补推它覆盖的、还没结、它没拿着的审批；离开：推给它、还没结的对它算没收到
-        if (active) for (const pending of shown()) deliver(pending, attendee);
-        else attendee.held.clear();
+        // 变为在场：补推它覆盖的、还没结、它没拿着的审批（含报过没送到的）；离开：推给它、还没结的对它算没收到
+        if (active) {
+          attendee.missed.clear();
+          for (const pending of shown()) deliver(pending, attendee);
+        } else attendee.held.clear();
+        recheck();
+      },
+      undelivered(approvalId) {
+        const pending = [...attendee.held].find(p => p.id === approvalId);
+        if (!pending) return;
+        attendee.held.delete(pending);
+        attendee.missed.add(pending);
         recheck();
       },
       present: () => isPresent(attendee, Date.now()),
@@ -488,7 +503,7 @@ export function createApprovals(deps: ApprovalDeps) {
     surfaces.add(surface);
     return {
       attend(who, sink, scope) {
-        const attendee: Attendee = { surface, who, sink, scope, until: 0, held: new Set() };
+        const attendee: Attendee = { surface, who, sink, scope, until: 0, held: new Set(), missed: new Set() };
         surface.attendees.add(attendee);
         return attendance(attendee);
       },

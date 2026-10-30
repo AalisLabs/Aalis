@@ -430,6 +430,7 @@ async function stubbed(presenceMs = 10 * MINUTE) {
                 entry.presence.push(active);
                 until = active ? Date.now() + presenceMs : 0;
               },
+              undelivered() {},
               present: () => Date.now() < until,
               respond: () => ({ ok: true }),
               leave() {
@@ -963,6 +964,23 @@ describe('没送达', () => {
     const contents = s.requests().map(({ message }) => message.content);
     expect(contents.filter(c => c.includes('rm -rf a'))).toHaveLength(1);
     expect(contents.filter(c => c.includes('rm -rf b'))).toHaveLength(2);
+  });
+
+  it('一张送达、一张没送达：只有没送达的那张对她算没收到，宽限过后按不在场结；送达的那张照旧等，引用它照常应答', async () => {
+    const s = await setup({
+      deliver: id => (id === 'm2' ? { ok: false, error: '发送失败' } : { ok: true, messageIds: [id] }),
+    });
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    await s.say('帮我清一下');
+    const a = s.call({ command: 'rm -rf a' });
+    const { id } = await s.requested();
+    const b = s.call({ command: 'rm -rf b' }, OWNER_QQ, GROUP);
+    await s.requested(2);
+    await vi.advanceTimersByTimeAsync(GRACE_MS);
+    await vi.waitFor(() => expect(b.content).toEqual(expect.stringContaining(ABSENT)));
+    expect(a.content).toBeUndefined();
+    await s.reply('同意', id);
+    expect(await a.result).toBe('ran');
   });
 
   it('一张送达、一张没送达之后别人在群里说话：她的接入还拿着这两张、不撤；两张等满时限过期时，私聊里为送达过的那张发一行过期', async () => {

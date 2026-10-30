@@ -145,7 +145,7 @@ interface Shown {
 /** 一个身份在一处的接入 */
 interface Attendee {
   attendance: ApprovalAttendance;
-  /** 推给它、还没结的审批 id：发不出去时对拿着它的接入上报离开；不空时这份接入不撤 */
+  /** 推给它、还没结的审批 id：哪张发不出去就对拿着它的接入报这一张没送到；不空时这份接入不撤 */
   held: Set<string>;
 }
 
@@ -296,9 +296,9 @@ function runChatApproval({
 
   /**
    * 推一张审批：发到这一处（群窗口就是它的根会话，不按审批所在的会话找）。确定没送达时这里的人看不到它：这张还在等就对拿着它的
-   * 接入上报离开，审批服务把推给它们、还没结的都算没收到，他们再说话时补推。结果未知的可能已经送达：不上报、不补推，只是认不出
-   * 引用它的回复。送达且平台给了消息 id 才认得出引用它的回复；不给时补一句这里无法应答。送达之前已经结了的只记下消息 id（引用
-   * 它的回复回「已经处理过」）
+   * 接入报这一张没送到，审批服务只把这一张对它们算没收到（推给它们的别的照旧），他们再说话时补推。结果未知的可能已经送达：不报、
+   * 不补推，只是认不出引用它的回复。送达且平台给了消息 id 才认得出引用它的回复；不给时补一句这里无法应答。送达之前已经结了的
+   * 只记下消息 id（引用它的回复回「已经处理过」）
    */
   async function push(place: Place, shown: Shown): Promise<void> {
     const { approval } = shown;
@@ -308,7 +308,7 @@ function runChatApproval({
     const waiting = place.shown.get(approval.id) === shown;
     if (delivery.state === 'failed' && waiting) {
       for (const attendee of place.attendees.values()) {
-        if (attendee.held.has(approval.id)) attendee.attendance.presence(false);
+        if (attendee.held.has(approval.id)) attendee.attendance.undelivered(approval.id);
       }
     }
     if (delivery.state !== 'delivered') return;
@@ -354,8 +354,8 @@ function runChatApproval({
   }
 
   /**
-   * 撤掉审批服务说已不在场的接入，他再说话时重建：接入不随说过话的人一直增多。推给它、还没结的照留：这不是在场规则（发不出去、
-   * 上报离开之后它已不在场），是撤了就收不到这些卡的结算，过期那一行发不出，这一处记着的卡也删不掉
+   * 撤掉审批服务说已不在场的接入，他再说话时重建：接入不随说过话的人一直增多。推给它、还没结的照留：这不是在场规则（推给它的
+   * 都没送到、最近又没说话时它已不在场），是撤了就收不到这些卡的结算，过期那一行发不出，这一处记着的卡也删不掉
    */
   function sweep(): void {
     for (const place of [...chats.values(), ...windows.values()]) {

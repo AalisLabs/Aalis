@@ -114,6 +114,7 @@ const doubles = definePlugin({
       attachSurface: () => ({
         attend: () => ({
           presence() {},
+          undelivered() {},
           present: () => false,
           respond: () => ({ ok: false, refusal: 'unavailable', message: '替身不应答' }),
           leave() {},
