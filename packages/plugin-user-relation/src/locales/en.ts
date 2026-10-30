@@ -4,7 +4,7 @@ import type { Source } from '../texts.js';
 export default defineLocale<Source>()({
   displayName: 'Relation graph',
   groupSummary:
-    'Query the user relation graph: node resolution across kinds / BFS subgraphs / shortest paths between any nodes / edges filtered by type / node timelines.',
+    'Query the user relation graph: node resolution across kinds / BFS subgraphs / shortest paths between any nodes / edges filtered by type / node timelines',
   extractionEnabledLabel: 'Extract new relations from conversations (write switch)',
   extractionEnabledDescription:
     '**Write switch**: when off, the plugin stops creating new relation nodes and edges, but the middleware still reads and injects existing relations and actions can still query and delete them. To remove it completely, disable the whole plugin.',
@@ -106,7 +106,7 @@ export default defineLocale<Source>()({
   maxInjectedEventsLabel: 'Injection: maximum events',
   maxInjectedRelationsLabel: 'Injection: maximum relationships',
   maxParticipantsLabel: 'Injection: participants shown per event',
-  maxParticipantsDescription: 'Beyond this, the rest show as +N 人. Default 5',
+  maxParticipantsDescription: 'Beyond this, the rest show as “+N 人”. Default 5',
   maxCooccurrenceLabel: 'Injection: co-occurrence partners shown',
   maxCooccurrenceDescription: 'Implicit two-hop links counted through shared events; 0 turns this section off',
   hotEventsLabel: 'Injection: global trending events',

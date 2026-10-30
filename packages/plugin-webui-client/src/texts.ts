@@ -629,7 +629,7 @@ const SOURCE = {
   sessionDefaults: '会话默认',
   originFrom: '来自：{layer}',
   placeLayer: '{place}（{layer}）',
-  placeOn: '{place}{platform}',
+  placeOn: '{place}（{platform}）',
   overriddenBy: '这里还被{layer}覆盖',
   writeToOnly: '改到：{scope}',
   pickLayer: '先在左边选一层',

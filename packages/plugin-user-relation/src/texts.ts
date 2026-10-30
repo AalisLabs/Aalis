@@ -6,7 +6,7 @@ import en from './locales/en.js';
 
 const SOURCE = {
   displayName: '人物关系图',
-  groupSummary: '查询用户关系图：跨类节点解析 / BFS 子图 / 任意节点最短路径 / 多类型筛选边 / 节点时间线。',
+  groupSummary: '查询用户关系图：跨类节点解析 / BFS 子图 / 任意节点最短路径 / 多类型筛选边 / 节点时间线',
   // 配置
   extractionEnabledLabel: '允许从对话中提取新关系（写入总开关）',
   extractionEnabledDescription:

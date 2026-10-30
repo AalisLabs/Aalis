@@ -151,6 +151,33 @@ describe('工具插件的分组带文字对象的概述', () => {
     expect(mine.map(group => [group.name, isTextRef(group.summary)])).toEqual(groups.map(name => [name, true]));
   });
 
+  it('mcp-client 的元数据组、user-profile 与 user-relation：原文与英文都不以句号收尾，与其余各组一致', async () => {
+    const summaries = [];
+    for (const [id, name] of [
+      ['mcp-client', 'mcp:_meta'],
+      ['user-profile', 'user-profile'],
+      ['user-relation', 'user-relation'],
+    ]) {
+      const found = CASES.find(([caseId]) => caseId === id);
+      if (!found) throw new Error(`CASES 里没有 ${id}`);
+      const [, definition, , config, around] = found;
+      const group = (await groupsOf(definition, config, around)).find(g => g.name === name);
+      if (!isTextRef(group?.summary)) throw new Error(`${name} 没有文字对象的概述`);
+      summaries.push([toSource(group.summary), resolveText(group.summary, ['en'])]);
+    }
+    expect(summaries).toEqual([
+      [
+        '让 agent 列出和切换已配置的 MCP server（不能新增/删除条目）',
+        'Let the agent list configured MCP servers and turn them on or off (entries cannot be added or removed)',
+      ],
+      ['查询已经积累的某人事实档案', 'Look up the fact profile built up for a person'],
+      [
+        '查询用户关系图：跨类节点解析 / BFS 子图 / 任意节点最短路径 / 多类型筛选边 / 节点时间线',
+        'Query the user relation graph: node resolution across kinds / BFS subgraphs / shortest paths between any nodes / edges filtered by type / node timelines',
+      ],
+    ]);
+  });
+
   it('okx-trading：模拟盘与实盘各一句', async () => {
     const summaries = [];
     for (const demo of [true, false]) {

@@ -32,5 +32,5 @@ export default defineLocale<Source>()({
   serverGroupSummary: 'Remote MCP server "{id}" bridged by plugin-mcp-client',
   metaGroup: 'MCP / metadata',
   metaGroupSummary:
-    'Let the agent list configured MCP servers and turn them on or off (entries cannot be added or removed).',
+    'Let the agent list configured MCP servers and turn them on or off (entries cannot be added or removed)',
 });

@@ -28,7 +28,7 @@ const SOURCE = {
   connectFailedDetail: '检查这台服务器的 command、args 与 env（它要的环境变量），改好后保存配置即重连。原因：{reason}',
   serverGroupSummary: '通过 plugin-mcp-client 桥接的远端 MCP server "{id}"',
   metaGroup: 'MCP / 元数据',
-  metaGroupSummary: '让 agent 列出和切换已配置的 MCP server（不能新增/删除条目）。',
+  metaGroupSummary: '让 agent 列出和切换已配置的 MCP server（不能新增/删除条目）',
 } as const;
 export type Source = typeof SOURCE;
 
