@@ -6,6 +6,7 @@
 //   npm create aalis@latest my-bot -- --advanced  → 另问模板档、记忆后端、embedding 与向量库
 //   npm create aalis@latest my-bot -- --yes       → 非交互：上面几问全取默认
 //   npm create aalis@latest my-bot -- --tier minimal --no-install
+//   npm create aalis@latest my-bot -- --yes --lang auto,zh-CN,en → 指定 Aalis 的语言列表（安装界面也按它显示）
 //
 // 产出一个独立项目目录：package.json（依赖 @aalis/core + @aalis/runtime + 所选插件）、
 // index.mjs（一行 startAalis 启动）、家目录 home/（aalis.config.yaml 与 secrets.yaml）、README、.gitignore，
@@ -13,6 +14,7 @@
 //
 // 默认装 standard 档的常用一套；本机有 Ollama（认 OLLAMA_HOST）时对话模型默认用它，零 key 可用。
 // 所选插件即写入 dependencies，由 @aalis/runtime 的 node_modules 加载器在启动时发现并加载。
+// 终端里的文字取自本包的字典（中文、英文），按系统语言或 --lang 显示；生成的文件按安装界面的语言写。
 // ============================================================
 
 import { spawn } from 'node:child_process';
@@ -22,6 +24,18 @@ import { arch, argv, cwd, env, exit, platform, stderr, stdin, stdout, version } 
 import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
+import {
+  matchLanguage,
+  normalizeLanguages,
+  pickLanguage,
+  resolveText,
+  selfName,
+  TextError,
+  type TextRef,
+  textLines,
+  textOf,
+} from '@aalis/schema-i18n';
+import { t } from './texts.js';
 
 /** 模板档：bare 只有 core 与 runtime，full 为全部官方插件 */
 type Tier = 'bare' | 'minimal' | 'standard' | 'full';
@@ -77,10 +91,18 @@ export const STANDARD_EXTRA = [
   '@aalis/plugin-chat-approval',
 ];
 
+/** 终端里显示的文字：字典里的句子按显示语言渲染，品牌名、包名与命令这类原样 */
+type Shown = string | TextRef;
+
+/** 按显示语言取字符串 */
+function shown(text: Shown, language: UiLanguage): string {
+  return typeof text === 'string' ? text : resolveText(text, [language]);
+}
+
 /** 一个选项：插件包名（模板档的选项是档名）与终端里显示的说明 */
 export interface Option {
   name: string;
-  label: string;
+  label: Shown;
 }
 
 const DEEPSEEK = '@aalis/plugin-llm-deepseek';
@@ -100,41 +122,80 @@ const OLLAMA_EMBEDDING_MODEL = 'nomic-embed-text';
 export const CHAT_MODELS: Option[] = [
   { name: DEEPSEEK, label: 'DeepSeek' },
   { name: '@aalis/plugin-llm-openai', label: 'OpenAI' },
-  { name: OLLAMA_LLM, label: 'Ollama（本机运行，零 key）' },
+  { name: OLLAMA_LLM, label: t('localNoKey', { name: 'Ollama' }) },
 ];
 
 export const PLATFORMS: Option[] = [
-  { name: '@aalis/plugin-cli', label: 'CLI 终端' },
-  { name: WEBUI, label: 'WebUI 管理界面' },
-  { name: '@aalis/plugin-adapter-onebot', label: 'OneBot（QQ 等）' },
+  { name: '@aalis/plugin-cli', label: t('platformCli') },
+  { name: WEBUI, label: t('platformWebui') },
+  { name: '@aalis/plugin-adapter-onebot', label: t('platformOnebot') },
 ];
 const DEFAULT_PLATFORMS = ['@aalis/plugin-cli', WEBUI];
 
 export const MEMORY_BACKENDS: Option[] = [
-  { name: SQLITE, label: 'SQLite（本地文件，推荐）' },
-  { name: '@aalis/plugin-memory-inmemory', label: '内存（重启丢失）' },
-  { name: '@aalis/plugin-memory-mongodb', label: 'MongoDB（需外部服务）' },
+  { name: SQLITE, label: t('memorySqlite') },
+  { name: '@aalis/plugin-memory-inmemory', label: t('memoryInMemory') },
+  { name: '@aalis/plugin-memory-mongodb', label: t('memoryMongodb') },
 ];
 
 export const EMBEDDINGS: Option[] = [
   { name: OPENAI_EMBEDDING, label: 'OpenAI Embedding' },
-  { name: OLLAMA_EMBEDDING, label: 'Ollama Embedding（本机运行，零 key）' },
+  { name: OLLAMA_EMBEDDING, label: t('localNoKey', { name: 'Ollama Embedding' }) },
 ];
 
 export const VECTORSTORES: Option[] = [
-  { name: FLAT, label: 'Flat（内置，零依赖）' },
-  { name: LANCEDB, label: 'LanceDB（高性能）' },
+  { name: FLAT, label: t('vectorstoreFlat') },
+  { name: LANCEDB, label: t('vectorstoreLancedb') },
 ];
 
-const TIER_OPTIONS: Array<{ name: Tier; label: string }> = [
-  { name: 'bare', label: 'bare：只装 core 与 runtime（完全自定义的起点）' },
-  { name: 'minimal', label: 'minimal：最简对话实例（网关、Agent、权限、会话、对话模型、平台与记忆后端）' },
-  {
-    name: 'standard',
-    label: 'standard：常用的一套（minimal 加人设、记忆增强、工具、调度、技能、诊断等，可选语义记忆）',
-  },
-  { name: 'full', label: 'full：全部已发布的官方插件（实时查 npm，含联网搜索）' },
+const TIER_OPTIONS: Array<{ name: Tier; label: TextRef }> = [
+  { name: 'bare', label: t('tierBare') },
+  { name: 'minimal', label: t('tierMinimal') },
+  { name: 'standard', label: t('tierStandard') },
+  { name: 'full', label: t('tierFull') },
 ];
+
+// ── 语言 ──────────────────────────────────────────────────
+
+/** 安装界面的语言：本包字典有的语言（原文与译文） */
+const UI_LANGUAGES = ['zh-CN', 'en'] as const;
+export type UiLanguage = (typeof UI_LANGUAGES)[number];
+
+/** 第一方插件提供的语言：第一方字典都是原文 zh-CN、带 en */
+const FIRST_PARTY_LANGUAGES = ['zh-CN', 'en'];
+
+/** 语言列表里的「跟随系统」：取服务进程的系统语言，与 plugin-i18n 认的同一个字面量 */
+const AUTO = 'auto';
+
+/** 按读者语言显示的插件：这批插件里有它时才排语言列表、写它的配置段 */
+const I18N = '@aalis/plugin-i18n';
+
+/**
+ * 识别系统语言：Node 的 Intl 默认 locale（跟 LANG），规范化；认不出（und）时按 en-US，同 plugin-i18n 的跟随系统。
+ * 建项目时取一次：安装界面的语言、默认的语言列表与找语言包都按它
+ */
+export function systemLanguage(): string {
+  const [tag] = normalizeLanguages([Intl.DateTimeFormat().resolvedOptions().locale]);
+  return tag === undefined || tag.split('-')[0] === 'und' ? 'en-US' : tag;
+}
+
+/** --lang 的值：逗号分隔的语言列表，每项是 auto 或认得的语言标签（判据同 plugin-i18n），规范化、去重；不合法时写明是哪一项 */
+export function parseLanguages(raw: string): { ok: true; languages: string[] } | { ok: false; error: TextRef } {
+  const languages: string[] = [];
+  for (const item of raw.split(',').map(part => part.trim())) {
+    const tag = item === AUTO ? AUTO : normalizeLanguages([item])[0];
+    if (tag === undefined) return { ok: false, error: t('badLanguage', { item }) };
+    if (!languages.includes(tag)) languages.push(tag);
+  }
+  return { ok: true, languages };
+}
+
+/** 安装界面的语言：语言列表里第一个本包字典有的语言（auto 按系统语言），都没有时按系统语言，再没有时为英文 */
+export function uiLanguage(system: string, languages: readonly string[] = []): UiLanguage {
+  const chain = [...languages.map(tag => (tag === AUTO ? system : tag)), system];
+  const at = pickLanguage(chain, UI_LANGUAGES);
+  return at === undefined ? 'en' : UI_LANGUAGES[at];
+}
 
 // 要密钥的插件与它的键：提问时当场粘贴，没粘贴的写成空桩，由用户在 WebUI 或配置文件里填。直接写进
 // home/aalis.config.yaml（home/ 不入库，见 renderGitignore），首次启动时宿主把密钥移进 secrets.yaml、配置里换成引用。
@@ -188,26 +249,23 @@ export async function askPicks(
   const keys: Keys = {};
   const paste = async (plugin: Option) => {
     for (const key of KNOWN_CONFIG[plugin.name] ?? []) {
-      const value = await p.secret(`粘贴 ${plugin.label} 的 ${key}（输入不显示，回车跳过）`);
+      const value = await p.secret(t('pasteKey', { plugin: plugin.label, key }));
       if (value) keys[plugin.name] = { ...keys[plugin.name], [key]: value };
     }
   };
-  const chat = await p.choose('对话模型', CHAT_MODELS, o.ollama ? OLLAMA_LLM : DEEPSEEK);
+  const chat = await p.choose(t('chatTitle'), CHAT_MODELS, o.ollama ? OLLAMA_LLM : DEEPSEEK);
   await paste(chat);
-  const platforms = await p.chooseMany('接入平台（可多选）', PLATFORMS, DEFAULT_PLATFORMS);
-  const memory = o.advanced ? (await p.choose('记忆后端', MEMORY_BACKENDS, SQLITE)).name : SQLITE;
+  const platforms = await p.chooseMany(t('platformsTitle'), PLATFORMS, DEFAULT_PLATFORMS);
+  const memory = o.advanced ? (await p.choose(t('memoryTitle'), MEMORY_BACKENDS, SQLITE)).name : SQLITE;
   const picks: Picks = { chat: chat.name, platforms, memory };
-  if (
-    o.tier === 'standard' &&
-    (await p.confirm('要长期语义记忆吗？按意思找回很久以前聊过的内容，需要一个 embedding 模型', o.ollama))
-  ) {
+  if (o.tier === 'standard' && (await p.confirm(t('semanticQuestion'), o.ollama))) {
     const fallback = embeddingFor(chat.name, o.ollama);
     const embedding = o.advanced
-      ? await p.choose('Embedding 提供者', EMBEDDINGS, fallback)
+      ? await p.choose(t('embeddingTitle'), EMBEDDINGS, fallback)
       : EMBEDDINGS.find(e => e.name === fallback)!;
     await paste(embedding);
     const stores = VECTORSTORES.filter(v => o.lancedb || v.name !== LANCEDB);
-    const vectorstore = o.advanced ? (await p.choose('向量库', stores, FLAT)).name : FLAT;
+    const vectorstore = o.advanced ? (await p.choose(t('vectorstoreTitle'), stores, FLAT)).name : FLAT;
     picks.semantic = { embedding: embedding.name, vectorstore };
   }
   return { picks, keys };
@@ -264,11 +322,7 @@ export function ollamaHost(raw: string | undefined): string | undefined {
   if (!value) return undefined;
   const withScheme = /^[a-z][a-z\d+.-]*:\/\//i.test(value);
   const href = withScheme ? value : `http://${value}`;
-  if (!URL.canParse(href)) {
-    throw new Error(
-      `OLLAMA_HOST 的值「${value}」不是有效的地址：写成 主机:端口（如 127.0.0.1:11434）或完整地址（如 http://主机:端口）`,
-    );
-  }
+  if (!URL.canParse(href)) throw new TextError(t('badOllamaHost', { value }));
   const url = new URL(href);
   if (!withScheme && !/:\d+$/.test(value.split('/')[0])) url.port = '11434';
   return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
@@ -318,16 +372,16 @@ async function ollamaCapabilities(base: string, model: string, signal: AbortSign
   }
 }
 
-/** 用到 Ollama 时启动前要拉的模型：探不到时不知道里面有什么，照样提示 */
-export function ollamaSteps(picks: Picks, probe: OllamaProbe | null): string[] {
+/** 用到 Ollama 时启动前要拉的模型（命令带说明）：探不到时不知道里面有什么，照样提示 */
+export function ollamaSteps(picks: Picks, probe: OllamaProbe | null): TextRef[] {
   const models = probe?.models ?? [];
-  const steps: string[] = [];
-  if (picks.chat === OLLAMA_LLM && !probe?.chat) steps.push('ollama pull <对话模型名>    # 先拉一个对话模型');
+  const steps: TextRef[] = [];
+  if (picks.chat === OLLAMA_LLM && !probe?.chat) steps.push(t('pullChat'));
   if (
     picks.semantic?.embedding === OLLAMA_EMBEDDING &&
     !models.some(m => m === OLLAMA_EMBEDDING_MODEL || m.startsWith(`${OLLAMA_EMBEDDING_MODEL}:`))
   ) {
-    steps.push(`ollama pull ${OLLAMA_EMBEDDING_MODEL}    # 语义记忆用的 embedding 模型`);
+    steps.push(t('pullEmbedding', { model: OLLAMA_EMBEDDING_MODEL }));
   }
   return steps;
 }
@@ -384,6 +438,11 @@ interface CatalogEntry {
   official: boolean;
 }
 
+/** 检索结果里的一个包 */
+interface Found {
+  package: { name: string; keywords?: string[] };
+}
+
 /**
  * npm search 响应 → 插件目录条目。脚手架只收**可装功能插件**。
  *
@@ -410,7 +469,7 @@ export function toPluginCatalog(data: { objects?: Array<{ package: { name: strin
 
 // ── 输入校验（纯函数，便于单测；交互层在出错时重问而非静默吞）──────────
 
-export type IndexParse = { ok: true; indices: number[] } | { ok: false; error: string };
+export type IndexParse = { ok: true; indices: number[] } | { ok: false; error: TextRef };
 
 /**
  * 解析「序号选择」输入：兼容逗号或空格分隔（"1,2" / "1, 2" / "1 2" 等价）。
@@ -421,18 +480,14 @@ export type IndexParse = { ok: true; indices: number[] } | { ok: false; error: s
 export function parseIndexSelection(raw: string, count: number, mode: 'multi' | 'exclusive'): IndexParse {
   const tokens = raw.split(/[\s,]+/).filter(Boolean);
   const indices: number[] = [];
-  for (const t of tokens) {
-    if (!/^\d+$/.test(t)) {
-      return { ok: false, error: `无法识别「${t}」：请只输入序号（如 1,2 或 1 2），不要含字母或符号。` };
-    }
-    const n = Number.parseInt(t, 10);
-    if (n < 1 || n > count) return { ok: false, error: `序号 ${n} 超出范围（应在 1-${count}）。` };
-    if (indices.includes(n)) return { ok: false, error: `序号 ${n} 重复了。` };
+  for (const token of tokens) {
+    if (!/^\d+$/.test(token)) return { ok: false, error: t('badToken', { token }) };
+    const n = Number.parseInt(token, 10);
+    if (n < 1 || n > count) return { ok: false, error: t('outOfRange', { n, count }) };
+    if (indices.includes(n)) return { ok: false, error: t('duplicate', { n }) };
     indices.push(n);
   }
-  if (mode === 'exclusive' && indices.length > 1) {
-    return { ok: false, error: '这是单选，请只输入一个序号。' };
-  }
+  if (mode === 'exclusive' && indices.length > 1) return { ok: false, error: t('singleChoice') };
   return { ok: true, indices };
 }
 
@@ -445,7 +500,7 @@ export function parseYesNo(ans: string, def: boolean): boolean | null {
   return null;
 }
 
-export type ValidationResult = { ok: true } | { ok: false; error: string };
+export type ValidationResult = { ok: true } | { ok: false; error: TextRef };
 
 /**
  * 校验是否为合法 npm 包名（生成项目/插件的 package.json `name`）。覆盖 npm 核心规则的常见子集：
@@ -453,23 +508,19 @@ export type ValidationResult = { ok: true } | { ok: false; error: string };
  * 只用宽松正则（放行 MyBot / 全点名等）或只查非空不够，会生成无法 install/publish 的名字。
  */
 export function validateNpmName(name: string): ValidationResult {
-  if (!name) return { ok: false, error: '名称不能为空。' };
-  if (name.length > 214) return { ok: false, error: '名称过长（>214 字符）。' };
-  if (/\s/.test(name)) return { ok: false, error: '名称不能含空格。' };
-  if (name !== name.toLowerCase()) return { ok: false, error: '名称必须全小写（npm 包名规则，如 my-bot）。' };
+  if (!name) return { ok: false, error: t('nameEmpty') };
+  if (name.length > 214) return { ok: false, error: t('nameTooLong') };
+  if (/\s/.test(name)) return { ok: false, error: t('nameSpace') };
+  if (name !== name.toLowerCase()) return { ok: false, error: t('nameUppercase') };
   let pkg = name;
   if (name.startsWith('@')) {
     const m = name.match(/^@([^/]+)\/(.+)$/);
-    if (!m) return { ok: false, error: 'scope 包名格式应为 @scope/name。' };
-    if (!/^[a-z0-9][a-z0-9._-]*$/.test(m[1])) {
-      return { ok: false, error: `scope「${m[1]}」非法（须以小写字母/数字开头，仅含 a-z 0-9 . _ -）。` };
-    }
+    if (!m) return { ok: false, error: t('scopeFormat') };
+    if (!/^[a-z0-9][a-z0-9._-]*$/.test(m[1])) return { ok: false, error: t('scopeInvalid', { scope: m[1] }) };
     pkg = m[2];
   }
-  if (/^[._]/.test(pkg)) return { ok: false, error: '名称不能以 . 或 _ 开头。' };
-  if (!/^[a-z0-9][a-z0-9._-]*$/.test(pkg)) {
-    return { ok: false, error: '名称只能含小写字母、数字、- . _，且以字母或数字开头（如 my-bot）。' };
-  }
+  if (/^[._]/.test(pkg)) return { ok: false, error: t('nameLeadingDot') };
+  if (!/^[a-z0-9][a-z0-9._-]*$/.test(pkg)) return { ok: false, error: t('nameChars') };
   return { ok: true };
 }
 
@@ -485,29 +536,37 @@ export function checkNodeVersion(current: string): ValidationResult {
   if (at === -1 || have[at] > need[at]) return { ok: true };
   return {
     ok: false,
-    error: [
-      `Aalis 需要 Node.js ${MIN_NODE} 起，当前是 ${current}。`,
-      `升级方法见 ${DOCS}/guide/first-run#upgrade-node`,
-    ].join('\n'),
+    error: textLines([
+      t('nodeTooOld', { need: MIN_NODE, current }),
+      t('upgradeNode', { url: `${DOCS}/guide/first-run#upgrade-node` }),
+    ]),
   };
 }
 
 // ── 终端提问 ──────────────────────────────────────────────
 
-/** 终端提问：坏输入说明原因后重问，不静默接受 */
+/** 终端提问：坏输入说明原因后重问，不静默接受。提问、选项与提示按 language 显示 */
 export interface Prompter {
-  text(question: string, def: string, validate: (value: string) => ValidationResult): Promise<string>;
+  /** 显示语言：选完安装界面的语言后改成那一种 */
+  language: UiLanguage;
+  text(question: Shown, def: string, validate: (value: string) => ValidationResult): Promise<string>;
   /** 单选：回车取 def */
-  choose<T extends Option>(title: string, options: readonly T[], def: string): Promise<T>;
+  choose<T extends Option>(title: Shown, options: readonly T[], def: string): Promise<T>;
   /** 多选，返回所选的 name：回车取 defs */
-  chooseMany(title: string, options: readonly Option[], defs: readonly string[]): Promise<string[]>;
-  confirm(question: string, def: boolean): Promise<boolean>;
+  chooseMany(title: Shown, options: readonly Option[], defs: readonly string[]): Promise<string[]>;
+  /** 排序，返回全部 name：输入的序号排在前面，没输入的照原顺序接在后面（只排序不删除）；回车照原顺序 */
+  order(title: Shown, options: readonly Option[]): Promise<string[]>;
+  confirm(question: Shown, def: boolean): Promise<boolean>;
   /** 不回显的输入（密钥）：回车跳过，得到空串 */
-  secret(question: string): Promise<string>;
+  secret(question: Shown): Promise<string>;
   close(): void;
 }
 
-export function createPrompter(input: NodeJS.ReadableStream, output: NodeJS.WritableStream): Prompter {
+export function createPrompter(
+  input: NodeJS.ReadableStream,
+  output: NodeJS.WritableStream,
+  language: UiLanguage,
+): Prompter {
   // 读密钥时关掉回显：终端模式下键入的字由 readline 写到输出，经这一层转发，关掉时丢弃
   let muted = false;
   const echo = new Writable({
@@ -518,51 +577,67 @@ export function createPrompter(input: NodeJS.ReadableStream, output: NodeJS.Writ
   });
   // 不留输入历史：粘贴的密钥不能被上箭头翻出来
   const rl = createInterface({ input, output: echo, terminal: true, historySize: 0 });
-  const say = (line: string) => output.write(`${line}\n`);
-  const ask = async (question: string) => (await rl.question(question)).trim();
+  const show = (text: Shown) => shown(text, prompter.language);
+  const say = (line: Shown) => output.write(`${show(line)}\n`);
+  const ask = async (question: Shown) => (await rl.question(show(question))).trim();
+  const warn = (error: TextRef) => say(t('warning', { error }));
+
+  /** 列出选项，按序号读一组；坏输入说明原因后重问 */
+  async function pick<T extends Option>(
+    title: Shown,
+    options: readonly T[],
+    mode: 'multi' | 'exclusive',
+    prompt: Shown,
+  ): Promise<T[] | undefined> {
+    say(`\n${show(t('optionsTitle', { title }))}`);
+    for (const [i, o] of options.entries()) say(`  ${i + 1}. ${show(o.label)}`);
+    while (true) {
+      const raw = await ask(prompt);
+      if (raw === '') return undefined;
+      const r = parseIndexSelection(raw, options.length, mode);
+      if (r.ok) return r.indices.map(i => options[i - 1]);
+      warn(r.error);
+    }
+  }
 
   async function select<T extends Option>(
-    title: string,
+    title: Shown,
     options: readonly T[],
     mode: 'multi' | 'exclusive',
     defs: readonly string[],
   ): Promise<T[]> {
-    say(`\n${title}：`);
-    for (const [i, o] of options.entries()) say(`  ${i + 1}. ${o.label}`);
     const defaults = options.filter(o => defs.includes(o.name));
-    const shown = defaults.map(o => options.indexOf(o) + 1).join(',');
-    const prompt =
-      mode === 'exclusive' ? `选一个（序号，回车 = ${shown}）: ` : `选若干（逗号或空格分隔序号，回车 = ${shown}）: `;
-    while (true) {
-      const raw = await ask(prompt);
-      if (raw === '') return defaults;
-      const r = parseIndexSelection(raw, options.length, mode);
-      if (r.ok) return r.indices.map(i => options[i - 1]);
-      say(`  注意：${r.error}`);
-    }
+    const shownDefaults = defaults.map(o => options.indexOf(o) + 1).join(',');
+    const prompt = t(mode === 'exclusive' ? 'chooseOne' : 'chooseMany', { shown: shownDefaults });
+    return (await pick(title, options, mode, prompt)) ?? defaults;
   }
 
-  return {
+  const prompter: Prompter = {
+    language,
     async text(question, def, validate) {
       while (true) {
-        const value = (await ask(`${question} (${def}): `)) || def;
+        const value = (await ask(`${show(question)} (${def}): `)) || def;
         const r = validate(value);
         if (r.ok) return value;
-        say(`  注意：${r.error}`);
+        warn(r.error);
       }
     },
     choose: async (title, options, def) => (await select(title, options, 'exclusive', [def]))[0],
     chooseMany: async (title, options, defs) => (await select(title, options, 'multi', defs)).map(o => o.name),
+    async order(title, options) {
+      const first = (await pick(title, options, 'multi', t('orderPrompt'))) ?? [];
+      return [...first, ...options.filter(o => !first.includes(o))].map(o => o.name);
+    },
     async confirm(question, def) {
       while (true) {
-        const r = parseYesNo(await ask(`${question} (${def ? 'Y/n' : 'y/N'}): `), def);
+        const r = parseYesNo(await ask(`${show(question)} (${def ? 'Y/n' : 'y/N'}): `), def);
         if (r !== null) return r;
-        say('  注意：请输入 y 或 n。');
+        warn(t('yesOrNo'));
       }
     },
     async secret(question) {
       // 提示在 question 里同步写出，之后才关回显
-      const answer = rl.question(`${question}: `);
+      const answer = rl.question(`${show(question)}: `);
       muted = true;
       try {
         return (await answer).trim();
@@ -573,21 +648,51 @@ export function createPrompter(input: NodeJS.ReadableStream, output: NodeJS.Writ
     },
     close: () => rl.close(),
   };
+  return prompter;
 }
 
 // ── 版本 ──────────────────────────────────────────────────
 
-/** 实时查 npm 的 aalis-plugin 目录；失败返回 null（调用方回退静态表）。 */
-async function fetchCatalog(registry: string): Promise<CatalogEntry[] | null> {
+/** 按关键词检索源上的包；失败返回 null */
+async function search(registry: string, keyword: string): Promise<Found[] | null> {
   try {
     const base = registry.replace(/\/+$/, '') || DEFAULT_REGISTRY;
-    const url = `${base}/-/v1/search?text=${encodeURIComponent(`keywords:${AALIS_KEYWORD}`)}&size=100`;
+    const url = `${base}/-/v1/search?text=${encodeURIComponent(`keywords:${keyword}`)}&size=100`;
     const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!r.ok) return null;
-    return toPluginCatalog((await r.json()) as Parameters<typeof toPluginCatalog>[0]);
+    return ((await r.json()) as { objects?: Found[] }).objects ?? [];
   } catch {
     return null;
   }
+}
+
+/** 实时查 npm 的 aalis-plugin 目录；失败返回 null（调用方回退静态表）。 */
+async function fetchCatalog(registry: string): Promise<CatalogEntry[] | null> {
+  const objects = await search(registry, AALIS_KEYWORD);
+  return objects && toPluginCatalog({ objects });
+}
+
+/**
+ * 按语言找语言包：关键词 aalis-lang-<小写标签>，先按完整标签、再按基础语言（ja-JP 先找 aalis-lang-ja-jp，再找 aalis-lang-ja），
+ * 只收确实带这个关键词的包。回找到的包名与关键词对应的语言，没找到时包名为空；检索失败回 null
+ */
+async function findLanguagePacks(registry: string, tag: string): Promise<{ language: string; names: string[] } | null> {
+  const base = new Intl.Locale(tag).language;
+  for (const language of tag === base ? [tag] : [tag, base]) {
+    const keyword = `aalis-lang-${language.toLowerCase()}`;
+    const found = await search(registry, keyword);
+    if (!found) return null;
+    const names = found.filter(o => o.package.keywords?.includes(keyword)).map(o => o.package.name);
+    if (names.length > 0) return { language, names };
+  }
+  return { language: tag, names: [] };
+}
+
+/** 没找到语言包时的提示：检索失败写连不上；源是官方源时只说没有，别的源另提示它可能不支持检索 */
+export function packSearchMiss(registry: string, failed: boolean, language: { name: string; tag: string }): TextRef {
+  if (failed) return t('packSearchFailed', { registry, ...language });
+  const official = (registry.replace(/\/+$/, '') || DEFAULT_REGISTRY) === DEFAULT_REGISTRY;
+  return t(official ? 'packSearchEmpty' : 'packSearchEmptyMirror', { registry, ...language });
 }
 
 /** 查 {registry}/{pkg}/latest 的版本；失败返回 null（调用方回退 'latest'）。 */
@@ -627,7 +732,102 @@ const TROUBLESHOOTING_URL = `${DOCS}/guide/troubleshooting`;
 /** webui-server 的默认监听地址与端口 */
 const WEBUI_URL = 'http://127.0.0.1:3000';
 
-function renderPackageJson(projectName: string, enabled: Set<string>, versions: Map<string, string>): string {
+/** 生成的文件里按安装界面的语言写的说明（普通字符串，不经字典：生成的文件没有读者语言一说） */
+interface Copy {
+  /** package.json 的 description */
+  description(projectName: string): string;
+  /** 入口 index.mjs 的注释 */
+  entry: string;
+  /** 配置里没有插件段时 plugins 上方的注释 */
+  config: string;
+  readme(o: { projectName: string; hasWebui: boolean; plugins: number }): string;
+}
+
+const COPY: Record<UiLanguage, Copy> = {
+  'zh-CN': {
+    description: projectName => `${projectName} —— 基于 Aalis 的 AI 助手`,
+    entry: `// 从本目录的 node_modules 加载已装的 @aalis 插件。家目录（配置、密钥、数据、日志）缺省是本目录下的 home/，
+// 设 AALIS_HOME 或用 npm start -- --home <目录> 可换到别处（npm 要在 -- 之后才把参数传给脚本）。
+// 默认开启控制台彩色日志 + home/logs/latest.log 文件日志（无 TTY 时自动关闭染色）。`,
+    config:
+      '# 启用的插件用默认配置启动；需要密钥/地址的在下方 plugins 段填写（密钥在启动时移进同目录的 secrets.yaml，本处换成引用；home/ 已在 .gitignore 里，不入库）。',
+    readme: ({ projectName, hasWebui, plugins }) => `# ${projectName}
+
+基于 [Aalis](${DOCS}) 的 AI 助手项目，由 create-aalis 生成。
+
+## 启动
+
+\`\`\`bash
+npm install        # 生成时跳过了安装的话
+npm start
+\`\`\`
+
+- 第一次运行要做什么：${FIRST_RUN_URL}
+- 装不上或起不来：${TROUBLESHOOTING_URL}
+
+## 配置
+
+- 家目录是 \`home/\`：配置、密钥、数据与日志都在里面（已在 \`.gitignore\` 里，不会入库）。设 \`AALIS_HOME\` 或用 \`npm start -- --home <目录>\` 可换到别处。
+- 编辑 \`home/aalis.config.yaml\` 调整插件与参数。
+- 密钥/令牌：填进 \`home/aalis.config.yaml\` 里该插件的段${hasWebui ? '，或启动后在 WebUI 插件区打开该插件填写' : ''}。启动时它们会被移进 \`home/secrets.yaml\`（0600），配置文件里换成引用；备份家目录时连同 \`secrets.yaml\` 一起备份。
+${hasWebui ? `- WebUI 管理界面默认 ${WEBUI_URL} 。\n` : ''}
+## 装更多插件
+
+\`\`\`bash
+npm install @aalis/plugin-<name>
+\`\`\`
+
+装好后重启实例${hasWebui ? '，或在 WebUI 插件区点「重新扫描」' : ''}，新插件才会加载。${hasWebui ? '也可以在 WebUI 的插件市场里搜索安装。' : ''}
+
+> 启用集：${plugins} 个插件。完整生态见 npm 上的 \`aalis-plugin\` 关键词。
+`,
+  },
+  en: {
+    description: projectName => `${projectName} — an AI assistant based on Aalis`,
+    entry: `// Loads the installed @aalis plugins from this directory's node_modules. The home directory (config, secrets, data, logs)
+// defaults to home/ here; set AALIS_HOME or use npm start -- --home <directory> to move it (npm passes arguments to the script only after --).
+// Colored console logs and the home/logs/latest.log file log are on by default (coloring turns off without a TTY).`,
+    config:
+      '# Enabled plugins start with their default configuration; fill in keys and addresses in the plugins section below (on start, keys move into secrets.yaml in this directory and are replaced by references here; home/ is in .gitignore and not committed).',
+    readme: ({ projectName, hasWebui, plugins }) => `# ${projectName}
+
+An AI assistant project based on [Aalis](${DOCS}), generated by create-aalis.
+
+## Start
+
+\`\`\`bash
+npm install        # if installing was skipped when generating
+npm start
+\`\`\`
+
+- What to do on the first run: ${FIRST_RUN_URL}
+- If it fails to install or start: ${TROUBLESHOOTING_URL}
+
+## Configuration
+
+- The home directory is \`home/\`: configuration, secrets, data and logs all live there (it is in \`.gitignore\` and not committed). Set \`AALIS_HOME\` or use \`npm start -- --home <directory>\` to move it elsewhere.
+- Edit \`home/aalis.config.yaml\` to adjust plugins and settings.
+- Keys and tokens: fill them into the plugin's section in \`home/aalis.config.yaml\`${hasWebui ? ', or open the plugin in the WebUI plugin area after starting' : ''}. On start they are moved into \`home/secrets.yaml\` (0600) and replaced by references in the config file; back up \`secrets.yaml\` together with the home directory.
+${hasWebui ? `- The WebUI admin console is at ${WEBUI_URL} by default.\n` : ''}
+## More plugins
+
+\`\`\`bash
+npm install @aalis/plugin-<name>
+\`\`\`
+
+New plugins load after you restart the instance${hasWebui ? ' or use Rescan plugin folders in the WebUI plugin area' : ''}.${hasWebui ? ' You can also search for and install them in the WebUI plugin market.' : ''}
+
+> Enabled plugins: ${plugins}. See the \`aalis-plugin\` keyword on npm for the whole ecosystem.
+`,
+  },
+};
+
+export function renderPackageJson(
+  projectName: string,
+  enabled: Set<string>,
+  versions: Map<string, string>,
+  ui: UiLanguage,
+): string {
   const range = (n: string): string => versions.get(n) ?? 'latest';
   const deps: Record<string, string> = {
     '@aalis/core': range('@aalis/core'),
@@ -640,7 +840,7 @@ function renderPackageJson(projectName: string, enabled: Set<string>, versions: 
       version: '0.1.0',
       private: true,
       type: 'module',
-      description: `${projectName} —— 基于 Aalis 的 AI 助手`,
+      description: COPY[ui].description(projectName),
       engines: { node: `>=${MIN_NODE}` },
       // 默认 dev 模式（startAalis 据 NODE_ENV!=='production' 判定）；
       // 生产部署用 `NODE_ENV=production node index.mjs`（Windows 用 set/$env:）。
@@ -654,17 +854,16 @@ function renderPackageJson(projectName: string, enabled: Set<string>, versions: 
   )}\n`;
 }
 
-function renderEntry(): string {
+/** 入口：注释跟安装界面的语言，启动报错与仓库根的入口同一句英文 */
+export function renderEntry(ui: UiLanguage): string {
   return `import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startAalis } from '@aalis/runtime';
 
-// 从本目录的 node_modules 加载已装的 @aalis 插件。家目录（配置、密钥、数据、日志）缺省是本目录下的 home/，
-// 设 AALIS_HOME 或用 npm start -- --home <目录> 可换到别处（npm 要在 -- 之后才把参数传给脚本）。
-// 默认开启控制台彩色日志 + home/logs/latest.log 文件日志（无 TTY 时自动关闭染色）。
+${COPY[ui].entry}
 const here = dirname(fileURLToPath(import.meta.url));
 startAalis({ appDir: here, defaultHome: join(here, 'home') }).catch(err => {
-  console.error('Aalis 启动失败:', err);
+  console.error('Aalis failed to start:', err);
   process.exit(1);
 });
 `;
@@ -694,21 +893,29 @@ export function pluginSettings(
   return out;
 }
 
-export function renderConfig(settings: Record<string, Record<string, string>>): string {
+/**
+ * 配置文档：插件段（pluginSettings 的结果），给了语言列表时另写 plugin-i18n 的 language（调用方只在这批插件里有它时给）；
+ * 没有插件段时的注释跟安装界面的语言
+ */
+export function renderConfig(
+  settings: Record<string, Record<string, string>>,
+  ui: UiLanguage,
+  languages?: readonly string[],
+): string {
+  const plugins: Record<string, Record<string, string | readonly string[]>> = languages
+    ? { ...settings, [I18N]: { language: languages } }
+    : settings;
   const lines = ['name: Aalis', 'logLevel: info'];
-  const configured = Object.keys(settings);
+  const configured = Object.keys(plugins);
   if (configured.length > 0) {
     lines.push('plugins:');
     for (const name of configured) {
       lines.push(`  "${name}":`);
-      // 值写成 JSON 字符串，同时也是合法的 YAML 双引号串：引号、反斜杠、冒号与 # 原样读回
-      for (const [key, value] of Object.entries(settings[name])) lines.push(`    ${key}: ${JSON.stringify(value)}`);
+      // 值写成 JSON（字符串与字符串数组），同时也是合法的 YAML 双引号串与流式序列：引号、反斜杠、冒号与 # 原样读回
+      for (const [key, value] of Object.entries(plugins[name])) lines.push(`    ${key}: ${JSON.stringify(value)}`);
     }
   } else {
-    lines.push(
-      '# 启用的插件用默认配置启动；需要密钥/地址的在下方 plugins 段填写（密钥在启动时移进同目录的 secrets.yaml，本处换成引用；home/ 已在 .gitignore 里，不入库）。',
-    );
-    lines.push('plugins: {}');
+    lines.push(COPY[ui].config, 'plugins: {}');
   }
   lines.push('sessionConfig:', '  platforms:');
   for (const platform of OWNER_PLATFORMS) {
@@ -723,38 +930,8 @@ function renderGitignore(): string {
   return `${['node_modules/', 'home/', '*.log', 'dist/'].join('\n')}\n`;
 }
 
-export function renderReadme(projectName: string, enabled: Set<string>): string {
-  const hasWebui = enabled.has(WEBUI);
-  return `# ${projectName}
-
-基于 [Aalis](${DOCS}) 的 AI 助手项目，由 create-aalis 生成。
-
-## 启动
-
-\`\`\`bash
-npm install        # 生成时跳过了安装的话
-npm start
-\`\`\`
-
-- 第一次运行要做什么：${FIRST_RUN_URL}
-- 装不上或起不来：${TROUBLESHOOTING_URL}
-
-## 配置
-
-- 家目录是 \`home/\`：配置、密钥、数据与日志都在里面（已在 \`.gitignore\` 里，不会入库）。设 \`AALIS_HOME\` 或用 \`npm start -- --home <目录>\` 可换到别处。
-- 编辑 \`home/aalis.config.yaml\` 调整插件与参数。
-- 密钥/令牌：填进 \`home/aalis.config.yaml\` 里该插件的段${hasWebui ? '，或启动后在 WebUI 插件区打开该插件填写' : ''}。启动时它们会被移进 \`home/secrets.yaml\`（0600），配置文件里换成引用；备份家目录时连同 \`secrets.yaml\` 一起备份。
-${hasWebui ? `- WebUI 管理界面默认 ${WEBUI_URL} 。\n` : ''}
-## 装更多插件
-
-\`\`\`bash
-npm install @aalis/plugin-<name>
-\`\`\`
-
-装好后重启实例${hasWebui ? '，或在 WebUI 插件区点「重新扫描」' : ''}，新插件才会加载。${hasWebui ? '也可以在 WebUI 的插件市场里搜索安装。' : ''}
-
-> 启用集：${countPlugins(enabled)} 个插件。完整生态见 npm 上的 \`aalis-plugin\` 关键词。
-`;
+export function renderReadme(projectName: string, enabled: Set<string>, ui: UiLanguage): string {
+  return COPY[ui].readme({ projectName, hasWebui: enabled.has(WEBUI), plugins: countPlugins(enabled) });
 }
 
 /** 结尾的「下一步」：进目录、Ollama 要拉的模型、启动，再点名还没填的密钥与去哪填 */
@@ -764,36 +941,31 @@ export function renderNextSteps(o: {
   enabled: Set<string>;
   keys: Keys;
   /** ollamaSteps 算出的命令 */
-  ollama: string[];
+  ollama: TextRef[];
   tier: Tier;
-}): string {
+}): TextRef {
   const hasWebui = o.enabled.has(WEBUI);
-  const lines = ['下一步：', `  cd ${o.dir}${o.installed ? '' : ' && npm install'}`, ...o.ollama.map(s => `  ${s}`)];
-  lines.push('  npm start');
+  const lines: Shown[] = [
+    t('nextSteps'),
+    `  cd ${o.dir}${o.installed ? '' : ' && npm install'}`,
+    ...o.ollama.map(step => t('indented', { line: step })),
+    '  npm start',
+  ];
   const unfilled = [...o.enabled]
     .sort()
-    .flatMap(name => (KNOWN_CONFIG[name] ?? []).filter(key => !o.keys[name]?.[key]).map(key => `  ${name} 的 ${key}`));
-  if (unfilled.length > 0) {
-    lines.push(
-      '',
-      '还没填的密钥（填好之前对应的插件起不来）：',
-      ...unfilled,
-      `  填法：${hasWebui ? '启动后在 WebUI 插件区打开该插件填写，或' : ''}填进 home/aalis.config.yaml 里 plugins 下该插件的段`,
+    .flatMap(name =>
+      (KNOWN_CONFIG[name] ?? [])
+        .filter(key => !o.keys[name]?.[key])
+        .map(key => t('unfilledKey', { plugin: name, key })),
     );
+  if (unfilled.length > 0) {
+    lines.push('', t('unfilledKeys'), ...unfilled, t(hasWebui ? 'keyWhereWebui' : 'keyWhere'));
   }
   // full 档另装了不少要手配的插件（OneBot 的连接、MongoDB 的 uri 等），上面点名的不是全部
-  if (o.tier === 'full') {
-    lines.push('', '其余要填凭据、地址或路径的插件：启动后在 WebUI 的「需要处理」里标待配置或失败，照着去配置。');
-  }
-  lines.push('', `第一次运行：${FIRST_RUN_URL}`);
-  if (o.tier !== 'full') {
-    lines.push(
-      hasWebui
-        ? '更多插件：启动后在 WebUI 的插件市场搜索安装；或 npm install @aalis/plugin-<名>，装好后重启实例或在插件区点「重新扫描」。'
-        : '更多插件：npm install @aalis/plugin-<名>，装好后重启实例才会加载。',
-    );
-  }
-  return `${lines.join('\n')}\n`;
+  if (o.tier === 'full') lines.push('', t('fullOthers'));
+  lines.push('', t('firstRun', { url: FIRST_RUN_URL }));
+  if (o.tier !== 'full') lines.push(t(hasWebui ? 'morePluginsWebui' : 'morePlugins'));
+  return textLines([...lines, '']);
 }
 
 // ── npm install ───────────────────────────────────────────
@@ -808,49 +980,35 @@ type InstallFailureKind = 'disk' | 'permission' | 'platform' | 'peer' | 'browser
 const INSTALL_FAILURES: Array<{
   kind: InstallFailureKind;
   match: RegExp;
-  explain(stderr: string, found: RegExpExecArray): string[];
+  explain(stderr: string, found: RegExpExecArray): TextRef[];
 }> = [
   {
     kind: 'disk',
     match: /\bENOSPC\b/,
-    explain: () => ['磁盘空间不够（ENOSPC）。', '腾出空间后再装。'],
+    explain: () => [t('diskReason'), t('diskFix')],
   },
   {
     kind: 'permission',
     match: /\bEACCES\b/,
-    explain: () => [
-      '没有写入权限（EACCES）。',
-      '不要用 sudo 重试：把项目目录与 npm 的缓存目录（npm config get cache 查看）改回当前用户所有，',
-      '例如 sudo chown -R "$(whoami)" <目录>；报的是全局目录时，用 nvm 装的 Node，或 npm config set prefix ~/.npm-global。',
-    ],
+    explain: () => [t('permissionReason'), t('permissionFix'), t('permissionExample')],
   },
   {
     kind: 'platform',
     match: /\bEBADPLATFORM\b/,
     explain: stderr => {
-      const pkg = /Unsupported platform for (\S+?)@\d/.exec(stderr)?.[1] ?? '某个依赖';
-      return [
-        `依赖 ${pkg} 不支持这台机器的系统或 CPU 架构（EBADPLATFORM）。`,
-        `加 --advanced 重新生成，换掉用到它的插件（npm ls ${pkg} 查是哪个）。`,
-      ];
+      const pkg = /Unsupported platform for (\S+?)@\d/.exec(stderr)?.[1] ?? t('someDependency');
+      return [t('platformReason', { pkg }), t('platformFix', { pkg })];
     },
   },
   {
     kind: 'peer',
     match: /\bERESOLVE\b/,
-    explain: () => [
-      'npm 解不开依赖版本（ERESOLVE）。',
-      '新生成的项目里不该出现：请把上面的日志附进问题报告 https://github.com/AalisLabs/Aalis/issues',
-    ],
+    explain: () => [t('peerReason'), t('peerFix')],
   },
   {
     kind: 'browser',
     match: /Failed to set up (?:chrome|chrome-headless-shell|firefox)\b|node_modules[\\/]puppeteer\s*$/m,
-    explain: () => [
-      '下载浏览器失败：用到浏览器的插件装的时候要下载 Chrome。',
-      '设镜像地址后重装：PUPPETEER_CHROME_DOWNLOAD_BASE_URL=<镜像地址> PUPPETEER_CHROME_HEADLESS_SHELL_DOWNLOAD_BASE_URL=<镜像地址> npm install；',
-      '或先不装用到浏览器的插件：从 package.json 的 dependencies 删掉它们再 npm install（npm ls puppeteer 查是哪几个）。',
-    ],
+    explain: () => [t('browserReason'), t('browserMirror'), t('browserSkip')],
   },
   {
     kind: 'native',
@@ -858,29 +1016,19 @@ const INSTALL_FAILURES: Array<{
     explain: stderr => {
       const pkg =
         /^npm (?:error|ERR!) path \S*node_modules[\\/]((?:@[^\\/\s]+[\\/])?[^\\/\s]+)\s*$/m.exec(stderr)?.[1] ??
-        '某个依赖';
-      return [
-        `原生模块 ${pkg} 编译失败：本机缺 C/C++ 编译工具。`,
-        '装上编译工具后重装：macOS 执行 xcode-select --install；Linux 装 build-essential 与 python3；Windows 装 Visual Studio 的「使用 C++ 的桌面开发」。',
-        `或加 --advanced 重新生成，换掉用到它的插件（npm ls ${pkg} 查是哪个）。`,
-      ];
+        t('someDependency');
+      return [t('nativeReason', { pkg }), t('nativeTools'), t('nativeReplace', { pkg })];
     },
   },
   {
     kind: 'missing',
     match: /\b(E404|ETARGET)\b/,
-    explain: (_stderr, [, code]) => [
-      `源上没有这个包或这个版本（${code}）。`,
-      '核对包名与版本；用的是镜像源时，刚发布的版本可能还没同步，稍后重试或临时换回官方源：npm install --registry=https://registry.npmjs.org。',
-    ],
+    explain: (_stderr, [, code]) => [t('missingReason', { code }), t('missingFix')],
   },
   {
     kind: 'network',
     match: /\b(ENOTFOUND|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN)\b/,
-    explain: (_stderr, [, code]) => [
-      `连不上 npm 源（${code}）。`,
-      '检查网络与代理设置后重试；默认源不通时换一个：npm config set registry <源地址>，再 npm install。',
-    ],
+    explain: (_stderr, [, code]) => [t('networkReason', { code }), t('networkFix')],
   },
 ];
 
@@ -899,17 +1047,17 @@ export function installFailureKind(stderr: string): InstallFailureKind | undefin
 }
 
 /** npm install 失败后给用户的说明：认得出的写明原因与修法，认不出的指向上面 npm 的报错；都带重试命令与日志位置 */
-export function describeInstallFailure(stderr: string, dir: string): string {
+export function describeInstallFailure(stderr: string, dir: string): TextRef {
   const known = recognize(stderr);
-  const [reason, ...fixes] = known ? known.failure.explain(stderr, known.found) : ['原因见上面 npm 的报错。'];
+  const [reason, ...fixes] = known ? known.failure.explain(stderr, known.found) : [t('unknownReason')];
   const log = /A complete log of this run can be found in:\s*(\S+)/.exec(stderr)?.[1];
-  return [
-    `npm install 失败：${reason}`,
-    ...fixes.map(line => `  ${line}`),
-    `重试：cd ${dir} && npm install`,
-    ...(log ? [`npm 的完整日志：${log}`] : []),
-    `安装排障：${TROUBLESHOOTING_URL}`,
-  ].join('\n');
+  return textLines([
+    t('installFailed', { reason }),
+    ...fixes,
+    t('retry', { dir }),
+    ...(log ? [t('npmLog', { log })] : []),
+    t('troubleshooting', { url: TROUBLESHOOTING_URL }),
+  ]);
 }
 
 /** 失败时留下的 stderr 末尾长度：npm 的报错在最后，前面多是告警 */
@@ -946,7 +1094,7 @@ function argValue(flag: string): string | undefined {
 }
 
 /** 带取值的 flag：紧随其后的一个 token 是它的值，不得再当位置参数。 */
-const VALUE_FLAGS = new Set(['--tier', '--registry']);
+const VALUE_FLAGS = new Set(['--tier', '--registry', '--lang']);
 
 /**
  * 取位置参数：跳过所有 flag，以及取值 flag 后面那个值。
@@ -974,80 +1122,188 @@ function fail(message: string): never {
 
 // 非交互终端（管道 / 某些 IDE 终端 / CI）下进交互模式会在 readline 遇 EOF 时静默空退
 // （exit 0、无项目、无报错）。提前拦截并给可操作指引，避免「看着像用不了」。
-const NON_TTY_GUIDE = [
-  '',
-  '检测到非交互式环境（stdin 不是 TTY），没法逐项提问。改用非交互的写法：',
-  '  npm create aalis@latest <名> -- --yes             # 全取默认：探到本机 Ollama 时对话模型与语义记忆都用它，否则 DeepSeek、不装语义记忆；平台是 CLI 与 WebUI',
-  '  npm create aalis@latest <名> -- --tier minimal    # 按某一档的默认装：bare、minimal、standard、full',
-  '要密钥的插件，生成后在 home/aalis.config.yaml 里填，或启动后在 WebUI 插件区填。',
-  '',
-].join('\n');
+const NON_TTY_GUIDE = textLines(['', t('nonTty'), t('nonTtyYes'), t('nonTtyTier'), t('nonTtyKeys'), '']);
 
-/** 提问得到的答案：minimal 与 standard 档另有所选、粘贴的密钥与 Ollama 的探测结果 */
-type Answers =
-  | { projectName: string; tier: 'bare' | 'full' }
-  | { projectName: string; tier: 'minimal' | 'standard'; picks: Picks; keys: Keys; probe: OllamaProbe | null };
+/** 选语言包时不装的那一项 */
+const NO_PACK = '';
 
-async function collect(
+/** 提问得到的答案 */
+export interface Answers {
+  projectName: string;
+  plan: Plan;
+  /** 要装的插件：档与所选，加上一起装的语言包 */
+  enabled: Set<string>;
+  /** 当场粘贴的密钥（minimal 与 standard 档） */
+  keys: Keys;
+  /** Ollama 的探测结果：minimal 与 standard 档探过，其余档为 null */
+  probe: OllamaProbe | null;
+  /** 安装界面的语言：终端与生成的文件按它写 */
+  ui: UiLanguage;
+  /** 写进 plugin-i18n 配置的语言列表；这批插件里没有它时没有 */
+  languages?: string[];
+}
+
+/**
+ * 逐项定下装什么：安装界面的语言（没给 --lang 时第一问）、项目名、档与各档的所选；这批插件里有 plugin-i18n 时，列表跟随系统而
+ * 系统语言没有插件提供的，交互模式去源上找语言包、非交互只提示，最后排语言列表（给了 --lang 时照它写）。没有终端提问时一律取默认
+ */
+export async function collect(
   prompter: Prompter | undefined,
-  o: { name?: string; tier?: Tier; advanced: boolean; force: boolean; host?: string; lancedb: boolean },
+  o: {
+    name?: string;
+    tier?: Tier;
+    advanced: boolean;
+    force: boolean;
+    host?: string;
+    lancedb: boolean;
+    /** 识别到的系统语言（systemLanguage） */
+    system: string;
+    /** --lang 给的语言列表 */
+    languages?: readonly string[];
+    registry: string;
+  },
 ): Promise<Answers> {
-  console.log('\n=== 创建 Aalis 项目 ===\n');
+  let ui = uiLanguage(o.system, o.languages);
+  const show = (text: Shown) => shown(text, ui);
+  console.log(`\n${show(t('header'))}\n`);
+  if (prompter && !o.languages) {
+    const options = UI_LANGUAGES.map(tag => ({ name: tag, label: selfName(tag) }));
+    ui = (await prompter.choose(t('uiLanguageTitle'), options, ui)).name;
+    prompter.language = ui;
+  }
   const projectName =
-    o.name ?? (prompter ? await prompter.text('项目目录名', 'my-aalis-bot', validateNpmName) : 'my-aalis-bot');
+    o.name ?? (prompter ? await prompter.text(t('projectName'), 'my-aalis-bot', validateNpmName) : 'my-aalis-bot');
   const targetDir = resolve(cwd(), projectName);
   if (existsSync(targetDir) && readdirSync(targetDir).length > 0 && !o.force) {
-    fail(`目录已存在且非空: ${targetDir}（加 --force 覆盖写入）`);
+    fail(show(t('dirNotEmpty', { dir: targetDir })));
   }
   const advanced = prompter !== undefined && o.advanced;
-  if (prompter && !advanced) {
-    console.log('默认装常用的一套。要选模板档、记忆后端、embedding 或向量库，加 --advanced 重新运行。');
-  }
+  if (prompter && !advanced) console.log(show(t('advancedHint')));
   const tier =
-    o.tier ?? (prompter && advanced ? (await prompter.choose('模板档', TIER_OPTIONS, 'standard')).name : 'standard');
-  if (tier === 'bare' || tier === 'full') return { projectName, tier };
+    o.tier ??
+    (prompter && advanced ? (await prompter.choose(t('tierTitle'), TIER_OPTIONS, 'standard')).name : 'standard');
 
-  const probe = await probeOllama(o.host ?? OLLAMA_DEFAULT);
-  if (probe) {
-    console.log(
-      `探到 Ollama（${probe.base}），零 key 可用${probe.chat ? '' : '；里面还没有对话模型，启动前先 ollama pull 一个对话模型'}。`,
-    );
+  let plan: Plan = { tier: 'bare' };
+  let keys: Keys = {};
+  let probe: OllamaProbe | null = null;
+  if (tier === 'full') {
+    // 插件目录：只有 full 档用它枚举全部官方插件，其余各档的插件是固定的
+    const official = (await fetchCatalog(o.registry))?.filter(e => e.official).map(e => e.name);
+    if (!official) console.warn(show(t('catalogOffline')));
+    // 镜像源多不支持检索，却照样回 200 与空结果：不提示的话 full 档会悄悄少装
+    else if (official.length === 0) console.warn(show(t('catalogEmpty', { registry: o.registry })));
+    plan = { tier, catalog: official ?? null };
+  } else if (tier !== 'bare') {
+    probe = await probeOllama(o.host ?? OLLAMA_DEFAULT);
+    if (probe) console.log(show(t(probe.chat ? 'ollamaFound' : 'ollamaFoundNoChat', { base: probe.base })));
+    const ollama = probe !== null;
+    const asked = prompter
+      ? await askPicks(prompter, { tier, advanced, ollama, lancedb: o.lancedb })
+      : { picks: defaultPicks(tier, ollama), keys: {} };
+    plan = { tier, picks: asked.picks };
+    keys = asked.keys;
   }
-  const ollama = probe !== null;
-  const { picks, keys } = prompter
-    ? await askPicks(prompter, { tier, advanced, ollama, lancedb: o.lancedb })
-    : { picks: defaultPicks(tier, ollama), keys: {} };
-  return { projectName, tier, picks, keys, probe };
+  const enabled = pluginSet(plan, o.lancedb);
+  if (!enabled.has(I18N)) return { projectName, plan, enabled, keys, probe, ui };
+
+  // 列表跟随系统、系统语言又没有插件提供时：交互模式按关键词找语言包，问是否一起装；非交互不检索，只提示
+  const provided = [...FIRST_PARTY_LANGUAGES];
+  const language = { name: selfName(o.system), tag: o.system };
+  if ((o.languages ?? [AUTO]).includes(AUTO) && matchLanguage([o.system], provided) === undefined) {
+    if (prompter) {
+      const found = await findLanguagePacks(o.registry, o.system);
+      if (!found || found.names.length === 0) {
+        console.warn(show(packSearchMiss(o.registry, !found, language)));
+      } else {
+        const options = [...found.names.map(name => ({ name, label: name })), { name: NO_PACK, label: t('packSkip') }];
+        const pack = (await prompter.choose(t('packTitle', language), options, NO_PACK)).name;
+        if (pack !== NO_PACK) {
+          enabled.add(pack);
+          provided.push(found.language);
+        }
+      }
+    }
+    if (matchLanguage([o.system], provided) === undefined) console.warn(show(t('languageUnprovided', language)));
+  }
+  const defaults = [AUTO, ui, ...provided.filter(tag => tag !== ui)];
+  const languages = o.languages
+    ? [...o.languages]
+    : prompter
+      ? await orderLanguages(prompter, defaults, o.system)
+      : defaults;
+  return { projectName, plan, enabled, keys, probe, ui, languages };
+}
+
+/** 排语言列表：列出跟随系统（写明当前识别到的语言）与各语言的自称，排好后显示整条链再确认，不确认就重排 */
+async function orderLanguages(p: Prompter, defaults: readonly string[], system: string): Promise<string[]> {
+  const labelOf = (tag: string) =>
+    shown(tag === AUTO ? t('followSystem', { name: selfName(system) }) : selfName(tag), p.language);
+  const options = defaults.map(tag => ({ name: tag, label: labelOf(tag) }));
+  while (true) {
+    const order = await p.order(t('languagesTitle'), options);
+    if (await p.confirm(t('languageChain', { chain: order.map(labelOf).join(' → ') }), true)) return order;
+  }
+}
+
+/**
+ * 写出项目：package.json、入口、家目录（配置与空的密钥文件）、.gitignore 与 README。生成物的语言只取 answers.ui（第一问选的
+ * 安装界面语言），不看识别到的系统语言
+ */
+export async function writeProject(
+  answers: Answers,
+  o: { dir: string; registry: string; host?: string },
+): Promise<void> {
+  const { projectName, enabled, keys, ui } = answers;
+  mkdirSync(o.dir, { recursive: true });
+  // 逐包解析当前最新版本（一律查注册表的 latest；失败回退 latest）
+  const versions = await resolveDepRanges(o.registry, ['@aalis/core', '@aalis/runtime', ...enabled]);
+  writeFileSync(resolve(o.dir, 'package.json'), renderPackageJson(projectName, enabled, versions, ui), 'utf-8');
+  writeFileSync(resolve(o.dir, 'index.mjs'), renderEntry(ui), 'utf-8');
+  // 家目录：配置文件存在即算初始化过（runtime 的判据），目录与两个文件都收紧权限
+  const homeDir = resolve(o.dir, 'home');
+  mkdirSync(homeDir, { recursive: true, mode: 0o700 });
+  writeFileSync(resolve(homeDir, 'secrets.yaml'), '', { encoding: 'utf-8', mode: 0o600 });
+  const config = renderConfig(pluginSettings(enabled, keys, o.host), ui, answers.languages);
+  writeFileSync(resolve(homeDir, 'aalis.config.yaml'), config, { encoding: 'utf-8', mode: 0o600 });
+  writeFileSync(resolve(o.dir, '.gitignore'), renderGitignore(), 'utf-8');
+  writeFileSync(resolve(o.dir, 'README.md'), renderReadme(projectName, enabled, ui), 'utf-8');
 }
 
 async function main(): Promise<void> {
-  const node = checkNodeVersion(version);
-  if (!node.ok) fail(node.error);
-
   const args = argv.slice(2);
+  // 建项目时识别一次系统语言：安装界面的语言、默认的语言列表与找语言包都按它
+  const system = systemLanguage();
+  const langFlag = argValue('--lang');
+  const parsed = langFlag === undefined ? undefined : parseLanguages(langFlag);
+  const languages = parsed?.ok ? parsed.languages : undefined;
+  const ui = uiLanguage(system, languages);
+  const show = (text: Shown) => shown(text, ui);
+
+  const node = checkNodeVersion(version);
+  if (!node.ok) fail(show(node.error));
+  if (parsed && !parsed.ok) fail(show(parsed.error));
   const tierFlag = argValue('--tier');
   const interactive = !(args.includes('--yes') || args.includes('-y') || tierFlag !== undefined);
   const registry = argValue('--registry') ?? DEFAULT_REGISTRY;
   const name = positionalArgs(args)[0];
-  if (interactive && !stdin.isTTY) fail(NON_TTY_GUIDE);
+  if (interactive && !stdin.isTTY) fail(show(NON_TTY_GUIDE));
   if (name !== undefined) {
     const r = validateNpmName(name);
-    if (!r.ok) fail(`非法项目名「${name}」：${r.error}`);
+    if (!r.ok) fail(show(t('badProjectName', { name, error: r.error })));
   }
-  const tier = tierFlag === undefined ? undefined : TIER_OPTIONS.find(t => t.name === tierFlag.toLowerCase())?.name;
-  if (tierFlag !== undefined && tier === undefined) {
-    fail(`未知模板档「${tierFlag}」，请输入 bare / minimal / standard / full。`);
-  }
+  const tier =
+    tierFlag === undefined ? undefined : TIER_OPTIONS.find(option => option.name === tierFlag.toLowerCase())?.name;
+  if (tierFlag !== undefined && tier === undefined) fail(show(t('unknownTier', { tier: tierFlag })));
   let host: string | undefined;
   try {
     host = ollamaHost(env.OLLAMA_HOST);
   } catch (err) {
-    fail((err as Error).message);
+    fail(show(textOf(err)));
   }
   const lancedb = lancedbSupported(platform, arch);
 
   // 问完就关掉终端提问：装依赖期间 Ctrl+C 要照常能中止 npm
-  const prompter = interactive ? createPrompter(stdin, stdout) : undefined;
+  const prompter = interactive ? createPrompter(stdin, stdout, ui) : undefined;
   let answers: Answers;
   try {
     answers = await collect(prompter, {
@@ -1057,64 +1313,34 @@ async function main(): Promise<void> {
       force: args.includes('--force'),
       host,
       lancedb,
+      system,
+      languages,
+      registry,
     });
   } catch (err) {
     // 提问时按了 Ctrl+C：readline 随之关闭，没答完的那一问以 AbortError 结束。这时还没写任何文件
     if ((err as Error).name !== 'AbortError') throw err;
-    console.error('\n已取消，没有生成任何文件。');
+    console.error(`\n${shown(t('cancelled'), prompter?.language ?? ui)}`);
     exit(130);
   } finally {
     prompter?.close();
   }
-  const { projectName } = answers;
-  const chosen = answers.tier === 'minimal' || answers.tier === 'standard' ? answers : undefined;
-  const keys = chosen?.keys ?? {};
-
-  // 插件目录：只有 full 档用它枚举全部官方插件，其余各档的插件是固定的
-  const catalog = answers.tier === 'full' ? await fetchCatalog(registry) : null;
-  const official = catalog?.filter(e => e.official).map(e => e.name);
-  if (answers.tier === 'full' && !official) console.warn('（无法连接 npm，full 档回退离线静态表）');
-  // 镜像源多不支持检索，却照样回 200 与空结果：不提示的话 full 档会悄悄少装
-  if (answers.tier === 'full' && official?.length === 0) {
-    console.warn(
-      `（${registry} 的插件检索没有返回官方插件，full 档只装了 standard 档的插件与各问的全部选项；这个源可能不支持检索，可以加 --registry https://registry.npmjs.org 重试）`,
-    );
-  }
-  const plan: Plan =
-    answers.tier === 'full'
-      ? { tier: 'full', catalog: official ?? null }
-      : chosen
-        ? { tier: chosen.tier, picks: chosen.picks }
-        : { tier: 'bare' };
-  const enabled = pluginSet(plan, lancedb);
+  const { projectName, plan, enabled, keys } = answers;
+  const say = (text: Shown) => shown(text, answers.ui);
 
   const targetDir = resolve(cwd(), projectName);
-  mkdirSync(targetDir, { recursive: true });
-  // 逐包解析当前最新版本（一律查注册表的 latest；失败回退 latest）
-  const versions = await resolveDepRanges(registry, ['@aalis/core', '@aalis/runtime', ...enabled]);
-  writeFileSync(resolve(targetDir, 'package.json'), renderPackageJson(projectName, enabled, versions), 'utf-8');
-  writeFileSync(resolve(targetDir, 'index.mjs'), renderEntry(), 'utf-8');
-  // 家目录：配置文件存在即算初始化过（runtime 的判据），目录与两个文件都收紧权限
-  const homeDir = resolve(targetDir, 'home');
-  mkdirSync(homeDir, { recursive: true, mode: 0o700 });
-  writeFileSync(resolve(homeDir, 'secrets.yaml'), '', { encoding: 'utf-8', mode: 0o600 });
-  writeFileSync(resolve(homeDir, 'aalis.config.yaml'), renderConfig(pluginSettings(enabled, keys, host)), {
-    encoding: 'utf-8',
-    mode: 0o600,
-  });
-  writeFileSync(resolve(targetDir, '.gitignore'), renderGitignore(), 'utf-8');
-  writeFileSync(resolve(targetDir, 'README.md'), renderReadme(projectName, enabled), 'utf-8');
-  console.log(`\n已生成项目: ${targetDir}（启用 ${countPlugins(enabled)} 个插件）`);
+  await writeProject(answers, { dir: targetDir, registry, host });
+  console.log(`\n${say(t('generated', { dir: targetDir, count: countPlugins(enabled) }))}`);
 
   const install = !args.includes('--no-install');
   if (install) {
-    console.log('\n正在 npm install（可能需要几分钟）…\n');
+    console.log(`\n${say(t('installing'))}\n`);
     const result = await npmInstall(targetDir);
-    if (!result.ok) fail(`\n${describeInstallFailure(result.stderr, projectName)}`);
+    if (!result.ok) fail(`\n${say(describeInstallFailure(result.stderr, projectName))}`);
   }
-  const ollama = chosen ? ollamaSteps(chosen.picks, chosen.probe) : [];
+  const ollama = plan.tier === 'minimal' || plan.tier === 'standard' ? ollamaSteps(plan.picks, answers.probe) : [];
   console.log(
-    `\n${renderNextSteps({ dir: projectName, installed: install, enabled, keys, ollama, tier: answers.tier })}`,
+    `\n${say(renderNextSteps({ dir: projectName, installed: install, enabled, keys, ollama, tier: plan.tier }))}`,
   );
 }
 

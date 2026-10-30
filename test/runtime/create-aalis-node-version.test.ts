@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { checkNodeVersion } from '../../packages/create-aalis/src/cli.js';
+import { resolveText } from '../../packages/schema-i18n/src/index.js';
 
 // 最低 Node 版本是 24.15.0：从这一版起，默认记忆后端用的 node:sqlite 不再打印实验特性警告。
 // 脚手架一开头就检查，不够时写明需要的版本、当前版本与文档站升级一节的地址后退出，不生成任何文件。
@@ -26,13 +27,13 @@ describe('checkNodeVersion', () => {
     expect(checkNodeVersion(version).ok).toBe(false);
   });
 
-  it('不够时全文只有需要的版本、当前版本与文档站升级一节的地址', () => {
-    expect(checkNodeVersion('v22.16.0')).toEqual({
-      ok: false,
-      error:
-        'Aalis 需要 Node.js 24.15.0 起，当前是 v22.16.0。\n' +
-        '升级方法见 https://aalis.acenyan.com/guide/first-run#upgrade-node',
-    });
+  it('不够时全文只有需要的版本、当前版本与文档站升级一节的地址，按显示语言', () => {
+    const result = checkNodeVersion('v22.16.0');
+    if (result.ok) throw new Error('应当不够');
+    expect([resolveText(result.error, ['zh-CN']), resolveText(result.error, ['en'])]).toEqual([
+      'Aalis 需要 Node.js 24.15.0 起，当前是 v22.16.0。\n升级方法见 https://aalis.acenyan.com/guide/first-run#upgrade-node',
+      'Aalis needs Node.js 24.15.0 or later; this is v22.16.0.\nHow to upgrade: https://aalis.acenyan.com/guide/first-run#upgrade-node',
+    ]);
   });
 });
 
@@ -63,7 +64,18 @@ describe('create-aalis 在 Node 不够新时', () => {
           '--registry',
           'http://127.0.0.1:9',
         ],
-        { cwd: dir, timeout: 10_000, env: { ...process.env, OLLAMA_HOST: '127.0.0.1:9' } },
+        // 系统语言固定为中文：LANG 定，清掉会盖过它的 LC_ALL 与 LC_MESSAGES
+        {
+          cwd: dir,
+          timeout: 10_000,
+          env: {
+            ...process.env,
+            LANG: 'zh_CN.UTF-8',
+            LC_ALL: undefined,
+            LC_MESSAGES: undefined,
+            OLLAMA_HOST: '127.0.0.1:9',
+          },
+        },
       ).then(
         () => undefined,
         (error: { code?: number; stderr?: string }) => error,

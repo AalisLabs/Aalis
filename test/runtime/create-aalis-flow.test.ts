@@ -24,11 +24,14 @@ import {
   VECTORSTORES,
 } from '../../packages/create-aalis/src/cli.js';
 import { parseYesNo as parsePluginYesNo } from '../../packages/create-aalis-plugin/src/cli.js';
+import { resolveText, type TextRef } from '../../packages/schema-i18n/src/index.js';
 
 // create-aalis 的提问流程：默认只问对话模型（要 key 的当场粘贴）、接入平台与要不要语义记忆；
 // --advanced 另问记忆后端、embedding 与向量库。默认答案看本机有没有 Ollama。
 
 const run = promisify(execFile);
+/** 起真 CLI 时系统语言固定为中文：LANG 定，清掉会盖过它的 LC_ALL 与 LC_MESSAGES */
+const ZH_ENV = { ...process.env, LANG: 'zh_CN.UTF-8', LC_ALL: undefined, LC_MESSAGES: undefined };
 const cli = fileURLToPath(new URL('../../packages/create-aalis/src/cli.ts', import.meta.url));
 const tsx = createRequire(import.meta.url).resolve('tsx');
 
@@ -39,6 +42,8 @@ const OLLAMA_EMBEDDING = '@aalis/plugin-embedding-ollama';
 const FLAT = '@aalis/plugin-vectorstore-flat';
 const LANCEDB = '@aalis/plugin-vectorstore-lancedb';
 const names = (options: ReadonlyArray<{ name: string }>) => options.map(o => o.name);
+/** 提问照中文显示 */
+const zh = (text: string | TextRef) => (typeof text === 'string' ? text : resolveText(text, ['zh-CN']));
 
 interface Call {
   kind: 'choose' | 'chooseMany' | 'confirm' | 'secret';
@@ -52,24 +57,28 @@ function scripted(replies: unknown[] = []): { prompter: Prompter; calls: Call[] 
   const calls: Call[] = [];
   const next = () => replies.shift();
   const prompter: Prompter = {
+    language: 'zh-CN',
     text: async () => {
       throw new Error('提问流程不问文字');
     },
     choose: async (title, options, def) => {
-      calls.push({ kind: 'choose', title, options: names(options), def });
+      calls.push({ kind: 'choose', title: zh(title), options: names(options), def });
       const name = (next() as string | undefined) ?? def;
       return options.find(o => o.name === name)!;
     },
     chooseMany: async (title, options, defs) => {
-      calls.push({ kind: 'chooseMany', title, options: names(options), def: defs });
+      calls.push({ kind: 'chooseMany', title: zh(title), options: names(options), def: defs });
       return (next() as string[] | undefined) ?? [...defs];
     },
+    order: async () => {
+      throw new Error('提问流程不排序');
+    },
     confirm: async (title, def) => {
-      calls.push({ kind: 'confirm', title, def });
+      calls.push({ kind: 'confirm', title: zh(title), def });
       return (next() as boolean | undefined) ?? def;
     },
     secret: async title => {
-      calls.push({ kind: 'secret', title });
+      calls.push({ kind: 'secret', title: zh(title) });
       return (next() as string | undefined) ?? '';
     },
     close() {},
@@ -176,7 +185,7 @@ describe('终端提问', () => {
     output.on('data', chunk => {
       shown += String(chunk);
     });
-    const prompter = createPrompter(input, output);
+    const prompter = createPrompter(input, output, 'zh-CN');
     /** 敲一行字：等提问流程处理完再敲下一行 */
     const type = async (line: string) => {
       input.write(`${line}\r`);
@@ -224,6 +233,38 @@ describe('终端提问', () => {
     expect(t.shown()).toContain('  注意：请输入 y 或 n。');
     await t.type('y');
     expect(await yes).toBe(true);
+    t.prompter.close();
+  });
+
+  it('排序：回车照原顺序；输入的序号排到前面，没输入的照原顺序接在后面；坏输入说明原因后重问', async () => {
+    const t = terminal();
+    const languages = [
+      { name: 'auto', label: '跟随系统' },
+      { name: 'zh-CN', label: '中文（中国）' },
+      { name: 'en', label: 'English' },
+    ];
+    const kept = t.prompter.order('语言列表', languages);
+    await t.type('');
+    expect(await kept).toEqual(['auto', 'zh-CN', 'en']);
+    expect(t.shown()).toContain('按优先顺序输入序号，没输入的照原顺序接在后面（回车 = 照原顺序）: ');
+    const moved = t.prompter.order('语言列表', languages);
+    await t.type('3,3');
+    expect(t.shown()).toContain('  注意：序号 3 重复了。');
+    await t.type('3');
+    expect(await moved).toEqual(['en', 'auto', 'zh-CN']);
+    t.prompter.close();
+  });
+
+  it('提问自己的说明按终端的显示语言', async () => {
+    const t = terminal();
+    t.prompter.language = 'en';
+    const chosen = t.prompter.choose('Chat model', CHAT_MODELS, DEEPSEEK);
+    await t.type('1,2');
+    await t.type('');
+    expect((await chosen).name).toBe(DEEPSEEK);
+    expect(t.shown()).toContain('Chat model:\n  1. DeepSeek\n  2. OpenAI\n  3. Ollama (runs locally, no key needed)\n');
+    expect(t.shown()).toContain('Choose one (number; Enter = 1): ');
+    expect(t.shown()).toContain('  Note: This is a single choice; enter just one number.');
     t.prompter.close();
   });
 
@@ -356,7 +397,7 @@ describe('create-aalis --yes', () => {
     const { stdout } = await run(
       process.execPath,
       ['--import', tsx, cli, 'my-bot', '--yes', '--no-install', '--registry', `http://127.0.0.1:${registry}`],
-      { cwd: dir, timeout: 10_000, env: { ...process.env, OLLAMA_HOST: ollamaHostValue } },
+      { cwd: dir, timeout: 10_000, env: { ...ZH_ENV, OLLAMA_HOST: ollamaHostValue } },
     );
     const pkg = JSON.parse(await readFile(join(dir, 'my-bot', 'package.json'), 'utf-8'));
     const config = parse(await readFile(join(dir, 'my-bot', 'home', 'aalis.config.yaml'), 'utf-8'));
@@ -415,13 +456,14 @@ describe('提问时按 Ctrl+C', () => {
     await writeFile(preload, "Object.defineProperty(process.stdin, 'isTTY', { value: true });\n");
     const child = spawn(process.execPath, ['--import', preload, '--import', tsx, cli, '--no-install'], {
       cwd: dir,
-      env: { ...process.env, OLLAMA_HOST: '127.0.0.1:9' },
+      env: { ...ZH_ENV, OLLAMA_HOST: '127.0.0.1:9' },
     });
     let out = '';
     let err = '';
+    // 第一问是安装界面的语言
     child.stdout.on('data', chunk => {
       out += String(chunk);
-      if (out.includes('项目目录名')) child.stdin.write('\x03');
+      if (out.includes('安装界面的语言')) child.stdin.write('\x03');
     });
     child.stderr.on('data', chunk => {
       err += String(chunk);

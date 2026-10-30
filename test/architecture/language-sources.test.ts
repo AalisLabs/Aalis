@@ -34,6 +34,10 @@ const ALLOWED = new Map([
     'packages/plugin-i18n/src/index.ts resolvedOptions().locale',
     '跟随系统：语言列表里的 auto 取服务进程的系统语言（Node 的 Intl 默认 locale），插件激活时取一次（3.2，owner 10-17）',
   ],
+  [
+    'packages/create-aalis/src/cli.ts resolvedOptions().locale',
+    '安装界面识别：建项目时取一次系统语言，定安装界面的语言、默认的语言列表与要找的语言包；脚手架跑在插件体系之外（4.7，owner 10-17）',
+  ],
 ]);
 
 /** 一处命中：文件相对仓根，source 是哪种写法 */

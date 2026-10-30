@@ -62,6 +62,14 @@ function unmetRequirements(plugins: Iterable<string>): string[] {
   );
 }
 const cli = fileURLToPath(new URL('../../packages/create-aalis/src/cli.ts', import.meta.url));
+/** 起真 CLI 时系统语言固定为中文：LANG 定，清掉会盖过它的 LC_ALL 与 LC_MESSAGES；Ollama 探测指向没人监听的端口，不碰本机真的 Ollama */
+const CLI_ENV = {
+  ...process.env,
+  LANG: 'zh_CN.UTF-8',
+  LC_ALL: undefined,
+  LC_MESSAGES: undefined,
+  OLLAMA_HOST: '127.0.0.1:9',
+};
 const tsx = createRequire(import.meta.url).resolve('tsx');
 
 const names = (options: ReadonlyArray<{ name: string }>) => options.map(o => o.name);
@@ -71,11 +79,15 @@ const subsets = <T>(items: readonly T[]): T[][] =>
 
 /** 默认流程的回答：对话模型、平台、要不要语义记忆；密钥都跳过 */
 const answering = (a: { chat: string; platforms: string[]; semantic: boolean }): Prompter => ({
+  language: 'zh-CN',
   text: async () => {
     throw new Error('默认流程不问文字');
   },
   choose: async (_title, options) => options.find(o => o.name === a.chat)!,
   chooseMany: async () => a.platforms,
+  order: async () => {
+    throw new Error('默认流程不排序');
+  },
   confirm: async () => a.semantic,
   secret: async () => '',
   close() {},
@@ -110,8 +122,7 @@ describe('create-aalis 生成的项目', () => {
           '--registry',
           `http://127.0.0.1:${address.port}`,
         ],
-        // Ollama 探测指向没人监听的端口：不碰本机真的 Ollama
-        { cwd: dir, timeout: 10_000, env: { ...process.env, OLLAMA_HOST: '127.0.0.1:9' } },
+        { cwd: dir, timeout: 10_000, env: CLI_ENV },
       );
       const pkg = JSON.parse(await readFile(join(dir, 'my-bot', 'package.json'), 'utf-8'));
       expect(pkg.engines, '生成的项目与脚手架要求同一个最低 Node 版本').toEqual({ node: '>=24.15.0' });
@@ -159,7 +170,7 @@ describe('create-aalis 生成的项目', () => {
       const { stderr } = await run(
         process.execPath,
         ['--import', tsx, cli, 'my-bot', '--tier', 'full', '--no-install', '--registry', source],
-        { cwd: dir, timeout: 10_000, env: { ...process.env, OLLAMA_HOST: '127.0.0.1:9' } },
+        { cwd: dir, timeout: 10_000, env: CLI_ENV },
       );
       expect(stderr).toContain(source);
       expect(stderr).toContain('--registry https://registry.npmjs.org');
@@ -194,7 +205,7 @@ describe('create-aalis 生成的项目', () => {
           '--registry',
           `http://127.0.0.1:${address.port}`,
         ],
-        { cwd: dir, timeout: 10_000, env: { ...process.env, OLLAMA_HOST: '127.0.0.1:9' } },
+        { cwd: dir, timeout: 10_000, env: CLI_ENV },
       );
       const pkg = JSON.parse(await readFile(join(dir, 'my-bot', 'package.json'), 'utf-8'));
       expect(pkg.dependencies['@aalis/plugin-tool-math']).toBe('^0.11.0');
@@ -231,7 +242,7 @@ describe('create-aalis 生成的项目', () => {
             '--registry',
             `http://127.0.0.1:${address.port}`,
           ],
-          { cwd: dir, timeout: 10_000, env: { ...process.env, OLLAMA_HOST: '127.0.0.1:9' } },
+          { cwd: dir, timeout: 10_000, env: CLI_ENV },
         );
         const pkg = JSON.parse(await readFile(join(dir, tier, 'package.json'), 'utf-8'));
         expect(pkg.dependencies['@aalis/core'], tier).toBe('^0.11.0');

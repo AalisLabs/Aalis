@@ -95,7 +95,8 @@ async function start() {
     semantic: { embedding: EMBEDDING, vectorstore: '@aalis/plugin-vectorstore-flat' },
   };
   const set = pluginSet({ tier: 'standard', picks }, true);
-  const doc = parse(renderConfig(pluginSettings(set, {}))) as Partial<AalisConfig>;
+  // 界面语言显式给中文：中文的期望不随脚手架按识别写的默认列表变
+  const doc = parse(renderConfig(pluginSettings(set, {}), 'zh-CN', ['zh-CN'])) as Partial<AalisConfig>;
   const replaced = new Set([
     ...MINIMAL_BASE,
     picks.chat,

@@ -4,7 +4,7 @@
 > 本文讲两个脚手架各自的用途、运行哪条命令、问什么、生成了什么、有哪些约定、下一步往哪走。
 >
 > 相关源码：`packages/create-aalis/src/cli.ts`（建项目）、`packages/create-aalis-plugin/src/cli.ts`（建插件）。
-> 两者都是**零运行时依赖、纯 npm/node 的独立脚手架**。
+> 两者都是**纯 npm/node 的独立脚手架**；`create-aalis` 的运行时依赖只有 `@aalis/schema-i18n`（终端文字的字典）。
 
 ---
 
@@ -43,6 +43,9 @@ npm create aalis@latest my-bot -- --yes
 
 # 按某一档的默认装、跳过安装
 npm create aalis@latest my-bot -- --tier minimal --no-install
+
+# 指定 Aalis 的语言列表（安装界面也按它显示），不问两步语言
+npm create aalis@latest my-bot -- --yes --lang auto,zh-CN,en
 ```
 
 > 注意 `--` 分隔符：`npm create` 后给脚手架的 flag 必须放在 `--` 之后，否则会被 npm 自身解析、传不到脚手架。
@@ -65,7 +68,11 @@ npm start -- status
 
 ### 交互式提问
 
-没有 `--yes` / `--tier` 且终端是 TTY 时逐项提问（非 TTY 环境提前退出，写明改用 `--yes` 或 `--tier` 的写法）。坏输入说明原因后重问；问的过程中按 `Ctrl+C` 退出（退出码 130），这时还没有生成任何文件。默认流程问四件事：
+没有 `--yes` / `--tier` 且终端是 TTY 时逐项提问（非 TTY 环境提前退出，写明改用 `--yes` 或 `--tier` 的写法）。坏输入说明原因后重问；问的过程中按 `Ctrl+C` 退出（退出码 130），这时还没有生成任何文件。
+
+终端里的文字有中文与英文两种。脚手架一开头识别一次系统语言（Node 的 Intl 默认 locale，跟 `LANG`），没给 `--lang` 时第一问是**安装界面的语言**：只在中文、英文里选，识别结果预选，回车即可；识别到的是别的语言或认不出时预选英文。之后的提问与提示按选的语言显示，生成的 README、配置里的注释、`package.json` 的描述与入口的注释也按它写。
+
+接着默认流程问四件事：
 
 1. **项目目录名**：默认 `my-aalis-bot`，必须是合法 npm 包名（全小写、无空格、不以 `.`/`_` 开头等）。目录已存在且非空时退出，加 `--force` 覆盖写入。
 2. **对话模型**（单选）：DeepSeek、OpenAI、Ollama（本机运行，零 key）。探到本机的 Ollama 时默认 Ollama，否则默认 DeepSeek。选了要 key 的，接着请你粘贴它的 `apiKey`：输入不显示，回车跳过。多装几个对话模型以后在插件市场装。
@@ -73,6 +80,10 @@ npm start -- status
 4. **要长期语义记忆吗**（是或否）：按意思找回很久以前聊过的内容，要一个 embedding 模型。探到 Ollama 时默认「要」，否则默认「不要」。答「要」会装向量记忆、一个 embedding 提供者与 Flat 向量库：有 Ollama 可用（探到了，或对话模型选了 Ollama）时用 Ollama Embedding，否则用 OpenAI Embedding 并请你粘贴它的 `apiKey`。这一组由哪些插件组成见[记忆由哪些插件组成](./memory.md)。
 
 选项序号用逗号或空格分隔（`1,2` 与 `1 2` 一样），回车取默认。
+
+这批插件里有 `@aalis/plugin-i18n`（`minimal` 起各档都有）时，最后一问排 **Aalis 的语言列表**（写进它的配置，见下文「配置约定」）：列出「跟随系统（当前：<识别到的语言>）」与这批插件提供的全部语言，默认顺序是跟随系统、安装界面的语言、其余；按优先顺序输入序号，输入的排在前面，没输入的照原顺序接在后面（只排序不删除），回车用默认顺序，排好后显示整条列表再确认。`bare` 档没有这个插件，只问安装界面的语言。
+
+列表跟随系统、而识别到的系统语言没有任何插件提供时（第一方插件提供中文与英文），交互模式在问完上面几件事之后去源上找语言包：按关键词 `aalis-lang-<小写的完整标签>` 检索，没有再按基础语言（如 `ja-JP` 先找 `aalis-lang-ja-jp`，再找 `aalis-lang-ja`），只收确实带这个关键词的包，找到时问要不要一起装（默认不装），装的包写进依赖、它的语言进可选的语言。检索用同一个 `--registry`；连不上源时写明没能检索；没找到时，源是官方源就只说没有，别的源另提示它可能不支持检索、可以加 `--registry https://registry.npmjs.org` 重试。最终还是没有插件提供时提示一句「没有插件提供这种语言」，Aalis 按语言列表里的下一项显示。非交互时不检索，只提示。
 
 **`--advanced`** 在项目名之后先问**模板档**，选了 `minimal` 或 `standard` 再接着问上面的对话模型与平台，另问**记忆后端**（SQLite、内存、MongoDB，默认 SQLite）；`standard` 档答「要」语义记忆时，再问 **Embedding 提供者**（单选，默认同上）与**向量库**（Flat 或 LanceDB，默认 Flat）。没有 LanceDB 预编译件的平台（如 Intel Mac）不列 LanceDB。
 
@@ -102,9 +113,10 @@ npm start -- status
 | `--tier <档>` | 按这一档的默认装，不提问；`bare` / `minimal` / `standard` / `full` | — |
 | `--no-install` | 跳过自动 `npm install` | 默认会装 |
 | `--force` | 目标目录非空时也覆盖写入 | 默认报错退出 |
-| `--registry <url>` | 查插件目录与版本用的 npm 源 | `https://registry.npmjs.org` |
+| `--registry <url>` | 查插件目录、语言包与版本用的 npm 源 | `https://registry.npmjs.org` |
+| `--lang <列表>` | Aalis 的语言列表，逗号分隔，每项是 `auto`（跟随系统）或语言标签（如 `zh-CN`、`en`），不合法时退出并写明是哪一项。按给的顺序写进 plugin-i18n 的配置（`zh_CN` 这类写法收下，写成 `zh-CN`）；安装界面按列表的先后在中文、英文里选（`auto` 按识别到的系统语言，列表之后再看系统语言），选法同 [schema-i18n 的「语言链与渲染」](../api/schema-i18n.md#语言链与渲染)：先找语言与文字都相同的，再找语言相同的，如 `zh-TW,en` 选英文；都对不上时用英文。给了它交互模式也不问两步语言；`bare` 档没有 plugin-i18n，只用来定安装界面的语言 | 按系统语言：安装界面识别，列表写 `auto`、安装界面的语言、另一种 |
 
-> `--registry` 只影响脚手架查 `aalis-plugin` 目录与版本号；生成项目里 `npm install` 仍用你自己的 npm 配置（二者解耦）。
+> `--registry` 只影响脚手架查 `aalis-plugin` 目录、语言包与版本号；生成项目里 `npm install` 仍用你自己的 npm 配置（二者解耦）。
 
 ### 安装失败时
 
@@ -117,7 +129,7 @@ my-bot/
 ├── package.json        # @aalis/core + @aalis/runtime + 所选插件（版本见下），engines 写 Node 24.15.0 起
 ├── index.mjs           # 一行 startAalis 启动
 ├── home/               # 家目录（**不入库**）：配置、密钥、数据与日志都在这里
-│   ├── aalis.config.yaml   # 主配置：name / logLevel / plugins / sessionConfig / disabledPlugins；密钥字段只放引用
+│   ├── aalis.config.yaml   # 主配置：name / logLevel / plugins（含 plugin-i18n 的语言列表）/ sessionConfig / disabledPlugins；密钥字段只放引用
 │   └── secrets.yaml        # 密钥的值（生成时为空，0600）
 ├── .gitignore          # node_modules/ home/ *.log dist/
 └── README.md           # 启动、配置、装更多插件，以及第一次运行与安装排障的文档地址
@@ -134,7 +146,7 @@ import { startAalis } from '@aalis/runtime';
 
 const here = dirname(fileURLToPath(import.meta.url));
 startAalis({ appDir: here, defaultHome: join(here, 'home') }).catch(err => {
-  console.error('Aalis 启动失败:', err);
+  console.error('Aalis failed to start:', err);
   process.exit(1);
 });
 ```
@@ -158,6 +170,7 @@ startAalis({ appDir: here, defaultHome: join(here, 'home') }).catch(err => {
 
 - 要密钥的插件（DeepSeek、OpenAI、OpenAI Embedding，以及 `full` 档的联网搜索）写一个 `apiKey` 段：粘贴了的写成 JSON 字符串（同时是合法的 YAML 双引号串，引号、反斜杠、冒号与 `#` 原样读回），跳过的留空 `apiKey: ""`。空串不算填了：DeepSeek、OpenAI Embedding 与联网搜索激活失败，在 WebUI 标「待配置」；OpenAI 对话模型的 apiKey 只在连官方地址时必填，显示为「失败」加原因，按钮「去处理」（见[第一次运行](./first-run.md)）。填了值的在启动时移进 `secrets.yaml`。
 - 设了 `OLLAMA_HOST` 时，两个 Ollama 插件写上 `baseUrl`。
+- 这批插件里有 `@aalis/plugin-i18n` 时写它的 `language`：Aalis 的语言列表，交互模式最后一问排，给了 `--lang` 时按它写，都没有时按默认顺序 `auto`（跟随系统）、安装界面的语言、另一种第一方语言（一起装了语言包时再接它的语言），如 `language: ["auto", "zh-CN", "en"]`。`bare` 档不写。
 
 还会给两个只有 owner 进得来的平台（`cli`、`webui`）各写一个平台档，开放全部工具分组；这两项无条件写，平台没装时不起作用，之后从市场装上即生效。多人平台（如 OneBot）不代开。平台档是会话设置的一层，写在配置文档的顶层字段 `sessionConfig` 里，按插件实例 id 放这个实例的值（见 [plugin-session-settings](../plugins/plugin-session-settings.md)）。runtime 的 `--init` 写同样的平台档：
 
