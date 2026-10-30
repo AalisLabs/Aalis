@@ -1020,10 +1020,11 @@ function runAdapter(caps: Caps): void {
   });
   const { getOrLoadForward, fetchForward, expandForwards } = forwardExpander;
 
-  // 参与 memory:clear。转发原文是聊天内容，归入 context：条目没有会话维度，只在全局清理时清，会话级清理不动它（靠持久化层的
-  // 7 天回收）。收发的附件按所选种类清本适配器在会话媒体目录里的子目录：会话级清这个会话的，全局清各会话的。多实例共用同一
-  // 命名空间与目录、各有一份内存缓存：每个实例都清一遍（重复删是空操作），回显按来源合成一行——已有成功项时不再追加，前一
-  // 实例失败而本实例成功时改写那一行。四种附件各登记一个类型，/clear -t 才选得中（别的写入方也登记同名类型，帮助里只列一次）。
+  // 参与 memory:clear。转发原文是聊天内容，归入 context：条目记下的会话只用于取用判定，只在全局清理时清，会话级清理不动它
+  // （靠持久化层的 7 天回收）。收发的附件按所选种类清本适配器在会话媒体目录里的子目录：会话级清这个会话的，全局清各会话的。
+  // 多实例共用同一命名空间与目录、各有一份内存缓存：每个实例都清一遍（重复删是空操作），回显按来源合成一行——已有成功项时不再
+  // 追加，前一实例失败而本实例成功时改写那一行。四种附件各登记一个类型，/clear -t 才选得中（别的写入方也登记同名类型，帮助里只列
+  // 一次）。
   for (const [type, , label] of MEDIA_KINDS)
     contributions.use.contribute('memory:clear-type', { id: type, label: t(label) });
   caps.hooks.use.middleware('memory:clear', async (data, next) => {
@@ -1258,7 +1259,7 @@ function runAdapter(caps: Caps): void {
         if (id) {
           // 内存缓存，落空再读持久化层（重启后场景）
           const entry = await getOrLoadForward(id);
-          // 返回完整原文 + 摘要（如果有）与截断标志。工具层会优先使用 fullText 渲染。
+          // 返回完整原文 + 摘要（如果有）、截断标志与收到它的会话。工具层按这些会话过取用判定，再用 fullText 渲染。
           if (entry) return { __aalisForwardEntry: true, ...entry };
           return fetchForward(state, id);
         }

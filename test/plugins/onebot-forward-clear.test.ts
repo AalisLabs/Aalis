@@ -16,7 +16,9 @@ import { fixedRef } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 合并转发原文（持久化命名空间 onebot:forward 与进程内缓存）是聊天内容，归入 context：
-// 全局清理且类型为空或含 context 时清掉。条目没有会话维度，会话级清理不动它（靠 7 天回收）。
+// 全局清理且类型为空或含 context 时清掉。会话级清理不动它（靠 7 天回收）。
+// 条目记下收到这条转发的会话（工具取原文时按它们过取别的会话的规则）：别的会话再收到同一条时补上；持久化层里没记会话或记坏了的
+// 条目读回时会话为空，取用判定判不出。
 // 多实例共用同一命名空间、各有一份内存缓存：每个实例都清，回显合并成一条。回显是文字对象，按读者的语言显示。
 // ════════════════════════════════════════════════════════════
 
@@ -83,6 +85,46 @@ describe('forward-expand: clearAll', () => {
     expect(await mem.listMetadata(NS)).toEqual([]);
     expect(await expander.getOrLoadForward('F1'), '内存缓存也已清空').toBeUndefined();
     expect(await mem.getMetadata('user:profile', 'onebot:u1')).toEqual({ facts: [] });
+  });
+});
+
+describe('forward-expand: 条目记下收到它的会话', () => {
+  const P = 'onebot:1:private:2';
+  const G = 'onebot:1:group:3';
+  const expanderOn = (mem: MemoryService) =>
+    createForwardExpander<null>({
+      logger,
+      memory: fixedRef(mem),
+      media: fixedRef<MediaService>(undefined),
+      llm: fixedRef<LLMModel>(undefined),
+      i18n: fixedRef<I18nService>(undefined),
+      storage: {} as StorageService,
+      processService: fixedRef<ProcessService>(undefined),
+      forwardCfg: CFG,
+      attachmentMaxBytes: 1024,
+      sendAction: async () => ({ messages: [{ type: 'node', data: { nickname: '甲', content: '在' } }] }),
+    });
+
+  it('展开时记下收到它的会话；别的会话再收到同一条时补上并写进持久化层，同一会话不重复记', async () => {
+    const { mem } = await inMemory();
+    const expander = expanderOn(mem);
+    const forward = [{ type: 'forward', data: { id: 'F-s' } }];
+    await expander.expandForwards(null, forward, P);
+    expect((await expander.getOrLoadForward('F-s'))?.sessionIds).toEqual([P]);
+    await expander.expandForwards(null, forward, G);
+    await expander.expandForwards(null, forward, G);
+    expect((await expander.getOrLoadForward('F-s'))?.sessionIds).toEqual([P, G]);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(await mem.getMetadata(NS, 'F-s')).toMatchObject({ sessionIds: [P, G] });
+  });
+
+  it('持久化层里没记会话或记坏了的条目：读回时会话为空', async () => {
+    const { mem } = await inMemory();
+    await seed(mem, ['F1']);
+    await mem.saveMetadata(NS, 'F2', { ...entry('F2'), sessionIds: [P, 3] });
+    const expander = expanderOn(mem);
+    expect(await expander.getOrLoadForward('F1')).toMatchObject({ fullText: 'F1 的原文', sessionIds: [] });
+    expect((await expander.getOrLoadForward('F2'))?.sessionIds).toEqual([P]);
   });
 });
 

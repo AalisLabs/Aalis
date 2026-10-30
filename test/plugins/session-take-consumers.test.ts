@@ -28,6 +28,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 //   照交，onebot_get_session_history 报错
 // - onebot_get_msg 取到的消息按它所在的窗口拼出会话 id 过规则；判不出对端的（她自己发的私聊消息）按判不出拒绝，不放行时报错
 // - onebot_recall_self 指定的目标会话过规则，不放行时在读发出记录之前报错：报错里没有她在那里说的话，也不撤回
+// - onebot_get_forward_msg 命中适配器缓存的转发按收到它的会话过规则，有一个过得了就行；没记会话的按判不出拒绝
 // - 跨会话历史：被动注入不是谁要的，不传授权身份；recent_messages 带这次调用的授权身份。查询超取后逐条过规则，
 //   被拒的再多也不占名额
 // ════════════════════════════════════════════════════════════
@@ -192,6 +193,68 @@ describe('onebot_recall_self 过规则', () => {
     expect(refused).not.toContain('<B 私聊里她说的>');
     expect(deleted).toEqual([201, 202]);
     expect(asked).not.toContain(PB);
+  });
+});
+
+describe('onebot_get_forward_msg 命中缓存时过规则', () => {
+  /** 适配器缓存里的转发：收到它的会话与原文 */
+  const entry = (sessionIds: string[], fullText: string) => ({
+    __aalisForwardEntry: true,
+    fullText,
+    summary: null,
+    count: 1,
+    participants: ['甲(30002)'],
+    sessionIds,
+  });
+  const FORWARDS: Record<string, unknown> = {
+    'F-g2': entry([G2], '<别的群收到的>'),
+    'F-a': entry([PA], '<A 私聊里收到的>'),
+    'F-b': entry([PB], '<B 私聊里收到的>'),
+    'F-both': entry([PB, G2], '<两处都收到的>'),
+    'F-none': entry([], '<没记会话的>'),
+  };
+
+  async function setup() {
+    const recorder = toolRecorder();
+    const started = await startSettings({
+      adapters: [
+        {
+          platform: 'onebot',
+          sessionTypes: ONEBOT_TYPES,
+          callAction: async (_sessionId: string, action: string, params: Record<string, unknown>) => {
+            if (action !== 'get_forward_msg') throw new Error(`没有动作 ${action}`);
+            return FORWARDS[String(params.id)];
+          },
+        },
+      ],
+      owners: [OWNER],
+      stored: Object.fromEntries([G1, G2, PA, PB].map(id => [id, storedRoom(id)])),
+      first: [recorder.plugin],
+      plugins: [toolOnebot],
+    });
+    apps.push(started.app);
+    await started.app.start();
+    await started.app.plugins.idle();
+    const ctx = toolContext({ sessionId: G1, platform: 'onebot', userId: A.userId });
+    return (id: string) => recorder.call('onebot_get_forward_msg', { id }, ctx);
+  }
+
+  it('别的群、A 自己私聊里收到的与几处之一过得了的照常；只在 B 私聊里收到的回原因，没记会话的判不出，报错不带原文', async () => {
+    const get = await setup();
+    expect(await get('F-g2')).toContain('<别的群收到的>');
+    expect(await get('F-a')).toContain('<A 私聊里收到的>');
+    expect(await get('F-both')).toContain('<两处都收到的>');
+    const refused = (id: string) =>
+      get(id).then(
+        () => '',
+        (err: Error) => err.message,
+      );
+    const others = await refused('F-b');
+    expect(others).toContain('别人的私聊');
+    expect(others).not.toContain('<B 私聊里收到的>');
+    const none = await refused('F-none');
+    expect(none).toContain('判不出');
+    expect(none).not.toContain('<没记会话的>');
   });
 });
 
