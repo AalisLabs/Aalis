@@ -1663,12 +1663,12 @@ describe('onebot 出站：安全', () => {
     const shown = notAccepted(result.error, result);
     expect([renderIn(shown, 'en'), renderIn(shown, 'zh-CN'), toSource(result.error)]).toEqual([
       'Not sent: the platform did not accept it (The content is not a sendable image format (the file header does not match), so it was not sent; Unknown storage root: zz (registered roots: data, aalis))',
-      '没有发出：平台没收下（内容不是可发送的 image 格式（文件头不符），已拒发; 未知存储根：zz（已注册根：data, aalis））',
-      '内容不是可发送的 image 格式（文件头不符），已拒发; 未知存储根：zz（已注册根：data, aalis）',
+      '没有发出：平台没收下（内容不是可发送的 image 格式（文件头不符），已拒发；未知存储根：zz（已注册根：data, aalis））',
+      '内容不是可发送的 image 格式（文件头不符），已拒发；未知存储根：zz（已注册根：data, aalis）',
     ]);
   });
 
-  it('拒发的附件多到超过渲染的嵌套上限（40 件）：各条原因照样按读者的语言以「; 」相连', async () => {
+  it('拒发的附件多到超过渲染的嵌套上限（40 件）：各条原因照样按读者的语言相连（原文以「；」，英文以「; 」）', async () => {
     const t = await boot();
     const message: OutgoingMessage = {
       sessionId: GROUP,
@@ -1685,7 +1685,7 @@ describe('onebot 出站：安全', () => {
     if (result?.ok !== false) throw new Error('应当投递失败');
     expect([renderIn(result.error, 'en'), toSource(result.error)]).toEqual([
       Array(40).fill('Unknown storage root: zz (registered roots: data, aalis)').join('; '),
-      Array(40).fill('未知存储根：zz（已注册根：data, aalis）').join('; '),
+      Array(40).fill('未知存储根：zz（已注册根：data, aalis）').join('；'),
     ]);
   });
 

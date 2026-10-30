@@ -155,7 +155,6 @@ export default defineLocale<Source>()({
   protocolNotReady: 'protocol not initialized',
   v12NoFile: 'OneBot v12 connections do not support file attachments',
   typeNoFile: 'Session type {type} does not support file attachments',
-  andThen: '{head}; {tail}',
   notSentFrom: 'Not sent from message {from} onward',
   unconfirmedMessage: 'message {n}',
   unconfirmedFile: 'file {name}',
