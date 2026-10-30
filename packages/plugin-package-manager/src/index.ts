@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { unmetDependencies } from '@aalis/api-doctor';
+import { failureText, unmetDependencies } from '@aalis/api-doctor';
 import { hostConfig } from '@aalis/api-host-config';
 import { hostPaths } from '@aalis/api-host-paths';
 import {
@@ -765,7 +765,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
       const settled = (message: TextRef): InstallResult => ({ ok: true, message, plugin: defName });
       switch (main?.state) {
         case 'error':
-          return settled(t('installedErrored', { target, error: main.error ?? t('seeLogs') }));
+          return settled(t('installedErrored', { target, error: failureText(main) ?? t('seeLogs') }));
         case 'activating':
           return settled(t('installedActivating', { target }));
         case 'pending':
