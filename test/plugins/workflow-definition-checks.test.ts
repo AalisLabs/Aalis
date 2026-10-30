@@ -26,6 +26,7 @@ import { toolRequest } from '../fixtures/tool-call.js';
 // 二、启用的定义触发器写错的当场拒收、不保存：cron 交 cron-engine 校验；interval 的 seconds 要是大于 0、不超过上限（约 24.8 天）
 //    的数，超过的交给 setInterval 会溢出成每毫秒触发；once 的 runAt 要能解析。停用的不注册触发器，不校验它，启用时再校验。
 //    定义目录里超上限的 interval 照常载入，订阅不上、不触发。
+// 三、wait 节点的 seconds 与 agent 节点的 timeoutSeconds 同样交给定时器，不超过同一个上限，超过的报错、不保存。
 // 真 storage-local（workspace 根指向临时目录、可删）、真 tools 与 cron-engine；工具调用经放行一切的执行守卫。
 // ════════════════════════════════════════════════════════════
 
@@ -330,5 +331,29 @@ describe('写错的触发器当场拒收', () => {
     expect(svc.listWorkflows().map(d => d.id)).toEqual(['zz-month']);
     await vi.advanceTimersByTimeAsync(50);
     expect(started, '溢出的话 50 毫秒里会起 50 次运行').toEqual([]);
+  });
+});
+
+describe('节点的等待与时限', () => {
+  // 等待与 agent 节点的时限同样交给 setTimeout：超过 2^31-1 毫秒按 1 毫秒处理，等待立刻结束、agent 节点立刻超时
+  it('wait 的 seconds、agent 的 timeoutSeconds 超过上限：当场拒收、不保存；上限本身照收', async () => {
+    const svc = await boot();
+    const tooLong = (node: string, type: string, field: string) =>
+      `节点 "${node}"(${type}) 的 ${field} 不能超过 2,147,483 秒（约 24.8 天）：2592000`;
+    const withNodes = (nodes: string) => `id: zz-long\ntrigger:\n  type: manual\nnodes:\n${nodes}`;
+    const wait = (seconds: number) => `  - id: w\n    type: wait\n    seconds: ${seconds}\n`;
+    const agent = (timeoutSeconds: number) =>
+      `  - id: a\n    type: agent\n    instruction: 汇总\n    timeoutSeconds: ${timeoutSeconds}\n`;
+    expect(await tool('workflow_define', { yaml: withNodes(wait(2592000)) })).toEqual({
+      error: tooLong('w', 'wait', 'seconds'),
+    });
+    expect(await tool('workflow_define', { yaml: withNodes(agent(2592000)) })).toEqual({
+      error: tooLong('a', 'agent', 'timeoutSeconds'),
+    });
+    expect(svc.listWorkflows()).toEqual([]);
+    expect(readdirSync(defsDir())).toEqual([]);
+    expect(await tool('workflow_define', { yaml: withNodes(wait(2147483) + agent(2147483)) })).toMatchObject({
+      ok: true,
+    });
   });
 });
