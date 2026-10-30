@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RunCost } from '../../packages/api-remote-agent/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import {
   DRIVER_CONFIG,
   type DriverHub,
@@ -108,10 +109,10 @@ describe('换新', () => {
     a.bundles.delete(first.agentId);
     const id = await hub.accept();
     await until(() => hub.task(id).state === 'failed', '取不到旧工程包时失败');
-    expect(hub.task(id).error).toContain('上一个代理的工程包');
-    expect(hub.task(id).error).toContain('清空白纸');
-    expect(hub.task(id).error, '新代理每轮都卡在取旧包，等不到它留下工程包').not.toContain('等新代理');
-    expect(hub.task(id).error).not.toContain('已停止换新');
+    expect(toSource(hub.task(id).error)).toContain('上一个代理的工程包');
+    expect(toSource(hub.task(id).error)).toContain('清空白纸');
+    expect(toSource(hub.task(id).error), '新代理每轮都卡在取旧包，等不到它留下工程包').not.toContain('等新代理');
+    expect(toSource(hub.task(id).error)).not.toContain('已停止换新');
   });
 
   it('旧工程包永久取不到时，owner 点「不带旧工程继续」：仍用新代理、不再等旧包，成功后旧代理照常删除', async () => {
@@ -124,7 +125,7 @@ describe('换新', () => {
     a.bundles.delete(first.agentId);
     const stuck = await hub.accept();
     await until(() => hub.task(stuck).state === 'failed', '取不到旧工程包时失败');
-    expect(hub.task(stuck).error).toContain('不带旧工程继续');
+    expect(toSource(hub.task(stuck).error)).toContain('不带旧工程继续');
 
     expect(await hub.driver.freshStart(PAPER_A_ID)).toBeUndefined();
     const next = await runOne(hub, a);
@@ -133,7 +134,7 @@ describe('换新', () => {
     const prompt = a.callsOn('startRun', second.agentId).at(-1)?.args[1];
     expect(String(prompt)).not.toContain(bundleUrl(first.agentId));
     await until(() => a.callsOn('deleteAgent', first.agentId).length === 1, '没人再等它交接，旧代理照常删除');
-    expect(await hub.driver.freshStart(PAPER_A_ID), '交接已放弃，再点就说明没有在等').toContain('没有在等');
+    expect(toSource(await hub.driver.freshStart(PAPER_A_ID)), '交接已放弃，再点就说明没有在等').toContain('没有在等');
   });
 
   it('对照：没有在等旧工程包时「不带旧工程继续」拒绝，不改动账本', async () => {
@@ -141,7 +142,7 @@ describe('换新', () => {
     const hub = await startDriverHub({ remotes: { [REMOTE_A]: a } });
     await runOne(hub, a);
     const before = JSON.stringify(hub.store.data.papers[PAPER_A_ID]);
-    expect(await hub.driver.freshStart(PAPER_A_ID)).toContain('没有在等');
+    expect(toSource(await hub.driver.freshStart(PAPER_A_ID))).toContain('没有在等');
     expect(JSON.stringify(hub.store.data.papers[PAPER_A_ID])).toBe(before);
   });
 

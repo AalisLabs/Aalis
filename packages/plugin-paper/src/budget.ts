@@ -6,8 +6,10 @@
 // 每轮到终态后按实际费用入账（book），再释放预留；费用暂缺时预留保留，按临时花费计。
 // ============================================================
 
+import type { TextRef } from '@aalis/schema-i18n';
 import type { DaySpend, PaperLedger } from './ledger.js';
 import { actorKey } from './rooms.js';
+import { t } from './texts.js';
 
 /** 预留额取这块白纸最近几轮的均值 */
 const RESERVE_SAMPLE = 5;
@@ -66,7 +68,7 @@ export function paperBudgetUsage(
 
 /**
  * 能否再开一件（受理时与出队开轮前各判一次）。reserveCents 是本次要预留的额度（{@link reserveFor}）。
- * 按人件数按当天已受理的件数算，不含本件。
+ * 按人件数按当天已受理的件数算，不含本件。不能开的原因交给模型时取原文，所以数字照原样写、不按读者语言加千分位
  */
 export function canStart(
   ledger: PaperLedger,
@@ -76,20 +78,18 @@ export function canStart(
   user: string,
   limits: BudgetLimits,
   reserveCents: number,
-): { ok: true } | { ok: false; reason: string } {
+): { ok: true } | { ok: false; reason: TextRef } {
   const today = ledger.spend[day] ?? NO_SPEND;
   const reserves = Object.values(ledger.reserves);
   const reserved = (pick: (r: (typeof reserves)[number]) => boolean) =>
     reserves.filter(pick).reduce((sum, r) => sum + r.cents, 0);
-  const deny = (reason: string) => ({ ok: false as const, reason });
+  const deny = (reason: TextRef) => ({ ok: false as const, reason });
 
   const global = today.global + reserved(() => true);
   const globalLimit = optionalAmount(limits.globalCents);
   if (globalLimit !== undefined && global + reserveCents > globalLimit) {
     return deny(
-      globalLimit <= 0
-        ? '全局每天金额上限为 0，远端任务不开'
-        : `今天全局的远端任务额度不够（已用加预留 ${global} 美分，本件预留 ${reserveCents}，上限 ${globalLimit}）`,
+      globalLimit <= 0 ? t('globalZero') : t('globalOver', { used: global, reserve: reserveCents, limit: globalLimit }),
     );
   }
 
@@ -100,8 +100,8 @@ export function canStart(
     if (paperUsed + reserveCents > paperLimit) {
       return deny(
         paperLimit <= 0
-          ? '这块白纸的每天金额上限为 0，远端任务不开'
-          : `这块白纸今天的额度不够（已用加预留 ${paperUsed} 美分，本件预留 ${reserveCents}，上限 ${paperLimit}）`,
+          ? t('paperZero')
+          : t('paperOver', { used: paperUsed, reserve: reserveCents, limit: paperLimit }),
       );
     }
   }
@@ -110,9 +110,7 @@ export function canStart(
   const roomUsed = (today.rooms[room] ?? 0) + reserved(r => r.room === room);
   if (roomLimit !== undefined && roomUsed + reserveCents > roomLimit) {
     return deny(
-      roomLimit <= 0
-        ? '本房间的每天金额上限（remoteAgentRoomDailyCents）为 0，远端任务不开'
-        : `本房间今天的额度不够（已用加预留 ${roomUsed} 美分，本件预留 ${reserveCents}，上限 ${roomLimit}）`,
+      roomLimit <= 0 ? t('roomZero') : t('roomOver', { used: roomUsed, reserve: reserveCents, limit: roomLimit }),
     );
   }
 
@@ -121,12 +119,12 @@ export function canStart(
   if (userLimit !== undefined) {
     const userUsed = mine.cents + reserved(r => r.user === user);
     if (userUsed + reserveCents > userLimit) {
-      return deny(`你今天的额度不够（已用加预留 ${userUsed} 美分，本件预留 ${reserveCents}，上限 ${userLimit}）`);
+      return deny(t('userOver', { used: userUsed, reserve: reserveCents, limit: userLimit }));
     }
   }
   const taskLimit = optionalAmount(limits.userTasks);
   if (taskLimit !== undefined && mine.tasks + 1 > taskLimit) {
-    return deny(`你今天已经交了 ${mine.tasks} 件，每人每天上限 ${taskLimit} 件`);
+    return deny(t('userTasksOver', { count: mine.tasks, limit: taskLimit }));
   }
   return { ok: true };
 }

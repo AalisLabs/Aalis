@@ -37,6 +37,7 @@ import { PaperNotices, registerPendingHint } from './notices.js';
 import { PaperPublication } from './publication.js';
 import { Isolation } from './rooms.js';
 import { TaskJournal } from './task-journal.js';
+import { t } from './texts.js';
 import { registerPaperTools } from './tools.js';
 import { registerPaperPage } from './webui.js';
 import { registerWorksTools } from './works.js';
@@ -63,7 +64,7 @@ const uses = {
 
 export default definePlugin({
   name: '@aalis/plugin-paper',
-  displayName: '白纸',
+  displayName: t('paper'),
   subsystem: 'agent',
   configSchema,
   uses,

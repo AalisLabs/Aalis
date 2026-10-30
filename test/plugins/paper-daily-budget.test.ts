@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dayKey } from '../../packages/plugin-paper/src/budget.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { human } from '../fixtures/paper.js';
 import {
   DRIVER_CONFIG,
@@ -61,7 +62,7 @@ describe('白纸日额度：受理、出队、记账与重启', () => {
     const second = await hub.accept(ROOM_A2);
     remote.finish(hub.task(first).runId ?? '');
     await until(() => hub.task(first).state === 'done' && hub.task(second).state === 'failed', '费用入账并拒绝第二件');
-    expect(hub.task(second).error).toContain('白纸今天的额度不够');
+    expect(toSource(hub.task(second).error)).toContain('白纸今天的额度不够');
     expect(remote.count('createAgent')).toBe(1);
     expect(remote.count('startRun')).toBe(0);
     const day = dayKey(Date.now());

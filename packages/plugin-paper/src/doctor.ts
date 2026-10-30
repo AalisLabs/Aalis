@@ -12,12 +12,12 @@
 import type { BoundDoctor, CheckLevel, CheckResult } from '@aalis/api-doctor';
 import { type RemoteAgentProvider, resolveRemoteAgent } from '@aalis/api-remote-agent';
 import type { SessionManagerService } from '@aalis/api-session-manager';
-import { describeLayer } from '@aalis/api-session-settings';
 import type { ServiceSelection } from '@aalis/core';
-import type { PaperConfig } from './config.js';
+import { type TextRef, textClauses, textOf } from '@aalis/schema-i18n';
+import { egressName, type PaperConfig } from './config.js';
 import type { LedgerStore } from './ledger.js';
-import { type Isolation, layersWith, type PaperFields, paperLabel, sharingRooms } from './rooms.js';
-import { describe } from './util.js';
+import { type Isolation, layerName, layersWith, type PaperFields, paperLabel, sharingRooms } from './rooms.js';
+import { t } from './texts.js';
 
 const CHECK_ID = 'paper.config';
 
@@ -31,7 +31,7 @@ export function registerPaperDoctor(deps: {
   cfg: PaperConfig;
   signal: AbortSignal;
   /** 对账里列表连续失败到 3 次的提供者实例（见 PaperDriver.listingFailures） */
-  listingFailures: () => Array<{ type: string; count: number; categories: string[] }>;
+  listingFailures: () => Array<{ type: string; count: number; categories: TextRef[] }>;
 }): void {
   deps.doctor.registerCheck({
     id: CHECK_ID,
@@ -39,69 +39,43 @@ export function registerPaperDoctor(deps: {
     async run(): Promise<CheckResult> {
       const { ledger, cfg } = deps;
       const sm = deps.sessionManager.use;
-      const errors: string[] = [];
-      const warnings: string[] = [];
-      const notes: string[] = [];
+      const errors: TextRef[] = [];
+      const warnings: TextRef[] = [];
+      const notes: TextRef[] = [];
 
-      if (ledger.failure) errors.push(`${ledger.failure}，远端任务一律不开`);
+      if (ledger.failure) errors.push(t('doctorLedgerDown', { failure: ledger.failure }));
       const { collisions, unknown } = await deps.isolation.report(deps.signal);
-      for (const papers of collisions) {
-        errors.push(`白纸 ${papers.join('、')} 用的提供者在同一远端账号下（同账号的代理能互读对话），这几块都不开`);
-      }
+      for (const papers of collisions) errors.push(t('doctorCollision', { papers }));
       for (const [paperId, paper] of Object.entries(ledger.data.papers)) {
-        if (paper.halted)
-          errors.push(`白纸 ${paperLabel(paperId)} 已停开（${paper.halted.detail}），等 owner 在 WebUI 恢复`);
+        if (paper.halted) errors.push(t('doctorHalted', { paper: paperLabel(paperId), detail: paper.halted.detail }));
       }
       for (const alert of ledger.data.alerts) {
         if (alert.kind !== 'unknown-agent' || alert.acknowledged) continue;
-        errors.push(
-          `远端代理「${alert.providerType}」的账号下有账本外的代理 ${alert.subject}，用它的白纸停开，` +
-            '等 owner 在 WebUI 核实并标为已读',
-        );
+        errors.push(t('doctorUnknownAgent', { type: String(alert.providerType), agent: String(alert.subject) }));
       }
 
-      for (const { type, papers, detail } of unknown) {
-        warnings.push(
-          `取不到提供者「${type}」的远端账号标识（白纸 ${papers.join('、')}；原因：${detail}），` +
-            '按冲突处理：引用同类提供者的具名白纸都不开',
-        );
-      }
+      for (const { type, papers, detail } of unknown)
+        warnings.push(t('doctorAccountUnknown', { type, papers, detail }));
       for (const { layer, value } of layersWith(deps.fields, 'remoteAgentTypes')) {
         if (value.length === 0) continue;
-        warnings.push(
-          `remoteAgentTypes（${value.join('、')}）写在${describeLayer(layer)}，这一层覆盖的开了白纸的房间都会继承；` +
-            '按窗口写在房间的场所设置里即可',
-        );
+        warnings.push(t('doctorTypesInherited', { types: value, layer: layerName(layer) }));
       }
       for (const [name, spec] of cfg.papers) {
         const type = spec.remoteAgentType;
-        if (type && !resolveRemoteAgent(deps.remote, type))
-          warnings.push(`白纸 ${name} 引用的远端代理「${type}」不在场`);
+        if (type && !resolveRemoteAgent(deps.remote, type)) warnings.push(t('doctorRemoteAbsent', { name, type }));
         const { labels, shared } = sharingRooms(sm, deps.fields, ledger.data, `n:${name}`);
-        if (shared) {
-          warnings.push(
-            `白纸 ${name} 被多个房间共用（${labels.join('、')}）：长期代理的对话与工作区对所有这些房间可见`,
-          );
-        }
+        if (shared) warnings.push(t('doctorShared', { name, rooms: labels }));
       }
-      for (const [name, reason] of cfg.brokenPapers)
-        errors.push(`白纸 ${name} 的配置有误（${reason}），已停用：用它的房间没有白纸，改对之前同名的后续条目也不生效`);
-      if (cfg.globalDailyCents === 0) warnings.push('globalDailyCents 为 0，远端任务不会开');
-      if (cfg.globalDailyCents === undefined)
-        notes.push('全局每日额度没填，不限额：远端任务按实际花费计费，要设上限就填金额');
+      for (const [name, problem] of cfg.brokenPapers) errors.push(t('doctorBroken', { name, problem }));
+      if (cfg.globalDailyCents === 0) warnings.push(t('doctorGlobalZero'));
+      if (cfg.globalDailyCents === undefined) notes.push(t('doctorUnlimited'));
       for (const task of Object.values(ledger.data.tasks)) {
         if (task.state !== 'starting') continue;
         if (!ledger.data.alerts.some(a => a.kind === 'claim-failed' && a.subject === task.id)) continue;
-        warnings.push(
-          `白纸任务 ${task.id} 认领失败后仍在开轮中（房间 ${task.room}）：开轮结果未知，远端这一轮可能在跑；` +
-            '提供者一直不可用时可在任务表「放弃跟踪」',
-        );
+        warnings.push(t('doctorClaimFailed', { id: task.id, room: task.room }));
       }
       for (const { type, count, categories } of deps.listingFailures()) {
-        warnings.push(
-          `对账时远端代理「${type}」的列表已连续 ${count} 次取不全（${categories.join('、')}），` +
-            '这期间账本外的代理与轮次查不出来',
-        );
+        warnings.push(t('doctorListing', { type, count, categories }));
       }
 
       const types = new Set([cfg.defaults.remoteAgentType, ...[...cfg.papers.values()].map(s => s.remoteAgentType)]);
@@ -110,10 +84,11 @@ export function registerPaperDoctor(deps: {
         if (!provider) continue;
         try {
           const egress = await provider.use.egress(deps.signal);
-          if (egress.source === 'owner-config')
-            notes.push(`远端代理「${type}」的出网方式（${egress.mode}）取自 owner 配置，未核实`);
+          if (egress.source === 'owner-config') {
+            notes.push(t('doctorEgressUnverified', { type, mode: egressName(egress.mode) }));
+          }
         } catch (err) {
-          warnings.push(`取不到远端代理「${type}」的出网方式，用它的白纸不开：${describe(err)}`);
+          warnings.push(t('doctorEgressFailed', { type, error: textOf(err) }));
         }
       }
 
@@ -122,7 +97,7 @@ export function registerPaperDoctor(deps: {
         id: CHECK_ID,
         category: 'config',
         level,
-        message: (level === 'ok' ? ['白纸配置与账本正常', ...notes] : [...errors, ...warnings, ...notes]).join('；'),
+        message: textClauses(level === 'ok' ? [t('doctorOk'), ...notes] : [...errors, ...warnings, ...notes]),
       };
     },
   });

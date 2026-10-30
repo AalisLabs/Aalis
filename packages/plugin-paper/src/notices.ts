@@ -94,7 +94,7 @@ function noticeText(task: TaskRecord): TextRef {
 function noticeContent(task: TaskRecord, direct?: DirectSend): string {
   const facts: string[] = [];
   if (task.startedAt !== undefined && task.endedAt !== undefined) {
-    facts.push(`用时 ${formatDuration(task.endedAt - task.startedAt)}`);
+    facts.push(`用时 ${toSource(formatDuration(task.endedAt - task.startedAt))}`);
   }
   if (task.costCents !== undefined) facts.push(`花费 ${task.costCents} 美分`);
   else if (task.runId) facts.push('费用还没入账');

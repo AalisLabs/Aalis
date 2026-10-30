@@ -31,6 +31,7 @@ import {
   resolveRoomPaper,
 } from './rooms.js';
 import type { TaskJournal } from './task-journal.js';
+import { t } from './texts.js';
 import { describe, truncate } from './util.js';
 
 const MAX_TEXT = 1000;
@@ -72,7 +73,7 @@ export async function enterPaperRoom(
   const refused = checkEligibility(sm, ctx, kind);
   if (refused) return { refused };
   const paper = resolveRoomPaper(sm, deps.fields, deps.cfg, ctx.sessionId, ctx.platform);
-  return 'unavailable' in paper ? { refused: paper.unavailable } : { paper };
+  return 'unavailable' in paper ? { refused: toSource(paper.unavailable) } : { paper };
 }
 
 const fail = (error: string) => JSON.stringify({ ok: false, error });
@@ -149,7 +150,7 @@ export function registerPaperTools(deps: PaperToolDeps): void {
       isolation: deps.isolation,
       signal: deps.signal,
     });
-    if ('unavailable' in remote) return fail(remote.unavailable);
+    if ('unavailable' in remote) return fail(toSource(remote.unavailable));
 
     let accepted: string | undefined;
     const result = await ledger.exclusive(async () => {
@@ -173,7 +174,7 @@ export function registerPaperTools(deps: PaperToolDeps): void {
         },
         reserve,
       );
-      if (!budget.ok) return fail(budget.reason);
+      if (!budget.ok) return fail(toSource(budget.reason));
 
       const open = tasksOn(paper.paperId).filter(t => UNFINISHED_STATES.has(t.state));
       if (open.length >= paper.spec.maxWaiting) {
@@ -274,7 +275,7 @@ export function registerPaperTools(deps: PaperToolDeps): void {
         name: t.name,
         text: t.text,
         state: t.state,
-        ...(currentProgress(t) ? { progress: currentProgress(t) } : {}),
+        ...(currentProgress(t) ? { progress: toSource(currentProgress(t)) } : {}),
         ...(t.publication
           ? {
               publication: {
@@ -325,7 +326,7 @@ export function registerPaperTools(deps: PaperToolDeps): void {
       if (!ours(task)) return missing;
       return actorKey(task.initiator) === user ? undefined : '只能取消自己发起的任务';
     });
-    return JSON.stringify(result);
+    return JSON.stringify(toSource(result));
   }
 
   async function paperSend(args: Record<string, unknown>, ctx: ToolCallContext): Promise<string> {
@@ -368,7 +369,8 @@ export function registerPaperTools(deps: PaperToolDeps): void {
 
   tools.registerGroup({
     name: 'paper',
-    label: '白纸',
+    label: t('paper'),
+    summary: t('paperGroupSummary'),
     description:
       '委托远端代理后台创作网页、图片、动画等项目，也可继续修改已有工程；默认按白纸配置审核并发布，显式选择只创作可取回成品',
   });

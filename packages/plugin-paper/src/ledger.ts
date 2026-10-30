@@ -9,8 +9,8 @@
 import type { RunActivity } from '@aalis/api-remote-agent';
 import { isStorageNotFound, type OwnStorage } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
-import type { TextRef } from '@aalis/schema-i18n';
-import { describe } from './util.js';
+import { TextError, type TextRef, textOf, toSource } from '@aalis/schema-i18n';
+import { t } from './texts.js';
 
 /** 私有目录下的账本文件 */
 const LEDGER = 'ledger.json';
@@ -20,7 +20,8 @@ export interface PaperState {
   binding?: string;
   halted?: {
     reason: 'unknown-run' | 'cost-missing' | 'cancel-failed' | 'storage-full' | 'provider';
-    detail: string;
+    /** 停开说明：新记录是文字对象（参数截 200 字），旧记录是字符串；经受理的拒绝理由交给模型时取原文 */
+    detail: string | TextRef;
     at: number;
   };
   lastClearedAt: number;
@@ -181,7 +182,8 @@ export interface AlertRecord {
   subject?: string;
   /** 远端代理插件实例 id */
   providerType?: string;
-  message: string;
+  /** 新记录是文字对象（参数截 200 字），旧记录是字符串 */
+  message: string | TextRef;
   acknowledged: boolean;
 }
 
@@ -236,7 +238,7 @@ function isLedger(value: unknown): value is PaperLedger {
 export class LedgerStore {
   data: PaperLedger = emptyLedger();
   /** 账本文件存在但读不出或解析不了（原因）：远端任务一律不开，原文件不覆盖 */
-  failure?: string;
+  failure?: TextRef;
   #writing: Promise<void> = Promise.resolve();
   #queue: Promise<unknown> = Promise.resolve();
   readonly #listeners = new Set<() => void>();
@@ -255,26 +257,26 @@ export class LedgerStore {
         this.logger.debug('白纸账本不存在，从空账本起步');
         return;
       }
-      this.fail(`读取失败：${describe(err)}`);
+      this.fail(t('ledgerReadFailed', { error: textOf(err) }));
       return;
     }
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
     } catch (err) {
-      this.fail(`解析失败：${describe(err)}`);
+      this.fail(t('ledgerParseFailed', { error: textOf(err) }));
       return;
     }
     if (!isLedger(parsed)) {
-      this.fail('结构不对（版本不是 1，或缺少必需的表）');
+      this.fail(t('ledgerBadShape'));
       return;
     }
     this.data = parsed;
   }
 
-  private fail(reason: string): void {
-    this.failure = `白纸账本 ${this.storage.uri(LEDGER)} ${reason}`;
-    this.logger.error(`${this.failure}；远端任务一律不开，原文件不覆盖，请人工修复或移走后重启`);
+  private fail(reason: TextRef): void {
+    this.failure = t('ledgerFailure', { uri: this.storage.uri(LEDGER), reason });
+    this.logger.error(`${toSource(this.failure)}；远端任务一律不开，原文件不覆盖，请人工修复或移走后重启`);
   }
 
   /**
@@ -282,7 +284,7 @@ export class LedgerStore {
    * 完成：「写失败就回滚内存」的调用方靠这一点保证被回滚的修改不会经别的写上磁盘
    */
   save(): Promise<void> {
-    if (this.failure) return Promise.reject(new Error(this.failure));
+    if (this.failure) return Promise.reject(new TextError(this.failure));
     const body = JSON.stringify(this.data, null, 2);
     const run = this.#writing.then(async () => {
       await this.storage.writeFile(LEDGER, body);
