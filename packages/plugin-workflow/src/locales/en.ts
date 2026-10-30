@@ -37,6 +37,8 @@ export default defineLocale<Source>()({
   persistDescription: 'When off, it is only registered in memory and lost after a restart',
   yamlFailed: 'Failed to parse the YAML: {error}',
   badDefinition: 'Invalid definition: trigger or nodes is missing',
+  badId:
+    'A workflow id may only use English letters, digits, underscores and hyphens (it is the file name of the definition): {id}',
   definitions: 'Definitions',
   stateEnabled: 'Enabled',
   stateDisabled: 'Disabled',

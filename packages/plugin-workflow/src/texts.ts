@@ -40,6 +40,7 @@ const SOURCE = {
   persistDescription: '关闭后只在内存里注册，重启后丢失',
   yamlFailed: 'YAML 解析失败：{error}',
   badDefinition: '定义不合法：缺少 trigger 或 nodes',
+  badId: '工作流 id 只能用英文字母、数字、下划线与连字符（它是定义文件的文件名）: {id}',
   definitions: '定义',
   stateEnabled: '启用',
   stateDisabled: '停用',
