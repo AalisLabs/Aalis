@@ -39,10 +39,10 @@ export default defineLocale<Source>()({
   productionBranchInvalid:
     'productionBranch is invalid: it must be a branch name and cannot start with p- (work branches use that prefix)',
   targetClaimed: 'The works site target or project is already managed by another instance on this host',
-  stateUnreadable: 'The works site state file could not be read',
+  stateUnreadable: 'The state file could not be read',
   scopeMismatch: 'The works site publish scope does not match the deployed ledger',
   legacyScopeMismatch: 'The works site publish scope does not match the ledger of the old root directory',
-  paused: 'The works site has paused automatic deployment',
+  paused: 'Automatic deployment is paused',
   onlineFailOpenMismatch: 'The online fail_open does not match the configuration',
   tokenExpiring: 'The Cloudflare token expires within 14 days',
   unreadAlerts: 'The works site has {count, plural, one {# unread alert} other {# unread alerts}}',

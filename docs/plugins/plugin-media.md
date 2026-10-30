@@ -91,7 +91,7 @@ export default definePlugin({
 | `contextHistory.enabled` | boolean | `true` | 允许多模态 processor 读取聊天上下文：启用后，图片描述 / 音频识别 / 视频抽帧调用多模态模型时，会将近期聊天记录拼到 prompt 里，让模型能联系上下文进行识别。对传统 Whisper-style ASR 后端无效。 |
 | `contextHistory.maxMessages` | number | `4` | 上下文最大消息条数 |
 | `senderContext` | object | — | 发送者画像注入 (vision) |
-| `senderContext.enabled` | boolean | `true` | 允许在 vision 上下文中注入发送者 user-profile 摘要：启用后，vision 描述图片时会带上发送者的长期 fact 摘要（来自 plugin-user-profile），帮助模型理解 “草羊机截图 = Minecraft 玩家在炫耀” 类场景。读取失败微 user-profile 未启用时静默跳过，不会阻断识别。 |
+| `senderContext.enabled` | boolean | `true` | 允许在 vision 上下文中注入发送者 user-profile 摘要：启用后，vision 描述图片时会带上发送者的长期 fact 摘要（来自 plugin-user-profile），帮助模型理解 “草羊机截图 = Minecraft 玩家在炫耀” 类场景。读取失败或 user-profile 未启用时静默跳过，不会阻断识别。 |
 | `senderContext.profileMaxChars` | number | `200` | profile 摘要最大字符数：超过截断。填 0 等于禁用 profile 注入。 |
 
 ## 相关

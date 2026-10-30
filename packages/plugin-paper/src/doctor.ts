@@ -16,10 +16,14 @@ import type { ServiceSelection } from '@aalis/core';
 import { type TextRef, textClauses, textOf } from '@aalis/schema-i18n';
 import { egressName, type PaperConfig } from './config.js';
 import type { LedgerStore } from './ledger.js';
-import { type Isolation, layerName, layersWith, type PaperFields, paperLabel, sharingRooms } from './rooms.js';
+import { type Isolation, layerName, layersWith, type PaperFields, sharingRooms } from './rooms.js';
 import { t } from './texts.js';
 
 const CHECK_ID = 'paper.config';
+
+/** 诊断里点名一块白纸：具名白纸写「白纸 <名字>」，房间白纸写「房间白纸 <id>」 */
+const doctorLabel = (paperId: string): TextRef =>
+  paperId.startsWith('n:') ? t('namedPaperLabel', { name: paperId.slice(2) }) : t('roomPaperLabel', { id: paperId });
 
 export function registerPaperDoctor(deps: {
   doctor: BoundDoctor;
@@ -47,7 +51,7 @@ export function registerPaperDoctor(deps: {
       const { collisions, unknown } = await deps.isolation.report(deps.signal);
       for (const papers of collisions) errors.push(t('doctorCollision', { papers }));
       for (const [paperId, paper] of Object.entries(ledger.data.papers)) {
-        if (paper.halted) errors.push(t('doctorHalted', { paper: paperLabel(paperId), detail: paper.halted.detail }));
+        if (paper.halted) errors.push(t('doctorHalted', { paper: doctorLabel(paperId), detail: paper.halted.detail }));
       }
       for (const alert of ledger.data.alerts) {
         if (alert.kind !== 'unknown-agent' || alert.acknowledged) continue;

@@ -448,15 +448,8 @@ describe('作品站持久状态与内容核对', () => {
   });
 
   it.each([
-    [
-      'en',
-      [
-        'The works site has paused automatic deployment',
-        'Cloudflare authentication failed',
-        'Deployment failed repeatedly',
-      ],
-    ],
-    ['zh-CN', ['作品站已暂停自动部署', 'Cloudflare 鉴权失败', '部署连续失败']],
+    ['en', ['Automatic deployment is paused', 'Cloudflare authentication failed', 'Deployment failed repeatedly']],
+    ['zh-CN', ['已暂停自动部署', 'Cloudflare 鉴权失败', '部署连续失败']],
   ])('%s：health() 的三种原因（暂停、鉴权失败、部署连续失败）', async (language, expected) => {
     const reasons = [];
     for (const prepare of [

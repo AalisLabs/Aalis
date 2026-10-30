@@ -142,7 +142,7 @@ describe('create-aalis-plugin README 与 index 同源', () => {
     expect(pages).toHaveLength(1);
     expect(checkPage(pages[0])).toMatchObject({ ok: true, page: { kind: 'declarative' } });
     const [info] = (pages[0] as { content: Array<{ data: () => unknown }> }).content;
-    expect(toSource(info.data())).toEqual([{ label: '提示', value: '这是 演示 插件的示例信息面板。' }]);
+    expect(toSource(info.data())).toEqual([{ label: '提示', value: '这是 演示 的示例信息面板。' }]);
   });
 
   it('页面用自带前端：生成 webui/ 的入口与脚本，files 带上 webui；登记成插件前端页面，webui-server 找得到包根与入口；删除动作删一条并通知重取', async () => {

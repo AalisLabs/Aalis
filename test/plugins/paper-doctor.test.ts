@@ -128,6 +128,18 @@ describe('诊断项 paper.config', () => {
     expect(renderIn(result.message, language)).toBe(message);
   });
 
+  it('房间白纸停开：点名写「房间白纸 <id>」，前面不再叠一个「白纸」', async () => {
+    const files = ledgerWith(ledger => {
+      ledger.papers['p:abc123'] = { lastClearedAt: 0, halted: { reason: 'unknown-run', detail: 'HALT', at: 1 } };
+    });
+    const hub = await startPaperHub({ remotes: VERIFIED, files });
+    const [result] = await hub.doctor();
+    expect([renderIn(result.message, 'zh-CN'), renderIn(result.message, 'en')]).toEqual([
+      '房间白纸 p:abc123 已停开（HALT），等 owner 在 WebUI 恢复',
+      'Room paper p:abc123 is halted (HALT); waiting for the owner to resume it in the WebUI',
+    ]);
+  });
+
   it('对照：试点形态（一块具名白纸、一个房间、出网来自提供者接口）为 ok', async () => {
     const result = await check({ listed: [ROOM], places: { [WINDOW]: PILOT_ROOM } });
     expect(result.level).toBe('ok');
