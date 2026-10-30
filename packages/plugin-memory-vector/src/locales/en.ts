@@ -13,7 +13,7 @@ export default defineLocale<Source>()({
     'In user mode, the hit score of messages from the same user is multiplied by this factor (>1 means they come first)',
   perItemMaxCharsLabel: 'Per-message truncation length',
   perItemMaxCharsDescription:
-    'Character limit for each message shown to the LLM; 0 = no truncation (recommended). Anything beyond is marked with “N characters not shown”.',
+    'Character limit for each message shown to the LLM; 0 = no truncation (recommended). Anything beyond is marked with “…[已截断，还剩 N 个字符未展示]”.',
   minScoreLabel: 'Minimum similarity',
   minScoreDescription:
     '0~1; hits whose score (the semantic score before time weighting) is below this are dropped. 0 means no filtering',

@@ -42,7 +42,8 @@ const SOURCE = {
   atDescription: '写到哪一层：session（本会话，缺省）、place、platformType、platform、global',
   nameDescription: '会话显示名',
   itemArgument: '项：字段名，几个插件同名时写 <实例 id>/<键>',
-  valueArgument: '值：余下的整行；列表与映射写 [] 、文字写 "" 即设成空',
+  valueArgument:
+    '值：取余下的内容，按指令的分词规则读：含空格、换行或引号时整段加引号，反斜杠一律写两个；以 - 开头时前面加 --。列表与映射写 []、文字写 "" 即设成空',
   authorityAbsent: '要装上权限插件才能在聊天里改设置',
   notFiled: '这个会话还没收录，没有场所层',
   noPlatformType: '这个会话没有聊天窗口，不属于任何平台类型档',

@@ -24,4 +24,5 @@ export default defineLocale<Source>()({
   alreadySettled: 'This approval has already been handled.',
   answerRefused: 'The answer did not take effect: {reason}',
   expired: 'The approval for {tool} has expired.',
+  cancelled: 'The approval for {tool} has been cancelled.',
 });

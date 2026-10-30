@@ -340,10 +340,10 @@ function runChatApproval({
             held.delete(approvalId);
             const entry = place.shown.get(approvalId);
             place.shown.delete(approvalId);
-            // 只给送达过的、只在过期时说一句（这里的每份接入都收到同一个结算，只说一次）：在这里回的、在别处处理的与撤销的，
-            // 回合自己的回复会说明结果
-            if (entry?.sent === 'delivered' && state === 'expired')
-              void send(place, t('expired', { tool: sanitizeForCard(entry.approval.tool) }));
+            // 只给送达过的、只在过期与撤销时说一句（这里的每份接入都收到同一个结算，只说一次）：在这里回的与在别处处理的，
+            // 回合自己的回复会说明结果；撤销的（回合被停下、会话被删、/clear）那一轮不一定有回复
+            if (entry?.sent === 'delivered' && (state === 'expired' || state === 'cancelled'))
+              void send(place, t(state, { tool: sanitizeForCard(entry.approval.tool) }));
           },
         },
         place.scope,

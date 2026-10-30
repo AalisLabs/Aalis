@@ -13,7 +13,7 @@ const SOURCE = {
   userPriorityBoostDescription: '在 user 模式下对同一用户消息的命中分数乘以该系数（>1 表示优先）',
   perItemMaxCharsLabel: '单条截断字数',
   perItemMaxCharsDescription:
-    '每条消息呈现给 LLM 时的字符上限；0 = 不截断（推荐）。超出会以「剩余 N 字符未展示」明示。',
+    '每条消息呈现给 LLM 时的字符上限；0 = 不截断（推荐）。超出会以「…[已截断，还剩 N 个字符未展示]」明示。',
   minScoreLabel: '最低相似度阈值',
   minScoreDescription: '0~1，命中分数（时间加权前的语义分）低于该值则丢弃。0 表示不过滤',
   contextExpandLabel: '上下文情景扩展',

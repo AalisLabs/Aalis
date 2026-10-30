@@ -269,6 +269,23 @@ describe('作者默认', () => {
 });
 
 describe('可按会话设置的项', () => {
+  it('写过的各处没取到：名字旁写原因、点按重取，取到之后照常标「另有 N 处设置」', async () => {
+    let fail = true;
+    await boot({
+      handlers: {
+        'session/config/overrides': () => {
+          if (fail) throw new Error('<断了>');
+          return OVERRIDES;
+        },
+      },
+    });
+    const retry = await rowOf('最大工具迭代').findByRole('button', { name: '别处的设置没取到：<断了>（点按重试）' });
+    fail = false;
+    fireEvent.click(retry);
+    expect(await rowOf('最大工具迭代').findByRole('button', { name: '另有 3 处设置' })).toBeTruthy();
+    expect(rowOf('最大工具迭代').queryByRole('button', { name: /没取到/ })).toBeNull();
+  });
+
   it('标「可按会话设置」，另有设过的标「另有 N 处设置」，点开逐个列出（场所写称呼与层名、不带平台，子会话带父会话，引号用「」），每处链到那一层或那个会话的设置；模型不在表里，在服务偏好块里带标记', async () => {
     await boot();
     await vi.waitFor(() => expect(rowOf('最大工具迭代').getByText('可按会话设置')).toBeTruthy());

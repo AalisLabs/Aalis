@@ -42,7 +42,7 @@ export default definePlugin({
 | `search.topK` | number | `5` | 最大返回数：语义搜索返回的命中条数（每条会再带上下文窗口） |
 | `search.timeWeight` | number | `0.3` | 时间权重：0=纯语义，1=纯时间近因 |
 | `search.userPriorityBoost` | number | `2` | 同用户加权系数：在 user 模式下对同一用户消息的命中分数乘以该系数（&gt;1 表示优先） |
-| `search.perItemMaxChars` | number | `0` | 单条截断字数：每条消息呈现给 LLM 时的字符上限；0 = 不截断（推荐）。超出会以「剩余 N 字符未展示」明示。 |
+| `search.perItemMaxChars` | number | `0` | 单条截断字数：每条消息呈现给 LLM 时的字符上限；0 = 不截断（推荐）。超出会以「…[已截断，还剩 N 个字符未展示]」明示。 |
 | `search.minScore` | number | `0` | 最低相似度阈值：0~1，命中分数（时间加权前的语义分）低于该值则丢弃。0 表示不过滤 |
 | `contextExpand` | object | — | 上下文情景扩展：命中后自动取该消息在原会话中的前后 N 条相邻消息（含 user/assistant/notice/tool）还原情景。0 = 关闭。 |
 | `contextExpand.window` | number | `2` | 扩展窗口（前后各 N 条消息）：0 = 仅命中本身。建议 2~5 |
