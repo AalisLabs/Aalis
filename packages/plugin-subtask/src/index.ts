@@ -12,7 +12,7 @@ import { actingIdentity, type ToolCallContext, tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { toSource } from '@aalis/schema-i18n';
-import { type IncomingMessage, WellKnownMetadataKeys } from '@aalis/schema-message';
+import { type IncomingMessage, type TurnRecord, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { t } from './texts.js';
 
 // =====================================================================
@@ -118,7 +118,10 @@ const NOT_FOUND = '子任务不存在';
 /** 父会话记录 metadata 里本插件的键：到期销毁的子任务留下的回报 */
 const REPORTS_KEY = 'subtask';
 
-/** 到期销毁的子任务留给父会话的回报：check_subtask、wait_subtasks 读到即删，父会话提醒列出它的那一轮结束后删 */
+/**
+ * 到期销毁的子任务留给父会话的回报：check_subtask、wait_subtasks 读到即删，父会话提醒列出它的那一轮回复或静默收尾后删（出错、
+ * 被停止的一轮之后留着）
+ */
 interface SubtaskReport {
   id: string;
   name: string;
@@ -261,8 +264,10 @@ function registerSubtask(
   /** 本插件记下的一轮结束时刻；重启或重载之后没有，取会话记录上的 lastTurn.endedAt */
   const endedAt = new Map<string, number>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
-  /** 父会话这一轮的提醒里列出过的回报（子会话 id）：这一轮结束时删 */
+  /** 父会话这一轮的提醒里列出过的回报（子会话 id）：这一轮回复或静默收尾时删 */
   const listed = new Map<string, Set<string>>();
+  /** 一轮的结局（回合 id → 结局）：agent:turn:after 记下，同一轮的 agent:turn:before 收尾时取走 */
+  const outcomes = new Map<string, TurnRecord['outcome']>();
   /**
    * 子会话还在时 check_subtask、wait_subtasks 交出过的结果（子会话 id → 那一份回报）：到期销毁时同一份不再写回报。只记在内存里，
    * 重启或重载之后到期的照样写回报
@@ -1082,7 +1087,7 @@ function registerSubtask(
     }
   }
 
-  /** 这个会话这一轮的提醒里列出过的回报：这一轮结束时删 */
+  /** 这个会话这一轮的提醒里列出过的回报：这一轮回复或静默收尾时删 */
   async function dropListed(sessionId: string): Promise<void> {
     const ids = listed.get(sessionId);
     const sm = tracked;
@@ -1098,9 +1103,15 @@ function registerSubtask(
     }
   }
 
-  // 一轮从开始（agent:turn:before）到它的 next 返回为止：子会话记在飞，结束时记下时刻、排定时器；父会话删掉这一轮列出过的回报
+  hooks.use.middleware('agent:turn:after', async (data, next) => {
+    outcomes.set(data.turnId, data.outcome);
+    await next();
+  });
+
+  // 一轮从开始（agent:turn:before）到它的 next 返回为止：子会话记在飞，结束时记下时刻、排定时器；父会话这一轮回复或静默收尾时
+  // 删掉这一轮列出过的回报，出错、被停止（或没走到 agent:turn:after）的模型没交出什么，回报留着、下一轮照常列出
   hooks.use.middleware('agent:turn:before', async (data, next) => {
-    const { sessionId } = data;
+    const { sessionId, turnId } = data;
     const { source } = data.inputs[0].message;
     const sm = sessionManager.present ? sessionManager.use : undefined;
     const session = sm?.getSession(sessionId);
@@ -1120,7 +1131,10 @@ function registerSubtask(
           schedule(sessionId);
         }
       }
-      await dropListed(sessionId);
+      const outcome = outcomes.get(turnId);
+      outcomes.delete(turnId);
+      if (outcome === 'replied' || outcome === 'silent') await dropListed(sessionId);
+      else listed.delete(sessionId);
     }
   });
 
