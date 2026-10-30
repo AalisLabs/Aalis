@@ -25,6 +25,7 @@ import toolOnebotPlugin from '../../packages/plugin-tool-onebot/src/index.js';
 import sessionToolPlugin from '../../packages/plugin-tool-session/src/index.js';
 import toolSystemPlugin from '../../packages/plugin-tool-system/src/index.js';
 import userProfilePlugin from '../../packages/plugin-user-profile/src/index.js';
+import userRelationPlugin from '../../packages/plugin-user-relation/src/index.js';
 import websearchPlugin from '../../packages/plugin-websearch-serper/src/index.js';
 import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
 import { isTextRef, resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
@@ -37,7 +38,8 @@ import { makeToolRegistry } from '../fixtures/tool-registry.js';
 // 工具插件登记的每个分组都带给人看的一句概述（summary），是文字对象：WebUI 设置里分组选项按读者的语言显示它，description 照旧
 // 只给模型。每个插件单独起在一个 App 里，存储是内存替身、进程服务是空替身（只为让要它们的插件激活），WebUI 是测试台，另有真的
 // cron-engine（定时与编排要它），要凭据的插件给占位凭据。OKX 的概述按模拟盘与实盘分两句；mcp-client 按服务器桥接的分组也有，服务器是一启动就退出的 node 进程。
-// tool-onebot 只在出现 OneBot 平台时登记，激活之后另登记一个 OneBot 平台的替身；user-profile 要记忆（内存实现）与对话模型（替身）。
+// tool-onebot 只在出现 OneBot 平台时登记，激活之后另登记一个 OneBot 平台的替身；user-profile 要记忆（内存实现）与对话模型（替身），
+// user-relation 只要记忆，同用这一份。
 // ════════════════════════════════════════════════════════════
 
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
@@ -104,6 +106,7 @@ const CASES: [string, PluginDefinition, string[], Record<string, unknown>?, Arou
   ['workflow', workflowPlugin, ['workflow']],
   ['tool-onebot', toolOnebotPlugin, ['onebot-daily', 'onebot-group', 'onebot-personal'], {}, onebotOnline],
   ['user-profile', userProfilePlugin, ['user-profile'], {}, memoryAndModel],
+  ['user-relation', userRelationPlugin, ['user-relation'], {}, memoryAndModel],
 ];
 
 /** 只起这一个插件（宿主另做的见 around），交出它登记的分组 */

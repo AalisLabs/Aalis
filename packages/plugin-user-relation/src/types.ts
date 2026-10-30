@@ -501,3 +501,25 @@ export interface RelationGraphSnapshot {
   entities: EntityNode[];
   edges: RelationEdge[];
 }
+
+/** 一次 consolidate() 的各项计数；带 LLM 增强时另有 llm 一项 */
+export interface ConsolidateCounts {
+  aliasCandidates: number;
+  aliasEdgesCreated: number;
+  eventEdgesNormalized: number;
+  entityHierarchyCandidates: number;
+  entityHierarchyEdgesCreated: number;
+  lateralParentCandidates: number;
+  lateralParentsCreated: number;
+  lateralEdgesCreated: number;
+  eventDuplicateCandidates: number;
+  eventDuplicatesMerged: number;
+  llm?: { verified: number; rejected: number; cacheHits: number; summariesRewritten: number };
+}
+
+/** 最近一次 consolidate()：完成的时刻（ms）、触发来源与各项计数 */
+export interface LastConsolidate {
+  at: number;
+  trigger: 'manual' | 'eviction' | 'api';
+  counts: ConsolidateCounts;
+}

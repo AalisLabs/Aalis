@@ -3642,6 +3642,9 @@ importers:
       '@aalis/api-host-config':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-host-config
+      '@aalis/api-i18n':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-i18n
       '@aalis/api-llm':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../api-llm

@@ -20,6 +20,7 @@ import { contributions } from '@aalis/api-contributions';
 import { embedding } from '@aalis/api-embedding';
 import { hooks } from '@aalis/api-hooks';
 import { ownHostConfig } from '@aalis/api-host-config';
+import { i18n } from '@aalis/api-i18n';
 import { llm } from '@aalis/api-llm';
 import { memory } from '@aalis/api-memory';
 import { persona } from '@aalis/api-persona';
@@ -31,6 +32,7 @@ import { userRelation } from '@aalis/api-user-relation';
 import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
+import { textOf } from '@aalis/schema-i18n';
 import { type EvictionConfig, registerRelationCommands } from './commands.js';
 import { RelationExtractor } from './extractor.js';
 import { registerRelationContribution } from './middleware.js';
@@ -46,132 +48,121 @@ const configSchema = defineConfig({
   extractionEnabled: {
     type: 'boolean',
     onInvalid: 'error',
-    label: '允许从对话中提取新关系（写入总开关）',
-    description:
-      '**写入总开关**：关闭后插件停止生成任何新关系节点/边；但 middleware 仍读取并注入旧关系、actions 仍可查/删。彻底卸载请整体停用该插件。',
+    label: t('extractionEnabledLabel'),
+    description: t('extractionEnabledDescription'),
     default: true,
   },
   triggerEveryNMessages: {
     type: 'number',
-    label: '自动触发阈值（每 N 条消息）',
-    description: '每会话累计 N 条入站消息后自动跑一次 LLM 提取。0=关闭自动提取。',
+    label: t('triggerLabel'),
+    description: t('triggerDescription'),
     default: 20,
   },
   readWindowSize: {
     type: 'number',
-    label: '提取读取窗口大小',
-    description:
-      '每次提取时回读的最近消息数。建议略大于触发阈值（如阈值 20、窗口 30），让相邻批次窗口重叠 10 条左右、便于 LLM 跨批次稳定识别同一事件与关系',
+    label: t('readWindowLabel'),
+    description: t('readWindowDescription'),
     default: 30,
   },
   mode: {
     type: 'select',
-    label: '提取模式',
-    description: 'incremental: 固定窗口；all-new: 一次性读所有累积（注意 context 上限）',
+    label: t('modeLabel'),
+    description: t('modeDescription'),
     options: [
-      { value: 'incremental', label: '增量窗口（推荐）' },
-      { value: 'all-new', label: '全量累积（慎用）' },
+      { value: 'incremental', label: t('modeIncremental') },
+      { value: 'all-new', label: t('modeAllNew') },
     ],
     default: 'incremental',
   },
   allNewMaxMessages: {
     type: 'number',
-    label: 'all-new 模式下的最大消息数',
-    description: '仅 mode=all-new 时生效；硬上限以防 context 溢出',
+    label: t('allNewMaxLabel'),
+    description: t('allNewMaxDescription'),
     default: 200,
   },
   readScope: {
     type: 'select',
-    label: '提取读取范围',
-    description:
-      '决定每次提取从哪些会话拉取消息送给 LLM：\n- same-session（默认）：只读当前 sessionId（同群/同私聊），证据 100% 在原 session 内；\n- same-platform：把同 platform 下所有会话最近消息合并送 LLM，每行带 [sid:xxx] 前缀，evidence 按真实来源记录；适合识别跨群共享话题；\n- cross-platform：跨所有平台聚合（同上），适合识别跨平台同一用户/同一事件。\n跨会话模式仅在 memory 后端实现 getRecentMessagesAcrossSessions 时生效，否则自动降级到 same-session。',
+    label: t('readScopeLabel'),
+    description: t('readScopeDescription'),
     options: [
-      { value: 'same-session', label: '仅当前会话（默认）' },
-      { value: 'same-platform', label: '同平台跨会话' },
-      { value: 'cross-platform', label: '全平台跨会话' },
+      { value: 'same-session', label: t('readScopeSession') },
+      { value: 'same-platform', label: t('readScopePlatform') },
+      { value: 'cross-platform', label: t('readScopeAll') },
     ],
     default: 'same-session',
   },
   crossSessionMaxAgeMinutes: {
     type: 'number',
-    label: '跨会话拉取最大时间窗口（分钟）',
-    description: '仅 readScope!=same-session 时生效；只取最近 N 分钟内的消息。0=不限',
+    label: t('crossMaxAgeLabel'),
+    description: t('crossMaxAgeDescription'),
     default: 60,
   },
   candidateEventDays: {
     type: 'number',
-    label: '候选事件回溯天数',
-    description: '提取时把最近 N 天的活跃事件作为候选清单交给 LLM，避免重复创建同名事件',
+    label: t('candidateDaysLabel'),
+    description: t('candidateDaysDescription'),
     default: 7,
   },
   candidateEventLimit: {
     type: 'number',
-    label: '候选事件最大数量',
-    description: '控制 prompt 体积',
+    label: t('candidateLimitLabel'),
+    description: t('candidateLimitDescription'),
     default: 20,
   },
   senderNeighborhoodEdgeLimit: {
     type: 'number',
-    label: '候选人 1 跳邻居展示上限',
-    description:
-      '提取时，对窗口内每位已知发言人附带其 1 跳邻居子图（已关联的事件/实体/人际关系，按权重降序），上限条数。0 = 关闭',
+    label: t('neighborLimitLabel'),
+    description: t('neighborLimitDescription'),
     default: 8,
   },
   extractionModel: {
     type: 'llm-ref',
-    label: '提取使用的 LLM',
-    description: '建议挑一个具备 chat 能力的便宜模型；留空则使用默认 llm 服务',
+    label: t('extractionModelLabel'),
+    description: t('extractionModelDescription'),
   },
   extractionDisableThinking: {
     type: 'boolean',
-    label: '提取：禁用思考模式',
-    description:
-      '提取是结构化输出任务，思考型模型（如 deepseek-v4-flash）开启思考后可能把 token budget 全花在 reasoning 上、返回空内容。' +
-      '开启时用模型最浅的思考档（能关闭思考的模型即关闭），模型不能调思考时不起作用。默认开启',
+    label: t('extractionThinkingLabel'),
+    description: t('extractionThinkingDescription'),
     default: true,
   },
 
   // ────── Consolidate（图整理 + 自动别名合并 + 可选 LLM 增强）──────
   consolidationModel: {
     type: 'llm-ref',
-    label: 'Consolidate 使用的 LLM',
-    description:
-      '可选。配置后 /relation.consolidate 与淘汰后自动整理会调用该模型做 (A) 别名候选语义核验、(B) 合并后摘要重写、(C) 实体层级推断。推荐选大上下文模型（如 GPT-4o、Claude Opus）。留空时整理只做旧账边整理，别名与层级只统计候选、不改图。',
+    label: t('consolidationModelLabel'),
+    description: t('consolidationModelDescription'),
   },
   consolidationDisableThinking: {
     type: 'boolean',
-    label: 'Consolidate LLM：禁用思考模式',
-    description: '同 extractionDisableThinking。默认开启',
+    label: t('consolidationThinkingLabel'),
+    description: t('consolidationThinkingDescription'),
     default: true,
   },
   consolidationAutoLink: {
     type: 'boolean',
     onInvalid: 'error',
     label: 'Consolidate autoLink',
-    description:
-      '为 true 且配置了 consolidationModel 时，经模型核验后自动合并别名实体、建层级边；未配置整理模型时与 false 一样只统计候选、不动数据。',
+    description: t('autoLinkDescription'),
     default: false,
   },
   consolidationSkipLowScorePairs: {
     type: 'boolean',
-    label: 'Consolidate：跳过低权候选 pair',
-    description:
-      '启用后，宽召回阶段双方 compositeScore 均低于阈值的候选不送 LLM 核验（两端都是 edge tier，合并价值低）。默认启用以节省 LLM 调用。',
+    label: t('skipLowLabel'),
+    description: t('skipLowDescription'),
     default: true,
   },
   consolidationLowScoreThreshold: {
     type: 'number',
-    label: 'Consolidate：低权阈值',
-    description:
-      'compositeScore 阈值（0~1，与 scoreToTier 的 edge 边界一致，默认 0.2）。设 0 等同关闭跳过；仅在 consolidationSkipLowScorePairs=true 时生效。',
+    label: t('lowThresholdLabel'),
+    description: t('lowThresholdDescription'),
     default: 0.2,
   },
   consolidateAfterEviction: {
     type: 'boolean',
     onInvalid: 'error',
-    label: '淘汰时自动 consolidate',
-    description:
-      '每次触发容量淘汰时，先自动运行一次 consolidate（去重 / 整理 / 层级推断），再执行淘汰。与 /relation maintain 顺序一致，使 PageRank 入出度更完整。',
+    label: t('consolidateAfterEvictionLabel'),
+    description: t('consolidateAfterEvictionDescription'),
     default: true,
   },
 
@@ -179,151 +170,146 @@ const configSchema = defineConfig({
   evictionEnabled: {
     type: 'boolean',
     onInvalid: 'error',
-    label: '启用自动老化',
-    description:
-      '每次提取完成后扫一遍当前图：先删孤儿节点（无任何边），再按"超出配额"逐项删除"老旧 + 低权重 + PageRank 边缘"的人物/事件/实体/边。不再有硬豁免，重要性完全由 PageRank 、weight 衰减与 mentionCount 表达。配额设为 0 则允许该类节点无限增长。',
+    label: t('evictionLabel'),
+    description: t('evictionDescription'),
     default: true,
   },
   maxPersons: {
     type: 'number',
-    label: '人物总数上限',
-    description:
-      '超过则按 (now - lastMentionedAt) / (mentionCount · PR) 排序，先删老旧低活跃人物。0=不限（允许人物无限增长）。',
+    label: t('maxPersonsLabel'),
+    description: t('maxPersonsDescription'),
     default: 1500,
   },
   maxEvents: {
     type: 'number',
-    label: '事件总数上限',
-    description: '超过则按 (now - lastReinforcedAt) / weight 排序，先删老旧低权重事件。0=不限。',
+    label: t('maxEventsLabel'),
+    description: t('maxEventsDescription'),
     default: 2500,
   },
   maxEntities: {
     type: 'number',
-    label: '实体总数上限',
-    description: '同上策略。0=不限。',
+    label: t('maxEntitiesLabel'),
+    description: t('maxEntitiesDescription'),
     default: 1500,
   },
   maxEdges: {
     type: 'number',
-    label: '边总数上限',
-    description: '超过则保留 weight · 端点PR平均 最高的边。0=不限。',
+    label: t('maxEdgesLabel'),
+    description: t('maxEdgesDescription'),
     default: 10000,
   },
   pagerankDamping: {
     type: 'number',
-    label: 'PageRank 阻尼系数',
-    description: '淘汰打分用。常用 0.85。',
+    label: t('dampingLabel'),
+    description: t('dampingDescription'),
     default: 0.85,
   },
   pagerankIterations: {
     type: 'number',
-    label: 'PageRank 最大迭代次数',
-    description: '20 通常够用；图较大、邻接稠密可调到 30~50。',
+    label: t('iterationsLabel'),
+    description: t('iterationsDescription'),
     default: 20,
   },
   pagerankEpsilon: {
     type: 'number',
-    label: 'PageRank 收敛阈值',
-    description: 'L1 误差小于该值即提前停止迭代。',
+    label: t('epsilonLabel'),
+    description: t('epsilonDescription'),
     default: 0.0001,
   },
   communityAlgorithm: {
     type: 'select',
-    label: '社群发现默认算法',
-    description:
-      'evictByQuota 之后顺手跑的社群发现算法（写入节点社群缓存，community_peers / community_bridge 读它），也是 community_overview 不传 algorithm 时的默认算法。louvain=经典快、硬划分；leiden=Louvain + 内部连通性 refinement；slpa=Speaker-Listener Label Propagation，原生重叠社区（跨群人物能获得多个社群隶属度）。agent 调 community_overview 时可临时指定 algorithm 参数覆盖此默认。',
+    label: t('communityLabel'),
+    description: t('communityDescription'),
     options: [
-      { value: 'louvain', label: 'Louvain（默认，快，硬划分）' },
-      { value: 'leiden', label: 'Leiden-lite（硬划分，保证内部连通）' },
-      { value: 'slpa', label: 'SLPA（原生重叠社区，软划分）' },
+      { value: 'louvain', label: t('communityLouvain') },
+      { value: 'leiden', label: t('communityLeiden') },
+      { value: 'slpa', label: t('communitySlpa') },
     ],
     default: 'louvain',
   },
   evictHysteresisPct: {
     type: 'number',
-    label: '淘汰滞回 (0~1)',
-    description: 'count > quota·(1+该值) 才触发淘汰；设为 0.2 时，quota=500 在 600 触发。用以避免"写一条删一条"。',
+    label: t('hysteresisLabel'),
+    description: t('hysteresisDescription'),
     default: 0.2,
   },
   evictTargetPct: {
     type: 'number',
-    label: '淘汰回落目标 (0~1)',
-    description:
-      '触发后裁到 floor(quota·该值)；配合 hysteresisPct=0.2 与该值=0.8，单次裁 ~40% quota（quota=500 → 一次裁 ~200 条）。',
+    label: t('targetLabel'),
+    description: t('targetDescription'),
     default: 0.8,
   },
   weightDecayHalfLifeDays: {
     type: 'number',
-    label: 'Weight 时间衰减半衰期（天）',
-    description:
-      '淘汰/排序时把 weight 按半衰期折算：effW = raw × max(0.5^(天数/halfLife), floor)。让长期不被强化的"老高 weight"自动让出保护名额。0 = 关闭衰减。',
+    label: t('halfLifeLabel'),
+    description: t('halfLifeDescription'),
     default: 180,
   },
   weightDecayFloor: {
     type: 'number',
-    label: 'Weight 衰减下限因子 (0~1)',
-    description: 'effW 不会低于 raw × 该值。保留"老朋友"底色，避免完全失忆。默认 0.3。',
+    label: t('floorLabel'),
+    description: t('floorDescription'),
     default: 0.3,
   },
   // ────── Middleware 注入侧 ──────
   agentInjection: {
     type: 'boolean',
     onInvalid: 'error',
-    label: '向 agent 注入关系上下文',
-    description: '把当前用户的子图速览作为 agent:prompt 贡献注入（turn-context 槽，历史之后、当前消息之前）',
+    label: t('injectionLabel'),
+    description: t('injectionDescription'),
     default: true,
   },
   injectionMaxDepth: {
     type: 'number',
-    label: '注入：BFS 最大深度',
-    description: '0=仅起点；1=直接邻居；2=同事件其他参与者 / 朋友的朋友。token 敏感，默认 2',
+    label: t('injectionDepthLabel'),
+    description: t('injectionDepthDescription'),
     default: 2,
   },
   injectionMaxBreadth: {
     type: 'number',
-    label: '注入：单节点展开邻居上限',
-    description: '按 weight 降序展开。默认 10',
+    label: t('injectionBreadthLabel'),
+    description: t('injectionBreadthDescription'),
     default: 10,
   },
   maxInjectedEvents: {
     type: 'number',
-    label: '注入：事件条数上限',
+    label: t('maxInjectedEventsLabel'),
     default: 5,
   },
   maxInjectedRelations: {
     type: 'number',
-    label: '注入：人际关系条数上限',
+    label: t('maxInjectedRelationsLabel'),
     default: 8,
   },
   maxParticipantsPerEvent: {
     type: 'number',
-    label: '注入：每事件展示参与者数',
-    description: '超出会显示 +N 人。默认 5',
+    label: t('maxParticipantsLabel'),
+    description: t('maxParticipantsDescription'),
     default: 5,
   },
   maxCooccurrencePartners: {
     type: 'number',
-    label: '注入：共现伙伴展示数',
-    description: '基于事件桥统计的隐式二跳；0 关闭该小节',
+    label: t('maxCooccurrenceLabel'),
+    description: t('maxCooccurrenceDescription'),
     default: 5,
   },
   maxGlobalHotEvents: {
     type: 'number',
-    label: '注入：全局热点事件数',
-    description: '与当前用户子图无关，按全局 lastMentionedAt 排序的最近事件；0 关闭',
+    label: t('hotEventsLabel'),
+    description: t('hotEventsDescription'),
     default: 5,
   },
   maxGlobalHotEntities: {
     type: 'number',
-    label: '注入：全局热点实体数',
-    description: '与当前用户子图无关，按全局 lastMentionedAt 排序的最近实体；0 关闭',
+    label: t('hotEntitiesLabel'),
+    description: t('hotEntitiesDescription'),
     default: 5,
   },
   groupOnly: {
     type: 'boolean',
     onInvalid: 'error',
-    label: '仅在群聊中注入',
-    description: '私聊一般无需关系图上下文',
+    label: t('groupOnlyLabel'),
+    description: t('groupOnlyDescription'),
     default: false,
   },
   // 按会话字段：坏值原样交来，按仅本会话处理
@@ -344,84 +330,81 @@ const configSchema = defineConfig({
   toolsEnabled: {
     type: 'boolean',
     onInvalid: 'error',
-    label: '向 Agent 暴露 dig 工具',
-    description:
-      '允许 LLM 主动调用 user_relation_* 工具：检索 / 分析 / 社群，以及带保护门的写工具（改名、修边、删除、合并等）',
+    label: t('toolsLabel'),
+    description: t('toolsDescription'),
     default: true,
   },
   commandsEnabled: {
     type: 'boolean',
     onInvalid: 'error',
-    label: '注册 /relation 指令',
-    description:
-      '注册 show / orphans / cleanup / consolidate / maintain 等 /relation 指令（cleanup 等写操作为 restricted，需 owner 授予）',
+    label: t('commandsLabel'),
+    description: t('commandsDescription'),
     default: true,
   },
   strictSelfAssertion: {
     type: 'boolean',
     onInvalid: 'error',
-    label: '严格自证模式',
-    description:
-      '开启后，提取只允许把人际关系归到「说过那条原话的人」名下：仅 person-person 边要求 evidence 中至少一条由 from 方本人发出（evidence.messageId 对应消息的发言者 == fromPersonId）。无论开关，person-person 边的 to 都须已存在 PersonNode（防孤儿边）。',
+    label: t('strictLabel'),
+    description: t('strictDescription'),
     default: true,
   },
   digToolDefaultMaxDepth: {
     type: 'number',
-    label: 'dig 工具：默认深度',
+    label: t('digDepthLabel'),
     default: 2,
   },
   digToolDefaultMaxBreadth: {
     type: 'number',
-    label: 'dig 工具：默认宽度',
+    label: t('digBreadthLabel'),
     default: 8,
   },
   digToolHardMaxDepth: {
     type: 'number',
-    label: 'dig 工具：硬上限深度',
-    description: 'Agent 传入更大值会被截断',
+    label: t('digHardDepthLabel'),
+    description: t('digHardDepthDescription'),
     default: 4,
   },
   digToolHardMaxBreadth: {
     type: 'number',
-    label: 'dig 工具：硬上限宽度',
+    label: t('digHardBreadthLabel'),
     default: 20,
   },
   findPathDefaultMaxDepth: {
     type: 'number',
-    label: 'find_path 默认深度',
+    label: t('findPathDepthLabel'),
     default: 4,
   },
   findPathHardMaxDepth: {
     type: 'number',
-    label: 'find_path 硬上限',
+    label: t('findPathHardLabel'),
     default: 6,
   },
   searchEventsDefaultLimit: {
     type: 'number',
-    label: 'search_events 默认 limit',
+    label: t('searchLimitLabel'),
     default: 10,
   },
   searchEventsHardMaxLimit: {
     type: 'number',
-    label: 'search_events 硬上限 limit',
+    label: t('searchHardLabel'),
     default: 50,
   },
 
   // ────── 关系图页 ──────
   graphSpacing: {
     type: 'number',
-    label: '关系图疏密',
+    label: t('spacingLabel'),
     default: 120,
     min: 20,
     max: 1000,
-    description: '关系图布局的理想边长（像素），越大越稀疏，建议 60 到 250',
+    description: t('spacingDescription'),
   },
 
   // ────── 通用 ──────
   debug: {
     type: 'boolean',
-    label: 'Debug 日志',
-    description: '开启后会输出提取/工具调用的详细日志',
+    label: t('debugLabel'),
+    description: t('debugDescription'),
     default: false,
   },
 });
@@ -552,7 +535,7 @@ function start(caps: Caps): void {
     const ref = cfg.consolidationModel;
     const consolidateModel = ref?.provider && ref.model ? { provider: ref.provider, model: ref.model } : undefined;
     registerRelationCommands(
-      { commands: caps.commands.use, platform: caps.platform, llm: caps.llm, logger: caps.logger.use },
+      { commands: caps.commands.use, platform: caps.platform, llm: caps.llm, i18n: caps.i18n, logger: caps.logger.use },
       service,
       {
         ...(consolidateModel
@@ -601,7 +584,7 @@ function start(caps: Caps): void {
         source: 'user-relation',
         type: 'user-relation',
         success: true,
-        message: `关系图已清空 (${cleared} 条)`,
+        message: t('clearDone', { count: cleared }),
       });
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
@@ -610,7 +593,7 @@ function start(caps: Caps): void {
         source: 'user-relation',
         type: 'user-relation',
         success: false,
-        message: `关系图清空失败: ${m}`,
+        message: t('clearFailed', { error: textOf(err) }),
       });
     }
     await next();
@@ -643,12 +626,14 @@ const uses = {
   sessionFields: optional(sessionFields),
   /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
   document: optional(ownHostConfig),
+  /** /relation 长任务的立即回执按会话的语言渲染；缺席时按原文 */
+  i18n: optional(i18n),
 };
 type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-user-relation',
-  displayName: '人物关系图',
+  displayName: t('displayName'),
   subsystem: 'memory',
   configSchema,
   provides: [userRelation],

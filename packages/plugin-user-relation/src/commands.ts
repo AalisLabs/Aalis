@@ -17,19 +17,62 @@
  */
 
 import type { BoundCommands } from '@aalis/api-commands';
+import { type I18nService, localizeFor } from '@aalis/api-i18n';
 import type { LLMModel } from '@aalis/api-llm';
 import { type PlatformAdapter, resolvePlatformBySession } from '@aalis/api-platform';
 import type { Logger, ServiceSelection } from '@aalis/core';
+import { type TextRef, textLines } from '@aalis/schema-i18n';
 import type { RelationService } from './service.js';
-import type { EntityNode, EventNode, PersonNode, RelationEdge } from './types.js';
+import { t } from './texts.js';
+import type { ConsolidateCounts, EntityNode, EventNode, LastConsolidate, PersonNode, RelationEdge } from './types.js';
 import { findOrphans } from './utils.js';
+import { ENTITY_KIND_NAMES, nameIn } from './webui.js';
 
 /** /relation 指令用到的能力 */
 interface CommandsCaps {
   commands: BoundCommands;
   platform: ServiceSelection<PlatformAdapter>;
   llm: ServiceSelection<LLMModel>;
+  /** 立即回执按会话的语言渲染；缺席时按原文 */
+  i18n: ServiceSelection<I18nService>;
   logger: Logger;
+}
+
+/** consolidation 的触发来源的显示名 */
+const TRIGGER_NAMES: Record<LastConsolidate['trigger'], TextRef> = {
+  manual: t('triggerManual'),
+  eviction: t('triggerEviction'),
+  api: t('triggerApi'),
+};
+
+/** 整理的各项计数：条件片段（event 重复、LLM 增强与其中的缓存命中）各成一句，以「，」相连 */
+function consolidateSummary(counts: ConsolidateCounts): TextRef {
+  const parts = [
+    t('consolidateCounts', {
+      aliasCandidates: counts.aliasCandidates,
+      aliasEdges: counts.aliasEdgesCreated,
+      eventEdges: counts.eventEdgesNormalized,
+      hierarchyCandidates: counts.entityHierarchyCandidates,
+      hierarchyEdges: counts.entityHierarchyEdgesCreated,
+      lateralCandidates: counts.lateralParentCandidates,
+      lateralParents: counts.lateralParentsCreated,
+      lateralEdges: counts.lateralEdgesCreated,
+    }),
+  ];
+  if (counts.eventDuplicateCandidates > 0) {
+    parts.push(
+      t('consolidateDuplicates', { candidates: counts.eventDuplicateCandidates, merged: counts.eventDuplicatesMerged }),
+    );
+  }
+  if (counts.llm) {
+    const { verified, rejected, cacheHits, summariesRewritten: rewritten } = counts.llm;
+    parts.push(
+      cacheHits > 0
+        ? t('consolidateLlmCached', { verified, rejected, cacheHits, rewritten })
+        : t('consolidateLlm', { verified, rejected, rewritten }),
+    );
+  }
+  return parts.reduce((head, tail) => t('andThen', { head, tail }));
 }
 
 /** 容量淘汰配置：index.ts 解析一次，extractor 与 /relation compress、maintain、rewrite-weights 共用 */
@@ -52,7 +95,7 @@ export interface EvictionConfig {
 }
 
 export function registerRelationCommands(
-  { commands: cmds, platform, llm, logger }: CommandsCaps,
+  { commands: cmds, platform, llm, i18n, logger }: CommandsCaps,
   service: RelationService,
   options: {
     consolidateLLM?: { modelRef: { provider: string; model: string }; disableThinking: boolean };
@@ -65,31 +108,31 @@ export function registerRelationCommands(
     consolidateLowScoreThreshold: number;
   },
 ): void {
-  cmds.command('relation', '关系图的查看、清理与维护');
-  cmds.command('relation.cleanup', '清理关系图里的节点');
+  cmds.command('relation', t('relationDescription'));
+  cmds.command('relation.cleanup', t('cleanupDescription'));
 
   // ---- show ----
   cmds
-    .command('relation.show <kind:string> <id:text>', '查看关系图中某节点及其直连边')
-    .argument('kind', 'person、event 或 entity')
-    .argument('id', '节点 id；人物写 platform:userId')
+    .command('relation.show <kind:string> <id:text>', t('showDescription'))
+    .argument('kind', t('showKindArgument'))
+    .argument('id', t('showIdArgument'))
     .example('/relation show person onebot:1234567')
     .example('/relation show entity 9f3a2b...')
     .action(async (_argv, kindArg, idArg) => {
       const kind = String(kindArg ?? '').toLowerCase();
       const id = String(idArg ?? '').trim();
-      if (!id) return 'id 不能为空';
+      if (!id) return t('emptyId');
       const snap = await service.loadAll();
       if (kind === 'person') {
-        if (!id.includes(':')) return 'person id 应为 platform:userId';
+        if (!id.includes(':')) return t('badPersonId');
         const p = snap.persons.find(x => x.id === id);
-        if (!p) return `未找到 person: ${id}`;
+        if (!p) return t('nodeNotFound', { kind, id });
         const nb = await service.getNeighborhood(id);
         return formatPerson(p, nb.events, nb.entities, nb.edges);
       }
       if (kind === 'event') {
         const e = snap.events.find(x => x.id === id);
-        if (!e) return `未找到 event: ${id}`;
+        if (!e) return t('nodeNotFound', { kind, id });
         const edges = snap.edges.filter(
           ed =>
             (ed.kind === 'person-event' && ed.toEventId === id) ||
@@ -99,114 +142,130 @@ export function registerRelationCommands(
       }
       if (kind === 'entity') {
         const ent = snap.entities.find(x => x.id === id);
-        if (!ent) return `未找到 entity: ${id}`;
+        if (!ent) return t('nodeNotFound', { kind, id });
         const edges = snap.edges.filter(ed => ed.kind === 'person-entity' && ed.toEntityId === id);
         return formatEntity(ent, edges);
       }
-      return `未知 kind: ${kind}（应为 person / event / entity）`;
+      return t('unknownKind', { kind });
     });
 
   // ---- orphans (list) ----
-  cmds.command('relation.orphans', '列出图中所有孤立点（不被任何边引用）').action(async () => {
+  cmds.command('relation.orphans', t('orphansDescription')).action(async () => {
     const { persons, events, entities } = findOrphans(await service.loadAll());
     if (persons.length + events.length + entities.length === 0) {
-      return '无孤立点。';
+      return t('noOrphans');
     }
-    const lines: string[] = ['# 孤立点'];
+    const lines: Array<string | TextRef> = [t('orphansTitle')];
     if (persons.length) {
-      lines.push(`## 人物 (${persons.length})`);
+      lines.push(t('orphanSection', { kind: t('persons'), count: persons.length }));
       for (const p of persons) lines.push(`- ${p.id}  ${p.displayName ?? ''}`);
     }
     if (events.length) {
-      lines.push(`## 事件 (${events.length})`);
+      lines.push(t('orphanSection', { kind: t('events'), count: events.length }));
       for (const e of events) lines.push(`- ${e.id}  ${e.title}`);
     }
     if (entities.length) {
-      lines.push(`## 实体 (${entities.length})`);
-      for (const e of entities) lines.push(`- ${e.id}  [${e.entityKind}] ${e.name}`);
+      lines.push(t('orphanSection', { kind: t('entities'), count: entities.length }));
+      for (const e of entities) {
+        lines.push(t('orphanEntity', { id: e.id, kind: nameIn(ENTITY_KIND_NAMES, e.entityKind), name: e.name }));
+      }
     }
-    return lines.join('\n');
+    return textLines(lines);
   });
 
   // ---- cleanup person/event/entity ----
   cmds
-    .command('relation.cleanup.person <id:text>', '删除人物及其所有相关边', { visibility: 'restricted' })
+    .command('relation.cleanup.person <id:text>', t('cleanupPersonDescription'), { visibility: 'restricted' })
     .argument('id', 'platform:userId')
     .action(async (_argv, idArg) => {
       const id = String(idArg ?? '').trim();
-      if (!id.includes(':')) return 'person id 应为 platform:userId';
+      if (!id.includes(':')) return t('badPersonId');
       const [platform, userId] = id.split(':', 2);
       const r = await service.deletePerson(platform!, userId!);
-      return `已删除 person ${id}（级联 ${r.deletedEdges} 条边）`;
+      return t('nodeDeleted', { kind: 'person', id, edges: r.deletedEdges });
     });
 
   // ---- forget-me：用户自助清理自己的节点 ----
   // 注意：只能清掉「自己作为发言者」被记录的节点和直接挂在节点上的边；
   // 别人在事件 title / evidence 里**提及**你的名字（纯字符串）无法清理——
   // 因为这种情况下系统压根没把"你"识别为一个节点，没有 id 可定位。
-  cmds
-    .command('relation.forget-me', '清理我自己在关系图中的节点与直接关联。不清理别人对我的文本提及')
-    .action(async argv => {
-      const { platform, userId } = argv.session;
-      if (!platform || !userId) return '当前会话无法识别你的身份（缺少 platform / userId）';
-      const id = `${platform}:${userId}`;
-      const snap = await service.loadAll();
-      const exists = snap.persons.some(p => p.id === id);
-      if (!exists) return `关系图中没有你的节点（${id}），无需清理。`;
-      const r = await service.deletePerson(platform, userId);
-      return `已删除你的节点 ${id}（级联 ${r.deletedEdges} 条边）。注意：别人在事件文本中提到你的字符串不会被清理。`;
-    });
-
-  cmds
-    .command('relation.cleanup.event <id:text>', '删除事件及其所有相关边', { visibility: 'restricted' })
-    .action(async (_argv, idArg) => {
-      const id = String(idArg ?? '').trim();
-      if (!id) return '请提供 event id';
-      const r = await service.deleteEvent(id);
-      return `已删除 event ${id}（级联 ${r.deletedEdges} 条边）`;
-    });
-
-  cmds
-    .command('relation.cleanup.entity <id:text>', '删除实体及其所有相关边', { visibility: 'restricted' })
-    .action(async (_argv, idArg) => {
-      const id = String(idArg ?? '').trim();
-      if (!id) return '请提供 entity id';
-      const r = await service.deleteEntity(id);
-      return `已删除 entity ${id}（级联 ${r.deletedEdges} 条边）`;
-    });
-
-  cmds.command('relation.cleanup.orphans', '一键清理所有孤立点', { visibility: 'restricted' }).action(async () => {
-    const r = await service.pruneOrphans();
-    const deleted = r.deletedPersons + r.deletedEvents + r.deletedEntities;
-    return `已清理 ${deleted} 个孤立点（人物 ${r.deletedPersons} / 事件 ${r.deletedEvents} / 实体 ${r.deletedEntities}），悬空边 ${r.deletedDanglingEdges} 条`;
+  cmds.command('relation.forget-me', t('forgetMeDescription')).action(async argv => {
+    const { platform, userId } = argv.session;
+    if (!platform || !userId) return t('noIdentity');
+    const id = `${platform}:${userId}`;
+    const snap = await service.loadAll();
+    const exists = snap.persons.some(p => p.id === id);
+    if (!exists) return t('notInGraph', { id });
+    const r = await service.deletePerson(platform, userId);
+    return t('selfDeleted', { id, edges: r.deletedEdges });
   });
 
   cmds
-    .command('relation.cleanup.all', '【危险】清空整个关系图。要加 --yes 才执行', {
+    .command('relation.cleanup.event <id:text>', t('cleanupEventDescription'), { visibility: 'restricted' })
+    .action(async (_argv, idArg) => {
+      const id = String(idArg ?? '').trim();
+      if (!id) return t('needId', { kind: 'event' });
+      const r = await service.deleteEvent(id);
+      return t('nodeDeleted', { kind: 'event', id, edges: r.deletedEdges });
+    });
+
+  cmds
+    .command('relation.cleanup.entity <id:text>', t('cleanupEntityDescription'), { visibility: 'restricted' })
+    .action(async (_argv, idArg) => {
+      const id = String(idArg ?? '').trim();
+      if (!id) return t('needId', { kind: 'entity' });
+      const r = await service.deleteEntity(id);
+      return t('nodeDeleted', { kind: 'entity', id, edges: r.deletedEdges });
+    });
+
+  cmds
+    .command('relation.cleanup.orphans', t('cleanupOrphansDescription'), { visibility: 'restricted' })
+    .action(async () => {
+      const r = await service.pruneOrphans();
+      return t('orphansPruned', {
+        total: r.deletedPersons + r.deletedEvents + r.deletedEntities,
+        persons: r.deletedPersons,
+        events: r.deletedEvents,
+        entities: r.deletedEntities,
+        edges: r.deletedDanglingEdges,
+      });
+    });
+
+  cmds
+    .command('relation.cleanup.all', t('cleanupAllDescription'), {
       visibility: 'restricted',
     })
-    .option('yes', '--yes', { description: '确认执行' })
+    .option('yes', '--yes', { description: t('yesOption') })
     .action(async argv => {
       if (argv.options.yes !== true) {
-        return '注意：该操作将删除所有人物 / 事件 / 实体 / 边。如确实需要，请追加 --yes。';
+        return t('cleanupAllWarning');
       }
       // 一次批量提交（sqlite/inmemory 原子，mongodb 仅按序遇错即停、可幂等重清），
       // 不逐节点级联：后者每删一个节点付 2 次全图读，
       // 生产图规模下要跑数分钟且中途失败会留下半张图（见 service.clearAll 的注释）。
       const cleared = await service.clearAll(logger);
-      return `已清空关系图（删除 ${cleared} 条记录：人物 / 事件 / 实体 / 边 / 合并否决缓存）`;
+      return t('graphCleared', { count: cleared });
     });
 
+  let renderWarned = false;
+  /** 按会话的语言渲染立即回执出错：这次按原文发出，告警一次，之后不再告警 */
+  const onRenderError = (err: unknown) => {
+    if (renderWarned) return;
+    renderWarned = true;
+    logger.warn('按会话的语言渲染立即回执出错，按原文发出（之后再出错不再告警）:', err);
+  };
+
   /**
-   * 长任务前的"立即反馈"：fire-and-forget 推送一条 ack 给当前会话，
+   * 长任务前的"立即反馈"：fire-and-forget 推送一条 ack 给当前会话（按这个会话的语言渲染；读者只带会话 id，不带
+   * ExecutionInput 的 platform：那是调用者身份的平台），
    * 让用户知道命令已被接到、正在跑（consolidate/compress 在大图上可能跑数秒到数十秒）。
    * - 只推给有平台适配器认领的会话（定时任务发进群里的也推）；没有认领者的会话（如编排的内部会话）没有人在等，不推
    * - 推送失败静默，不 await 完成，纯并发
    */
-  function ackBackground(sessionId: string, text: string): void {
+  function ackBackground(sessionId: string, text: TextRef): void {
     void (async () => {
       const adapter = await resolvePlatformBySession(platform, sessionId, logger);
-      await adapter?.use.sendMessage(sessionId, text);
+      await adapter?.use.sendMessage(sessionId, localizeFor(i18n, text, { sessionId }, { onError: onRenderError }));
     })().catch(err => {
       logger.debug(`[user-relation] 立即反馈推送失败（可忽略）：${(err as Error).message}`);
     });
@@ -272,43 +331,53 @@ export function registerRelationCommands(
 
   // ---- consolidate（整理：别名候选 / 旧账去重） ----
   cmds
-    .command('relation.consolidate', '整理关系图。扫描别名候选、规范化 PersonEventEdge', {
+    .command('relation.consolidate', t('consolidateDescription'), {
       visibility: 'restricted',
     })
-    .option('auto-link', '--auto-link', {
-      description: '经整理模型核验后合并别名候选、建层级边；没有整理模型时只统计候选',
-    })
-    .option('no-llm', '--no-llm', { description: '跳过 consolidationModel 配置的 LLM 增强（A 核验 + B 摘要重写）' })
+    .option('auto-link', '--auto-link', { description: t('autoLinkOption') })
+    .option('no-llm', '--no-llm', { description: t('noLlmOption') })
     .action(async argv => {
       const gate = tryAcquireCommand('relation.consolidate');
-      if (!gate.ok) return `上一次 /relation consolidate 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
+      if (!gate.ok) return t('busy', { command: 'consolidate', seconds: gate.elapsedSec });
       try {
         const autoLink = argv.options['auto-link'] === true;
         const useLlm = argv.options['no-llm'] !== true && !!options.consolidateLLM;
         ackBackground(
           argv.session.sessionId,
-          `正在整理关系图（autoLink=${autoLink ? 'on' : 'off'}，LLM=${useLlm ? 'on' : 'off'}），请稍候…`,
+          t('ackConsolidate', { autoLink: autoLink ? 'on' : 'off', llm: useLlm ? 'on' : 'off' }),
         );
         const r = await service.consolidate(buildConsolidateOpts(autoLink, useLlm));
-        const lines = [
-          '关系图整理完成：',
-          `- 别名候选：${r.aliasCandidates.length} 对（auto-link=${autoLink ? 'on' : 'off'}，已建 ${r.aliasEdgesCreated} 条 is-alias-of 边）`,
-          `- EventEntityEdge 去重：${r.eventEdgesNormalized} 组重整`,
-          `- 实体层级候选：${r.entityHierarchyCandidates} 对，新增 ${r.entityHierarchyEdgesCreated} 条 entity-entity[part-of] 边`,
-          `- 侧向父候选：${r.lateralParentCandidates} 簇，新建父实体 ${r.lateralParentsCreated} 个，新增 ${r.lateralEdgesCreated} 条侧向 part-of 边`,
+        const lines: Array<string | TextRef> = [
+          t('consolidated'),
+          t('consolidatedAliases', {
+            candidates: r.aliasCandidates.length,
+            autoLink: autoLink ? 'on' : 'off',
+            edges: r.aliasEdgesCreated,
+          }),
+          t('consolidatedEventEdges', { groups: r.eventEdgesNormalized }),
+          t('consolidatedHierarchy', { candidates: r.entityHierarchyCandidates, edges: r.entityHierarchyEdgesCreated }),
+          t('consolidatedLateral', {
+            clusters: r.lateralParentCandidates,
+            parents: r.lateralParentsCreated,
+            edges: r.lateralEdgesCreated,
+          }),
         ];
         if (useLlm) {
           lines.push(
-            `- LLM 核验：通过 ${r.llmVerified ?? 0}，否决 ${r.llmRejected ?? 0}；摘要重写 ${r.summariesRewritten ?? 0} 条`,
+            t('consolidatedLlm', {
+              verified: r.llmVerified ?? 0,
+              rejected: r.llmRejected ?? 0,
+              rewritten: r.summariesRewritten ?? 0,
+            }),
           );
         }
         if (r.aliasCandidates.length > 0) {
-          lines.push('', '别名候选（前 10 条）：');
+          lines.push('', t('aliasCandidatesHead'));
           for (const c of r.aliasCandidates.slice(0, 10)) {
             lines.push(`  · [${c.aKind}] ${c.aId}  ↔  [${c.bKind}] ${c.bId}  —  ${c.reason}`);
           }
         }
-        return lines.join('\n');
+        return textLines(lines);
       } finally {
         releaseCommand('relation.consolidate');
       }
@@ -316,34 +385,27 @@ export function registerRelationCommands(
 
   // ---- rewrite-weights（手动触发 eager 时间衰减回写） ----
   cmds
-    .command(
-      'relation.rewrite-weights',
-      '把关系图的权重回写为衰减后的值。event/entity/edge 的 weight 字段物理回写为当前 effectiveWeight（时间衰减落地）',
-      { visibility: 'restricted' },
-    )
+    .command('relation.rewrite-weights', t('rewriteWeightsDescription'), { visibility: 'restricted' })
     .action(async argv => {
       const gate = tryAcquireCommand('relation.rewrite-weights');
-      if (!gate.ok) return `上一次 /relation rewrite-weights 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
+      if (!gate.ok) return t('busy', { command: 'rewrite-weights', seconds: gate.elapsedSec });
       try {
         const { weightDecayHalfLifeDays: halfLifeDays, weightDecayFloor: floor } = options.eviction;
         if (halfLifeDays <= 0) {
-          return `weight 衰减未启用（halfLifeDays=${halfLifeDays}），无需回写。`;
+          return t('decayOff', { halfLifeDays });
         }
-        ackBackground(
-          argv.session.sessionId,
-          `正在按 halfLifeDays=${halfLifeDays}、floor=${floor} 回写 weight，请稍候…`,
-        );
+        ackBackground(argv.session.sessionId, t('ackRewrite', { halfLifeDays, floor }));
         const r = await service.rewriteWeights({ halfLifeDays, floor });
         if (r.skipped) {
-          return 'weight 衰减未启用，已跳过。';
+          return t('decaySkipped');
         }
-        return [
-          'weight 时间衰减回写完成：',
-          `- 事件：写回 ${r.events} 条`,
-          `- 实体：写回 ${r.entities} 条`,
-          `- 边：  写回 ${r.edges} 条`,
-          `（参数：halfLifeDays=${halfLifeDays}, floor=${floor}）`,
-        ].join('\n');
+        return textLines([
+          t('rewritten'),
+          t('rewrittenEvents', { count: r.events }),
+          t('rewrittenEntities', { count: r.entities }),
+          t('rewrittenEdges', { count: r.edges }),
+          t('rewrittenParameters', { halfLifeDays, floor }),
+        ]);
       } finally {
         releaseCommand('relation.rewrite-weights');
       }
@@ -351,16 +413,12 @@ export function registerRelationCommands(
 
   // ---- event-duplicates（dry-run：列出 event 重复合并候选，不实际合并） ----
   cmds
-    .command(
-      'relation.event-duplicates',
-      '扫描事件节点的重复合并候选，不修改图。三段式：embedding/jaccard + 结构相似 + LLM 终判',
-      { visibility: 'restricted' },
-    )
+    .command('relation.event-duplicates', t('eventDuplicatesDescription'), { visibility: 'restricted' })
     .action(async argv => {
       const gate = tryAcquireCommand('relation.event-duplicates');
-      if (!gate.ok) return `上一次 /relation event-duplicates 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
+      if (!gate.ok) return t('busy', { command: 'event-duplicates', seconds: gate.elapsedSec });
       try {
-        ackBackground(argv.session.sessionId, '正在扫描 event 重复候选（同 sessionScope / 都 global），请稍候…');
+        ackBackground(argv.session.sessionId, t('ackDuplicates'));
         const r = await service.findEventDuplicates({
           ...(options.consolidateLLM
             ? {
@@ -372,30 +430,42 @@ export function registerRelationCommands(
               }
             : {}),
         });
-        const lines: string[] = [];
-        lines.push(`event 重复扫描完成（embedding ${r.embeddingAvailable ? '可用' : '不可用，降级 jaccard'}）`);
-        lines.push(
-          `候选 ${r.candidates.length} 对，LLM 通过 ${r.llmVerified}，LLM 否决 ${r.llmRejected}，缓存命中 ${r.llmRejectCacheHits}`,
-        );
+        const lines: TextRef[] = [
+          r.embeddingAvailable ? t('duplicatesScanned') : t('duplicatesScannedJaccard'),
+          t('duplicatesCounted', {
+            candidates: r.candidates.length,
+            verified: r.llmVerified,
+            rejected: r.llmRejected,
+            cacheHits: r.llmRejectCacheHits,
+          }),
+        ];
         if (r.candidates.length > 0) {
-          lines.push('--- 候选明细（前 20 条）---');
+          lines.push(t('duplicatesHead'));
           for (const c of r.candidates.slice(0, 20)) {
-            const sims =
+            const scores =
               c.fusedScore !== null
                 ? `fused=${c.fusedScore.toFixed(2)} (cos=${c.cosineScore?.toFixed(2)}, struct=${c.structuralScore.toFixed(2)})`
                 : `jac=${c.jaccardScore.toFixed(2)}, struct=${c.structuralScore.toFixed(2)}`;
             const verdict = c.llmVerdict
-              ? `[${c.cacheHit ? '缓存' : c.llmVerdict.isSame ? '通过' : '否决'}] ${c.llmVerdict.reason}`
-              : '[未判]';
+              ? t(c.cacheHit ? 'verdictCached' : c.llmVerdict.isSame ? 'verdictPassed' : 'verdictRejected', {
+                  reason: c.llmVerdict.reason,
+                })
+              : t('verdictNone');
             lines.push(
-              `  · [${c.sessionScope}] ${c.aTitle.slice(0, 18)} ↔ ${c.bTitle.slice(0, 18)}  ${sims}  ${verdict}`,
+              t('duplicateLine', {
+                scope: c.sessionScope,
+                a: c.aTitle.slice(0, 18),
+                b: c.bTitle.slice(0, 18),
+                scores,
+                verdict,
+              }),
             );
           }
           if (r.candidates.length > 20) {
-            lines.push(`  …省略 ${r.candidates.length - 20} 条`);
+            lines.push(t('duplicatesOmitted', { count: r.candidates.length - 20 }));
           }
         }
-        return lines.join('\n');
+        return textLines(lines);
       } finally {
         releaseCommand('relation.event-duplicates');
       }
@@ -403,15 +473,15 @@ export function registerRelationCommands(
 
   // ---- compress（仅跳出一次容量淘汰 + 伤亡报告） ----
   cmds
-    .command('relation.compress', '手动触发关系图的容量淘汰。按 PageRank 低分删 events/entities/edges', {
+    .command('relation.compress', t('compressDescription'), {
       visibility: 'restricted',
     })
     .action(async argv => {
       const gate = tryAcquireCommand('relation.compress');
-      if (!gate.ok) return `上一次 /relation compress 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
+      if (!gate.ok) return t('busy', { command: 'compress', seconds: gate.elapsedSec });
       try {
         const ev = options.eviction;
-        ackBackground(argv.session.sessionId, '正在压缩关系图（孤儿清理 + PageRank 计算 + 容量淘汰），请稍候…');
+        ackBackground(argv.session.sessionId, t('ackCompress'));
         const before = await service.loadAll();
         let deletedPersons = 0;
         let deletedEvents = 0;
@@ -431,13 +501,32 @@ export function registerRelationCommands(
           deletedEvents = orphans.deletedEvents;
           deletedEntities = orphans.deletedEntities;
         }
-        return [
-          '关系图压缩完成：',
-          `- 人物：${before.persons.length} → ${before.persons.length - deletedPersons}（删 ${deletedPersons} 个孤儿）`,
-          `- 事件：${before.events.length} → ${before.events.length - deletedEvents}（删 ${deletedEvents}，阈 ${ev.maxEvents}）`,
-          `- 实体：${before.entities.length} → ${before.entities.length - deletedEntities}（删 ${deletedEntities}，阈 ${ev.maxEntities}）`,
-          `- 边：  ${before.edges.length} → ${before.edges.length - deletedEdges}（删 ${deletedEdges}，阈 ${ev.maxEdges}）`,
-        ].join('\n');
+        return textLines([
+          t('compressed'),
+          t('compressedPersons', {
+            before: before.persons.length,
+            after: before.persons.length - deletedPersons,
+            deleted: deletedPersons,
+          }),
+          t('compressedEvents', {
+            before: before.events.length,
+            after: before.events.length - deletedEvents,
+            deleted: deletedEvents,
+            max: ev.maxEvents,
+          }),
+          t('compressedEntities', {
+            before: before.entities.length,
+            after: before.entities.length - deletedEntities,
+            deleted: deletedEntities,
+            max: ev.maxEntities,
+          }),
+          t('compressedEdges', {
+            before: before.edges.length,
+            after: before.edges.length - deletedEdges,
+            deleted: deletedEdges,
+            max: ev.maxEdges,
+          }),
+        ]);
       } finally {
         releaseCommand('relation.compress');
       }
@@ -445,23 +534,19 @@ export function registerRelationCommands(
 
   // ---- maintain（整理 + 压缩 一步完成） ----
   cmds
-    .command(
-      'relation.maintain',
-      '关系图体检：先整理再压缩，报告全过程。整理含别名、part-of、层级与侧向父，压缩即容量淘汰',
-      { visibility: 'restricted' },
-    )
-    .option('no-llm', '--no-llm', { description: '跳过 consolidate 阶段的 LLM 增强' })
-    .option('no-auto-link', '--no-auto-link', { description: '取消 consolidate 阶段的 autoLink' })
+    .command('relation.maintain', t('maintainDescription'), { visibility: 'restricted' })
+    .option('no-llm', '--no-llm', { description: t('maintainNoLlmOption') })
+    .option('no-auto-link', '--no-auto-link', { description: t('maintainNoAutoLinkOption') })
     .action(async argv => {
       const gate = tryAcquireCommand('relation.maintain');
-      if (!gate.ok) return `上一次 /relation maintain 还在跑（已累计 ${gate.elapsedSec}s），请稍后再试…`;
+      if (!gate.ok) return t('busy', { command: 'maintain', seconds: gate.elapsedSec });
       try {
         const ev = options.eviction;
         const useLlm = argv.options['no-llm'] !== true && !!options.consolidateLLM;
         const autoLink = argv.options['no-auto-link'] !== true && options.consolidateAutoLink;
         ackBackground(
           argv.session.sessionId,
-          `正在体检关系图：先整理再压缩（autoLink=${autoLink ? 'on' : 'off'}，LLM=${useLlm ? 'on' : 'off'}），请稍候…`,
+          t('ackMaintain', { autoLink: autoLink ? 'on' : 'off', llm: useLlm ? 'on' : 'off' }),
         );
 
         // 顺序：先 consolidate（在原图上合并别名/层级/事件去重）→ 再 evict（在去重后的图上
@@ -484,42 +569,63 @@ export function registerRelationCommands(
         }
         const s2 = await service.loadAll();
 
-        // 报告：先整理后压缩，每行只反映本阶段的真实减量
-        const consolidateLine =
-          `[1/2] 整理：人物 ${s0.persons.length}→${s1.persons.length}，事件 ${s0.events.length}→${s1.events.length}，` +
-          `实体 ${s0.entities.length}→${s1.entities.length}，边 ${s0.edges.length}→${s1.edges.length}；` +
-          `别名 ${cr.aliasCandidates.length} 候选/${cr.aliasEdgesCreated} 边，` +
-          `事件边重整 ${cr.eventEdgesNormalized}，` +
-          `层级 ${cr.entityHierarchyCandidates} 候选/${cr.entityHierarchyEdgesCreated} 边，` +
-          `侧向父 ${cr.lateralParentCandidates} 簇/新建 ${cr.lateralParentsCreated}/边 ${cr.lateralEdgesCreated}` +
-          (useLlm
-            ? `，LLM 通过 ${cr.llmVerified ?? 0} 否决 ${cr.llmRejected ?? 0} 摘要重写 ${cr.summariesRewritten ?? 0}`
-            : '');
+        // 报告：先整理后压缩，每行只反映本阶段的真实减量；整理一行的 LLM 增强是另一句，以「，」相连
+        const consolidated = t('maintainConsolidated', {
+          persons0: s0.persons.length,
+          persons1: s1.persons.length,
+          events0: s0.events.length,
+          events1: s1.events.length,
+          entities0: s0.entities.length,
+          entities1: s1.entities.length,
+          edges0: s0.edges.length,
+          edges1: s1.edges.length,
+          aliasCandidates: cr.aliasCandidates.length,
+          aliasEdges: cr.aliasEdgesCreated,
+          eventEdges: cr.eventEdgesNormalized,
+          hierarchyCandidates: cr.entityHierarchyCandidates,
+          hierarchyEdges: cr.entityHierarchyEdgesCreated,
+          lateralCandidates: cr.lateralParentCandidates,
+          lateralParents: cr.lateralParentsCreated,
+          lateralEdges: cr.lateralEdgesCreated,
+        });
+        const consolidateLine = useLlm
+          ? t('andThen', {
+              head: consolidated,
+              tail: t('consolidateLlm', {
+                verified: cr.llmVerified ?? 0,
+                rejected: cr.llmRejected ?? 0,
+                rewritten: cr.summariesRewritten ?? 0,
+              }),
+            })
+          : consolidated;
+        const sizes = {
+          persons1: s1.persons.length,
+          persons2: s2.persons.length,
+          events1: s1.events.length,
+          events2: s2.events.length,
+          entities1: s1.entities.length,
+          entities2: s2.entities.length,
+          edges1: s1.edges.length,
+          edges2: s2.edges.length,
+        };
         const compressLine =
-          evictionMode === 'quota'
-            ? `[2/2] 压缩：人物 ${s1.persons.length}→${s2.persons.length}，事件 ${s1.events.length}→${s2.events.length}，实体 ${s1.entities.length}→${s2.entities.length}，边 ${s1.edges.length}→${s2.edges.length}`
-            : `[2/2] 压缩：仅清孤儿（未配置淘汰阈值）—人物 ${s1.persons.length}→${s2.persons.length}，事件 ${s1.events.length}→${s2.events.length}，实体 ${s1.entities.length}→${s2.entities.length}，边 ${s1.edges.length}→${s2.edges.length}`;
-        return ['关系图体检完成：', consolidateLine, compressLine].join('\n');
+          evictionMode === 'quota' ? t('maintainCompressed', sizes) : t('maintainOrphansOnly', sizes);
+        return textLines([t('maintained'), consolidateLine, compressLine]);
       } finally {
         releaseCommand('relation.maintain');
       }
     });
 
   // ---- consolidation-status（查询最近一次 consolidate 运行情况） ----
-  cmds
-    .command('relation.consolidation-status', '查看最近一次关系图整理的结果。含 consolidate 的运行时间、触发源与结果')
-    .action(async () => {
-      const info = service.getLastConsolidateInfo();
-      if (!info.lastRunAt) {
-        return (
-          '注意：本次运行以来尚未执行过 consolidation。\n' +
-          '触发方式：/relation consolidate（手动）、/relation maintain（先整理后压缩），或容量淘汰前自动触发。'
-        );
-      }
-      const time = new Date(info.lastRunAt).toLocaleString('zh-CN', { hour12: false });
-      const triggerLabel = info.trigger === 'manual' ? '手动' : info.trigger === 'eviction' ? '淘汰前自动' : 'API 调用';
-      return `最近一次 consolidation：${time}（触发方式：${triggerLabel}）\n${info.summary ?? '（无详情）'}`;
+  cmds.command('relation.consolidation-status', t('consolidationStatusDescription')).action(async () => {
+    const last = service.getLastConsolidateInfo();
+    if (!last) return t('notConsolidatedYet');
+    return t('lastConsolidation', {
+      at: last.at,
+      trigger: TRIGGER_NAMES[last.trigger],
+      summary: consolidateSummary(last.counts),
     });
+  });
 }
 
 // ───── helpers ─────
