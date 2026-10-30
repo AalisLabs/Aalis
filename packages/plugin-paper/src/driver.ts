@@ -61,7 +61,7 @@ import { buildPrompt } from './prompt.js';
 import { actorKey, checkRemote, type Isolation, type PaperFields, pausedReason, resolveRoomPaper } from './rooms.js';
 import type { TaskJournal } from './task-journal.js';
 import { t } from './texts.js';
-import { category, describe, truncate } from './util.js';
+import { category, describe, taskStateName, truncate } from './util.js';
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -332,7 +332,7 @@ export class PaperDriver {
         case 'collecting':
           return { ok: false as const, error: t('stillCollecting') };
         default:
-          return { ok: false as const, error: t('taskEnded', { state: task.state }) };
+          return { ok: false as const, error: t('taskEnded', { state: taskStateName(task.state) }) };
       }
     });
     if ('ok' in step) {

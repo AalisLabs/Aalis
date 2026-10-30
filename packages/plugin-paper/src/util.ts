@@ -4,6 +4,7 @@
 
 import { isRemoteAgentError, type RemoteAgentErrorCode } from '@aalis/api-remote-agent';
 import type { TextRef } from '@aalis/schema-i18n';
+import type { TaskRecord } from './ledger.js';
 import { t } from './texts.js';
 
 /** 错误的说明文字 */
@@ -40,6 +41,19 @@ export function truncate(s: string, max: number): string {
 /** 落盘或提供者报来的值：表里有就取名字，没有照原值显示 */
 export const named = <K extends string>(names: Record<K, TextRef>, value: string): string | TextRef =>
   Object.hasOwn(names, value) ? names[value as K] : value;
+
+const STATE_TEXT: Record<TaskRecord['state'], TextRef> = {
+  queued: t('stateQueued'),
+  starting: t('stateStarting'),
+  running: t('stateRunning'),
+  collecting: t('stateCollecting'),
+  done: t('stateDone'),
+  failed: t('stateFailed'),
+  cancelled: t('cancelled'),
+};
+
+/** 任务状态的显示名（任务表与取消失败的原因共用；交给模型时取原文） */
+export const taskStateName = (state: string): string | TextRef => named(STATE_TEXT, state);
 
 /** 字节数的可读写法：B、KB、MB */
 export function formatSize(bytes: number): string {

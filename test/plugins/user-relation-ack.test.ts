@@ -320,10 +320,10 @@ describe('/relation consolidation-status 按会话的语言', () => {
 
   it('zh-CN 与改动前逐字相同', async () => {
     expect(await statuses('zh-CN')).toEqual([
-      '注意：本次运行以来尚未执行过 consolidation。\n触发方式：/relation consolidate（手动）、/relation maintain（先整理后压缩），或容量淘汰前自动触发。',
-      `最近一次 consolidation：2026/10/29 06:05:03（触发方式：手动）\n${COUNTED}，event 重复候选 12（合并 13），LLM 通过 9 否决 10（缓存命中 14） 摘要重写 11`,
-      `最近一次 consolidation：2026/10/29 06:05:03（触发方式：淘汰前自动）\n${COUNTED}`,
-      `最近一次 consolidation：2026/10/29 06:05:03（触发方式：API 调用）\n${COUNTED}，LLM 通过 9 否决 10 摘要重写 11`,
+      '注意：本次运行以来尚未执行过整理。\n触发方式：/relation consolidate（手动）、/relation maintain（先整理后压缩），或容量淘汰前自动触发。',
+      `最近一次整理：2026/10/29 06:05:03（触发方式：手动）\n${COUNTED}，重复事件候选 12（合并 13），LLM 通过 9 否决 10（缓存命中 14） 摘要重写 11`,
+      `最近一次整理：2026/10/29 06:05:03（触发方式：淘汰前自动）\n${COUNTED}`,
+      `最近一次整理：2026/10/29 06:05:03（触发方式：API 调用）\n${COUNTED}，LLM 通过 9 否决 10 摘要重写 11`,
     ]);
   });
 });

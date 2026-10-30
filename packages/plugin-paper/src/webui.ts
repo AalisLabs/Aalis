@@ -28,7 +28,7 @@ import { type AgentRecord, type AlertRecord, type LedgerStore, type TaskRecord, 
 import { currentProgress } from './progress.js';
 import { actorKey, type PaperFields, paperLabel, resolveRoomPaper, sharingRooms } from './rooms.js';
 import { t } from './texts.js';
-import { formatDuration, formatSize, named } from './util.js';
+import { formatDuration, formatSize, named, taskStateName } from './util.js';
 
 const PAGE_KEY = 'paper';
 /** 能在页面里预览的位图；宿主经 /api/media 按文件头再核一次 */
@@ -38,16 +38,6 @@ const RECENT_ARTIFACTS = 10;
 /** 创作日志的详情显示最近几条记录 */
 const RECENT_LOG_RECORDS = 20;
 
-const STATE_TEXT: Record<TaskRecord['state'], TextRef> = {
-  queued: t('stateQueued'),
-  starting: t('stateStarting'),
-  running: t('stateRunning'),
-  collecting: t('stateCollecting'),
-  done: t('stateDone'),
-  failed: t('stateFailed'),
-  cancelled: t('cancelled'),
-};
-
 const VIA_TEXT: Record<NonNullable<TaskRecord['cancelledVia']>, TextRef> = {
   tool: t('viaTool'),
   webui: t('viaWebui'),
@@ -55,7 +45,7 @@ const VIA_TEXT: Record<NonNullable<TaskRecord['cancelledVia']>, TextRef> = {
 };
 
 function taskStatus(task: TaskRecord): StatusValue {
-  const base = named(STATE_TEXT, task.state);
+  const base = taskStateName(task.state);
   const text = task.error
     ? t('stateWithError', { state: base, error: task.error })
     : task.cancelledVia

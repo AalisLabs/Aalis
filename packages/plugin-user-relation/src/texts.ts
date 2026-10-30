@@ -298,9 +298,9 @@ const SOURCE = {
   rewrittenEntities: '- 实体：写回 {count, number} 条',
   rewrittenEdges: '- 边：  写回 {count, number} 条',
   rewrittenParameters: '（参数：halfLifeDays={halfLifeDays}, floor={floor}）',
-  ackDuplicates: '正在扫描 event 重复候选（同 sessionScope / 都 global），请稍候…',
-  duplicatesScanned: 'event 重复扫描完成（embedding 可用）',
-  duplicatesScannedJaccard: 'event 重复扫描完成（embedding 不可用，降级 jaccard）',
+  ackDuplicates: '正在扫描重复事件候选（同 sessionScope / 都 global），请稍候…',
+  duplicatesScanned: '重复事件扫描完成（embedding 可用）',
+  duplicatesScannedJaccard: '重复事件扫描完成（embedding 不可用，降级 jaccard）',
   duplicatesCounted:
     '候选 {candidates, number} 对，LLM 通过 {verified, number}，LLM 否决 {rejected, number}，缓存命中 {cacheHits, number}',
   duplicatesHead: '--- 候选明细（前 20 条）---',
@@ -325,15 +325,15 @@ const SOURCE = {
   maintainOrphansOnly:
     '[2/2] 压缩：仅清孤儿（未配置淘汰阈值）—人物 {persons1, number}→{persons2, number}，事件 {events1, number}→{events2, number}，实体 {entities1, number}→{entities2, number}，边 {edges1, number}→{edges2, number}',
   notConsolidatedYet:
-    '注意：本次运行以来尚未执行过 consolidation。\n触发方式：/relation consolidate（手动）、/relation maintain（先整理后压缩），或容量淘汰前自动触发。',
-  lastConsolidation: '最近一次 consolidation：{at, date, short} {at, time, medium}（触发方式：{trigger}）\n{summary}',
+    '注意：本次运行以来尚未执行过整理。\n触发方式：/relation consolidate（手动）、/relation maintain（先整理后压缩），或容量淘汰前自动触发。',
+  lastConsolidation: '最近一次整理：{at, date, short} {at, time, medium}（触发方式：{trigger}）\n{summary}',
   triggerManual: '手动',
   triggerEviction: '淘汰前自动',
   triggerApi: 'API 调用',
   // 整理的计数（consolidation-status 的摘要；LLM 一句与体检的整理一行共用）；条件片段各成一句，以「，」相连
   consolidateCounts:
     '别名候选 {aliasCandidates, number}，建别名边 {aliasEdges, number}，事件边整理 {eventEdges, number}，实体层级候选 {hierarchyCandidates, number}，层级边 {hierarchyEdges, number}，侧向父候选 {lateralCandidates, number}，新建父 {lateralParents, number}，侧向边 {lateralEdges, number}',
-  consolidateDuplicates: 'event 重复候选 {candidates, number}（合并 {merged, number}）',
+  consolidateDuplicates: '重复事件候选 {candidates, number}（合并 {merged, number}）',
   consolidateLlm: 'LLM 通过 {verified, number} 否决 {rejected, number} 摘要重写 {rewritten, number}',
   consolidateLlmCached:
     'LLM 通过 {verified, number} 否决 {rejected, number}（缓存命中 {cacheHits, number}） 摘要重写 {rewritten, number}',

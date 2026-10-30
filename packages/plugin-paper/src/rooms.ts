@@ -18,7 +18,7 @@ import { actingIdentity, type ToolCallContext } from '@aalis/api-tools';
 import type { Logger, ProviderEntry, ServiceSelection } from '@aalis/core';
 import type { SessionFieldsOf } from '@aalis/schema-config';
 import { sameText, type TextRef, textOf, toSource } from '@aalis/schema-i18n';
-import type { configSchema, PaperConfig, PaperSpec } from './config.js';
+import { type configSchema, egressName, type PaperConfig, type PaperSpec } from './config.js';
 import type { LedgerStore, PaperLedger } from './ledger.js';
 import { t } from './texts.js';
 import { category } from './util.js';
@@ -287,7 +287,13 @@ export async function checkRemote(deps: {
     return { unavailable: t('egressUnreadable', { type, category: category(err) }) };
   }
   if (!egressWithin(egress, spec.remoteAgentEgress)) {
-    return { unavailable: t('egressExceeds', { type, mode: egress.mode, ceiling: spec.remoteAgentEgress }) };
+    return {
+      unavailable: t('egressExceeds', {
+        type,
+        mode: egressName(egress.mode),
+        ceiling: egressName(spec.remoteAgentEgress),
+      }),
+    };
   }
   if (provider.use.transcriptIsolation === 'shared') {
     if (!spec.name) return { unavailable: t('sharedNeedsName', { type }) };
