@@ -401,6 +401,52 @@ describe('历史归并', () => {
     for (const item of items) expect(SessionItemSchema.safeParse(item).success).toBe(true);
   });
 
+  it('翻页的边界落在一轮中间（插进来的输入、组外的消息）时往前扩到这一轮的开头：一页不从一轮中间开始，同一轮的话与工具卡不在两页各出一遍', async () => {
+    const K = WellKnownMetadataKeys;
+    const inTurn = (entry?: string) => ({ [K.TurnId]: 't1', ...(entry ? { [K.TurnEntry]: entry } : {}) });
+    const stored: Message[] = [
+      { role: 'user', content: '<更早>', timestamp: 1 },
+      { role: 'user', content: '<问>', timestamp: 2, metadata: inTurn('opened') },
+      {
+        role: 'assistant',
+        content: '先查',
+        timestamp: 3,
+        toolCalls: [{ id: 'c1', type: 'function', function: { name: 'search', arguments: '{}' } }],
+        metadata: inTurn(),
+      },
+      { role: 'tool', content: '结果', toolCallId: 'c1', timestamp: 4, metadata: { ...inTurn(), [K.CallId]: 'c1' } },
+      { role: 'user', content: '<补一句>', timestamp: 5, metadata: inTurn('joined') },
+      {
+        role: 'assistant',
+        content: '好了',
+        timestamp: 6,
+        metadata: inTurn(),
+        segments: [
+          { type: 'text', content: '先查' },
+          { type: 'tool_call', name: 'search', args: {}, result: '结果', callId: 'c1', startTime: 10, endTime: 15 },
+          { type: 'text', content: '好了' },
+        ],
+      },
+    ];
+    const getFullHistory = async (_sessionId: string, limit: number) => stored.slice(-limit);
+    const shapes: string[][] = [];
+    let before: string | undefined;
+    do {
+      const page = await readHistory(
+        { getFullHistory } as unknown as MemoryService,
+        'zz',
+        { before, limit: 2, skip: () => false },
+        context(),
+        { warn: () => {} },
+      );
+      shapes.push(
+        page.items.map(i => (i.kind === 'tool-call' ? `tool:${i.name}` : 'text' in i ? String(i.text) : i.kind)),
+      );
+      before = page.before;
+    } while (before !== undefined);
+    expect(shapes).toEqual([['<问>', '先查', 'tool:search', '<补一句>', '好了'], ['<更早>']]);
+  });
+
   it('新格式：最后一条带时间线的回复覆盖前面按旧格式落库的工具调用组', () => {
     const entries = merged([
       { role: 'user', content: '查一下', timestamp: 1 },
