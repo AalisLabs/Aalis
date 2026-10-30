@@ -10,6 +10,8 @@ export default defineLocale<Source>()({
   allowedHostsLabel: 'Host allowlist',
   allowedHostsDescription:
     'Host names in the browser address bar when the WebUI is reached through a reverse proxy or a domain name, without scheme or port. IP addresses, localhost and the listen address are always accepted; requests for any other host name get 421, which keeps out DNS rebinding pages',
+  badAllowedHost:
+    '{entry} is not a host name: write only the host name (a port is allowed), without a scheme, user name or path',
   autoOpenLabel: 'Open the browser on startup',
   autoOpenDescription:
     'Opens the default browser the first time the app starts listening; reloading the plugin with the same token does not open it again, while a newly generated token opens it again so you can sign in. Turn this off over SSH or in headless environments',
