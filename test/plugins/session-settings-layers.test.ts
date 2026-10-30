@@ -336,6 +336,29 @@ describe('一个实例写过的各处', () => {
     });
     expect(llmRow(admin.rows({ layer: { scope: 'global' } }))?.actual?.label).toBe('<-|->');
   });
+
+  it('声明字段的插件交的 actual 与偏好的 fromText 抛错：只这一项受影响（行不带 actual、全局层按没有偏好，建子会话不写它），其余照常，同一个错只告警一次', async () => {
+    const broken = () => {
+      throw new Error('<插件坏了>');
+    };
+    const a = fieldsPlugin('zz-a', { ...SCHEMA, llm: { ...SCHEMA.llm, fromText: broken } }, { llm: broken });
+    const { admin, host, sm, warns } = await setup({ fields: [a.definition], models: [['zz-llm', 'm1']] });
+    host.services.use.prefer('llm', 'zz-llm/m1', { for: 'zz-a' });
+    const { id } = await sm.createSession({}, { createdFrom: 'webui' });
+    const rows = () => admin.rows({ sessionId: id, at: { platform: 'webui' } }).filter(r => r.plugin === 'zz-a');
+    rows();
+    const llm = rows().find(r => r.key === 'llm');
+    expect(llm).toBeDefined();
+    expect(llm).not.toHaveProperty('actual');
+    expect(llm?.effective).toBeUndefined();
+    expect(rows().find(r => r.key === 'persona')?.effective).toBe('default');
+    const values = (admin.childMetadata(id) as { 'session-settings': { values: Array<{ key: string }> } })[
+      'session-settings'
+    ].values;
+    expect(values.map(v => v.key)).toContain('persona');
+    expect(values.map(v => v.key)).not.toContain('llm');
+    expect(warns.filter(w => w.includes('<插件坏了>'))).toHaveLength(2);
+  });
 });
 
 describe('可设的层', () => {
