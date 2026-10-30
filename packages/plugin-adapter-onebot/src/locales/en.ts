@@ -141,6 +141,8 @@ export default defineLocale<Source>()({
   cannotInline: 'The {format} format cannot be inlined, so it was not sent',
   tooLargeToInline:
     'It exceeds the inline limit, so it was not passed to the OneBot implementation to fetch and was not sent',
+  tooManyMedia:
+    'A reply can carry at most {max, number} media items; the {count, plural, one {# extra item was} other {# extra items were}} not sent',
   wsNotConnected: 'WebSocket is not connected',
   actionFailed: 'OneBot action {action} failed (retcode={retcode})',
   actionFailedDetail: 'OneBot action {action} failed (retcode={retcode}): {detail}',

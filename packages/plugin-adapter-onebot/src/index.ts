@@ -1098,11 +1098,12 @@ function runAdapter(caps: Caps): void {
   /**
    * 逐条发出，一条没发成就停，后面的不发：交回实现端给出的各条消息 id（按发送顺序，没给的不算）、已发出的条数与停下那一条的
    * 错误。不重试：没等到回执的那条实现端可能已经发出，重发会在群里出现两遍。连接不可用时在发第一条之前抛错。replyTo：引用
-   * 回复的平台消息 id，只加在第一条前
+   * 回复的平台消息 id，只加在第一条前。还在准备的条（她回复里要下载内联的媒体）逐条等到了再发，等到 undefined 的那条不发、
+   * 不计条数
    */
   async function sendPieces(
     sessionId: string,
-    pieces: OutgoingPiece[],
+    pieces: (OutgoingPiece | Promise<OutgoingPiece | undefined>)[],
     replyTo?: string,
   ): Promise<{ messageIds: string[]; sent: number; failure?: unknown }> {
     const parsed = parseSessionId(sessionId);
@@ -1122,19 +1123,29 @@ function runAdapter(caps: Caps): void {
     }
 
     const messageIds: string[] = [];
-    for (let i = 0; i < pieces.length; i++) {
-      const { text, segments } = pieces[i];
+    let sent = 0;
+    for (const pending of pieces) {
+      const piece = await pending;
+      if (!piece) continue;
+      const { text, segments } = piece;
+      // 与上一条之间按这一条的字数延迟
+      if (sent > 0) {
+        const delay = Math.min(text.replace(/<[^>]+>/g, '').length * splitDelayPerChar, splitMaxDelay);
+        if (delay > 0) {
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
       const { action, params } = state.protocol.buildSendMessage({
         detailType: parsed.detailType,
         targetId: parsed.targetId,
-        segments: withReply(segments, i === 0 ? replyTo : undefined),
+        segments: withReply(segments, sent === 0 ? replyTo : undefined),
       });
 
       let sendResult: unknown;
       try {
         sendResult = await sendAction(state, action, params);
       } catch (failure) {
-        return { messageIds, sent: i, failure };
+        return { messageIds, sent, failure };
       }
       // 记录发出消息的 message_id，支撑「撤回自己发的消息」（每分条各自独立的 id）
       const sentId = extractSentMessageId(sendResult);
@@ -1142,17 +1153,9 @@ function runAdapter(caps: Caps): void {
         sentTracker.record(sessionId, sentId, text, Date.now());
         messageIds.push(sentId);
       }
-
-      // 按下一条消息的字数计算延迟
-      if (i < pieces.length - 1) {
-        const charCount = pieces[i + 1].text.replace(/<[^>]+>/g, '').length;
-        const delay = Math.min(charCount * splitDelayPerChar, splitMaxDelay);
-        if (delay > 0) {
-          await new Promise(r => setTimeout(r, delay));
-        }
-      }
+      sent++;
     }
-    return { messageIds, sent: pieces.length };
+    return { messageIds, sent };
   }
 
   // ----- 版本自动检测 -----
@@ -2353,7 +2356,7 @@ function runAdapter(caps: Caps): void {
     let sentPieces = 0;
     let stopped: unknown;
     try {
-      let pieces = toPieces(msg.content ?? '', msg.markup);
+      const plain = toPieces(msg.content ?? '', msg.markup);
       let attachmentPieces: OutgoingPiece[] = [];
       let inlineAttachments: MessageAttachment[] = [];
       const uploads: Array<{ file: string; name: string; attachment: MessageAttachment }> = [];
@@ -2389,16 +2392,13 @@ function runAdapter(caps: Caps): void {
         uploads.push(...materialized.uploads);
         errors.push(...materialized.errors);
       }
-      if (msg.markup) {
-        const inlined = await inlineMarkupMedia(pieces, storage, logger.use);
-        pieces = inlined.pieces;
-        errors.push(...inlined.errors);
-      }
+      // 她回复里的媒体段在后台按先后下载，正文逐条等、等到一条发一条：前面的文字不等后面的下载
+      const inlined = msg.markup ? inlineMarkupMedia(plain, storage, logger.use) : undefined;
+      const pieces = inlined?.pieces ?? plain;
 
       // 正文按 markup 发；附件物化出的消息段接在后面各自单独成一条，不拼成标记、不经正文媒体段的那道过滤。逐条发，一条没发成
       // 就停，后面的（含附件的消息段）不再发
-      total = pieces.length + attachmentPieces.length;
-      const attempt = (list: OutgoingPiece[], replyTo?: string) =>
+      const attempt = (list: (OutgoingPiece | Promise<OutgoingPiece | undefined>)[], replyTo?: string) =>
         sendPieces(msg.sessionId, list, replyTo).catch((failure: unknown) => ({ messageIds: [], sent: 0, failure }));
       if (pieces.length) {
         logger.use.debug(`OneBot 发送消息 [${msg.sessionId}]: ${msg.content}`);
@@ -2406,10 +2406,13 @@ function runAdapter(caps: Caps): void {
         messageIds = body.messageIds;
         sentPieces = body.sent;
         stopped = body.failure;
-        textSent = stopped === undefined;
+        textSent = stopped === undefined && body.sent > 0;
       }
+      // 停在中途时后面的条可能还在下载：都落定了才数得出共几条、收齐去掉的原因
+      if (inlined) errors.push(...(await inlined.errors));
+      total = (await Promise.all(pieces)).filter(piece => piece !== undefined).length + attachmentPieces.length;
       if (attachmentPieces.length && stopped === undefined) {
-        const media = await attempt(attachmentPieces, pieces.length ? undefined : msg.replyTo);
+        const media = await attempt(attachmentPieces, sentPieces ? undefined : msg.replyTo);
         delivered.push(...inlineAttachments.slice(0, media.sent));
         sentPieces += media.sent;
         stopped = media.failure;

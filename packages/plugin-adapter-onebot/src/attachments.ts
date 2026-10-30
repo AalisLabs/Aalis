@@ -33,11 +33,16 @@ import type { MessageAttachment } from '@aalis/schema-message';
 import { detectMediaFormat, FILE_HEAD_BYTES, type MediaKind } from '@aalis/util-file-signature';
 import { safeFetch } from '@aalis/util-network-guard';
 import { readBodyCapped } from './attachment-cache.js';
+import { createConcurrencyLimited } from './forward-expand.js';
 import { t } from './texts.js';
 import type { OutgoingPiece, ParsedSegment } from './types.js';
 
 /** base64 内联上限（10 MiB）。超过的 storage 文件降级为 file:// 并记 warn，超过的网址拒发。 */
 const MAX_INLINE_BYTES = 10 * 1024 * 1024;
+/** 她一条回复里最多内联几个媒体段：多出的不下载、去掉 */
+const MAX_MARKUP_MEDIA = 10;
+/** 她一条回复里的媒体段同时最多下载几个 */
+const MARKUP_DOWNLOAD_CONCURRENCY = 4;
 
 /**
  * NapCat 能以消息段内联的格式（格式名取自 @aalis/util-file-signature）；语音的 M4A 与视频的 MP4、MOV 同为
@@ -214,27 +219,32 @@ export async function materializeAttachments(
 
 /**
  * 她回复正文（OutgoingMessage.markup）里的媒体段只发网址的：实现端自己去拉不经 SSRF 判定，这里与附件同一条路，经 safeFetch
- * 下载、按文件头核对后改成 base64:// 内联，各段同时下载。地址不是网址的（file://、本机路径、存储地址、data URI、正文里写的
- * base64:// 等）不交给实现端，与解析不了、下载不了、超过内联上限、不是能内联的媒体的段一样去掉，原因收进 errors（已记 warn），
- * 去掉后没有段的那一条不发；存储里的媒体由 plugin-image-sender 在派发前转成附件。在解析出的段上改、不回头改正文：从正文里删掉
- * 标记再解析，两边的文字会拼出新的标记
+ * 下载、按文件头核对后改成 base64:// 内联。一条回复最多内联 MAX_MARKUP_MEDIA 个媒体段，多出的不下载、去掉，原因一条收进 errors；
+ * 下载同时最多 MARKUP_DOWNLOAD_CONCURRENCY 个，按段的先后排队。地址不是网址的（file://、本机路径、存储地址、data URI、正文里写的
+ * base64:// 等）不交给实现端，与解析不了、下载不了、超过内联上限、不是能内联的媒体的段一样去掉，原因收进 errors（已记 warn）；
+ * 存储里的媒体由 plugin-image-sender 在派发前转成附件。在解析出的段上改、不回头改正文：从正文里删掉标记再解析，两边的文字会拼出
+ * 新的标记。
+ *
+ * 各条按原顺序各交一个 Promise，下载在调用时就排进队：调用方逐条等、等到一条发一条，前面的文字不等后面的下载。去掉后没有段的
+ * 那一条为 undefined，不发。errors 在各条都落定之后交出
  */
-export async function inlineMarkupMedia(
+export function inlineMarkupMedia(
   pieces: OutgoingPiece[],
   storage: StorageService,
   logger?: Logger,
-): Promise<{ pieces: OutgoingPiece[]; errors: unknown[] }> {
+): { pieces: Promise<OutgoingPiece | undefined>[]; errors: Promise<unknown[]> } {
   const errors: unknown[] = [];
-  /** 一个段换成的段：网址的媒体段换成内联后的，发不出的为 undefined */
-  const inline = async (segment: ParsedSegment): Promise<ParsedSegment | undefined> => {
-    const { type } = segment;
-    if (type !== 'image' && type !== 'audio' && type !== 'video') return segment;
-    const address = String(segment.data.url);
+  const download = createConcurrencyLimited(
+    (att: MessageAttachment) => attachmentToOneBotFile(att, storage, logger),
+    MARKUP_DOWNLOAD_CONCURRENCY,
+  );
+  /** 一个媒体段换成的段：网址的换成内联后的，发不出的为 undefined */
+  const inline = async (type: MediaKind, address: string): Promise<ParsedSegment | undefined> => {
     try {
       // 按网址解析得出 http、https 的才下载：不计首尾空白、不分大小写
       const url = URL.canParse(address) ? new URL(address) : undefined;
       if (!url || !/^https?:$/.test(url.protocol)) throw new TextError(t('notUrl'));
-      const { file, uploadExt } = await attachmentToOneBotFile({ kind: type, data: url.href }, storage, logger);
+      const { file, uploadExt } = await download({ kind: type, data: url.href });
       if (uploadExt !== undefined) throw new TextError(t('cannotInline', { format: uploadExt }));
       return { type, data: { url: file } };
     } catch (err) {
@@ -243,11 +253,24 @@ export async function inlineMarkupMedia(
       return undefined;
     }
   };
-  const inlined = await Promise.all(
-    pieces.map(async ({ text, segments }) => ({
-      text,
-      segments: (await Promise.all(segments.map(inline))).filter(segment => segment !== undefined),
-    })),
+  let media = 0;
+  const inlined = pieces.map(({ text, segments }) =>
+    Promise.all(
+      segments.map(segment => {
+        const { type } = segment;
+        if (type !== 'image' && type !== 'audio' && type !== 'video') return segment;
+        media++;
+        return media > MAX_MARKUP_MEDIA ? undefined : inline(type, String(segment.data.url));
+      }),
+    ).then(done => {
+      const kept = done.filter(segment => segment !== undefined);
+      return kept.length > 0 ? { text, segments: kept } : undefined;
+    }),
   );
-  return { pieces: inlined.filter(piece => piece.segments.length > 0), errors };
+  if (media > MAX_MARKUP_MEDIA) {
+    const err = new TextError(t('tooManyMedia', { max: MAX_MARKUP_MEDIA, count: media - MAX_MARKUP_MEDIA }));
+    logger?.warn?.(`OneBot 正文里的媒体标记未全部发出: ${err.message}`);
+    errors.push(err);
+  }
+  return { pieces: inlined, errors: Promise.all(inlined).then(() => errors) };
 }
