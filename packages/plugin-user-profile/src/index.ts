@@ -11,7 +11,7 @@ import { userRelation } from '@aalis/api-user-relation';
 import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
-import { type TextRef, textClauses, textLines } from '@aalis/schema-i18n';
+import { TextError, type TextRef, textClauses, textLines, textOf } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 import { DIRECTIVE_KINDS, WellKnownMetadataKeys, wasAddressed } from '@aalis/schema-message';
 import { parseLLMJsonObject } from '@aalis/util-json-repair';
@@ -49,86 +49,81 @@ const BOT_FALLBACK_NAME = '机器人';
 const configSchema = defineConfig({
   extractEveryNMessages: {
     type: 'number',
-    label: '每 N 条消息提取一次',
-    description:
-      '同一用户每发 N 条消息触发一次事实提取。无论 Aalis 是否回复都会计数，群聊中每人独立计数。设为 1 表示每条消息都尝试提取（不推荐）；设为 0 或负数则禁用提取（仍会注入已有档案）',
+    label: t('extractEveryLabel'),
+    description: t('extractEveryDescription'),
     default: 5,
   },
   historyForExtraction: {
     type: 'number',
-    label: '提取参考历史条数',
-    description: '触发提取时，喂给 LLM 的最近消息条数',
+    label: t('historyLabel'),
+    description: t('historyDescription'),
     default: 8,
   },
   maxFactsPerUser: {
     type: 'number',
-    label: '单用户事实上限',
-    description:
-      '超出后按 updatedAt 升序淘汰最久未更新的，旧事实自动淘汰。最小有效值为 5（写入时自动下限），不支持设为 0 来禁用提取；若要禁用提取请将 extractEveryNMessages 设为 0',
+    label: t('maxFactsLabel'),
+    description: t('maxFactsDescription'),
     default: 30,
   },
   maxFactCharsPerItem: {
     type: 'number',
-    label: '单条事实字数上限',
-    description: '超出会被裁断，避免 LLM 输出长段落代替事实',
+    label: t('maxFactCharsLabel'),
+    description: t('maxFactCharsDescription'),
     default: 80,
   },
   maxOtherParticipants: {
     type: 'number',
-    label: '群聊其他参与者档案上限',
-    description: '群聊中除当前发言者外，最多加载多少人的档案摘要注入 LLM。0 表示禁用群聊多用户注入',
+    label: t('maxOthersLabel'),
+    description: t('maxOthersDescription'),
     default: 3,
   },
   maxFactsForOthers: {
     type: 'number',
-    label: '其他参与者摘要条数上限',
-    description: '群聊背景参与者每人只显示最近更新的 N 条事实，避免 prompt 过长',
+    label: t('maxFactsForOthersLabel'),
+    description: t('maxFactsForOthersDescription'),
     default: 5,
   },
   temporaryFactMaxAgeDays: {
     type: 'number',
-    label: '临时事实保留天数',
-    description:
-      'temporality=temporary 的事实超过该天数未更新后不再主动注入 prompt（仍保留在档案中，等待后续 update/remove）。0 表示不淡出',
+    label: t('temporaryMaxAgeLabel'),
+    description: t('temporaryMaxAgeDescription'),
     default: 90,
   },
   relationScoreDecayPerDay: {
     type: 'number',
-    label: '关系强度每日衰减',
-    description: '用户长期未互动时，relationScore 每天衰减的分数。0 表示不衰减',
+    label: t('decayLabel'),
+    description: t('decayDescription'),
     default: 0.5,
   },
   relationIncrementDirect: {
     type: 'number',
-    label: '私聊关系增量',
-    description: 'direct 触发时每条消息增加的关系强度',
+    label: t('directLabel'),
+    description: t('directDescription'),
     default: 1,
   },
   relationIncrementImmediate: {
     type: 'number',
-    label: '主动呼叫关系增量',
-    description: '群聊 @/名字主动触发时每条消息增加的关系强度',
+    label: t('immediateLabel'),
+    description: t('immediateDescription'),
     default: 1.5,
   },
   relationIncrementInterval: {
     type: 'number',
-    label: '群聊被动参与关系增量',
-    description: '群聊频率/活跃度被动触发或普通入站消息增加的关系强度',
+    label: t('intervalLabel'),
+    description: t('intervalDescription'),
     default: 0.5,
   },
   relationIncrementWitness: {
     type: 'number',
-    label: '旁观（不回复）关系增量',
-    description:
-      '每条入站消息无论 agent 是否回复都加上的最低档增量。若 agent 触发回复，会再叠加 direct/immediate/interval 之一。0 表示旁观不加分；互动次数与最近互动时戳仍照记（衰减基准与最近互动排序的唯一来源）',
+    label: t('witnessLabel'),
+    description: t('witnessDescription'),
     default: 0.1,
   },
   allowGlobalBackfill: {
     type: 'boolean',
     onInvalid: 'error',
-    label: '允许跨会话补齐副档案',
-    description:
-      '当前群/会话中的候选不足时，是否允许从其他群、私聊等跨会话中选取最近互动过的用户来补全「其他参与者背景摘要」。关闭后仅限当前上下文内出现过的用户',
+    label: t('backfillLabel'),
+    description: t('backfillDescription'),
     default: false,
   },
 });
@@ -310,7 +305,7 @@ type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
   name: '@aalis/plugin-user-profile',
-  displayName: '用户事实档案',
+  displayName: t('displayName'),
   subsystem: 'memory',
   configSchema,
   uses,
@@ -485,47 +480,47 @@ function registerUserProfile({
       ref = undefined;
     }
     if (!Array.isArray(ref) || ref.length !== 2 || !ref.every(part => typeof part === 'string')) {
-      throw new Error(`不认识的事实：${rowKey}`);
+      throw new TextError(t('unknownFact', { rowKey }));
     }
     return ref as [string, string];
   }
 
   const page = webui.use.definePage({
     key: 'profiles',
-    title: '用户档案',
+    title: t('profiles'),
     icon: 'contact',
     actions: {
       forgetFact: {
-        label: '删除',
+        label: t('forgetLabel'),
         effect: 'destructive',
-        confirm: '删掉后，以后的对话里不再带上这条事实。',
+        confirm: t('forgetConfirm'),
         row: true,
         async handler({ rowKey }) {
           const [userKey, factId] = parseFactRef(rowKey);
           const mem = pinnedMemory();
           const profile = await loadProfile(mem, userKey);
           const hit = profile?.facts.find(f => f.id === factId);
-          if (!profile || !hit) throw new Error('这条事实已经不在档案里了');
+          if (!profile || !hit) throw new TextError(t('factGone'));
           await saveProfile(mem, userKey, {
             ...profile,
             facts: profile.facts.filter(f => f !== hit),
             updatedAt: Date.now(),
           });
           page.invalidate();
-          return `已删除：${hit.text}`;
+          return t('forgotten', { text: hit.text });
         },
       },
       clearProfile: {
-        label: '清空档案',
+        label: t('clearProfileLabel'),
         effect: 'destructive',
-        confirm: '这个人的全部事实连同关系强度、互动次数一起清空。',
+        confirm: t('clearProfileConfirm'),
         row: true,
         async handler({ rowKey }) {
           const mem = pinnedMemory();
-          if (!(await mem.getMetadata(PROFILE_NS, rowKey))) throw new Error(`${rowKey} 已经没有档案了`);
+          if (!(await mem.getMetadata(PROFILE_NS, rowKey))) throw new TextError(t('profileGone', { key: rowKey }));
           await mem.deleteMetadata(PROFILE_NS, rowKey);
           page.invalidate();
-          return `已清空 ${rowKey} 的档案`;
+          return t('profileCleared', { key: rowKey });
         },
       },
     },
@@ -534,12 +529,12 @@ function registerUserProfile({
         type: 'table',
         id: 'profiles',
         rowKey: 'key',
-        description: '她从对话里记下的关于各人的事实，会带进以后的对话。这里只能删除，不能改写。',
-        empty: '还没有人的档案',
+        description: t('pageDescription'),
+        empty: t('pageEmpty'),
         columns: [
-          { key: 'key', label: '用户', primary: true },
-          { key: 'facts', label: '事实', primary: true },
-          { key: 'updatedAt', label: '最近记下', kind: 'time' },
+          { key: 'key', label: t('columnUser'), primary: true },
+          { key: 'facts', label: t('columnFacts'), primary: true },
+          { key: 'updatedAt', label: t('columnLastNoted'), kind: 'time' },
         ],
         async data() {
           const entries = await memory.use.listMetadata(PROFILE_NS);
@@ -556,12 +551,12 @@ function registerUserProfile({
             type: 'table',
             id: 'facts',
             rowKey: 'ref',
-            empty: '这个人的档案里没有事实了',
+            empty: t('factsEmpty'),
             columns: [
-              { key: 'text', label: '事实', primary: true },
-              { key: 'category', label: '分类' },
-              { key: 'temporality', label: '时效' },
-              { key: 'updatedAt', label: '记下', kind: 'time' },
+              { key: 'text', label: t('columnFact'), primary: true },
+              { key: 'category', label: t('columnCategory') },
+              { key: 'temporality', label: t('columnTerm') },
+              { key: 'updatedAt', label: t('columnNoted'), kind: 'time' },
             ],
             rowActions: [{ action: 'forgetFact' }],
             async data({ rowKey }) {
@@ -572,7 +567,7 @@ function registerUserProfile({
                   ref: JSON.stringify([rowKey, f.id]),
                   text: f.text,
                   category: f.category ? CATEGORY_NAMES[f.category] : '',
-                  temporality: f.temporality === 'temporary' ? '近期' : '长期',
+                  temporality: f.temporality === 'temporary' ? t('termShort') : t('termLong'),
                   updatedAt: f.updatedAt,
                 }));
             },
@@ -1298,15 +1293,14 @@ function registerUserProfile({
         source: 'user-profile',
         type: 'user-profile',
         success: true,
-        message: `用户档案已清空 (${keys.length} 条)`,
+        message: t('clearDone', { count: keys.length }),
       });
     } catch (err) {
-      const m = err instanceof Error ? err.message : String(err);
       data.results.push({
         source: 'user-profile',
         type: 'user-profile',
         success: false,
-        message: `用户档案清空失败: ${m}`,
+        message: t('clearFailed', { error: textOf(err) }),
       });
     }
     page.invalidate();
@@ -1320,7 +1314,8 @@ function registerUserProfile({
   // - 两种调用方式：① user_key 直传；② platform+user_id 组合
   tools.use.registerGroup({
     name: 'user-profile',
-    label: '用户档案',
+    label: t('profiles'),
+    summary: t('groupSummary'),
     description: '查询已经积累的某人事实档案。',
   });
   tools.use.register({
@@ -1394,31 +1389,30 @@ function registerUserProfile({
   // /profile              查看自己的档案
   // /profile clear        清除自己的档案（authority=2，自己删自己的）
   // /profile clear nuke   清空所有用户档案（authority=3，dangerous）
-  commands.use.command('profile', '查看你在 Aalis 中的事实档案').action(async argv => {
+  commands.use.command('profile', t('profileDescription')).action(async argv => {
     const userId = argv.session.userId;
-    if (!userId) return '当前会话未识别用户身份，无法查看档案。';
+    if (!userId) return t('noIdentityView');
     const userKey = userKeyOf(argv.session.platform, userId);
     const profile = await loadProfileLenient(memory.present ? memory.use : undefined, userKey);
     if (!profile || profile.facts.length === 0) {
-      return `暂无档案数据 (${userKey})`;
+      return t('noProfileYet', { key: userKey });
     }
     return profileText(profile, userKey);
   });
 
-  commands.use.command('profile.clear', '清除你自己的事实档案', { visibility: 'restricted' }).action(async argv => {
+  commands.use.command('profile.clear', t('clearDescription'), { visibility: 'restricted' }).action(async argv => {
     const userId = argv.session.userId;
-    if (!userId) return '当前会话未识别用户身份，无法清除档案。';
+    if (!userId) return t('noIdentityClear');
     const userKey = userKeyOf(argv.session.platform, userId);
     const mem = pinnedMemory();
     try {
       const existed = await mem.getMetadata(PROFILE_NS, userKey);
-      if (!existed) return `你当前没有档案数据 (${userKey})`;
+      if (!existed) return t('noOwnProfile', { key: userKey });
       await mem.deleteMetadata(PROFILE_NS, userKey);
       page.invalidate();
-      return `已清除你的档案 (${userKey})`;
+      return t('ownCleared', { key: userKey });
     } catch (err) {
-      const m = err instanceof Error ? err.message : String(err);
-      return `清除失败：${m}`;
+      return t('ownClearFailed', { error: textOf(err) });
     }
   });
 
@@ -1427,7 +1421,7 @@ function registerUserProfile({
   //（它改的是**他人**档案，且 target 含冒号时直传 key、可触及任意一份档案）。
   // id 未命中时列出前若干条供定位。
   commands.use
-    .command('profile.forget <target:string> <factId:string>', '定点删除某用户档案中的一条事实（运维除毒）', {
+    .command('profile.forget <target:string> <factId:string>', t('forgetDescription'), {
       risk: 'dangerous',
     })
     .action(async (argv, targetArg, factIdArg) => {
@@ -1437,14 +1431,14 @@ function registerUserProfile({
       const mem = memory.list().find(p => p.selected)?.use;
       try {
         const profile = await loadProfile(mem, userKey);
-        if (!profile || profile.facts.length === 0) return `无档案数据 (${userKey})`;
+        if (!profile || profile.facts.length === 0) return t('noProfile', { key: userKey });
         const hit = profile.facts.find(f => f.id === factId);
         if (!hit) {
           const listing = profile.facts
             .slice(0, 20)
             .map(f => `  [${f.id}] ${f.text.slice(0, 50)}`)
             .join('\n');
-          return `未找到事实 [${factId}]。${userKey} 现有 ${profile.facts.length} 条：\n${listing}`;
+          return t('factNotFound', { factId, key: userKey, count: profile.facts.length, listing });
         }
         await saveProfile(mem, userKey, {
           ...profile,
@@ -1452,21 +1446,20 @@ function registerUserProfile({
           updatedAt: Date.now(),
         });
         page.invalidate();
-        return `已删除 ${userKey} 的事实 [${factId}]：${hit.text.slice(0, 60)}`;
+        return t('factForgotten', { key: userKey, factId, text: hit.text.slice(0, 60) });
       } catch (err) {
-        return `删除失败：${err instanceof Error ? err.message : String(err)}`;
+        return t('forgetFailed', { error: textOf(err) });
       }
     });
 
-  commands.use.command('profile.clear.nuke', '【危险】清空所有用户档案', { risk: 'dangerous' }).action(async () => {
+  commands.use.command('profile.clear.nuke', t('nukeDescription'), { risk: 'dangerous' }).action(async () => {
     const mem = pinnedMemory();
     try {
       const [keys] = await clearMetadataNamespaces(mem, [PROFILE_NS], logger.use);
       page.invalidate();
-      return `已清空全部用户档案（${keys.length} 条）`;
+      return t('nukeDone', { count: keys.length });
     } catch (err) {
-      const m = err instanceof Error ? err.message : String(err);
-      return `清空失败：${m}`;
+      return t('nukeFailed', { error: textOf(err) });
     }
   });
 

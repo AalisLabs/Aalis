@@ -6,6 +6,7 @@ import { App, events, provide } from '../../packages/core/src/index.js';
 import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import userProfile from '../../packages/plugin-user-profile/src/index.js';
+import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { provideHostLanguage } from '../fixtures/host-language.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
@@ -54,6 +55,11 @@ describe('plugin-user-profile: 事实的语言', () => {
 
     expect(systems[0]).toContain('5. 每条 text 用一句简洁的 日本語 (日本)（ja-JP），不超过 80 个字符，');
     expect(systems[0]).not.toContain('简洁中文');
+  });
+
+  it('配置项 maxFactCharsPerItem 叫「单条事实字符数上限」，与提示词同样按字符', () => {
+    const { maxFactCharsPerItem } = userProfile.configSchema as unknown as { maxFactCharsPerItem: { label: unknown } };
+    expect(toSource(maxFactCharsPerItem.label)).toBe('单条事实字符数上限');
   });
 
   /** 装上档案插件，存一条目标用户的话与她的一条回复，触发一次提取，交回提取请求的 system 与 user */
