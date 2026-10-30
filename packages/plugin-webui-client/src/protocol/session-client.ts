@@ -21,7 +21,7 @@ import { type ConnectionState, openSocket } from './socket';
 // 断线后重连，重新握手、watch 并重订打开着的会话；断开时在途的请求以 ConnectionLostError 失败，不重发。
 
 /** 本客户端实现的协议版本 */
-export const PROTOCOL_VERSION = '1.0';
+export const PROTOCOL_VERSION = '1.1';
 const CLIENT = { name: 'webui', version };
 
 // 线上的形状：帧里的文字已由服务端按全局默认层的语言渲染成字符串

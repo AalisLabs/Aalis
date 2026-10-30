@@ -122,9 +122,8 @@ describe('握手与请求', () => {
     expect(client.state.status).toBe('open');
   });
 
-  it('客户端实现的协议主版本与契约一致', () => {
-    client = createSessionClient();
-    expect(PROTOCOL_VERSION.split('.')[0]).toBe(SESSION_PROTOCOL_VERSION.split('.')[0]);
+  it('客户端声明的协议版本与契约相同：客户端随服务端一起发布，次版本新加的帧与字段它都要认', () => {
+    expect(PROTOCOL_VERSION).toBe(SESSION_PROTOCOL_VERSION);
   });
 
   it('回应按 id 配对，乱序到达也各归各位；错误帧带上业务错误码', async () => {
