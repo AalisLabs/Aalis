@@ -8,7 +8,7 @@ import { historyCleared } from '@aalis/api-memory'; // 也是 declaration mergin
 import { messageArchive } from '@aalis/api-message-archive';
 import { type SessionInfo, type SessionManagerService, sessionLabel, sessionManager } from '@aalis/api-session-manager';
 import { type SessionFieldReader, sessionSettings } from '@aalis/api-session-settings';
-import { actingIdentity, type ToolCallContext, tools } from '@aalis/api-tools';
+import { actingIdentity, backgroundTasks, type ToolCallContext, tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { toSource } from '@aalis/schema-i18n';
@@ -203,6 +203,8 @@ const uses = {
   gateway: optional(gateway),
   /** 按会话字段的全局层：宿主配置文档里本实例的那一段 */
   document: optional(ownHostConfig),
+  /** 子会话在跑的后台任务：有的不到期销毁；不在时没有 */
+  backgroundTasks: optional(backgroundTasks),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -224,7 +226,18 @@ export default definePlugin({
 });
 
 function registerSubtask(
-  { tools, events, hooks, logger, sessionManager, messageArchive, agent, sessionSettings, gateway }: Caps,
+  {
+    tools,
+    events,
+    hooks,
+    logger,
+    sessionManager,
+    messageArchive,
+    agent,
+    sessionSettings,
+    gateway,
+    backgroundTasks,
+  }: Caps,
   cfg: PluginConfig,
   fields: SubtaskFields,
 ): void {
@@ -1030,8 +1043,13 @@ function registerSubtask(
 
   // ---- 到期销毁 ----
   // 子会话的一轮结束（不论结局）满 idleDeleteHours 就删掉，追问让它在下一轮结束时重新计时，从没跑过一轮的不计时。在飞的一轮与
-  // 发出还没落定的追问由本插件自己记，不看会话状态（归档的子会话跑一轮时状态不翻；追问之前那一轮先把状态收口了）。
+  // 发出还没落定的追问由本插件自己记，不看会话状态（归档的子会话跑一轮时状态不翻；追问之前那一轮先把状态收口了）。有在跑的
+  // 后台任务的同样不删：正常结束的由结束通知开的那一轮收尾时重排，被停止、中断的不发结束通知，结束时重排。
   // 删除只在定时器里做：删除要等这个会话的回合收尾，在回合里删就互相等。销毁之前把回报写进父会话记录
+
+  /** 这个子会话有在跑的后台任务：正常结束时结束通知开一轮，那一轮收尾时重新计时 */
+  const hasRunningTask = (sessionId: string) =>
+    backgroundTasks.present && backgroundTasks.use.list({ sessionId }).some(task => task.status === 'running');
 
   /** 起点：一轮结束的时刻；从没跑过一轮的没有 */
   const startOf = (child: SessionInfo) => endedAt.get(child.id) ?? child.lastTurn?.endedAt;
@@ -1051,7 +1069,7 @@ function registerSubtask(
   }
 
   /**
-   * 到点重判：一轮在飞或追问还没落定的等那一轮收尾、追问落定时再排；没到期的再排；到期的写回报、删掉（父会话在它还在时已经取走
+   * 到点重判：一轮在飞、追问还没落定或有在跑的后台任务的等那一轮收尾、追问落定、任务结束时再排；没到期的再排；到期的写回报、删掉（父会话在它还在时已经取走
    * 过同一份结果的不写回报）。写回报要等一拍：这一拍里发出的追问让它忙起来（或会话管理换了）时撤回这条回报、不删，由那一轮收尾
    * 或追问落定时重新排
    */
@@ -1060,7 +1078,7 @@ function registerSubtask(
     const sm = tracked;
     const child = sm?.getSession(childId);
     if (!sm || child?.parentId === undefined) return;
-    const busy = () => inflight.has(childId) || followUps.has(childId);
+    const busy = () => inflight.has(childId) || followUps.has(childId) || hasRunningTask(childId);
     if (busy()) return;
     const start = startOf(child);
     if (start === undefined) return;
@@ -1136,6 +1154,13 @@ function registerSubtask(
       if (outcome === 'replied' || outcome === 'silent') await dropListed(sessionId);
       else listed.delete(sessionId);
     }
+  });
+
+  // 后台任务被停止或中断：不发结束通知、不开一轮，就在这时重排（正常结束的由结束通知那一轮收尾时重排）；不是子会话的不排
+  events.use.on('background:changed', change => {
+    if (!('task' in change)) return;
+    const { sessionId, status } = change.task;
+    if ((status === 'stopped' || status === 'aborted') && !inflight.has(sessionId)) schedule(sessionId);
   });
 
   events.use.on('session:deleted', sessionId => {

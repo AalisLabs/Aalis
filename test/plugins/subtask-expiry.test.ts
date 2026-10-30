@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { HookContextMap } from '../../packages/api-hooks/src/index.js';
-import type { App } from '../../packages/core/src/index.js';
+import { type BackgroundTask, type BackgroundTaskStatus, backgroundTasks } from '../../packages/api-tools/src/index.js';
+import { type App, definePlugin, type PluginDefinition, provide } from '../../packages/core/src/index.js';
 import subtask from '../../packages/plugin-subtask/src/index.js';
 import { type SubtaskHub, startSubtaskHub } from '../fixtures/subtask.js';
 import { deferred } from '../helpers/deferred.js';
@@ -9,7 +10,8 @@ import { deferred } from '../helpers/deferred.js';
 // 子会话的到期销毁：子会话的一轮结束（回复、出错、被停止都算）满 idleDeleteHours 就删掉，追问在下一轮结束时重新计时，从没跑过
 // 一轮的不计时；在飞的一轮与发出还没落定的追问由子任务插件自己记，不看会话状态。追问经网关送达、不等，在它落定时（所在的一轮
 // 结束、被放掉、在网关相位被挡下）去掉记下的；子任务那一轮结束时还有没落定的追问，这一轮的回复不交回、不完成，等追问那一轮。
-// 删除只在定时器里做，延时截到 24 小时、到点重判；
+// 子会话有在跑的后台任务时同样不删：正常结束的由结束通知开的那一轮收尾时重新计时，被停止、中断的（不发结束通知）结束时按最近
+// 一轮重判。删除只在定时器里做，延时截到 24 小时、到点重判；
 // 插件重载之后按会话记录上的 lastTurn.endedAt 补删或重排。销毁之前把回报（名字、状态、原因、结果、任务）写进父会话记录，
 // check_subtask、wait_subtasks 读到即删，父会话提醒列出它的那一轮回复或静默收尾后删（出错、被停止的一轮留着，下一轮照常
 // 列出）；父会话清空时一并清掉。已删的子会话收到还没开跑的
@@ -26,8 +28,8 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
 });
 
-async function setup(idleDeleteHours: number) {
-  const hub = await startSubtaskHub({ config: { idleDeleteHours } });
+async function setup(idleDeleteHours: number, plugins: PluginDefinition[] = []) {
+  const hub = await startSubtaskHub({ config: { idleDeleteHours }, plugins });
   apps.push(hub.app);
   const parent = await hub.sm.createSession({ name: '<父会话>' });
   const child = await hub.sm.createChildSession(parent.id, { name: '<子任务>', inputContext: '<任务>' });
@@ -38,6 +40,32 @@ async function setup(idleDeleteHours: number) {
 }
 
 const exists = (hub: SubtaskHub, id: string) => hub.sm.getSession(id) !== undefined;
+
+/** 后台任务登记的替身：列出用例摆上的任务 */
+const backgroundPlugin = (tasks: BackgroundTask[]) =>
+  definePlugin({
+    name: 'zz-background',
+    provides: [backgroundTasks],
+    uses: { provide },
+    apply: ({ provide }) => {
+      provide.use(backgroundTasks, {
+        list: ({ sessionId } = {}) => tasks.filter(task => sessionId === undefined || task.sessionId === sessionId),
+        output: () => undefined,
+        stop: async () => undefined,
+      });
+    },
+  });
+
+/** 子会话里转到后台、在跑的一个任务 */
+const runningTask = (sessionId: string): BackgroundTask => ({
+  id: 'bg_1',
+  sessionId,
+  kind: 'tool-call',
+  label: '<命令>',
+  call: { tool: '<命令>', args: {}, turnId: '<回合>', callId: '<调用>' },
+  status: 'running',
+  startedAt: Date.now(),
+});
 const advance = (ms: number) => vi.advanceTimersByTimeAsync(ms);
 /** 父会话记录上的回报 */
 const reports = (hub: SubtaskHub, parentId: string) =>
@@ -148,6 +176,38 @@ describe('到期销毁', () => {
     await hub.sm.updateSession(child.id, { status: 'archived' });
     await call('send_to_subtask', { subtask_id: child.id, message: '<追问>' });
     expect(hub.sm.getSession(child.id)?.status).toBe('archived');
+  });
+
+  it('有在跑的后台任务时不删：交回「已转后台」之后闲置到期也留着；结束通知那一轮收尾后重新计时', async () => {
+    const tasks: BackgroundTask[] = [];
+    const { hub, child } = await setup(1, [backgroundPlugin(tasks)]);
+    await hub.turn(child.id, 'replied', {
+      reply: '<已在后台跑>',
+      during: async () => void tasks.push(runningTask(child.id)),
+    });
+    await advance(2 * HOUR);
+    expect(exists(hub, child.id)).toBe(true);
+    tasks[0] = { ...tasks[0], status: 'completed' };
+    await hub.turn(child.id, 'replied', { source: 'bg:bg_1' });
+    await advance(59 * MINUTE);
+    expect(exists(hub, child.id)).toBe(true);
+    await advance(2 * MINUTE);
+    expect(exists(hub, child.id)).toBe(false);
+  });
+
+  it.each<BackgroundTaskStatus>([
+    'stopped',
+    'aborted',
+  ])('后台任务结束为 %s（不发结束通知）：结束时按最近一轮重判到期', async status => {
+    const tasks: BackgroundTask[] = [];
+    const { hub, child } = await setup(1, [backgroundPlugin(tasks)]);
+    await hub.turn(child.id, 'replied', { during: async () => void tasks.push(runningTask(child.id)) });
+    await advance(2 * HOUR);
+    expect(exists(hub, child.id)).toBe(true);
+    tasks[0] = { ...tasks[0], status };
+    await hub.host.events.use.emit('background:changed', { task: tasks[0] });
+    await advance(0);
+    expect(exists(hub, child.id)).toBe(false);
   });
 
   it('从没跑过一轮的子会话不计时', async () => {
