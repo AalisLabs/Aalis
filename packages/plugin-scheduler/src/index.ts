@@ -1028,9 +1028,9 @@ async function run(caps: Caps): Promise<void> {
       },
     },
     // 建任务 = 让 AI 在未来自主行动，且 actor 身份在此固化（见 resolveActor）。
-    // 写类：restricted + 每次确认——被注入的 LLM 建一条 cron 就等于拿到持久执行面。
+    // 写类：restricted + 确认，与别的要确认的操作同一规则（参与者都是 owner 且在免确认白名单里的回合免）。
     risk: 'dangerous',
-    confirm: 'always',
+    confirm: 'session',
     handler: async (args, callCtx) => {
       // 互斥校验：cron / interval / delaySeconds / runAt 必须恰好提供一个
       const hasCron = typeof args.cron === 'string' && args.cron.trim().length > 0;
@@ -1179,7 +1179,7 @@ async function run(caps: Caps): Promise<void> {
     },
     // 删类：删掉定时任务不可逆（无回收站）。
     risk: 'dangerous',
-    confirm: 'always',
+    confirm: 'session',
     handler: async args => {
       const ok = service.removeJob(args.name as string);
       return JSON.stringify({ ok, message: ok ? '已删除' : '任务不存在' });
@@ -1205,7 +1205,7 @@ async function run(caps: Caps): Promise<void> {
     },
     // 改状态类：暂停等于静默停掉一条自主行动，用户不会收到任何提示。
     risk: 'dangerous',
-    confirm: 'always',
+    confirm: 'session',
     handler: async args => {
       const ok = service.pauseJob(args.name as string);
       return JSON.stringify({ ok, message: ok ? '已暂停' : '任务不存在，或是一次性任务（不能暂停，只能删除重建）' });
@@ -1230,7 +1230,7 @@ async function run(caps: Caps): Promise<void> {
     },
     // 改状态类：恢复会让一条被停掉的自主行动重新开始跑。
     risk: 'dangerous',
-    confirm: 'always',
+    confirm: 'session',
     handler: async args => {
       const ok = service.resumeJob(args.name as string);
       return JSON.stringify({ ok, message: ok ? '已恢复' : '任务不存在' });
