@@ -88,7 +88,7 @@ export class AuthorityManager implements AuthorityService {
   }
 
   /**
-   * 这个身份所属各组的放行条目合集：成员关系的唯一入口（以后按场所取成员关系只改这里）。
+   * 这个身份所属各组的放行条目合集：成员关系的唯一入口。
    * 用户记录里的组名按配置里定义了的取，没定义的组不放行任何东西
    */
   private grantsOf(identity: { platform: string; userId?: string }): string[] {

@@ -210,7 +210,7 @@ export interface PluginThemesResponse {
 /**
  * 一个可选项：default 标没设时生效的那一项；description 是写在选项下面的一行说明（如工具分组的概述）。
  *
- * members 与回应的 others 是通用字段：任何「选几组、每组带一批东西」的多选（工具分组，以后的技能、模型分组等）都按它们交，
+ * members 与回应的 others 是通用字段：任何「选几组、每组带一批东西」的多选（如工具分组）都按它们交，
  * 界面不认来源、不认插件
  */
 export interface OptionDetail {

@@ -758,7 +758,7 @@ async function run(caps: Caps): Promise<void> {
     // 生产者是 plugin-agent 的 buildAssistantMetadata：自身标识写在 UserId 键
     //（值=identity.selfId），并带群名、群号与会话类型——全部透传，
     // 使 assistant 条目的渲染位置段（群「X」/私聊/）与 user 侧对齐。
-    // 注意没有 selfId 这个键（2026-08-27 审计抓过一次读错字段名）。
+    // 注意没有 selfId 这个键。
     const selfUserId = (meta[WellKnownMetadataKeys.UserId] as string | undefined) ?? '';
     // 与 user 侧对称：embed 带发送者前缀，身份信号入向量空间
     const embedText = prefixSender(rawText, nickname || undefined, selfUserId || undefined);
