@@ -51,7 +51,7 @@ export default defineLocale<Source>()({
   durationMinutes: '{minutes, number} min {seconds, number} s',
   callKindCommand: '{count, plural, one {# command} other {# commands}}',
   callKindFileChange: '{count, plural, one {# file change} other {# file changes}}',
-  callKindOther: '{count, number} other',
+  callKindOther: '{count, plural, one {# other call} other {# other calls}}',
   callsMixed: 'Called {count, plural, one {# tool} other {# tools}}: {kinds, list}',
   callsCommands: 'Ran {count, plural, one {# command} other {# commands}}',
   callsFileChanges: 'Made {count, plural, one {# file change} other {# file changes}}',

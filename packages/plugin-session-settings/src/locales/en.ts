@@ -10,7 +10,7 @@ export default defineLocale<Source>()({
   noPlace: 'Place not found: {key}',
   placeOnly: '{item} can be set down to a place, not on a single session',
   notApplicable:
-    '{item} does not apply to {kind, select, owner {owner sessions} room {rooms} task {subsessions} other {this kind of session}}',
+    '{item} does not apply to {kind, select, owner {owner sessions} room {rooms} task {child sessions} other {this kind of session}}',
   notForRooms: '{item} does not apply to rooms, so platform-type profiles do not take it',
   itemNamed: '{label} ({item})',
   badLayerName: 'Invalid layer name: {name} (must be non-empty, without : and not *)',

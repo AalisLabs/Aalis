@@ -23,7 +23,7 @@ export default defineLocale<Source>()({
     'this only lasts for this run and was not written to users.json, which cannot be read; fix state/users.json in the home directory and restart',
   awaitingFirstLoad: 'not written to users.json yet (the level table has not loaded); it is written once loaded',
   saveFailedRetry: 'not written to users.json (writing failed, see the logs); retried at the next save',
-  badIdentity: 'An identity must be written as "platform:user ID"; got {key}',
+  badIdentity: 'An identity must be written as “platform:user ID”; got {key}',
   commandKind: 'Command',
   toolKind: 'Tool',
   configSaveFailed: 'Applied for this run, but not written to the config file: {error}',
@@ -86,9 +86,9 @@ export default defineLocale<Source>()({
   rulesTab: 'Deny and waive confirmation',
   rulesEmpty: 'No deny or confirmation waiver rules',
   rule: 'Rule',
-  capabilityDenied: 'Disabled by the system: {capability}',
-  levelTooLow: 'Insufficient permission: "{capability}" needs level {required} (current {level})',
-  ownerOnlyCapability: 'Insufficient permission: "{capability}" is owner-only',
+  capabilityDenied: 'Denied by a deny rule: {capability}',
+  levelTooLow: 'Insufficient permission: “{capability}” needs level {required} (current {level})',
+  ownerOnlyCapability: 'Insufficient permission: “{capability}” is owner-only',
   intentUnreachable:
     'Operation cancelled: {capability} needs confirmation from the sender in person, but this command was not typed by a person, so it cannot be confirmed',
   intentDeclined: 'Operation cancelled: {capability} was not confirmed by the sender',
@@ -103,7 +103,7 @@ export default defineLocale<Source>()({
   confirmSession: 'Every time (the waiver list can waive it)',
   confirmAlways: 'Every time (only a confirmation override set to off waives it)',
   rulesDescription:
-    'Disabling overrides everything, owners included. Waiving confirmation only applies to what is done as an owner: the owner in person, subtasks the owner dispatched, scheduled tasks the owner created, and workflows whose definer and caller are both owners; anything started by others, or joined by messages from others, still needs owner approval, and is refused where no approval can be raised. Neither lowers levels. Both accept wildcards, such as tool:*.',
+    'Deny rules override everything, owners included. Waiving confirmation only applies to what is done as an owner: the owner in person, subtasks the owner dispatched, scheduled tasks the owner created, and workflows whose definer and caller are both owners; anything started by others, or joined by messages from others, still needs owner approval, and is refused where no approval can be raised. Neither lowers levels. Both accept wildcards, such as tool:*.',
   waivePattern:
     'A capability key or wildcard, such as tool:shell_exec, command:level, tool:*. Only waives confirmation for what is done as an owner; anything started by others, or joined by messages from others, still needs owner approval',
   ownerOnly: 'Only an owner can manage permissions',

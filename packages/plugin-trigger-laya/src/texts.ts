@@ -47,7 +47,7 @@ const SOURCE = {
   onlineManaged: '侧车在线（版本 {version}，由本插件托管）',
   unreachable: '侧车不可达（{error}）',
   starting: '侧车启动中（已 {seconds}s），就绪前判定按兜底只回点名',
-  restartingFor: '侧车重启中（已 {seconds}s，此前连续 {count} 次没起来）',
+  restartingFor: '侧车重启中（已 {seconds}s，此前连续 {count, number} 次没起来）',
   restarting: '{reason}，{wait}s 后重启（连续 {count} 次）',
   external:
     '侧车不由本插件托管：首次拉起前端口上已有别的侧车在运行；要改由本插件托管，先停掉它（系统服务要卸载），再重启 Aalis 或把 trigger 偏好切走再切回',

@@ -63,11 +63,11 @@ export default defineLocale<Source>()({
   pageOptionDescription: 'Page number (default 1)',
   modelsLabel: 'available models',
   personasLabel: 'available personas',
-  pagedNoMatch: 'No {label} match "{keyword}"',
+  pagedNoMatch: 'No {label} match “{keyword}”',
   pagedNone: '(No {label})',
   pagedHeader: 'Showing {label} ({count, number} in total · page {page, number}/{pages, number}):',
   pagedHeaderMatching:
-    'Showing {label} containing "{keyword}" ({count, number} in total · page {page, number}/{pages, number}):',
+    'Showing {label} containing “{keyword}” ({count, number} in total · page {page, number}/{pages, number}):',
   pagedHint: '—— Next page: {command} -p {next}  Search: {command} <keyword>',
   pagedHintMatching: '—— Next page: {command} {keyword} -p {next}',
 });

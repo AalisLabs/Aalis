@@ -293,7 +293,7 @@ describe('workflow：once 记录读不出时不安排 once', () => {
       `已启用 zz-once；${skipped}，修复运行历史文件后重启恢复`,
     );
     expect(resolveText(replies.at(-1) as never, ['en'])).toBe(
-      'Enabled zz-once; reading the once ledger failed (see the log), so it will not trigger in this run; ' +
+      'Enabled zz-once; reading the once ledger failed (see the logs), so it will not trigger in this run; ' +
         'use “Run now” to run it manually, and restart after fixing the run history file to restore it',
     );
     expect(calls).toBe(0);

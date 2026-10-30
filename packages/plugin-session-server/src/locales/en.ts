@@ -11,7 +11,7 @@ export default defineLocale<Source>()({
   historyCursorExpired: 'The history cursor has expired: {before}',
   noTaskRegistry: 'No background task registry',
   noTask: 'Background task {id} does not exist',
-  noAgentForSubsessions: "No agent service to stop turns, so the subsessions' turns cannot be stopped",
+  noAgentForSubsessions: "No agent service to stop turns, so the child sessions' turns cannot be stopped",
   noAgent: 'No agent service to stop the turn',
   turnNotRunning: 'This turn is not running: {turnId}',
   noCompression: 'No compaction service',

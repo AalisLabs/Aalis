@@ -21,9 +21,9 @@ export default defineLocale<Source>()({
   npmBrowser:
     'Downloading the browser failed: this plugin downloads Chrome while installing. Set a mirror for the Aalis process (environment variable PUPPETEER_CHROME_DOWNLOAD_BASE_URL), restart, and install again',
   npmNative:
-    'Native module {pkg} failed to compile: this machine lacks C/C++ build tools. On macOS run xcode-select --install; on Linux install build-essential and python3; on Windows install Visual Studio "Desktop development with C++"; then retry',
+    'Native module {pkg} failed to compile: this machine lacks C/C++ build tools. On macOS run xcode-select --install; on Linux install build-essential and python3; on Windows install Visual Studio “Desktop development with C++”; then retry',
   npmNativeUnknown:
-    'A native module failed to compile: this machine lacks C/C++ build tools. On macOS run xcode-select --install; on Linux install build-essential and python3; on Windows install Visual Studio "Desktop development with C++"; then retry',
+    'A native module failed to compile: this machine lacks C/C++ build tools. On macOS run xcode-select --install; on Linux install build-essential and python3; on Windows install Visual Studio “Desktop development with C++”; then retry',
   npmMissing:
     'The registry has no such package or version ({code}): check the name and version; if you use a mirror it may not have synced yet, so retry later',
   npmNetwork:
@@ -63,7 +63,7 @@ export default defineLocale<Source>()({
   noPackageJson:
     'Cannot read the package.json of {name}, so the market cannot tell what it is and will not uninstall it; if you are sure, run npm uninstall {name} in the project directory and restart',
   lifeline:
-    '{name} is hosting the market and management interface itself; uninstalling it would make this page unavailable at once, leaving only the terminal to recover. To switch implementations, install the replacement and switch to it in the service preferences under Settings "System" first, then come back and uninstall this one.',
+    '{name} is hosting the market and management interface itself; uninstalling it would make this page unavailable at once, leaving only the terminal to recover. To switch implementations, install the replacement and switch to it in the service preferences under Settings “System” first, then come back and uninstall this one.',
   originWorkspace: 'it is a local source package in the workspace; remove it through git',
   originLink:
     'it points to a local directory through file:/link:; change that source and the dependency declaration to remove it',

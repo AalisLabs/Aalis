@@ -873,7 +873,7 @@ describe('计划任务给人看的出口按读者的语言', () => {
   ];
   const CASES = {
     en: [
-      'Scheduled task "tz" could not be scheduled and will not run',
+      'Scheduled task “tz” could not be scheduled and will not run',
       "Fix this task's cron or timeZone in the configuration file; it takes effect once saved. Reason: Invalid time zone: Mars/Olympus",
       'Ran every',
       'Succeeded',

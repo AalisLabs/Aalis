@@ -153,7 +153,7 @@ describe('包管理自己的失败原因按全局层的语言', () => {
       {
         ok: false,
         message:
-          '@zz/ui is hosting the market and management interface itself; uninstalling it would make this page unavailable at once, leaving only the terminal to recover. To switch implementations, install the replacement and switch to it in the service preferences under Settings "System" first, then come back and uninstall this one.',
+          '@zz/ui is hosting the market and management interface itself; uninstalling it would make this page unavailable at once, leaving only the terminal to recover. To switch implementations, install the replacement and switch to it in the service preferences under Settings “System” first, then come back and uninstall this one.',
       },
     ],
     [

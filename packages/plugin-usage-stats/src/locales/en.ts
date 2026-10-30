@@ -9,7 +9,7 @@ export default defineLocale<Source>()({
   currencyLabel: 'Currency',
   currencyDescription: 'The currency shown on the cost column; display only',
   badPrice:
-    'The price of "{model}" must be three prices (input, cache hit, output) separated by commas; it takes effect once corrected in WebUI or the config file',
+    'The price of “{model}” must be three prices (input, cache hit, output) separated by commas; it takes effect once corrected in WebUI or the config file',
   ledgerUnreadable:
     'The usage ledger {file} cannot be read: check its read and write permissions; to start from an empty ledger, move it away and reload this plugin ← {error}',
   instanceLabel: '{name} ({instance})',

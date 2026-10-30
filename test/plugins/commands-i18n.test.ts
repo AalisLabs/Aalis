@@ -306,7 +306,7 @@ describe('内置指令的说明与回复按会话的语言', () => {
     s.host.contributions.use.contribute('memory:clear-type', { id: 'zz-kind', label: t('kindLabel') });
     expect((await s.ask(await s.session(['en']), '/clear -t context,zz-kind')).content).toBe(
       [
-        "This session's message history cleared",
+        "Cleared this session's message history",
         'Probe kind: no enabled plugin handles this type, so it was not cleared',
       ].join('\n'),
     );

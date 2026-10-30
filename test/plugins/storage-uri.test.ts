@@ -118,8 +118,8 @@ describe('toStorageUri（配置路径归一）', () => {
         '要用存储根以外的目录，先在「本地存储根」的 roots 里加一个指向它的根，并打开它的「允许写」；这个根文件工具也能访问',
     );
     expect(resolveText(textOf(error) as TextRef, ['en'])).toBe(
-      `Enter a storage URI here (<root>:/<path>, e.g. ${example}), not a local path "${input}"; ` +
-        'to use a directory outside the storage roots, first add a root pointing to it under roots in "Local storage roots" and turn on its "Allow writes"; file tools can access that root too',
+      `Enter a storage URI here (<root>:/<path>, e.g. ${example}), not a local path “${input}”; ` +
+        'to use a directory outside the storage roots, first add a root pointing to it under roots in “Local storage roots” and turn on its “Allow writes”; file tools can access that root too',
     );
   });
 });

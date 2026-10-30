@@ -278,8 +278,8 @@ describe('/clear 的附件清理归写入方', () => {
       '英文同样按文件计',
     ).toEqual([
       'Cleared images sent and received over OneBot (1 file)',
-      'Uploaded images cleared (1 file)',
-      'Drawings cleared (1 file)',
+      'Cleared uploaded images (1 file)',
+      'Cleared drawings (1 file)',
     ]);
     expect(left('images', GROUP_DIR)).toEqual(['zz-third']);
     expect(left('images', OTHER_DIR)).toEqual(['draw', 'onebot', 'zz-third']);

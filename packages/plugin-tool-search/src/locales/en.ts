@@ -18,5 +18,5 @@ export default defineLocale<Source>()({
     'Even with the tool search layer on, the full definitions of these tools are always exposed directly. Enter tool names, such as web_search.',
   maxDiscoveredKeepLabel: 'Discovered tool queue limit',
   maxDiscoveredKeepDescription:
-    'Keep at most N "discovered tools" inferred from the message history (keeping the most recently used, 0 = no limit), so that the discovered set does not grow without bound in long sessions and the search layer keeps its slimming value.',
+    'Keep at most N “discovered tools” inferred from the message history (keeping the most recently used, 0 = no limit), so that the discovered set does not grow without bound in long sessions and the search layer keeps its slimming value.',
 });

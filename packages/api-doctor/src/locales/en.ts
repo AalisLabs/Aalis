@@ -4,7 +4,7 @@ import type { Source } from '../texts.js';
 export default defineLocale<Source>()({
   lacking: 'missing service {service} ({trace})',
   failed: '{path} failed: {reason}',
-  reasonInLog: 'see the log for the reason',
+  reasonInLog: 'see the logs for the reason',
   disabled: '{path} is disabled',
   starting: 'waiting for {instance} to start',
   lingering: 'waiting for the old instance of {instance} to stop',

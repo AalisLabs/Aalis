@@ -74,7 +74,7 @@ describe('plugin-mcp-client 连不上时发提示', () => {
     const reason = toSource(notice.detail)?.slice(FIX.length);
     expect(errors).toEqual([`连接 MCP server "flaky" 失败: ${reason}`]);
     expect([renderIn(notice.title, 'en'), renderIn(notice.detail, 'en')]).toEqual([
-      'Cannot connect to MCP server "flaky"',
+      'Cannot connect to MCP server “flaky”',
       `Check this server's command, args and env (the environment variables it needs); saving the configuration after fixing them reconnects it. Reason: ${reason}`,
     ]);
     const names = () => registry.getAll().map(tool => tool.name);

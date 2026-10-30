@@ -73,7 +73,7 @@ describe('util-cron: 表达式解析', () => {
       source: '非法 cron 表达式（需 5 字段或别名）：garbage',
     });
     expect(rejected('0 99 * * *')).toEqual({
-      en: 'Cron field 2 is invalid (parses to nothing): "99"',
+      en: 'Cron field 2 is invalid (parses to nothing): “99”',
       source: 'cron 第 2 字段非法（解析为空）："99"',
     });
   });

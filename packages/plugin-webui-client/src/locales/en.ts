@@ -146,7 +146,7 @@ export default defineLocale<Source>()({
   uninstallServiceDependents: 'Depend on services it provides (uninstalling will be refused)',
   uninstallDependents: 'Reference it (may fail to start once it is uninstalled)',
   uninstallCodeNote:
-    'Its code will be deleted; data it wrote in the home folder (state/ and elsewhere) stays, to be cleaned up by hand if needed.',
+    'Its code will be deleted; data it wrote in the home directory (state/ and elsewhere) stays, to be cleaned up by hand if needed.',
   uninstallConfigNote:
     'Its configuration stays in the config file by default, so after a reinstall it starts with the same configuration.',
   removeConfigWithSecrets:
@@ -217,7 +217,7 @@ export default defineLocale<Source>()({
   themeOriginImported: 'Imported',
   themeWithOrigin: '{name} ({origin})',
   theme: 'Theme',
-  themeFollowSystem: 'Follow the system',
+  themeFollowSystem: 'Follow system',
   themeForDark: 'For dark',
   themeForLight: 'For light',
   themeStoredNote: 'The theme choice and imported themes are stored in this browser.',
@@ -404,7 +404,7 @@ export default defineLocale<Source>()({
   turnError: 'This turn ran into an error',
   callKindCommand: '{count, plural, one {# command} other {# commands}}',
   callKindFileChange: '{count, plural, one {# file change} other {# file changes}}',
-  callKindOther: '{count, number} other',
+  callKindOther: '{count, plural, one {# other call} other {# other calls}}',
   callsMixed: 'Called {count, plural, one {# tool} other {# tools}}: {kinds, list}',
   callsCommands: 'Ran {count, plural, one {# command} other {# commands}}',
   callsFileChanges: 'Made {count, plural, one {# file change} other {# file changes}}',
@@ -418,7 +418,7 @@ export default defineLocale<Source>()({
   rewindCodeAndChat: 'Rewind file changes and this turn’s conversation',
   speakerYou: 'You',
   messageFrom: 'From {source}',
-  entryOpenedAddressed: 'Started this turn · addressed',
+  entryOpenedAddressed: 'Started this turn · mentioned',
   entryOpenedInterjection: 'Started this turn · interjection',
   entryJoined: 'Joined this turn',
   queuedMessages: 'Queued messages',
@@ -429,7 +429,7 @@ export default defineLocale<Source>()({
   reasoningStreaming: 'Thinking…',
   reasoning: 'Thinking',
   forwardedChat:
-    'Forwarded chat: {count, plural, one {# message} other {# messages}} from {names, list}{more, plural, =0 {} one { and # other} other { and # others}}',
+    'Forwarded chat: {count, plural, one {# message} other {# messages}}; participants: {names, list}{more, plural, =0 {} one { and # other} other { and # others}}',
   forwardedCutOff: '(Only the beginning is shown)',
   forwardedNoContent: 'Forwarded chat (no expanded content)',
   backgroundTaskNamed: 'Background task {tool}',
@@ -539,7 +539,7 @@ export default defineLocale<Source>()({
   stateLacking: 'Missing services',
   stateWaiting: 'Waiting to start',
   stateUnconfigured: 'Needs configuration',
-  stateDisposed: 'Uninstalled',
+  stateDisposed: 'Unloaded',
   statusReason: '{status}: {reason}',
   reasonInLogs: 'See the logs for the reason',
   rootUnconfigured: 'Needs configuration: {keys, list}',

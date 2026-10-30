@@ -69,9 +69,9 @@ const CASES = {
   en: {
     tools: 'Machine interaction tools:\n  system\n  http',
     clear: [
-      "Cleared the to-do list of this session\nThis session's message history cleared",
-      'Cleared the to-do lists of all sessions (1 session)\nAll message history and archives cleared',
-      'Cleared the to-do lists of all sessions (2 sessions)\nAll message history and archives cleared',
+      "Cleared the to-do list of this session\nCleared this session's message history",
+      'Cleared the to-do lists of all sessions (1 session)\nCleared all message history and archives',
+      'Cleared the to-do lists of all sessions (2 sessions)\nCleared all message history and archives',
     ],
     browser: ['Page zz-page does not exist', 'Closed all pages'],
   },

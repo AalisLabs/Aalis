@@ -100,7 +100,7 @@ const CASES = {
       'Add a model that can see images in the model services, then choose it under “Image recognition → Recognition model” in “Multimodal media recognition” (left empty, one is chosen automatically)',
     ],
     clear: (count: number) =>
-      'Uploaded images cleared (0 files)\nFailed to clear the image description cache: ' +
+      'Cleared uploaded images (0 files)\nFailed to clear the image description cache: ' +
       `${count === 1 ? '1 entry was' : `${count} entries were`} deleted from memory, but this run could not read the ` +
       `description snapshot, so the snapshot on disk was not rewritten and ${count === 1 ? 'it' : 'they'} will come ` +
       'back after a restart',

@@ -40,7 +40,7 @@ export default defineLocale<Source>()({
   rootExists: 'The root directory already exists; nothing to create',
   deleteRoot: 'Cannot delete the root directory',
   badPath: 'Invalid path',
-  otherRoot: 'URI root "{root}" is not storage root {name} (cannot move across roots)',
+  otherRoot: 'URI root “{root}” is not storage root {name} (cannot move across roots)',
   notAllowed: 'Storage root {name} does not allow this operation ({permission})',
   symlink: 'Writing to a symbolic link is not allowed',
   parentNotDirectory: 'The parent path is not a directory',

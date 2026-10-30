@@ -1028,7 +1028,7 @@ describe('收起、没有回复与运行指示', () => {
       language(['en']),
     );
     const log = within(await main().findByRole('region', { name: 'Conversation' }));
-    expect(log.getByRole('button', { name: 'Called 4 tools: 2 commands, 1 file change, 1 other' })).toBeTruthy();
+    expect(log.getByRole('button', { name: 'Called 4 tools: 2 commands, 1 file change, 1 other call' })).toBeTruthy();
     expect(log.getByRole('button', { name: /^Run echo x{25}…\(25 characters omitted\)…x{30}$/ })).toBeTruthy();
   });
 
