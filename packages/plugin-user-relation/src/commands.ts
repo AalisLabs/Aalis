@@ -4,6 +4,7 @@
  * 命令清单（默认前缀由 plugin-commands 配置）。标 restricted 的为 restricted 可见性（需 owner 授予），其余为 public：
  * - `relation show person|event|entity <id>`：打印目标节点 + 直连边
  * - `relation orphans`：列出"孤立点"（不被任何边引用的 person/event/entity）
+ *   show 与 orphans 与读工具同一判据：调用会话的关系图范围是仅本会话时只列本会话的事件，人与实体照常
  * - `relation forget-me`：删除调用者自己的 Person 节点及其级联边
  * - `relation consolidation-status`：查看最近一次 consolidate 的运行时间、触发源与结果
  * - `relation cleanup person|event|entity <id>`：删该节点 + 级联边（restricted）
@@ -25,7 +26,7 @@ import { type TextRef, textLines } from '@aalis/schema-i18n';
 import type { RelationService } from './service.js';
 import { t } from './texts.js';
 import type { ConsolidateCounts, EntityNode, EventNode, LastConsolidate, PersonNode, RelationEdge } from './types.js';
-import { findOrphans } from './utils.js';
+import { findOrphans, withinScope } from './utils.js';
 import { ENTITY_KIND_NAMES, nameIn } from './webui.js';
 
 /** /relation 指令用到的能力 */
@@ -36,6 +37,8 @@ interface CommandsCaps {
   /** 立即回执按会话的语言渲染；缺席时按原文 */
   i18n: ServiceSelection<I18nService>;
   logger: Logger;
+  /** 判一个会话的关系图范围是不是仅本会话（按会话现读），与读工具同一个 */
+  sessionOnly(sessionId: string, platform: string | undefined): boolean;
 }
 
 /** consolidation 的触发来源的显示名 */
@@ -95,7 +98,7 @@ export interface EvictionConfig {
 }
 
 export function registerRelationCommands(
-  { commands: cmds, platform, llm, i18n, logger }: CommandsCaps,
+  { commands: cmds, platform, llm, i18n, logger, sessionOnly }: CommandsCaps,
   service: RelationService,
   options: {
     consolidateLLM?: { modelRef: { provider: string; model: string }; disableThinking: boolean };
@@ -111,6 +114,10 @@ export function registerRelationCommands(
   cmds.command('relation', t('relationDescription'));
   cmds.command('relation.cleanup', t('cleanupDescription'));
 
+  /** 调用会话的关系图范围是仅本会话时为这个会话，否则不过滤 */
+  const scopeOf = ({ sessionId, platform }: { sessionId: string; platform: string }) =>
+    sessionOnly(sessionId, platform) ? sessionId : undefined;
+
   // ---- show ----
   cmds
     .command('relation.show <kind:string> <id:text>', t('showDescription'))
@@ -118,16 +125,18 @@ export function registerRelationCommands(
     .argument('id', t('showIdArgument'))
     .example('/relation show person onebot:1234567')
     .example('/relation show entity 9f3a2b...')
-    .action(async (_argv, kindArg, idArg) => {
+    .action(async (argv, kindArg, idArg) => {
       const kind = String(kindArg ?? '').toLowerCase();
       const id = String(idArg ?? '').trim();
       if (!id) return t('emptyId');
-      const snap = await service.loadAll();
+      // 别的会话的事件连同连着它们的边都去掉：按 id 取它回未找到
+      const scope = scopeOf(argv.session);
+      const snap = withinScope(await service.loadAll(), scope);
       if (kind === 'person') {
         if (!id.includes(':')) return t('badPersonId');
         const p = snap.persons.find(x => x.id === id);
         if (!p) return t('nodeNotFound', { kind, id });
-        const nb = await service.getNeighborhood(id);
+        const nb = withinScope(await service.getNeighborhood(id), scope);
         return formatPerson(p, nb.events, nb.entities, nb.edges);
       }
       if (kind === 'event') {
@@ -150,8 +159,11 @@ export function registerRelationCommands(
     });
 
   // ---- orphans (list) ----
-  cmds.command('relation.orphans', t('orphansDescription')).action(async () => {
-    const { persons, events, entities } = findOrphans(await service.loadAll());
+  // 孤立按全图判（人与实体照常），事件一节只列本会话的
+  cmds.command('relation.orphans', t('orphansDescription')).action(async argv => {
+    const scope = scopeOf(argv.session);
+    const { persons, events: allEvents, entities } = findOrphans(await service.loadAll());
+    const events = scope ? allEvents.filter(e => e.sessionScope === scope) : allEvents;
     if (persons.length + events.length + entities.length === 0) {
       return t('noOrphans');
     }

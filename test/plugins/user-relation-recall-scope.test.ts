@@ -1,14 +1,18 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { type AuthorityService, capabilityMinLevel } from '../../packages/api-authority/src/index.js';
+import { commands } from '../../packages/api-commands/src/index.js';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
 import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.js';
 import { userRelation } from '../../packages/api-user-relation/src/index.js';
-import { App, definePlugin, logger, provide } from '../../packages/core/src/index.js';
+import { App, definePlugin, type Logger, logger, provide } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
+import { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import userRelationPlugin, { type RelationService } from '../../packages/plugin-user-relation/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { fixedRef, ref } from '../fixtures/service-ref.js';
 import { sessionValuesPlugin } from '../fixtures/session-settings.js';
 import { toolContext } from '../fixtures/tool-call.js';
 import { turnInput } from '../fixtures/turn-input.js';
@@ -18,7 +22,7 @@ import { turnInput } from '../fixtures/turn-input.js';
 // 抽出的事件、所属跨会话话题），只留本会话的事件；人际关系与关注的事物照常注入（它们是按人的摘要，与 user-profile 的参与者
 // 事实同类，owner 定为保留）。写坏了按「仅本会话」；为「全部」或会话设置不在时维持现状。关系图工具的会话作用域参数同样不超过
 // 它：为「仅本会话」时只能是调用所在的会话，模型传别的会话或不传都按它；没有这个参数的工具（解析节点、最短路径、联系分数、
-// 共同邻居、列边）同样不带别的会话的事件。
+// 共同邻居、列边）同样不带别的会话的事件。公开的 /relation show 与 /relation orphans 与读工具同一判据：不提档，只列本会话的事件。
 // ════════════════════════════════════════════════════════════
 
 const CUR = 'onebot:10000:group:20001';
@@ -259,6 +263,82 @@ describe('plugin-user-relation：关系图工具的会话作用域', () => {
   });
 });
 
+const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent } as unknown as Logger;
+
+/**
+ * 装上关系图插件（只开指令），指令登记在真指令表上、按 0 级群友裁决；备好两个会话里的事件，返回在本群执行 /relation 的函数与
+ * 事件 id。u1 参与本群开黑与私聊约饭、与 u2 是朋友；本群孤立、私聊孤立两件事、u3 与孤立游戏都不挂边
+ */
+async function relationCommands(sessions: Record<string, Record<string, unknown>>) {
+  const app = new App({ name: 'T', logLevel: 'error' });
+  apps.push(app);
+  await registerHubs(app);
+  await app.plugin(memoryInMemory);
+  const levelZero = {
+    authorize: (_who: unknown, req) => (capabilityMinLevel(req) > 0 ? '权限不足' : null),
+  } as AuthorityService;
+  const registry = new CommandRegistry(silent, fixedRef(levelZero), ref());
+  app.bind({ provide }).provide.use(commands, registry as never);
+  await app.plugin(sessionValuesPlugin(sessions));
+  await app.plugin(userRelationPlugin, {
+    extractionEnabled: false,
+    toolsEnabled: false,
+    commandsEnabled: true,
+    agentInjection: false,
+  });
+  await app.plugins.idle();
+  if (app.plugins.getPlugin(userRelationPlugin.name)?.state !== 'active')
+    throw new Error('plugin-user-relation 未激活');
+  const service = app.bind({ relation: userRelation }).relation.use as RelationService;
+  await service.observePerson('onebot', 'u1', 'Alice');
+  await service.observePerson('onebot', 'u2', 'Bob');
+  await service.observePerson('onebot', 'u3', 'Carol');
+  await service.addPersonPersonEdge({ fromPersonId: 'onebot:u1', toPersonId: 'onebot:u2', relationType: 'friend' });
+  const ids: Record<string, string> = {};
+  for (const [title, sessionScope] of [
+    ['本群开黑', CUR],
+    ['私聊约饭', PRIV],
+    ['本群孤立', CUR],
+    ['私聊孤立', PRIV],
+  ] as const) {
+    ids[title] = (await service.createEvent({ title, summary: `${title}的经过`, sessionScope, evidence: [] })).id;
+  }
+  for (const title of ['本群开黑', '私聊约饭']) {
+    await service.addPersonEventEdge({ fromPersonId: 'onebot:u1', toEventId: ids[title], role: 'participant' });
+  }
+  await service.createEntity({ entityKind: 'work', name: '孤立游戏', evidence: [] });
+  const run = async (...args: string[]) =>
+    String(await registry.execute('relation', { sessionId: CUR, platform: 'onebot', userId: 'u9', args, raw: '' }));
+  return { run, ids };
+}
+
+describe('plugin-user-relation：/relation 指令的关系图范围', () => {
+  it('仅本会话：show 与 orphans 只列本会话的事件，别的会话的事件按 id 也取不到；人、人际关系与实体照常', async () => {
+    const { run, ids } = await relationCommands({ [CUR]: { recallScope: 'session' } });
+    const person = await run('show', 'person', 'onebot:u1');
+    expect(person).toContain('本群开黑');
+    expect(person).toContain('friend');
+    expect(person).not.toContain('私聊约饭');
+    expect(person).not.toContain(ids.私聊约饭);
+    expect(await run('show', 'event', ids.本群开黑)).toContain('本群开黑的经过');
+    expect(await run('show', 'event', ids.私聊约饭)).toBe(`未找到 event: ${ids.私聊约饭}`);
+    const orphans = await run('orphans');
+    expect(orphans).toContain('本群孤立');
+    expect(orphans).toContain('onebot:u3');
+    expect(orphans).toContain('孤立游戏');
+    expect(orphans).not.toContain('私聊孤立');
+  });
+
+  it('全部（默认）：照常列全图', async () => {
+    const { run, ids } = await relationCommands({ [PRIV]: { recallScope: 'session' } });
+    expect(await run('show', 'person', 'onebot:u1')).toContain('私聊约饭');
+    expect(await run('show', 'event', ids.私聊约饭)).toContain('私聊约饭的经过');
+    const orphans = await run('orphans');
+    expect(orphans).toContain('本群孤立');
+    expect(orphans).toContain('私聊孤立');
+  });
+});
+
 describe('plugin-user-relation：关系图范围的登记', () => {
   /** 按这份配置装上关系图插件，返回它有没有向会话设置登记按会话字段 */
   async function registers(config: Record<string, unknown>): Promise<boolean> {
@@ -290,9 +370,10 @@ describe('plugin-user-relation：关系图范围的登记', () => {
     return registered.includes(userRelationPlugin.name);
   }
 
-  it('注入与工具都关着时不登记（这一项不影响任何东西）；开着其中一个时登记', async () => {
+  it('注入、工具与指令都关着时不登记（这一项不影响任何东西）；开着其中一个时登记', async () => {
     expect(await registers({ agentInjection: false, toolsEnabled: false })).toBe(false);
     expect(await registers({ agentInjection: true, toolsEnabled: false })).toBe(true);
     expect(await registers({ agentInjection: false, toolsEnabled: true })).toBe(true);
+    expect(await registers({ agentInjection: false, toolsEnabled: false, commandsEnabled: true })).toBe(true);
   });
 });

@@ -634,13 +634,17 @@ ASR / ollama 探测本地文件等。现有消费者包括 onebot 适配器、as
 - `plugin-memory-vector` 的 `crossSessionMode` 设成 `isolated`：被动召回与 `memory_recall` 只取本会话。向量召回不经取别的
   会话的规则，默认全部打通：不设的话，群里的一轮仍可能召回别人私聊里的原文；
 - `plugin-user-relation` 的 `recallScope` 设成 `session`：注入跳过跨会话事件、所属跨会话话题与全局热点，带会话作用域参数的
-  六个工具只能取本会话，解析节点、最短路径、联系分数、共同邻居与列边不经过别的会话的事件。
+  六个工具只能取本会话，解析节点、最短路径、联系分数、共同邻居与列边不经过别的会话的事件。公开指令 `/relation show` 与
+  `/relation orphans` 的回复不经模型、直接发进会话，同样只列本会话的事件：`/relation show event` 给了别的会话的事件 id 回
+  未找到。
 
 后装的记忆插件按它自己的作者默认取，已经设好的收窄管不到它。不覆盖：
 
 - `plugin-user-profile` 注入的发言者与其他参与者的事实：这些事实按人、跨会话，可能抽自私聊；
   保留它们是为了在群里认人。
 - `plugin-user-relation` 按节点 id 取单个节点的工具（如 `user_relation_node_score`）：给了别的会话的事件 id 时照样取到它。
+- `plugin-user-relation` 需 owner 授予的维护指令：`/relation event-duplicates` 列出的重复事件候选取自全图，带着别的会话的
+  事件标题。
 
 这几项默认不收窄，也挡不住群友直接在群里向模型套话：模型在别的会话里知道的事，只要进了上述不覆盖的来源，
 仍可能出现在回复里或被写进交给远端的任务正文。受理时不会自动回显任务正文，但远端代理会收到它。

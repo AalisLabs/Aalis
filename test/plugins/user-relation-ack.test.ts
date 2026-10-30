@@ -113,7 +113,14 @@ function world({
     getLastConsolidateInfo: () => lastConsolidations.shift(),
   } as unknown as RelationService;
   registerRelationCommands(
-    { commands, platform: ref([{ instance: onebot, contextId: 'onebot:a' }]), llm: ref(), i18n, logger },
+    {
+      commands,
+      platform: ref([{ instance: onebot, contextId: 'onebot:a' }]),
+      llm: ref(),
+      i18n,
+      logger,
+      sessionOnly: () => false,
+    },
     service,
     {
       consolidateLLM: { modelRef: { provider: 'zz', model: 'zz-model' }, disableThinking: true },
