@@ -992,7 +992,8 @@ const INSTALL_FAILURES: Array<{
     kind: 'platform',
     match: /\bEBADPLATFORM\b/,
     explain: stderr => {
-      const pkg = /Unsupported platform for (\S+?)@\d/.exec(stderr)?.[1] ?? t('someDependency');
+      const pkg = /Unsupported platform for (\S+?)@\d/.exec(stderr)?.[1];
+      if (!pkg) return [t('platformReasonUnknown'), t('platformFixUnknown')];
       return [t('platformReason', { pkg }), t('platformFix', { pkg })];
     },
   },
@@ -1010,9 +1011,8 @@ const INSTALL_FAILURES: Array<{
     kind: 'native',
     match: /gyp ERR!|node-gyp|prebuild-install/,
     explain: stderr => {
-      const pkg =
-        /^npm (?:error|ERR!) path \S*node_modules[\\/]((?:@[^\\/\s]+[\\/])?[^\\/\s]+)\s*$/m.exec(stderr)?.[1] ??
-        t('someDependency');
+      const pkg = /^npm (?:error|ERR!) path \S*node_modules[\\/]((?:@[^\\/\s]+[\\/])?[^\\/\s]+)\s*$/m.exec(stderr)?.[1];
+      if (!pkg) return [t('nativeReasonUnknown'), t('nativeTools'), t('nativeReplaceUnknown')];
       return [t('nativeReason', { pkg }), t('nativeTools'), t('nativeReplace', { pkg })];
     },
   },

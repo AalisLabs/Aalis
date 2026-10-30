@@ -101,7 +101,6 @@ export default defineLocale<Source>()({
     'More plugins: search for and install them in the WebUI plugin market after starting; or npm install @aalis/plugin-<name>, then restart the instance or use Rescan plugin folders in the plugin area.',
   morePlugins: 'More plugins: npm install @aalis/plugin-<name>; they load after you restart the instance.',
   installFailed: 'npm install failed: {reason}',
-  someDependency: 'some dependency',
   diskReason: 'Not enough disk space (ENOSPC).',
   diskFix: '  Free up some space and install again.',
   permissionReason: 'No write permission (EACCES).',
@@ -112,6 +111,9 @@ export default defineLocale<Source>()({
   platformReason:
     'The dependency {pkg} does not support the operating system or CPU architecture of this machine (EBADPLATFORM).',
   platformFix: '  Generate again with --advanced and replace the plugin that uses it (npm ls {pkg} shows which).',
+  platformReasonUnknown:
+    'A dependency does not support the operating system or CPU architecture of this machine (EBADPLATFORM).',
+  platformFixUnknown: '  Generate again with --advanced and replace the plugin that uses it.',
   peerReason: 'npm cannot resolve the dependency versions (ERESOLVE).',
   peerFix:
     '  This should not happen in a newly generated project: please attach the log above to an issue at https://github.com/AalisLabs/Aalis/issues',
@@ -124,6 +126,8 @@ export default defineLocale<Source>()({
   nativeTools:
     '  Install build tools and install again: on macOS run xcode-select --install; on Linux install build-essential and python3; on Windows install the "Desktop development with C++" workload of Visual Studio.',
   nativeReplace: '  Or generate again with --advanced and replace the plugin that uses it (npm ls {pkg} shows which).',
+  nativeReasonUnknown: 'Building a native module failed: this machine lacks C/C++ build tools.',
+  nativeReplaceUnknown: '  Or generate again with --advanced and replace the plugin that uses it.',
   missingReason: 'The registry does not have this package or version ({code}).',
   missingFix:
     '  Check the package name and version; on a mirror registry a version just published may not be synced yet, so retry later or switch back to the official registry for now: npm install --registry=https://registry.npmjs.org.',

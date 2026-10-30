@@ -574,6 +574,10 @@ describe('npm 失败的回执：写认出的原因与修法，整段输出进日
       '依赖 @lancedb/lancedb-darwin-x64 不支持这台机器的系统或 CPU 架构（EBADPLATFORM），这个插件在这里装不了',
     ],
     [
+      'npm error code EBADPLATFORM\nnpm error notsup Unsupported platform',
+      '有一个依赖不支持这台机器的系统或 CPU 架构（EBADPLATFORM），这个插件在这里装不了',
+    ],
+    [
       'npm error code ERESOLVE\nnpm error peer react@"^19.0.0" from react-dom@19.0.0',
       'peer 依赖冲突（市场安装不沿用 .npmrc 里的 legacy-peer-deps）：code ERESOLVE；peer react@"^19.0.0" from react-dom@19.0.0',
     ],
@@ -584,6 +588,10 @@ describe('npm 失败的回执：写认出的原因与修法，整段输出进日
     [
       'npm error path /abs/node_modules/zz-native-addon\nnpm error command failed\nnpm error gyp ERR! stack Error: not found: make',
       '原生模块 zz-native-addon 编译失败：本机缺 C/C++ 编译工具。macOS 执行 xcode-select --install；Linux 装 build-essential 与 python3；Windows 装 Visual Studio 的「使用 C++ 的桌面开发」，装好后重试',
+    ],
+    [
+      'npm error command failed\nnpm error gyp ERR! stack Error: not found: make',
+      '有一个原生模块编译失败：本机缺 C/C++ 编译工具。macOS 执行 xcode-select --install；Linux 装 build-essential 与 python3；Windows 装 Visual Studio 的「使用 C++ 的桌面开发」，装好后重试',
     ],
     [
       'npm error code E404\nnpm error 404 Not Found - GET https://registry.npmjs.org/@scope%2fnope - Not found',

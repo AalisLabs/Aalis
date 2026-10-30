@@ -25,7 +25,7 @@ const SOURCE = {
   llmNone:
     '未找到任何具备 chat 能力的 LLM —— 请确认已安装并启用至少一个 LLM 提供者插件（如 @aalis/plugin-llm-deepseek）。',
   llmNotFound: '配置指向的模型不存在：{wanted}。当前可用：{models, list}{more}。',
-  llmMore: '等 {count, number} 个（用 /model 查看全部）',
+  llmMore: ' 等 {count, number} 个（用 /model 查看全部）',
   llmUnresolved:
     'LLM 解析失败：能力过滤后有 {count, number} 个可用 entry，但解析时一个都没取到（服务可能正在装卸中，稍后重试）。',
   partHistory: '历史消息',

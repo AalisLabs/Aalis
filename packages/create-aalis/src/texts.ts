@@ -90,7 +90,6 @@ const SOURCE = {
     '更多插件：启动后在 WebUI 的插件市场搜索安装；或 npm install @aalis/plugin-<名>，装好后重启实例或在插件区点「重新扫描」。',
   morePlugins: '更多插件：npm install @aalis/plugin-<名>，装好后重启实例才会加载。',
   installFailed: 'npm install 失败：{reason}',
-  someDependency: '某个依赖',
   diskReason: '磁盘空间不够（ENOSPC）。',
   diskFix: '  腾出空间后再装。',
   permissionReason: '没有写入权限（EACCES）。',
@@ -99,6 +98,8 @@ const SOURCE = {
     '  例如 sudo chown -R "$(whoami)" <目录>；报的是全局目录时，用 nvm 装的 Node，或 npm config set prefix ~/.npm-global。',
   platformReason: '依赖 {pkg} 不支持这台机器的系统或 CPU 架构（EBADPLATFORM）。',
   platformFix: '  加 --advanced 重新生成，换掉用到它的插件（npm ls {pkg} 查是哪个）。',
+  platformReasonUnknown: '有一个依赖不支持这台机器的系统或 CPU 架构（EBADPLATFORM）。',
+  platformFixUnknown: '  加 --advanced 重新生成，换掉用到它的插件。',
   peerReason: 'npm 解不开依赖版本（ERESOLVE）。',
   peerFix: '  新生成的项目里不该出现：请把上面的日志附进问题报告 https://github.com/AalisLabs/Aalis/issues',
   browserReason: '下载浏览器失败：用到浏览器的插件装的时候要下载 Chrome。',
@@ -110,6 +111,8 @@ const SOURCE = {
   nativeTools:
     '  装上编译工具后重装：macOS 执行 xcode-select --install；Linux 装 build-essential 与 python3；Windows 装 Visual Studio 的「使用 C++ 的桌面开发」。',
   nativeReplace: '  或加 --advanced 重新生成，换掉用到它的插件（npm ls {pkg} 查是哪个）。',
+  nativeReasonUnknown: '有一个原生模块编译失败：本机缺 C/C++ 编译工具。',
+  nativeReplaceUnknown: '  或加 --advanced 重新生成，换掉用到它的插件。',
   missingReason: '源上没有这个包或这个版本（{code}）。',
   missingFix:
     '  核对包名与版本；用的是镜像源时，刚发布的版本可能还没同步，稍后重试或临时换回官方源：npm install --registry=https://registry.npmjs.org。',

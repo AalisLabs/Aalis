@@ -235,7 +235,7 @@ describe('describeLLMFailure — 让 LLM 解析失败可诊断', () => {
     const many = Array.from({ length: 40 }, (_, i) => `@aalis/plugin-llm-ollama/model-${i}`);
     const s = explain(many, { provider: 'p', model: 'm' });
     expect(s.length, `实测未截断时 40 个模型拼出 1874 字符，当前 ${s.length}`).toBeLessThan(300);
-    expect(s).toContain('等 40 个');
+    expect(s).toContain('model-4 等 40 个（用 /model 查看全部）');
   });
 
   it('ref 只有一半（缺 model）时按未配置处理', () => {

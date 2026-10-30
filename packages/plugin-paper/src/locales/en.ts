@@ -163,6 +163,7 @@ export default defineLocale<Source>()({
   paperMissing:
     'The paper “{name}” set for this room does not exist (the paper plugin config has no such name under papers)',
   roomPaperLabel: 'Room paper {id}',
+  namedPaperLabel: 'Paper {name}',
   profilePlatform: '{layer} “{platform}”',
   profilePlatformType: '{layer} “{platform} · {type}”',
   allRooms: 'all rooms under {layer}',
@@ -197,7 +198,7 @@ export default defineLocale<Source>()({
   doctorLedgerDown: '{failure}; no remote tasks will start',
   doctorCollision:
     'Papers {papers, list} use providers under the same remote account (agents on one account can read each other’s conversations); none of them will start',
-  doctorHalted: 'Paper {paper} is halted ({detail}); waiting for the owner to resume it in the WebUI',
+  doctorHalted: '{paper} is halted ({detail}); waiting for the owner to resume it in the WebUI',
   doctorUnknownAgent:
     'The account of remote agent “{type}” has an untracked agent {agent}; papers using it are halted until the owner verifies it in the WebUI and marks it as read',
   doctorAccountUnknown:
@@ -275,7 +276,7 @@ export default defineLocale<Source>()({
   storageFull:
     'The paper directory exceeded its total size limit of {bytes} bytes; the remaining outputs of task {id} were rejected',
   costMissing:
-    'The cost of run {run} could not be obtained; the reserve is kept as provisional spending. Resume in the WebUI after verifying',
+    'The cost of run {run} could not be obtained; the reserve is counted as spent for now; verify the cost before resuming',
   selfWake:
     'Runs not in the ledger appeared on agent {name} ({agent}): {runs, list}; handled as a self-wake: the agent is cancelled and deleted, and the next new agent starts without the old project bundle',
   waitedTooLong: 'waited past the limit',

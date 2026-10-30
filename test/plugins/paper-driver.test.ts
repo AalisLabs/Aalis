@@ -363,6 +363,9 @@ describe('费用', () => {
     expect(hub.task(t1).costCents).toBeUndefined();
     const ledger = hub.store.data;
     expect(ledger.papers[PAPER_A_ID].halted?.reason).toBe('cost-missing');
+    expect(toSource(ledger.papers[PAPER_A_ID].halted?.detail)).toBe(
+      `轮次 ${runId} 的费用取不到，预留额度暂记为花费，恢复前先核实费用`,
+    );
     expect(ledger.alerts).toContainEqual(expect.objectContaining({ kind: 'cost-missing' }));
     expect(ledger.reserves[t1], '预留按临时花费保留').toBeDefined();
     expect(ledger.runs[runId].cost.state).toBe('missing');

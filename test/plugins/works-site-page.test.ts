@@ -332,8 +332,8 @@ describe('作品站页', () => {
   });
 
   it.each([
-    ['en', 'The works site state file could not be read', 'Works site: The works site state file could not be read'],
-    ['zh-CN', '作品站状态文件读取失败', '作品站：作品站状态文件读取失败'],
+    ['en', 'The state file could not be read', 'Works site: The state file could not be read'],
+    ['zh-CN', '状态文件读取失败', '作品站：状态文件读取失败'],
   ])('%s：状态文件读不出时，概况的健康一栏、「出错」提示与动作的报错', async (language, reason, title) => {
     const store = new WorksStore(ownView(memoryStorage(new Map([[STATE_URI, '{broken']])), 'works-site'));
     await store.load();

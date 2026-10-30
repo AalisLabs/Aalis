@@ -15,14 +15,14 @@ const SOURCE = {
   npmPermission:
     '没有写入权限（EACCES）：把项目目录与 npm 的缓存目录（npm config get cache 查看）改回运行 Aalis 的用户所有后重试，不要用 sudo',
   npmPlatform: '依赖 {pkg} 不支持这台机器的系统或 CPU 架构（EBADPLATFORM），这个插件在这里装不了',
-  npmPlatformUnknown: '依赖 某个依赖 不支持这台机器的系统或 CPU 架构（EBADPLATFORM），这个插件在这里装不了',
+  npmPlatformUnknown: '有一个依赖不支持这台机器的系统或 CPU 架构（EBADPLATFORM），这个插件在这里装不了',
   npmPeer: 'peer 依赖冲突（市场安装不沿用 .npmrc 里的 legacy-peer-deps）：{conflicts}',
   npmBrowser:
     '下载浏览器失败：这个插件装的时候要下载 Chrome。给 Aalis 的进程设好镜像地址（环境变量 PUPPETEER_CHROME_DOWNLOAD_BASE_URL）后重启再装',
   npmNative:
     '原生模块 {pkg} 编译失败：本机缺 C/C++ 编译工具。macOS 执行 xcode-select --install；Linux 装 build-essential 与 python3；Windows 装 Visual Studio 的「使用 C++ 的桌面开发」，装好后重试',
   npmNativeUnknown:
-    '原生模块 某个依赖 编译失败：本机缺 C/C++ 编译工具。macOS 执行 xcode-select --install；Linux 装 build-essential 与 python3；Windows 装 Visual Studio 的「使用 C++ 的桌面开发」，装好后重试',
+    '有一个原生模块编译失败：本机缺 C/C++ 编译工具。macOS 执行 xcode-select --install；Linux 装 build-essential 与 python3；Windows 装 Visual Studio 的「使用 C++ 的桌面开发」，装好后重试',
   npmMissing: '源上没有这个包或这个版本（{code}）：核对包名与版本；用的是镜像源时它可能还没同步，稍后重试',
   npmNetwork:
     '连不上 npm 源（{code}）：检查网络与代理后重试；默认源不通时在终端执行 npm config set registry <源地址> 换一个源',

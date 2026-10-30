@@ -140,6 +140,7 @@ const SOURCE = {
   paperBroken: '白纸「{name}」的配置有误（{problem}），改对之前不能用',
   paperMissing: '本房间写的白纸「{name}」不存在（白纸插件配置的 papers 里没有这个名字）',
   roomPaperLabel: '房间白纸 {id}',
+  namedPaperLabel: '白纸 {name}',
   profilePlatform: '{layer}「{platform}」',
   profilePlatformType: '{layer}「{platform} · {type}」',
   allRooms: '{layer}的全部房间',
@@ -169,7 +170,7 @@ const SOURCE = {
   doctorOk: '白纸配置与账本正常',
   doctorLedgerDown: '{failure}，远端任务一律不开',
   doctorCollision: '白纸 {papers, list} 用的提供者在同一远端账号下（同账号的代理能互读对话），这几块都不开',
-  doctorHalted: '白纸 {paper} 已停开（{detail}），等 owner 在 WebUI 恢复',
+  doctorHalted: '{paper} 已停开（{detail}），等 owner 在 WebUI 恢复',
   doctorUnknownAgent:
     '远端代理「{type}」的账号下有账本外的代理 {agent}，用它的白纸停开，等 owner 在 WebUI 核实并标为已读',
   doctorAccountUnknown:
@@ -235,7 +236,7 @@ const SOURCE = {
   providerUnavailable: '远端代理「{type}」不可用（{category}）',
   timeoutCancelFailed: '白纸任务 {id} 超时的轮次 {run} 取消不了',
   storageFull: '白纸目录超过总占用上限 {bytes} 字节，任务 {id} 余下的成品已拒收',
-  costMissing: '轮次 {run} 的费用取不到，预留按临时花费保留；在 WebUI 核实后恢复',
+  costMissing: '轮次 {run} 的费用取不到，预留额度暂记为花费，恢复前先核实费用',
   selfWake:
     '代理 {name}（{agent}）上出现账本外的轮次 {runs, list}，按自唤醒处理：取消并删除代理，下一次新建代理不带旧工程包',
   waitedTooLong: '等待超过上限',

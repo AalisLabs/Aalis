@@ -273,6 +273,30 @@ describe('npm install 失败的修法', () => {
     expect(text).toContain('https://aalis.acenyan.com/guide/troubleshooting');
   });
 
+  it.each([
+    [
+      'npm error code EBADPLATFORM\nnpm error notsup Unsupported platform',
+      ['有一个依赖不支持这台机器的系统或 CPU 架构（EBADPLATFORM）。', '  加 --advanced 重新生成，换掉用到它的插件。'],
+      [
+        'A dependency does not support the operating system or CPU architecture of this machine (EBADPLATFORM).',
+        '  Generate again with --advanced and replace the plugin that uses it.',
+      ],
+    ],
+    [
+      'npm error code 1\nnpm error command failed\nnpm error gyp ERR! find Python',
+      ['有一个原生模块编译失败：本机缺 C/C++ 编译工具。', '  或加 --advanced 重新生成，换掉用到它的插件。'],
+      [
+        'Building a native module failed: this machine lacks C/C++ build tools.',
+        '  Or generate again with --advanced and replace the plugin that uses it.',
+      ],
+    ],
+  ])('认不出是哪个包：说「有一个依赖」「有一个原生模块」，不给跑不通的 npm ls %#', (stderr, zh, en) => {
+    const text = describeInstallFailure(`${stderr}\n${logLine}\n`, 'my-bot');
+    for (const line of zh) expect(toSource(text)).toContain(line);
+    for (const line of en) expect(resolveText(text, ['en'])).toContain(line);
+    expect(toSource(text)).not.toContain('npm ls');
+  });
+
   it('修法按显示语言：英文整段', () => {
     const output = `npm error code ENOSPC\nnpm error nospc ENOSPC: no space left on device, write\n${logLine}\n`;
     expect(resolveText(describeInstallFailure(output, 'my-bot'), ['en'])).toBe(

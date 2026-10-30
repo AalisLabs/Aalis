@@ -138,10 +138,10 @@ describe('/authority 与 /level 的回复', () => {
       'zz-chat:zz-owner (owner, level ∞, all permissions)',
     ],
     'zh-CN': [
-      '已设 zz-chat:zz-user 等级：1',
+      '已把 zz-chat:zz-user 的等级设为 1',
       '等级必须是整数',
       '您的等级：1',
-      'zz-chat:zz-other 等级：0',
+      'zz-chat:zz-other 的等级：0',
       '您（owner，等级 ∞，拥有全部权限）',
       'zz-chat:zz-owner（owner，等级 ∞，拥有全部权限）',
     ],
