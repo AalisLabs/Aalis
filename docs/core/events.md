@@ -52,7 +52,7 @@ core 自持的只有下面八个基础设施事件（源码 `packages/core/src/t
 
 | 事件 | 参数 | 时机 |
 |---|---|---|
-| `service:changed` | `name` | 该服务的提供者或选中的那一家可能变了，请重读（`list` / `get` / `all`）。`provide`、退订、激活拆卸、激活转入后台与完成后上线、偏好切换（`services.use.prefer` / `unprefer`）都发；可能变化时就发，不保证恰好一次，也不说明变了什么。`follow` 借此按选中的变化重挂 |
+| `service:changed` | `name` | 该服务的提供者或选中的那一家可能变了，请重读（`list` / `get` / `all`）。`provide`、退订、激活拆卸、激活转入后台与完成后上线、偏好切换（`services.use.prefer` / `unprefer`）都发；可能变化时就发，不保证恰好一次，也不说明变了什么。core 自己的跟随（`follow`、`registrar`）与重算不靠它，由变更那次调用同步驱动 |
 | `plugin:loaded` | `instanceId` | 插件实例已激活；同一轮 recompute 可能紧接着激活下一个插件 |
 | `plugin:unloaded` | `instanceId` | 插件实例已拆卸；只发给发过 `plugin:loaded` 的激活：从未激活完成的（激活失败的回滚、仍在初始化时被拆）不发，关机拆卸也不发 |
 | `plugins:changed` | — | 一轮 recompute 收敛，插件状态集合可能已变；关机轮不发 |

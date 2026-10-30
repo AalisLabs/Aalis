@@ -717,7 +717,9 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 2613 → 2640：国际化（owner 10-16「core 这么改不会导致臃肿或者职责不清，则可以这么做」，core 线审定施工说明第 10 节）——
 // 插件显示名与服务 label 放宽为 unknown；插件失败只存抛出的原值 failure，error 投影时现算（errorOf）；core 自己的四种失败
 // 挂 code 与数据（types/failure.ts 的 CoreFailureCode 与 coreFailure，ServiceUnavailableError 加 code、service、provider）。
-const CORE_CODE_LINE_CEILING = 2640;
+// 2640 → 2653：idle() 缺口（owner 10-30「idle 可以在 0.21 的时候顺带更新一下」）——服务变更的单一出口 serviceChanged：
+// core 自己的跟随与重算经内部同步通道 watchServices 收敛，再发公开的 service:changed；运行时改由 ActivationHost 组装。
+const CORE_CODE_LINE_CEILING = 2653;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

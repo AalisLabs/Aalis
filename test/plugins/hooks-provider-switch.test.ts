@@ -15,12 +15,10 @@ import { registerHubs } from '../fixtures/hubs.js';
 //   - 没有提供者时 run 以被拒的 Promise 传出，不执行默认动作；
 //   - 提供者 bounce：依赖方随之重启，链按重新激活的次序重建，与冷启动同序；
 //   - 非独占下第二个提供者以更高优先级上线（热换）：消费者不重启，账本整体重挂。每条登记自带登记序，
-//     新提供者按它排链，链序与换人前相同。
+//     新提供者按它排链，链序与换人前相同。core 在换人那次调用里同步驱动各账本重挂，provide 返回时新表已完整。
 //   - 已知现状：换人时正在执行的链会跳过已移走的 handler，截停者被跳过时默认动作照样执行。旧登记表分不清
 //     「插件关了」与「搬去了新提供者」，两种修法各有代价；触发需运行中上线第二个钩子提供者，首方没有这种部署。
-//   - 已知现状：胜者在容器里同步换人，各消费者的账本经 service:changed 逐个重挂，跨若干微任务。这段窗口里
-//     新发起的 run 落在还不完整的新表上，截停者可能缺席。根治要 core 在通知前同步驱动重挂，另行拍板。
-//     以上两条在这里显式钉住，改动时必须是有意识的。
+//     上一条在这里显式钉住，改动时必须是有意识的。
 //   - 登记序由进程内全部 api-hooks 副本共用的计数器分配：契约包装了两份时，链序仍是登记序。
 // ════════════════════════════════════════════════════════════
 
@@ -284,7 +282,7 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
     expect(host.contributions.use.collect(POINT).map(h => h.key)).toEqual(before);
   });
 
-  it('已知现状：换人到各账本重挂完成前新发起的链落在不完整的新表上，截停者可能缺席；重挂完成后恢复截停', async () => {
+  it('换人那次 provide 返回时各账本已重挂到新表：同一拍发起的链照样被截停', async () => {
     const app = world();
     await registerHubs(app);
     await app.pluginAll(
@@ -307,16 +305,12 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
 
     let defaulted = false;
     host.provide.use(hooks, new HookTable(), { priority: 10, entryId: 'root/alt-hooks' });
-    // 与 provide 同一拍发起：新表上还没有 guard 的登记
-    const inWindow = await host.hooks.use.run(H, {} as never, async () => {
+    // 与 provide 同一拍发起：guard 的登记已在新表上
+    const sameTick = await host.hooks.use.run(H, {} as never, async () => {
       defaulted = true;
     });
-    expect(inWindow).toBe(true);
-    expect(defaulted).toBe(true);
-
-    await app.plugins.idle();
-    await new Promise(r => setTimeout(r, 0));
-    expect(await host.hooks.use.run(H, {} as never), '各账本重挂完成后恢复截停').toBe(false);
+    expect(sameTick, '同一拍发起的链被截停').toBe(false);
+    expect(defaulted, '不执行默认动作').toBe(false);
   });
 });
 

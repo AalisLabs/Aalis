@@ -50,7 +50,7 @@ export const inbox = defineService<Inbox, BoundInbox>('inbox', port => {
 
 消费方每次激活装配 `uses` 时，core 为每项声明造一个选择层，并对每个目标各调一次描述符的 `bind`，返回值就是该目标的业务句柄：`use` 的目标是本插件选中的那一家（随偏好与上下线换人），`of(id)` 的目标按 id 固定那一家，`list()` 条目的 `use` 与 `follow` 交给 `attach` 的句柄的目标钉在那一条登记上（首次取用时各调一次 `bind`）。钉住的目标退役时（`follow` 这次挂载的清理落定；`list()` 的条目不再对外之后的下一次 `list()`），它的 `bind` 经资源口登记的跟随、登记与 `track` 随之撤回，不留到激活关闭。bind 可以包装业务方法（如 `llm` 给请求盖上调用方 id：`chat: req => port.provider.chat({ ...req, caller: port.id })`）、加登记方法，改不了选谁。传入的 `BindingPort` 是 binder 接入这次激活生命周期的全部入口。经它登记的东西随这次激活撤回，异步的撤回由关闭等到、拒绝被接住；不经它持有的东西（模块级缓存、交给别处的闭包）core 看不见，也不会替它清理。
 
-- `follow(attach)`：随提供者换人的有状态资源。换人时先跑上次返回的清理（异步的等它落定）再挂新实例，下线与关闭时清理。
+- `follow(attach)`：随提供者换人的有状态资源。换人时先跑上次返回的清理（异步的等它落定）再挂新实例，下线与关闭时清理。提供者变更在那次调用里同步驱动它（`registrar` 同），先于 `service:changed` 的监听器。
 - `registrar({ key, register })`：按键登记到提供者上的条目。同键后调用者胜出（替换先前那条），提供者换人时整体重挂，关闭时与原语同一拍撤回。
 - `track(off, label?)`：binder 自己持有、不属于任何提供者的资源，例如它自建的定时器或对外部来源的订阅。`off` 在这次激活的撤回段执行；返回一次性的退订，手动退订启动的异步清理同样由关闭等到。
 - `id` / `identity` / `logger`：这次激活的逻辑名、资源身份（见下文）与日志器。
@@ -103,6 +103,7 @@ interface ServiceView<T = unknown> {
 - 关停边对本插件已声明服务（required 与 optional）在编排那一刻对外的全部提供者建，不只是选中的那一家。
 - `services.get` / `services.all` 给的是原始实例：存起来不会跟着换人。它们不增加声明、不参与激活闸、不自动跟随，也不产生关停边。关停期仍可能拿空；需要声明等待与跟随的，写进 `uses` 并使用 `follow`。
 - 顶层 required 缺席会 `pending`，恢复重新激活；选中的那一家换人不一律重启消费者。
+- 消费方的跟随与登记在提供者 `provide` 那次调用里就到达：提供者先完成初始化再 `provide`。
 
 ## `services`：动态查询与偏好
 

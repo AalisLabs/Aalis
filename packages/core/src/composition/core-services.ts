@@ -170,11 +170,11 @@ export function coreProviders(
     preferred: (key, scope) => container.getPreferred(keyName(key), scope?.for),
     prefer: (key, contextId, scope) => {
       container.prefer(keyName(key), contextId, scope?.for);
-      runtime.notify('service:changed', keyName(key));
+      runtime.serviceChanged(keyName(key));
     },
     unprefer: (key, scope) => {
       container.unprefer(keyName(key), scope?.for);
-      runtime.notify('service:changed', keyName(key));
+      runtime.serviceChanged(keyName(key));
     },
   };
   const [, provideFor] = entry<Provide>(provide, c => (descriptor, implementation, options) => {
@@ -194,12 +194,12 @@ export function coreProviders(
           `包名不同是撞名（服务名应带包名前缀），包名相同用 npm ls <包名> 查重复安装、去重后只留一份。`,
       );
     const off = container.register(name, implementation, entryId, c.owner, { ...options, descriptor });
-    runtime.notify('service:changed', name);
+    runtime.serviceChanged(name);
     // 一个激活登记多个条目（每个模型、每个存储根各一条）时带上条目 id，否则同名的登记行无从区分
     c.logger.debug(entryId === c.id ? `服务已注册: ${name}` : `服务已注册: ${name}（${entryId}）`);
     return () => {
       off();
-      runtime.notify('service:changed', name);
+      runtime.serviceChanged(name);
     };
   });
   return {

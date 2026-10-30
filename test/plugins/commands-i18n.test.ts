@@ -156,8 +156,7 @@ async function setup({
   host.commands.use.command('zz-hello', t('helloDescription')).action(() => t('hello', { name: 'zz' }));
   host.commands.use.command('zz-long', t('longDescription')).action(() => 'ok');
   host.commands.use.command('zz-count <n:number>', '计数').action((_argv, n) => String(n));
-  // 内置指令随 plugin-commands 激活登记，等它们出现
-  await vi.waitFor(() => expect(host.commands.use.get('clear')).toBeDefined());
+  expect(host.commands.use.get('clear'), '内置指令随 plugin-commands 激活登记，idle() 之后已在').toBeDefined();
 
   const sent: OutgoingMessage[] = [];
   host.events.use.on('outbound:message', message => {

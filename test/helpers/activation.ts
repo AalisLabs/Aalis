@@ -10,7 +10,7 @@ import {
 } from '../../packages/core/src/index.js';
 import { quietLogger } from '../../packages/core/src/infrastructure/logger.js';
 import type { Activation } from '../../packages/core/src/orchestration/activation.js';
-import { ActivationHost, notify } from '../../packages/core/src/orchestration/activation-host.js';
+import { ActivationHost } from '../../packages/core/src/orchestration/activation-host.js';
 import { EventBus } from '../../packages/core/src/primitives/events.js';
 import { ServiceContainer } from '../../packages/core/src/primitives/services.js';
 
@@ -27,16 +27,7 @@ export function bindActivationFixture(host: ActivationHost, activation: Activati
 export function createActivationFixture(options: { id?: string; logger?: Logger } = {}) {
   // 与 App 构造同一包法：注入的 logger 出错不传进 core
   const log = quietLogger(options.logger ?? new DefaultLogger('test', 'error'));
-  const bus = new EventBus();
-  const host = new ActivationHost(
-    {
-      events: bus,
-      services: new ServiceContainer(),
-      devMode: false,
-      notify: notify({ events: bus }, log),
-    },
-    log,
-  );
+  const host = new ActivationHost({ events: new EventBus(), services: new ServiceContainer(), devMode: false }, log);
   const activation = options.id && options.id !== 'root' ? host.create(options.id) : host.root;
   return bindActivationFixture(host, activation);
 }

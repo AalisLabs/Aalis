@@ -1130,12 +1130,11 @@ describe('审批面的登记', () => {
     });
 
     await app.plugins.enable(sessionServerPlugin.name);
-    // 登记跟着提供者重挂（通知异步送达）：接上之前的应答仍回 unavailable，接上之后不认识的 id 回 not-found
-    await vi.waitFor(() =>
-      expect(attendance.respond({ approvalId: 'x', decision: 'approve', contentHash: 'h' })).toMatchObject({
-        refusal: 'not-found',
-      }),
-    );
+    await app.plugins.idle();
+    // 登记跟着提供者重挂，idle() 放行时已接上：不认识的 id 回 not-found
+    expect(attendance.respond({ approvalId: 'x', decision: 'approve', contentHash: 'h' })).toMatchObject({
+      refusal: 'not-found',
+    });
     attendance.presence(true);
     const r = request(mine);
     await vi.waitFor(() => expect(got).toHaveLength(1));

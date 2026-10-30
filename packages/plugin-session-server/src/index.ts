@@ -204,7 +204,7 @@ async function run(caps: Caps): Promise<void> {
     caps.i18n,
     isOwner,
   );
-  // 功能位所看的服务上线或下线（通知在变化之后异步送达）：与上次推的不同才推给每条连接
+  // 功能位所看的服务上线或下线（通知在变化之后送达）：与上次推的不同才推给每条连接
   let features = currentFeatures();
   const featureServices = new Set([agent.name, checkpoint.name, compression.name, sessionSettings.name]);
   const refreshFeatures = (service: string) => {

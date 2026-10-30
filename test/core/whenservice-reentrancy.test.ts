@@ -16,8 +16,6 @@ interface Provider {
 }
 
 const svc = defineService<Provider>('__t:ws-re');
-/** 外部改偏好的 service:changed 在下一拍送到跟随者 */
-const tick = () => new Promise<void>(resolve => setTimeout(resolve, 0));
 
 const apps: App[] = [];
 afterEach(async () => {
@@ -125,7 +123,6 @@ describe('follow 重入时的资源归属', () => {
     });
 
     host.services.use.prefer(svc, 'root/b');
-    await tick();
     expect(trace).toEqual(['attach:a:1', 'cleanup:a:1', `attach:${target}:2`]);
     expect([...live]).toEqual([`${target}:2`]);
     off();
@@ -170,7 +167,6 @@ describe('follow 重入时的资源归属', () => {
     });
 
     host.services.use.prefer(svc, 'root/b');
-    await tick();
     expect(trace).toEqual(['attach:a:1', 'cleanup:a:1', 'attach:b:2', 'cleanup:b:2']);
     expect([...live]).toEqual([]);
     expect(released).toEqual(['a:1', 'b:2']);
@@ -195,7 +191,6 @@ describe('follow 重入时的资源归属', () => {
     });
 
     host.services.use.prefer(svc, 'root/b');
-    await tick();
     expect(trace).toEqual(['attach:a:1', 'cleanup:a:1']);
     expect(released).toEqual(['a:1']);
     expect([...live]).toEqual([]);
@@ -217,7 +212,6 @@ describe('follow 重入时的资源归属', () => {
     expect([...live]).toEqual(['b:1']);
     expect(warnings.filter(message => message.includes('跟随回调抛错'))).toHaveLength(1);
     host.services.use.prefer(svc, 'root/c');
-    await tick();
     expect([...live]).toEqual(['c:2']);
     off();
     expect([...live]).toEqual([]);
@@ -240,7 +234,6 @@ describe('follow 重入时的资源归属', () => {
     });
 
     host.services.use.prefer(svc, 'root/b');
-    await tick();
     expect(trace).toEqual(['attach:a:1', 'cleanup:a:1', 'attach:c:2']);
     expect([...live]).toEqual(['c:2']);
     expect(warnings.filter(message => message.includes('撤回抛错'))).toHaveLength(1);

@@ -224,10 +224,10 @@ export default definePlugin({
         open: { page: 'doctor' },
       });
     });
-    provide.use(doctor, registry);
-
-    // 注册 builtin 检查项（与第三方插件走同一条注册路径，自然出现在 listChecks 里）
+    // 注册 builtin 检查项（与第三方插件走同一条注册路径，自然出现在 listChecks 里）。先于 provide：
+    // provide 那次调用里，先激活的插件经 optional(doctor) 攒下的检查项就补登记进来，内置项要排在它们前面
     registerBuiltinChecks(registry, plugins, services.use, hostConfig);
+    provide.use(doctor, registry);
 
     // 注册 /doctor 命令 —— chat 与 CLI 通用入口。受限（等级 2）：报告带存储根的宿主路径、
     // 插件报错原文（其中可能有内网地址与端口），不该让群里人人都能看到

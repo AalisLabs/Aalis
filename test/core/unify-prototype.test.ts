@@ -276,8 +276,7 @@ describe('动态依赖：提供者更换、偏好、required 丢失与恢复', (
     expect(state(app, 'early')).toBe('active');
     const instance = makeHub();
     host.provide.use(hub, instance);
-    await sleep(0); // 重挂随 service:changed 的广播到达，不与 provide 同栈
-    expect(instance.list()).toEqual(['queued']);
+    expect(instance.list(), '补登记在 provide 那次调用里完成').toEqual(['queued']);
   });
 });
 
@@ -341,7 +340,6 @@ describe('失败回滚', () => {
     flaky.failOnRegister = true;
     const second = makeHub('second');
     host.provide.use(hub, second, { priority: 9, entryId: 'root/second' });
-    await sleep(0);
     expect(first.list(), '旧提供者上的整批已撤').toEqual([]);
     expect(second.list()).toEqual(['a', 'b']);
     expect(warnings.some(w => w.includes('"flaky" 失败（保留待重试）'))).toBe(true);
@@ -349,7 +347,6 @@ describe('失败回滚', () => {
     flaky.failOnRegister = false;
     const third = makeHub('third');
     host.provide.use(hub, third, { priority: 99, entryId: 'root/third' });
-    await sleep(0);
     expect(second.list()).toEqual([]);
     expect(third.list()).toEqual(['a', 'b', 'flaky']);
     expect(state(app, 'batch'), '换人不重启消费者').toBe('active');

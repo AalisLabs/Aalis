@@ -13,7 +13,6 @@ import {
   retireBatch,
 } from './plugin-activation.js';
 import { topoSortByDeps } from './plugin-topology.js';
-import { events } from '../composition/core-services.js';
 import { isOptional, requiredNames, type Uses } from '../composition/descriptors.js';
 import { assertValidInstanceId, type PluginDefinition, validateDefinition } from '../composition/plugin-definition.js';
 import { cloneConfigObject } from '../infrastructure/config-values.js';
@@ -61,8 +60,8 @@ export class PluginManager implements PluginManagerService {
   #reloading = false;
   /**
    * 手动 dispose 段计数器：disable / unload / bounce 在「dispose 旧
-   * 激活 → 改 entry.state」这段不可分割的状态变更期间 +1。期间 dispose 触发的
-   * service:changed 反应式 recompute 会被**排队**（而非立即跑——那会看到
+   * 激活 → 改 entry.state」这段不可分割的状态变更期间 +1。期间 dispose 引起的
+   * 服务变更所触发的 recompute 会被**排队**（而非立即跑——那会看到
    * 半成品状态，比如把正在禁用的插件重新激活），由这些方法收尾的 recompute 统一消化。
    *
    * 用计数器而非布尔：dispose hook 内可能同步级联调用 disable/unload（级联
@@ -79,7 +78,7 @@ export class PluginManager implements PluginManagerService {
    */
   #queued = false;
   /**
-   * 全局关机标志。app.stop() 在 dispose 前置位，service:changed 触发的
+   * 全局关机标志。app.stop() 在 dispose 前置位，服务变更触发的
    * 反应式重算都会因此跳过——避免「正在关机还去 bounce
    * 一个永远不会被重新激活的插件」这种无意义噪声，也避免下游插件 dispose 中
    * 试图 register 命令 / 监听服务等动作触发误重入。
@@ -155,8 +154,9 @@ export class PluginManager implements PluginManagerService {
     };
 
     // 服务可能变了就路由到统一 recompute()。
-    // 单飞/挂起/关机的取舍都在 recompute 内部处理（在飞期间排队，关机后跳过）。
-    host.bind(host.root, { events }).events.use.on('service:changed', name => this.#kick(`service:changed:${name}`));
+    // 单飞/挂起/关机的取舍都在 recompute 内部处理（在飞期间排队，关机后跳过）。须是第一个服务观察者：重算的同步段
+    // 先把要退场的消费者标成关闭，它们的跟随随后跳过，交给撤回段统一收（拆卸路径上的下游由关闭计划先冻结）。
+    host.runtime.watchServices(name => this.#kick(`service:changed:${name}`));
   }
 
   /** 不等结果地发起一次重算（反应式触发、后台激活落定）；报错点名触发原因，不外泄成未处理拒绝 */
@@ -695,7 +695,7 @@ export class PluginManager implements PluginManagerService {
   #toBackground(entry: PluginRecord, activation: Activation): void {
     this.#background.add(activation);
     const runtime = this.#host.runtime;
-    for (const name of runtime.services.hold(activation.owner)) runtime.notify('service:changed', name);
+    for (const name of runtime.services.hold(activation.owner)) runtime.serviceChanged(name);
     this.#logger.warn(
       `插件 "${entry.instanceId}" 激活超过 ${this.#slowMs}ms 仍未完成，转入后台继续；它提供的服务在激活完成前不对依赖方开放`,
     );

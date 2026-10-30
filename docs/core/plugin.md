@@ -57,7 +57,7 @@ register(definition, config?, instanceId?, { disabled? })
   ├─ 从 uses 抽出 required / optional
   └─ recompute()（只登记了禁用条目时不重算）
         required 已满足 → 激活（ActivationHost.create → mount：装配能力并调用 apply → 校验 provides）
-        否则保持 pending，等待 service:changed
+        否则保持 pending，等待服务变更
 ```
 
 `app.pluginAll(items)` 是同一流程的批量形式：整批同步落账后只 recompute 一次，依赖方因此在同一次重算里排在它 required 服务的全部提供者之后激活。
@@ -143,7 +143,7 @@ PluginManager 只有一个状态变更入口：服务上下线、注册、启停
 
 ## 反应式监听
 
-- `service:changed` → `recompute()`
+- 服务变更 → `recompute()`（在变更那次调用里同步触发，不经公开的 `service:changed`）
 - flight 不再等的激活（转入后台，或被接手）落定 → `recompute()`
 
 单飞 / 挂起 / 关机的取舍都在 `recompute` 内部：在飞期间排队，关机后跳过。

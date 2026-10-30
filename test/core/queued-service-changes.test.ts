@@ -3,8 +3,6 @@ import {
   App,
   definePlugin,
   defineService,
-  type Events,
-  events,
   LogHub,
   lifecycle,
   optional,
@@ -26,7 +24,6 @@ describe('排队的服务下线变化', () => {
   let host: {
     provide: ServiceSelection<Provide>;
     services: ServiceSelection<Services>;
-    events: ServiceSelection<Events>;
   };
   let releases: Array<() => void>;
 
@@ -37,7 +34,7 @@ describe('排队的服务下线变化', () => {
       logLevel: 'error',
       logHub: new LogHub(),
     });
-    host = app.bind({ provide, services, events });
+    host = app.bind({ provide, services });
     await app.plugins.idle();
   });
 
@@ -160,7 +157,7 @@ describe('排队的服务下线变化', () => {
     expect(app.plugins.getPlugin('consumer')?.state).toBe('pending');
   });
 
-  it('合并多个下线服务与重复通知，只停用命中的 required 消费者一次', async () => {
+  it('合并多个下线服务与多次重算请求，只停用命中的 required 消费者一次', async () => {
     const removeA = host.provide.use(svcA, {});
     const removeB = host.provide.use(svcB, {});
     const both = await requiredBoth('both');
@@ -199,8 +196,6 @@ describe('排队的服务下线变化', () => {
 
     removeA();
     removeB();
-    await host.events.use.emit('service:changed', svcA.name);
-    await host.events.use.emit('service:changed', svcB.name);
     host.provide.use(svcNever, {});
     await (app.plugins as PluginManager).recompute();
     busy.release();

@@ -66,8 +66,7 @@ async function world(opts: { probes?: ReturnType<typeof probe>[]; noContribution
   await app.plugin(commandsPlugin, {});
   await app.plugins.idle();
   const registry = host.commands.use as unknown as CommandRegistry;
-  // 内置指令随 plugin-commands 激活登记，等它们出现
-  await vi.waitFor(() => expect(registry.get('clear')).toBeDefined());
+  expect(registry.get('clear'), '内置指令随 plugin-commands 激活登记，idle() 之后已在').toBeDefined();
   const guardCalls: string[] = [];
   registry.setExecutionGuard(async ctx => {
     guardCalls.push(ctx.name);
