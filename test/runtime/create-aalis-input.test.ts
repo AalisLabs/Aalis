@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseIndexSelection, positionalArgs, validateNpmName } from '../../packages/create-aalis/src/cli.js';
 import {
   parseYesNo,
+  positionalArgs as pluginPositionalArgs,
   renderIndexTs,
   validateNpmName as validatePluginName,
 } from '../../packages/create-aalis-plugin/src/cli.js';
@@ -75,7 +76,7 @@ describe('validateNpmName（create-aalis 项目名 = 生成 package.json name）
 });
 
 describe('create-aalis-plugin: validateNpmName 与 create-aalis 行为一致', () => {
-  it('同样规则（刻意双份零依赖实现，须同步）', () => {
+  it('同样规则（两个脚手架各留一份实现，须同步）', () => {
     for (const n of ['my-plugin', 'MyPlugin', 'my plugin', '@scope/p', '@bad scope/p', '']) {
       expect(validatePluginName(n).ok, n).toBe(validateNpmName(n).ok);
     }
@@ -121,8 +122,9 @@ describe('positionalArgs（flag 取值不当位置参数）', () => {
     expect(positionalArgs(['-y', 'my-bot', '--tier', 'minimal'])).toEqual(['my-bot']);
   });
 
-  it('`--lang en my-bot` 的位置参数只有 my-bot', () => {
+  it('`--lang en <名>` 的位置参数只有名字，两个脚手架结果相同', () => {
     expect(positionalArgs(['--lang', 'en', 'my-bot'])).toEqual(['my-bot']);
+    expect(pluginPositionalArgs(['--lang', 'en', 'zz-demo'])).toEqual(['zz-demo']);
   });
 
   it('`--tier=full` 写法不影响位置参数；纯 flag 时无位置参数', () => {
@@ -141,6 +143,7 @@ describe('renderIndexTs：生成的入口', () => {
   }) => ({
     packageName: 'aalis-plugin-demo',
     displayName: '演示',
+    sourceLanguage: 'zh-CN' as const,
     features,
   });
 
@@ -149,6 +152,7 @@ describe('renderIndexTs：生成的入口', () => {
     expect(bare).toContain('export default definePlugin({');
     expect(bare).toContain('uses: { logger },');
     expect(bare).toContain("import { definePlugin, logger } from '@aalis/core';");
+    expect(bare).toContain("import { t } from './texts.js';");
 
     const full = renderIndexTs(answers({ tool: true, command: true, webui: 'declarative', sessionSetting: false }));
     expect(full).toContain(
@@ -156,7 +160,7 @@ describe('renderIndexTs：生成的入口', () => {
     );
     // 页面在 apply 里登记（组件与数据源一次给出），不是静态导出
     expect(full).toContain('webui.use.definePage({');
-    expect(full).toContain(`data: () => [{ label: '提示', value: "这是 演示 插件的示例信息面板。" }],`);
+    expect(full).toContain("data: () => [{ label: t('tipLabel'), value: t('tipValue', { name: t('displayName') }) }],");
     expect(full).not.toMatch(/export const (name|actions|inject)\b/);
   });
 });

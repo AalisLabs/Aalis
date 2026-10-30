@@ -38,6 +38,10 @@ const ALLOWED = new Map([
     'packages/create-aalis/src/cli.ts resolvedOptions().locale',
     '安装界面识别：建项目时取一次系统语言，定安装界面的语言、默认的语言列表与要找的语言包；脚手架跑在插件体系之外',
   ],
+  [
+    'packages/create-aalis-plugin/src/cli.ts resolvedOptions().locale',
+    '安装界面识别：没给 --lang 时取一次系统语言，定终端的显示语言与缺省的原文语言；脚手架跑在插件体系之外',
+  ],
 ]);
 
 /** 一处命中：文件相对仓根，source 是哪种写法 */
