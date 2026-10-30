@@ -17,6 +17,7 @@
 - 展示值放宽为 `unknown`：`PluginDefinition.displayName`、`PluginStatusEntry.displayName`，以及服务提供者的展示标签 `ServiceView.label`、`ServiceInfo.label`、`ProviderEntry.label`、`ProvideOptions.label`。core 不读、不校验，原样转交；按 `string` 读这些字段的代码在类型上报错。
 - `PluginEntry` 与 `PluginStatusEntry` 加 `failure`：激活失败时抛出的原值；`error` 改为由它现算，取值不变。
 - core 自己的四种失败挂 `code` 与数据属性，取值见包根类型 `CoreFailureCode`：`required-retry-exhausted`（`service`）、`provides-not-registered`（`services`）、`exclusive-conflict`（`service`）、`service-unavailable`（`service`、`provider`，即 `ServiceUnavailableError`）。message 不变。
+- `follow`、`registrar` 的回调改在提供者登记、撤回或偏好切换的那次调用里同步执行，先于 `service:changed` 的监听器；`idle()` 放行时自供自用服务的补登记已在（清理返回 Promise 的 `follow` 仍等清理落定才挂新的）。core 不再订阅公开的 `service:changed`，别处发出的这条事件不再触发重算与重挂。消费方的登记在 `provide` 那次调用里就到达，提供者要先完成初始化再 `provide`。
 
 ### 第一方插件给人看的文字进字典（@aalis/plugin-package-manager、@aalis/plugin-storage-local、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-ollama、@aalis/plugin-llm-openai、@aalis/plugin-memory-summary、@aalis/plugin-skills、@aalis/plugin-cron-engine、@aalis/plugin-scheduler、@aalis/plugin-workflow、@aalis/plugin-adapter-onebot、@aalis/plugin-user-relation、@aalis/plugin-publish-review）
 

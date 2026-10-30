@@ -24,6 +24,8 @@ import {
   defineService,
   lifecycle,
   logger,
+  optional,
+  type PluginDefinition,
   provide,
   services,
 } from '../../packages/core/src/index.js';
@@ -65,14 +67,18 @@ afterEach(() => {
   for (const host of hosts.splice(0)) host.dispose();
 });
 
-async function boot(options: { slowThresholdMs?: number; disposeTimeoutMs?: number } = {}) {
-  const app = new App({ name: 'T', logLevel: 'error', ...options });
+async function boot(
+  options: { slowThresholdMs?: number; disposeTimeoutMs?: number; before?: PluginDefinition[] } = {},
+) {
+  const { before = [], ...appOptions } = options;
+  const app = new App({ name: 'T', logLevel: 'error', ...appOptions });
   const host = app.bind({ provide, services });
   const recordedCommands: Array<{ name: string; description?: string }> = [];
   const pages = pageHost();
   hosts.push(pages);
   host.provide.use(webuiServer, pages.service);
   host.provide.use(commands, makeCommandService(recordedCommands) as never);
+  for (const definition of before) await app.plugins.register(definition, {});
   await app.plugins.register(doctorPlugin, {});
   await app.plugins.idle();
   return { app, pages, recordedCommands, doctor: host.services.use.get(doctor) as DoctorService };
@@ -93,6 +99,24 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     expect(ids).not.toContain('fs.data');
     expect(ids).not.toContain('commands.overrides');
     expect(recordedCommands.some(c => c.name === 'doctor')).toBe(true);
+    await app.stop();
+  });
+
+  it('先于 doctor 激活的插件登记的检查项排在内置检查项之后', async () => {
+    const early = definePlugin({
+      name: 'zz-doctor-early',
+      uses: { doctor: optional(doctor) },
+      apply({ doctor }) {
+        doctor.use.registerCheck({
+          id: 'zz.early',
+          category: 'other',
+          run: () => ({ id: 'zz.early', category: 'other', level: 'ok', message: 'ok' }),
+        });
+      },
+    });
+    const { app, doctor: service } = await boot({ before: [early] });
+    const ids = service.listChecks().map(c => c.id);
+    expect(ids.indexOf('env.node')).toBeLessThan(ids.indexOf('zz.early'));
     await app.stop();
   });
 

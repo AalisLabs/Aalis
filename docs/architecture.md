@@ -264,7 +264,7 @@ disabled ←─(手动禁用)─ active
 
 ### 统一状态机：`recompute()`
 
-PluginManager 只有一个外部可见的状态变更入口：`recompute()`。`service:changed`、enable / disable / updateConfig / bounce、转入后台的激活落定都汇入同一状态机。关机不经它：`App.stop()` 先冻好一张停机计划，`stopAll()` 执行它。
+PluginManager 只有一个外部可见的状态变更入口：`recompute()`。服务变更、enable / disable / updateConfig / bounce、转入后台的激活落定都汇入同一状态机。关机不经它：`App.stop()` 先冻好一张停机计划，`stopAll()` 执行它。
 
 optional 上下线与选中的那一家换人不改变目标态，不级联 bounce。有状态接线走选择层的 `follow`。
 

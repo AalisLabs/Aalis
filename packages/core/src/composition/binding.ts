@@ -2,10 +2,10 @@ import type { CoreFailureCode } from '../types/failure.js';
 
 import { isThenable } from '../kernel/disposable-chain.js';
 
-import type { EventBus } from '../primitives/events.js';
 import type { ServiceContainer, ServiceEntry } from '../primitives/services.js';
 
 import type { BindingPort, FollowCleanup, Registrar, ServiceDescriptor, ServiceSelection } from './descriptors.js';
+import type { ServiceRuntime } from './runtime.js';
 import type { Logger } from '../infrastructure/logger.js';
 import type { Resources } from '../infrastructure/resources.js';
 
@@ -58,7 +58,7 @@ interface BindingScope {
   readonly logger: Logger;
   readonly resources: Resources;
   readonly services: Pick<ServiceContainer, 'ranked'>;
-  readonly events: EventBus;
+  readonly watchServices: ServiceRuntime['watchServices'];
   /** 登记跟随边：挂上的那一条归 owner 提供；提供者撤回时经 pump 就地驱动交接；释放时带上撤回的落定 */
   retainBinding(owner: symbol, name: string, pump: () => void): (settling?: Promise<void>) => void;
 }
@@ -272,7 +272,7 @@ function createTarget<P, B>(
 
   // 选择可能变化时让全部跟随者收敛（pump 自己去重）。拆卸窗口内的服务事件不引爆清理，由撤回段统一收
   const subscribe = (): void => {
-    const off = scope.events.on('service:changed', service => {
+    const off = scope.watchServices(service => {
       if (service === name && !scope.resources.disposed) pumpAll();
     });
     unwatch = scope.resources.trackWithdrawal(() => {

@@ -3,7 +3,7 @@ import type { PluginManagerService } from '../types/app.js';
 import { EventBus } from '../primitives/events.js';
 import { ServiceContainer } from '../primitives/services.js';
 
-import { ActivationHost, notify } from './activation-host.js';
+import { ActivationHost } from './activation-host.js';
 import { appService, narrow, pluginsService } from './host-services.js';
 import { PluginManager, type PluginRegistration } from './plugin.js';
 import type { RestartStrategy } from './providers.js';
@@ -133,16 +133,12 @@ export class App {
         this.logger.warn(`事件 "${event}" 的监听器超过 ${limit}ms 未返回（来自 ${contextId}），不再等待，继续后续步骤`);
       },
     });
-    const container = new ServiceContainer();
 
     // 1. 根激活
-    const runtime = {
-      events: this.#events,
-      services: container,
-      devMode: options.devMode ?? true,
-      notify: notify({ events: this.#events }, this.logger),
-    };
-    this.#host = new ActivationHost(runtime, this.logger);
+    this.#host = new ActivationHost(
+      { events: this.#events, services: new ServiceContainer(), devMode: options.devMode ?? true },
+      this.logger,
+    );
     const caps = this.#host.bind(this.#host.root, { provide });
 
     // 2. 插件管理器

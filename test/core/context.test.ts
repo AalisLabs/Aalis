@@ -398,7 +398,6 @@ describe('disposable 闭包自移除', () => {
       };
     });
     ctx.caps.provide.use(defineService('svc'), { v: 1 });
-    await tick(); // 等 service:changed 异步派发到观察器
     expect(cleanupRan).toBe(1); // 新 cleanup 被立即执行，而非挂上后永不触发
   });
 });
