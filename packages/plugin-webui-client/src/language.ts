@@ -8,13 +8,13 @@ import {
 } from '@aalis/schema-i18n';
 import { type Source, t } from './texts';
 
-// 界面的语言与时区：全局默认层的语言链与服务进程的时区，由 LanguageProvider 取自服务端写进页面的
+// 界面的语言与时区：全局层的语言链与服务进程的时区，由 LanguageProvider 取自服务端写进页面的
 // 语言块或 GET /api/i18n/languages，不读浏览器的语言与时区。文字按这条链渲染，语言包给前端自带的字典补的译文取自
 // /api/i18n/messages；链为空（i18n 不在）时按原文。缺省是原文与 UTC：页面里没有语言块时取到之前按它画，单独渲染组件的测试
 // 也用它。换语言时先换这里，再重挂整个界面：组件与模块里的函数取的都是新的
 
 export interface Language {
-  /** 全局默认层的语言链；空的是 i18n 不在，文字按原文 */
+  /** 全局层的语言链；空的是 i18n 不在，文字按原文 */
   readonly chain: readonly string[];
   /** 服务进程的时区 */
   readonly timeZone: string;

@@ -296,7 +296,7 @@ const uses = {
   userRelation: optional(userRelation),
   /** 提取提示里机器人的称呼取人设名；缺席时用中性称呼 */
   persona: optional(persona),
-  /** 事实的语言：取全局默认层的语言列表（读者是 owner），缺席时按中文 */
+  /** 事实的语言：取全局层的语言列表（读者是 owner），缺席时按中文 */
   i18n: optional(i18n),
   /** 档案页；不在时照常记档案 */
   webui: optional(webuiServer),

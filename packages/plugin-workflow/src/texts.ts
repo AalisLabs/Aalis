@@ -26,6 +26,7 @@ const SOURCE = {
   runDisabled: 'workflow "{id}" 已禁用',
   runWorkflow: '立即运行',
   ran: '已运行 {id}，用时 {duration}',
+  elapsed: '{ms, duration}',
   enableAction: '启用',
   disableAction: '停用',
   delete: '删除',

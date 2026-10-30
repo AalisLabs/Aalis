@@ -491,7 +491,7 @@ describe('跑完一件任务后的几张表', () => {
     expect(detail.get('远端类型')).toBe(REMOTE);
     expect(String(detail.get('出网'))).toContain('只限白名单');
     expect(String(detail.get('出网'))).toContain('未核实');
-    expect(String(detail.get('目录占用 / 上限'))).toContain('2048');
+    expect(String(detail.get('目录占用 / 上限'))).toMatch(/^\d+ B \/ 2 GB$/);
     expect(detail.get('停开原因')).toBe('');
 
     const [task] = await tasks(hub);
@@ -515,7 +515,7 @@ describe('跑完一件任务后的几张表', () => {
         preview: media(pngUri),
         task: '像素猫',
         type: 'png',
-        size: expect.any(String),
+        size: expect.anything(),
         rel: 'cat.png',
       },
       {
@@ -523,10 +523,14 @@ describe('跑完一件任务后的几张表', () => {
         file: { name: `${html.id}.html`, handle: `signed:${htmlUri}` },
         task: '像素猫',
         type: 'html',
-        size: expect.any(String),
+        size: expect.anything(),
         rel: 'index.html',
       },
     ]);
+    expect(
+      (await artifacts(hub)).map(row => renderIn(row.size, 'en')),
+      '大小按通用的大小格式',
+    ).toEqual([`${png.sizeBytes}B`, `${html.sizeBytes}B`]);
 
     expect(await spend(hub)).toEqual(
       expect.arrayContaining([
@@ -600,7 +604,7 @@ describe('跑完一件任务后的几张表', () => {
           'works: zz-pub',
           'Not publishing',
         ],
-        durations: ['40 s', '7 min 20 s'],
+        durations: ['40 sec', '7 min, 20 sec'],
         progress: 'Running a command (failed) · bash · src/app.ts · npm test · exit code 1',
         egress: [
           'No egress (owner config, unverified); limit Allowlist only',
@@ -633,7 +637,7 @@ describe('跑完一件任务后的几张表', () => {
           '完成',
         ],
         publications: ['works：已上线', 'works：等待自动提交', 'works：发布处理中', 'works：zz-pub', '不发布'],
-        durations: ['40 秒', '7 分 20 秒'],
+        durations: ['40秒', '7分钟20秒'],
         progress: '执行命令（失败） · bash · src/app.ts · npm test · 退出码 1',
         egress: [
           '不出网（owner 配置，未核实）；上限 只限白名单',

@@ -57,7 +57,7 @@ export interface ForwardConfig {
   summaryMaxChars: number;
   /** 喂给摘要 LLM 的原文最大字符数。原文超过则前段截断；<=0 表示不截断 */
   summaryInputLimit: number /**
-   * 摘要使用的 system prompt。为空字符串 / undefined 时使用 `defaultForwardSummaryPrompt`，输出语言取全局默认层语言列表的
+   * 摘要使用的 system prompt。为空字符串 / undefined 时使用 `defaultForwardSummaryPrompt`，输出语言取全局层语言列表的
    * 第一项。
    * 传入非空字符串则完全覆盖默认 prompt。
    */;
@@ -76,7 +76,7 @@ export interface ForwardExpanderDeps<TState> {
   media: ServiceSelection<MediaService>;
   /** 摘要模型（缺席时不生成摘要） */
   llm: ServiceSelection<LLMModel>;
-  /** 默认摘要 prompt 的输出语言：取全局默认层的语言列表（缺席时按中文） */
+  /** 默认摘要 prompt 的输出语言：取全局层的语言列表（缺席时按中文） */
   i18n: ServiceSelection<I18nService>;
   /**
    * storage 的业务句柄，按 URI 路由到对应根：媒体落盘写 data 根、音频转码写 tmp 根。
@@ -342,7 +342,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
         t('summaryCutOff', { summary: out }),
         { host: true },
         {
-          onError: err => logger.warn(`按全局默认层的语言渲染摘要的截断标记出错，按原文写: ${err}`),
+          onError: err => logger.warn(`按全局层的语言渲染摘要的截断标记出错，按原文写: ${err}`),
         },
       );
     } catch (err) {

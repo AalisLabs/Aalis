@@ -1,5 +1,5 @@
 // ============================================================
-// 包内共用的小辅助：错误说明与类别、按码点截断、字节数与时长的可读写法
+// 包内共用的小辅助：错误说明与类别、按码点截断、任务状态的显示名、交给模型的正文里字节数的写法
 // ============================================================
 
 import { isRemoteAgentError, type RemoteAgentErrorCode } from '@aalis/api-remote-agent';
@@ -55,16 +55,9 @@ const STATE_TEXT: Record<TaskRecord['state'], TextRef> = {
 /** 任务状态的显示名（任务表与取消失败的原因共用；交给模型时取原文） */
 export const taskStateName = (state: string): string | TextRef => named(STATE_TEXT, state);
 
-/** 字节数的可读写法：B、KB、MB */
+/** 交给模型的正文里字节数的写法：B、KB、MB（页面上的大小用字典的 {n, size}） */
 export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-/** 时长的可读写法：秒，或分加秒。完成通知的正文取它的原文交给模型，数字照原样写 */
-export function formatDuration(ms: number): TextRef {
-  const seconds = Math.max(0, Math.round(ms / 1000));
-  const minutes = Math.floor(seconds / 60);
-  return minutes > 0 ? t('durationMinutes', { m: minutes, s: seconds % 60 }) : t('durationSeconds', { s: seconds });
 }

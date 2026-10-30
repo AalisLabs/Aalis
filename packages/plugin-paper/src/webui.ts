@@ -28,7 +28,7 @@ import { type AgentRecord, type AlertRecord, type LedgerStore, type TaskRecord, 
 import { currentProgress } from './progress.js';
 import { actorKey, type PaperFields, paperLabel, resolveRoomPaper, sharingRooms } from './rooms.js';
 import { t } from './texts.js';
-import { formatDuration, formatSize, named, taskStateName } from './util.js';
+import { named, taskStateName } from './util.js';
 
 const PAGE_KEY = 'paper';
 /** 能在页面里预览的位图；宿主经 /api/media 按文件头再核一次 */
@@ -158,7 +158,7 @@ export function registerPaperPage(deps: {
       progressAt: progress?.at,
       room: task.room,
       initiator: actorKey(task.initiator),
-      duration: task.startedAt !== undefined ? formatDuration((task.endedAt ?? deps.now()) - task.startedAt) : '',
+      duration: task.startedAt !== undefined ? t('elapsed', { ms: (task.endedAt ?? deps.now()) - task.startedAt }) : '',
       cost:
         task.costCents ??
         (ledger.data.reserves[task.id] ? t('reservedCents', { cents: ledger.data.reserves[task.id].cents }) : ''),
@@ -183,7 +183,7 @@ export function registerPaperPage(deps: {
             preview: BITMAPS.has(artifact.type) ? uri : undefined,
             task: task.name,
             type: named(ARTIFACT_TYPES, artifact.type),
-            size: formatSize(artifact.sizeBytes),
+            size: t('sizeValue', { bytes: artifact.sizeBytes }),
             rel: artifact.rel,
           };
         }),
@@ -207,7 +207,7 @@ export function registerPaperPage(deps: {
   async function usageText(paperId: string): Promise<string | TextRef> {
     try {
       const used = await usageOf(storage, paperDirUri(paperId));
-      return `${formatSize(used)} / ${formatSize(cfg.artifacts.maxPaperBytes)}`;
+      return t('usageValue', { used, limit: cfg.artifacts.maxPaperBytes });
     } catch (err) {
       return t('readFailed', { error: textOf(err) });
     }
@@ -227,7 +227,7 @@ export function registerPaperPage(deps: {
     } catch {
       // 存储提供者给不出本机路径时显示 URI
     }
-    return t('annotated', { text: where, note: formatSize(size) });
+    return t('annotated', { text: where, note: t('sizeValue', { bytes: size }) });
   }
 
   /** 这块白纸的每日额度一句话 */

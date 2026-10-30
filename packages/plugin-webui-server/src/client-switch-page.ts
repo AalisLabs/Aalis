@@ -8,8 +8,8 @@
 //   · 列表：GET  /api/services                       （取 webui-client 服务的 providers + preferred）
 //   · 切换：POST /api/services/webui-client/prefer    （owner 闸，body {contextId}）
 // 全局 auth 中间件已要求登录方可到达本路由（未认证 GET 直接回登录页），故本页无需自加 gate；
-// 切换动作仍受既有 owner 闸约束。抽成纯函数仅为便于单测——route 按全局默认层的语言渲染文字后交给它。
-// 文字按全局默认层的语言：页面上的在服务端写进 HTML，脚本要的放进 texts 块，带参数的留着 {名} 占位，由脚本填（见 html.ts）。
+// 切换动作仍受既有 owner 闸约束。抽成纯函数仅为便于单测——route 按全局层的语言渲染文字后交给它。
+// 文字按全局层的语言：页面上的在服务端写进 HTML，脚本要的放进 texts 块，带参数的留着 {名} 占位，由脚本填（见 html.ts）。
 
 import type { Localized } from '@aalis/schema-i18n';
 import { escapeHtml, textsBlock } from './html.js';

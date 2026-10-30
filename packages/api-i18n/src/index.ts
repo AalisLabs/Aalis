@@ -20,8 +20,8 @@ import {
 } from '@aalis/schema-i18n';
 
 /**
- * 读者：按谁的语言渲染。sessionId 取会话设置的 language（按继承链解析，platform 是入口平台），聊天平台上的读者用它；会话种类
- * 是 owner 的（WebUI 与终端的会话）与 host 一样。host 取全局默认层的设置，owner 自己看的出口（WebUI、会话协议、终端、
+ * 读者：按谁的语言渲染。sessionId 取会话设置的 language（按会话设置的层解析，platform 是入口平台），聊天平台上的读者用它；会话种类
+ * 是 owner 的（WebUI 与终端的会话）与 host 一样。host 取全局层的设置，owner 自己看的出口（WebUI、会话协议、终端、
  * access.txt）用它。语言只从这里来，出口不自己找语言来源；日期与时间一律按服务进程的时区
  */
 export type Audience = { sessionId: string; platform?: string } | { host: true };

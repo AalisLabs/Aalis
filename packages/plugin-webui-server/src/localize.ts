@@ -1,7 +1,7 @@
 // ============================================================
-// localize.ts — 回应里的文字按全局默认层的语言渲染
+// localize.ts — 回应里的文字按全局层的语言渲染
 //
-// WebUI 的读者是 owner 自己：一律按全局默认层的语言（i18n 的 { host: true } 读者），日期与时间按服务进程的时区，不看浏览器的
+// WebUI 的读者是 owner 自己：一律按全局层的语言（i18n 的 { host: true } 读者），日期与时间按服务进程的时区，不看浏览器的
 // 语言与时区（会话与场所的语言设置管的是聊天平台上的读者）。
 // 最早挂的中间件包住 res.json：值里的文字对象渲染后再发，i18n 缺席或渲染抛错时按原文（抛错只告警一次）。路由里外的 JSON 回应
 // （认证的 401 与 403、闸门、未知 API、错误处理）都经过它；不经 res.json 的文字（纯文本的错误、登录页与恢复页、access.txt）
@@ -46,10 +46,10 @@ export function skipSchemaDefaults(schemas: Iterable<unknown>): LocalizeSkip {
 export interface Localizer {
   /** 最早挂上：包住 res.json，渲染后再发 */
   middleware: express.RequestHandler;
-  /** 把值里的文字对象按全局默认层的语言渲染 */
+  /** 把值里的文字对象按全局层的语言渲染 */
   render<T>(value: T, options?: RenderOptions): Localized<T>;
   /**
-   * 全局默认层的语言链（i18n 的 chainOf），/api/i18n/messages 与页面的 lang 用它。i18n 缺席时为空，取链出错时告警
+   * 全局层的语言链（i18n 的 chainOf），/api/i18n/messages 与页面的 lang 用它。i18n 缺席时为空，取链出错时告警
    * （与渲染共用一次）并为空
    */
   languages(): readonly string[];
@@ -63,7 +63,7 @@ export function createLocalizer(
   const onError = (err: unknown) => {
     if (warned) return;
     warned = true;
-    logger.warn('按全局默认层的语言渲染出错，按原文发出（之后再出错不再告警）:', err);
+    logger.warn('按全局层的语言渲染出错，按原文发出（之后再出错不再告警）:', err);
   };
   const render = <T>(value: T, options?: RenderOptions) =>
     localizeFor(i18n, value, { host: true }, { ...options, onError });
