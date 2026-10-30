@@ -8,9 +8,9 @@ import { SettingRow } from './SettingRow';
 
 // 会话设置的一组行，会话的「设置」标签、设置的「会话默认」与房间的「场所设置」共用：composer 与 common 在前，advanced 收进默认
 // 折叠的「高级」，按声明它的插件实例分组，组名取插件显示名（后缀实例写「显示名 · 实例名」）。每行写生效值；生效值出自写入的
-// 这一层的行有恢复按钮（全局层叫「恢复默认」，其余层「恢复继承」），其余写来源（称呼由调用方按层表给）。全局层自己的各行
-// （设置的「会话默认」选了全局）写作者默认：等于默认标「默认」，不等写「默认：<值>」与「恢复默认」。没有生效值的写声明给的
-// 「没设时」，另写此刻实际在用的值
+// 这一层的行有恢复按钮（全局层叫「恢复默认」，值已等于作者默认的不出；其余层「恢复继承」），其余写来源（称呼由调用方按层表
+// 给）。全局层自己的各行（设置的「会话默认」选了全局）写作者默认：等于默认标「默认」，不等写「默认：<值>」与「恢复默认」。
+// 没有生效值的写声明给的「没设时」，另写此刻实际在用的值
 
 interface SettingRowsProps {
   rows: readonly Row[];
@@ -30,6 +30,9 @@ export function SettingRows({ rows, layer, own = false, originOf, update }: Sett
   const global = layer === 'global';
   // 全局层自己的各行写作者默认，其余写来源
   const authored = own && global;
+  /** 生效值出自全局层、已等于作者默认：恢复默认回不到别处 */
+  const atDefault = (row: Row) =>
+    row.source === 'global' && authorDefault(row.field, row.effective)?.isDefault === true;
   const line = (row: Row) => {
     const fallback = authored ? authorDefault(row.field, row.value) : undefined;
     const reset = global ? tr('resetDefault') : tr('resetInherit');
@@ -41,7 +44,7 @@ export function SettingRows({ rows, layer, own = false, originOf, update }: Sett
         source={fallback?.isDefault ? tr('sourceDefault') : undefined}
         note={!authored && row.source !== undefined && row.source !== layer ? originOf(row.source) : undefined}
         defaultNote={fallback?.isDefault === false ? fallback.note : undefined}
-        reset={(authored ? fallback?.isDefault === false : row.source === layer) ? reset : undefined}
+        reset={(authored ? fallback?.isDefault === false : row.source === layer && !atDefault(row)) ? reset : undefined}
         dependency={dependencyOf(rows, row)}
         unset={unsetOf(row, authored)}
         save={value => update(row, value)}
