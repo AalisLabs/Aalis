@@ -720,7 +720,7 @@ describe('读不出来与没排上的提示', () => {
 // 每次在目标会话里排一轮。假时钟同样按 1 毫秒处理，只假 setInterval（间隔通道都是它），推进 50 毫秒数开始执行的次数
 describe('固定间隔的上限', () => {
   const MONTH = 30 * 24 * 3600;
-  const reason = (value: string) => `间隔须大于 0 且不超过 2,147,483 秒（约 24.8 天）: ${value}`;
+  const reason = (value: string) => `间隔须大于 0 且不超过 2,147,483 秒（约 24.8 天）：${value}`;
 
   /** 假 setInterval 下跑一组用例，回调拿到的 started 记下每次开始执行的任务名 */
   async function withFakeIntervals(

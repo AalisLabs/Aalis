@@ -34,8 +34,8 @@ nodes:
     seconds: 0
 `;
 const NODES: WorkflowDef['nodes'] = [{ id: 'w', type: 'wait', seconds: 0 }];
-const badId = (id: string) => `工作流 id 只能用英文字母、数字、下划线与连字符（它是定义文件的文件名）: ${id}`;
-const badInterval = (value: string) => `间隔须大于 0 且不超过 2,147,483 秒（约 24.8 天）: ${value}`;
+const badId = (id: string) => `工作流 id 只能用字母、数字、下划线与连字符（它是定义文件的文件名）：${id}`;
+const badInterval = (value: string) => `间隔须大于 0 且不超过 2,147,483 秒（约 24.8 天）：${value}`;
 
 let base: string;
 let app: App;
@@ -112,6 +112,14 @@ describe('编排 id 只收字母、数字、下划线与连字符', () => {
     expect(readdirSync(defsDir())).toEqual(['zz-ok_1.yaml']);
   });
 
+  it('中文等各种文字的字母照收：定义目录里的照常载入，新定义照常写文件', async () => {
+    writeFileSync(join(defsDir(), '每日汇总.yaml'), yamlOf('每日汇总'));
+    const svc = await boot();
+    expect(svc.listWorkflows().map(def => def.id)).toEqual(['每日汇总']);
+    expect(await tool('workflow_define', { yaml: yamlOf('周报_2') })).toMatchObject({ ok: true, id: '周报_2' });
+    expect(readdirSync(defsDir()).sort()).toEqual(['周报_2.yaml', '每日汇总.yaml'].sort());
+  });
+
   it('删除只对已载入的定义动存储：借 ../ 删不到定义目录之外，载入失败的定义文件也不删，都回不存在', async () => {
     mkdirSync(workspaceFile('project'));
     writeFileSync(workspaceFile('project', 'docker-compose.yaml'), 'services: {}\n');
@@ -147,7 +155,7 @@ describe('写错的触发器当场拒收', () => {
       ['interval 写成字符串', '  type: interval\n  seconds: abc', badInterval('abc')],
       ['interval 是负数', '  type: interval\n  seconds: -5', badInterval('-5')],
       ['interval 超过上限', '  type: interval\n  seconds: 2592000', badInterval('2592000')],
-      ['once 解析不了', '  type: once\n  runAt: 明天', 'once 触发器的 runAt 不是能解析的时间: 明天'],
+      ['once 解析不了', '  type: once\n  runAt: 明天', 'once 触发器的 runAt 不是能解析的时间：明天'],
     ];
     for (const [label, trigger, error] of bad) {
       expect(await tool('workflow_define', { yaml: yamlOf('zz-bad', trigger) }), label).toEqual({ error });
