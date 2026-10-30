@@ -29,7 +29,7 @@ type AccessTier = (typeof ACCESS_TIERS)[number];
 type BoundaryPolicy = 'ask' | 'deny';
 ```
 
-档位与越界策略还不能按会话设：参考实现固定为工作区档、越界要问。
+参考实现的档位固定为工作区档、越界要问。
 
 有本地效果的一轮：
 

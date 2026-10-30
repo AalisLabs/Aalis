@@ -173,7 +173,7 @@ export default definePlugin({
 > `secret: true` 表示字段的值是凭据，由 `@aalis/schema-config` 声明，不需要引入 `@aalis/api-webui`。
 > 宿主把它的值存进密钥存储（Node 宿主是家目录的 `secrets.yaml`），配置文件里只留引用 `{ $secret: '<键>' }`，
 > WebUI 不回显原值；插件经 `parseConfig` 读到的仍是原值。引用的键不在密钥存储里时 `parseConfig` 拒绝激活，
-> 不回落默认值；这一行为在本批新版 schema-config 里，对它的依赖写成范围、下限抬到这个版本。
+> 不回落默认值（schema-config 0.15.0 起，对它的依赖写成 `>=0.15.0 <1.0.0`）。
 > 要把配置写回配置文件，用 `host-config` 的 `applyPluginConfig`，不要把 `parseConfig` 的结果或 `config.use`
 > 原样交给 `setPluginConfig`：其中密钥字段是原值，宿主会拒收（见 [运行态与配置文档](../core/config.md#跨重启保留)）。
 > 自定义字段类型（如 `'llm-ref'`）要 merging 到 `@aalis/schema-config` 的 `SchemaFieldTypes`，

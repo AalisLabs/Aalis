@@ -5,7 +5,7 @@
 
 ## 概述
 
-Agent Skills 技能系统，兼容 Anthropic Agent Skills 标准。每个技能是一个文件夹，含必需的 `SKILL.md`（YAML frontmatter 加 Markdown 正文）与可选的 `scripts/`、`references/`、`assets/` 目录。技能按渐进披露分三阶段进入上下文：Discovery、Activation、Execution。启用哪些技能是可按会话覆盖的字段 `enabledSkills`（[api-session-settings](../api/api-session-settings.md)），三个阶段都按调用所在的会话取；角色卡上的 `skills` 名单不再生效。
+Agent Skills 技能系统，兼容 Anthropic Agent Skills 标准。每个技能是一个文件夹，含必需的 `SKILL.md`（YAML frontmatter 加 Markdown 正文）与可选的 `scripts/`、`references/`、`assets/` 目录。技能按渐进披露分三阶段进入上下文：Discovery、Activation、Execution。启用哪些技能是可按会话覆盖的字段 `enabledSkills`（[api-session-settings](../api/api-session-settings.md)），三个阶段都按调用所在的会话取。
 
 ## 插件声明
 
