@@ -31,12 +31,12 @@ import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 媒体判据（api-media 的 mediaInScope）按目标分三类：会话媒体目录里的按目录名反查会话（按大小写折叠比，候选取并集），
-// 都在本会话树里的与调用所在会话历史里系统记下的引用放行、不问别的，本会话树以外的候选（含与本会话树撞名的）都过调用方给的
-// 取用判定 take 才放行；不在任何会话媒体目录下的本机文件交给调用方给的本机文件判定 local。取用规则本身由会话管理的参数化表钉住
-// （session-take-rule），这里的 take 与 local 是替身，只看分流。本机文件判法（localFileInScope）直接测，主体用权限插件的
-// principalKind。会话表、owner 判定与历史都是内存替身；真实写入方一节跑 onebot 附件缓存、绘图（离线渲染是替身）与媒体识别
-// 的落盘，断言它们按 api-media 的目录约定落进各自的子目录、判据接受它们产出的地址，是会话目录名的唯一守卫。浏览器截图的
-// 那条在 tool-browser-screenshot 里（要起真浏览器）。
+// 都在本会话树里的与调用所在会话历史里系统记下的放行、不问别的，本会话树以外的候选（含与本会话树撞名的）都过调用方给的
+// 取用判定 take 才放行；不在任何会话媒体目录下的本机文件交给调用方给的本机文件判定 local，历史里记过的也一样。取用规则
+// 本身由会话管理的参数化表钉住（session-take-rule），这里的 take 与 local 是替身，只看分流。本机文件判法（localFileInScope）
+// 直接测，主体用权限插件的 principalKind。会话表、owner 判定与历史都是内存替身；真实写入方一节跑 onebot 附件缓存、绘图
+// （离线渲染是替身）与媒体识别的落盘，断言它们按 api-media 的目录约定落进各自的子目录、判据接受它们产出的地址，是会话
+// 目录名的唯一守卫。浏览器截图的那条在 tool-browser-screenshot 里（要起真浏览器）。
 // ════════════════════════════════════════════════════════════
 
 const OWNER_QQ = '90001';
@@ -130,13 +130,12 @@ describe('三类目标的分流', () => {
     },
   ];
 
-  it('本会话树的媒体目录与本会话历史里记下的引用：放行，不问 take 与 local', async () => {
+  it('本会话树的媒体目录与本会话历史里记下的会话媒体：放行，不问 take 与 local', async () => {
     const d = deps({ histories: { [GROUP]: history } });
     for (const target of [
       ...['images', 'audios', 'videos', 'files'].map(dir => `data:/${dir}/${GROUP_DIR}/x.bin`),
       `tmp:/browser/${GROUP_DIR}/shot-1.png`,
       `data:/images/${sessionDirName(CHILD)}/x.png`,
-      'workspace:/pics/inbound.png',
       `data:/images/${OTHER_DIR}/onebot/sent.png`,
     ]) {
       expect(await mediaInScope(target, { sessionId: GROUP }, d), target).toBe(true);
@@ -358,6 +357,21 @@ describe('调用所在会话历史里系统记下的引用', () => {
     const d = deps({ histories: { [GROUP]: history } });
     expect(await mediaInScope('workspace:/pics/forged.png', { sessionId: GROUP }, d)).toBe(false);
     expect(d.asked.local).toBe(1);
+  });
+
+  it('历史里记过的本机文件（入站附件清单与发出的附件）：照旧按本机文件交给 local，按地址取到的是此刻的内容', async () => {
+    const sent: Message = {
+      role: 'assistant',
+      content: '',
+      timestamp: 2,
+      metadata: { [WellKnownMetadataKeys.SentRef]: 'workspace:/shots/latest.png' },
+    };
+    const d = deps({ histories: { [GROUP]: [...history, sent] } });
+    expect(await mediaInScope('workspace:/shots/latest.png', { sessionId: GROUP }, d)).toBe(false);
+    expect(await mediaInScope('workspace:/pics/inbound.png', { sessionId: GROUP }, d)).toBe(false);
+    expect(d.asked.local).toBe(2);
+    const owner = deps({ histories: { [GROUP]: [...history, sent] }, local: true });
+    expect(await mediaInScope('workspace:/shots/latest.png', { sessionId: GROUP }, owner)).toBe(true);
   });
 
   it('只看调用所在的会话：子会话里用根会话历史里的引用，按本机文件交给 local', async () => {

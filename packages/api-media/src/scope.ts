@@ -1,10 +1,11 @@
 // ============================================================
 // scope.ts — 媒体判据：一次调用能取哪些存储里的媒体
 //
-// 按目标分三类：会话媒体目录里的按目录名反查会话，本会话树的放行，别的会话（含与本会话树撞名的）交给调用方给的取用判定；
-// 调用所在会话历史里系统记下的引用放行；不在任何会话媒体目录下的本机文件交给调用方给的本机文件判定。第一方的两样判定由 mediaScopeOf 按
-// 一次调用给（会话管理的取用规则，经 api-session-manager 的 takeFrom；本机文件判法 localFileInScope），发媒体、看图的工具与
-// 回复里的媒体标记都用它，经调用方给的取用判定判：工具交工具调用上下文的 approveFor，逐个参与者判。
+// 按目标分三类：会话媒体目录里的按目录名反查会话，本会话树的与调用所在会话历史里系统记下的放行，别的会话（含与本会话树
+// 撞名的）交给调用方给的取用判定；不在任何会话媒体目录下的本机文件交给调用方给的本机文件判定，历史里记过的也一样。第一方的
+// 两样判定由 mediaScopeOf 按一次调用给（会话管理的取用规则，经 api-session-manager 的 takeFrom；本机文件判法
+// localFileInScope），发媒体、看图的工具与回复里的媒体标记都用它，经调用方给的取用判定判：工具交工具调用上下文的
+// approveFor，逐个参与者判。
 //
 // 判据按写入方的目录约定判归属，不是隔离：同一个根里的符号链接，或能往本会话目录写文件的工具，都能把别处的媒体伪装成
 // 本会话的。会话目录名取自 session-media 的 sessionDirName，换法有损（见它的说明）：种类目录与反查会话的目录名按大小写折叠比
@@ -99,7 +100,8 @@ export function historyMediaRefs(messages: readonly Message[]): string[] {
  * 会话表里反查会话（按大小写折叠比，几个会话撞同一个目录时取并集）：
  * 1. 反查出的会话都在本会话树里，或等于调用所在会话历史里系统记下的引用（{@link historyMediaRefs}）：放行。先比目录，不中再读历史；
  * 2. 反查出本会话树以外的会话（与本会话树撞名的也算）：take 判这些会话都能取才放行，本会话树的不问；一个会话都反查不到时不能；
- * 3. 不在任何会话媒体目录下的：按 local。
+ * 3. 不在任何会话媒体目录下的：按 local，调用所在会话历史里记过的也一样：本机文件按地址取到的是此刻的内容，不一定是当初
+ *    收发的那份。
  *
  * 媒体目录按整棵会话树（子任务里能用发起它的群里的图），历史只取调用所在会话
  */
@@ -122,8 +124,8 @@ export async function mediaInScope(
       ? []
       : (sessions?.listSessions() ?? []).map(({ id }) => id).filter(id => !tree.has(id) && named(id));
   if (mine && others.length === 0) return true;
-  if (historyMediaRefs(await deps.history(call.sessionId)).includes(uri)) return true;
   if (dir === undefined) return deps.local();
+  if (historyMediaRefs(await deps.history(call.sessionId)).includes(uri)) return true;
   return others.length > 0 && deps.take(others);
 }
 
