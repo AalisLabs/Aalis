@@ -20,6 +20,7 @@ import type {
 import type { Events, Logger, ServiceSelection } from '@aalis/core';
 import { TextError, type TextRef, textOf, toSource, truncateParams } from '@aalis/schema-i18n';
 import type { IncomingMessage } from '@aalis/schema-message';
+import { MAX_INTERVAL_SECONDS } from '@aalis/util-cron';
 import { t } from './texts.js';
 
 const MAX_OUTPUT_PREVIEW = 1000;
@@ -89,12 +90,19 @@ function interpolateValue(v: unknown, vars: Record<string, unknown>, outputs: Re
 
 // ─── 拓扑校验 ────────────────────────────────────────
 
-/** 按节点类型校验必填字段（运行期 raw 可能缺字段）；返回原因或 null */
+/**
+ * 按节点类型校验必填字段（运行期 raw 可能缺字段）；返回原因或 null。wait 的 seconds 与 agent 的 timeoutSeconds 交给 setTimeout，
+ * 与触发器的固定间隔同一个上限：超过 2^31-1 毫秒时 Node 按 1 毫秒处理，等待立刻结束、agent 节点立刻超时
+ */
 function nodeFieldError(node: NodeSpec): TextRef | null {
   const r = node as unknown as Record<string, unknown>;
   const id = String(r.id ?? '?');
   const filled = (v: unknown): boolean => typeof v === 'string' && v.trim().length > 0;
   const missing = (field: string) => t('missingField', { id, type: node.type, field });
+  const tooLong = (field: string, value: unknown) =>
+    typeof value === 'number' && value > MAX_INTERVAL_SECONDS
+      ? t('secondsTooLong', { id, type: node.type, field, value: String(value), max: MAX_INTERVAL_SECONDS })
+      : null;
   switch (node.type) {
     case 'tool':
       return filled(r.tool) ? null : missing('tool');
@@ -103,9 +111,10 @@ function nodeFieldError(node: NodeSpec): TextRef | null {
       if (!filled(r.sessionId)) return missing('sessionId');
       return null;
     case 'wait':
-      return typeof r.seconds === 'number' && Number.isFinite(r.seconds) ? null : t('missingSeconds', { id });
+      if (typeof r.seconds !== 'number' || !Number.isFinite(r.seconds)) return t('missingSeconds', { id });
+      return tooLong('seconds', r.seconds);
     case 'agent':
-      return filled(r.instruction) ? null : missing('instruction');
+      return filled(r.instruction) ? tooLong('timeoutSeconds', r.timeoutSeconds) : missing('instruction');
     default:
       return t('unknownNodeType', { id, type: String(r.type ?? '?') });
   }

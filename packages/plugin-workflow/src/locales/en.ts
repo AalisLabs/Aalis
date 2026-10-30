@@ -63,6 +63,7 @@ export default defineLocale<Source>()({
   cancelled: 'The run was cancelled',
   missingField: 'Node "{id}" ({type}) is missing the {field} field',
   missingSeconds: 'Node "{id}" (wait) is missing the numeric field seconds',
+  secondsTooLong: 'Node "{id}" ({type}): {field} may not exceed {max, number} seconds (about 24.8 days): {value}',
   unknownNodeType: 'Node "{id}" has an unknown type: {type}',
   duplicateNodeId: 'Duplicate node id',
   unknownDep: 'Node "{id}" references unknown dep "{dep}"',

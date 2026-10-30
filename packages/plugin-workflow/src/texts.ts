@@ -65,6 +65,7 @@ const SOURCE = {
   cancelled: '运行已取消',
   missingField: '节点 "{id}"({type}) 缺少 {field} 字段',
   missingSeconds: '节点 "{id}"(wait) 缺少数值字段 seconds',
+  secondsTooLong: '节点 "{id}"({type}) 的 {field} 不能超过 {max, number} 秒（约 24.8 天）：{value}',
   unknownNodeType: '节点 "{id}" 类型未知: {type}',
   duplicateNodeId: '节点 id 重复',
   unknownDep: '节点 "{id}" 引用未知 dep "{dep}"',

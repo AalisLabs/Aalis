@@ -77,7 +77,7 @@ export default definePlugin({
 |---|---|---|
 | `tool` | `tool`, `args` | 调用一个已注册工具；`args` 支持插值 |
 | `send-message` | `sessionId`, `content`, `platform?` | 向会话投递 `inbound:message`（fire-and-forget，不等回复）；`platform` 默认 `internal`。正文写成指令的也不执行，当普通消息交给她 |
-| `wait` | `seconds` | 等待固定秒数 |
+| `wait` | `seconds` | 等待固定秒数，不超过 2147483（约 24.8 天；等待交给定时器，超过 2^31-1 毫秒会溢出成立刻结束）：超过的定义时报错、不保存，`defsDir` 里的不载入 |
 | `agent` | `instruction`, `sessionId?`, `platform?`, `timeoutSeconds?` | 把指令派发给 agent **并等待本轮回复**；回复文本作节点结果；`platform` 默认 `workflow`。`instruction` 写成指令系统的指令也不执行，交给 agent |
 
 `args`（递归处理其中的字符串）、`content`、`instruction`、`sessionId`、`platform` 支持 `{{vars.X}}`（运行变量）与 `{{outputs.Y}}`（上游节点输出）插值；`tool`（工具名）、`id`、`out`、`deps` 不插值。
@@ -92,7 +92,7 @@ export default definePlugin({
 - 省略 `sessionId` 时为该节点生成一次性隔离子会话 `workflow::<runId>::<nodeId>`，适合子任务场景。这个 id 只用 `::` 分段、
   不含单冒号，不会被当成 IM 房间，按节点的 `platform` 选平台档；显式指向 IM 房间（`<平台>:...`）时按房间的出生平台选档，
   节点的 `platform` 不影响选档。
-- `timeoutSeconds`（默认 120）内未收到回复 → 节点失败；`outcome=error/aborted` → 节点失败；
+- `timeoutSeconds`（默认 120，不超过 2147483 即约 24.8 天，与 `wait` 的 `seconds` 同一条）内未收到回复 → 节点失败；`outcome=error/aborted` → 节点失败；
   `outcome=silent`（agent 选择不回复）是合法结果，节点成功、输出空串。
 - 立即失败、不等满超时：网关不在；指向调起这次运行的会话（经 `workflow_run` 调起时，那一轮在等这次运行，节点开不了轮）；
   指令在网关相位被吞（禁言、限速等）或排着时被放掉，没开轮。
