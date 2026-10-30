@@ -17,7 +17,7 @@ import {
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { TextError, type TextRef, textClauses, textOf, toSource } from '@aalis/schema-i18n';
 import type { IncomingMessage } from '@aalis/schema-message';
-import { parseEverySeconds } from '@aalis/util-cron';
+import { parseEverySeconds, validateIntervalSeconds } from '@aalis/util-cron';
 import { t } from './texts.js';
 
 // ════════════════════════════════════════════════════════════
@@ -131,9 +131,12 @@ export interface SchedulerService {
   pauseJob(name: string): boolean;
   resumeJob(name: string): boolean;
   triggerJob(name: string): Promise<boolean>;
-  /** 名字是配置文件里写了的、cron 无效时抛出原因，不收下 */
+  /** 名字是配置文件里写了的、cron 或固定间隔无效时抛出原因，不收下 */
   addJob(job: SchedulerJobConfig): void;
-  /** upsert：已存在则先 remove 再 add；计划任务页的新建与编辑都经它。名字是配置文件里写了的、cron 无效时抛出原因，原任务不变 */
+  /**
+   * upsert：已存在则先 remove 再 add；计划任务页的新建与编辑都经它。名字是配置文件里写了的、cron 或固定间隔无效时抛出原因，
+   * 原任务不变
+   */
   setJob(job: SchedulerJobConfig): void;
   removeJob(name: string): boolean;
 }
@@ -655,7 +658,8 @@ async function run(caps: Caps): Promise<void> {
       return Number.isFinite(ms) ? ms : 0;
     }
     if (job.interval) {
-      return (lastRun || Date.now()) + job.interval * 1000;
+      // 间隔无效的任务没有排上（见 initJob），不知道下次
+      return validateIntervalSeconds(job.interval) ? 0 : (lastRun || Date.now()) + job.interval * 1000;
     }
     if (job.cron) {
       const tz = job.timeZone?.trim() || undefined;
@@ -672,11 +676,25 @@ async function run(caps: Caps): Promise<void> {
 
   // ── 初始化所有任务 ──
 
-  /** cron 订阅不上、永远不会运行的任务各一条提示：任务重排或删掉时撤回 */
+  /** cron 订阅不上、固定间隔无效，永远不会运行的任务各一条提示：任务重排或删掉时撤回 */
   const unscheduled = new Map<string, NoticeHandle>();
   function clearUnscheduled(name: string): void {
     unscheduled.get(name)?.clear();
     unscheduled.delete(name);
+  }
+  /** 发「没有排上」的提示：配置文件里的任务写去配置里改，别的写去计划任务页编辑，带出原因 */
+  function markUnscheduled(name: string, reason: string | TextRef): void {
+    const fromConfig = configJobNames.has(name);
+    unscheduled.set(
+      name,
+      webui.use.notify({
+        id: `unscheduled:${name}`,
+        level: 'error',
+        title: t('unscheduledTitle', { name }),
+        detail: t(fromConfig ? 'unscheduledInConfig' : 'unscheduledOnPage', { error: reason }),
+        open: fromConfig ? 'config' : { page: 'scheduler' },
+      }),
+    );
   }
 
   function initJob(jobCfg: SchedulerJobConfig): void {
@@ -714,14 +732,21 @@ async function run(caps: Caps): Promise<void> {
       paused: jobCfg.paused === true || !jobCfg.enabled,
     };
 
-    // 固定间隔调度
-    if (jobCfg.interval && jobCfg.interval > 0 && jobCfg.enabled) {
-      rt.timer = setInterval(() => {
-        if (!rt.paused) {
-          executeJob(rt);
-          rt.nextRun = estimateNextRun(rt.config, Date.now());
-        }
-      }, jobCfg.interval * 1000);
+    // 固定间隔调度。间隔无效（不是大于 0 的数，或超过定时器能排的上限、溢出成每毫秒触发）的不排、发提示：服务入口已当场
+    // 拒收，这里只剩配置文件与存量文件里的任务
+    if (jobCfg.interval !== undefined && jobCfg.enabled) {
+      const problem = validateIntervalSeconds(jobCfg.interval);
+      if (problem) {
+        logger.use.warn(`任务 ${jobCfg.name} 的固定间隔无效: ${toSource(problem)}`);
+        markUnscheduled(jobCfg.name, problem);
+      } else {
+        rt.timer = setInterval(() => {
+          if (!rt.paused) {
+            executeJob(rt);
+            rt.nextRun = estimateNextRun(rt.config, Date.now());
+          }
+        }, jobCfg.interval * 1000);
+      }
     }
 
     // cron 任务：订阅到共享 cron-engine
@@ -740,17 +765,7 @@ async function run(caps: Caps): Promise<void> {
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
         logger.use.warn(`任务 ${jobCfg.name} cron 订阅失败: ${reason}`);
-        const fromConfig = configJobNames.has(jobCfg.name);
-        unscheduled.set(
-          jobCfg.name,
-          webui.use.notify({
-            id: `unscheduled:${jobCfg.name}`,
-            level: 'error',
-            title: t('unscheduledTitle', { name: jobCfg.name }),
-            detail: t(fromConfig ? 'unscheduledInConfig' : 'unscheduledOnPage', { error: textOf(err) }),
-            open: fromConfig ? 'config' : { page: 'scheduler' },
-          }),
-        );
+        markUnscheduled(jobCfg.name, textOf(err));
       }
     }
 
@@ -869,11 +884,19 @@ async function run(caps: Caps): Promise<void> {
     if (configJobNames.has(name)) throw new TextError(t('fromConfig', { name }));
   }
 
-  /** 无效的 cron 当场拒收：收下了也订阅不上、永远不会运行，还会落进持久化文件。页面、工具与别的插件都经服务新建与修改 */
-  function rejectInvalidCron(job: SchedulerJobConfig): void {
-    if (!job.cron) return;
-    const checked = cronEngine.use.validate(job.cron);
-    if (!checked.ok) throw typeof checked.text === 'string' ? new Error(checked.text) : new TextError(checked.text);
+  /**
+   * 无效的 cron 与固定间隔当场拒收：收下了也订阅不上、永远不会运行，或者间隔超过定时器能排的上限、溢出成每毫秒触发，还会落进
+   * 持久化文件。页面、工具与别的插件都经服务新建与修改
+   */
+  function rejectInvalidSchedule(job: SchedulerJobConfig): void {
+    if (job.cron) {
+      const checked = cronEngine.use.validate(job.cron);
+      if (!checked.ok) throw typeof checked.text === 'string' ? new Error(checked.text) : new TextError(checked.text);
+    }
+    if (job.interval !== undefined) {
+      const problem = validateIntervalSeconds(job.interval);
+      if (problem) throw new TextError(problem);
+    }
   }
 
   const service: SchedulerService = {
@@ -935,7 +958,7 @@ async function run(caps: Caps): Promise<void> {
     },
     addJob(job) {
       rejectConfigName(job.name);
-      rejectInvalidCron(job);
+      rejectInvalidSchedule(job);
       initJob(job);
       dynamicJobs.set(job.name, job);
       saveDynamicJobs();
@@ -943,7 +966,7 @@ async function run(caps: Caps): Promise<void> {
     setJob(job) {
       // upsert：先 remove 再 add
       rejectConfigName(job.name);
-      rejectInvalidCron(job);
+      rejectInvalidSchedule(job);
       const existed = runtimes.get(job.name);
       if (existed) {
         if (existed.timer) clearInterval(existed.timer);

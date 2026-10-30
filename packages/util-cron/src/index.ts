@@ -172,6 +172,22 @@ export function parseEverySeconds(input: string): number {
   return n;
 }
 
+/**
+ * 间隔的上限（秒）：`@every` 与上层的固定间隔都交给 setInterval，延时超过 32 位有符号毫秒（2^31-1，约 24.8 天）时 Node
+ * 按 1 毫秒处理，任务变成每毫秒触发一次。取整秒，乘回毫秒不越界
+ */
+export const MAX_INTERVAL_SECONDS = Math.floor((2 ** 31 - 1) / 1000);
+
+/**
+ * 校验间隔秒数（`@every` 与上层的固定间隔同一条）：要是大于 0、不超过 {@link MAX_INTERVAL_SECONDS} 的数。
+ * 不通过时给原因：本包字典里的文字对象
+ */
+export function validateIntervalSeconds(seconds: unknown): TextRef | null {
+  return typeof seconds === 'number' && seconds > 0 && seconds <= MAX_INTERVAL_SECONDS
+    ? null
+    : t('interval', { value: String(seconds), max: MAX_INTERVAL_SECONDS });
+}
+
 // ─── 表达式类型 ───
 
 export type CronExprKind = 'cron' | 'interval';
@@ -193,6 +209,7 @@ export function validateCronExpr(input: string): ValidateResult {
   if (s.startsWith('@every')) {
     const sec = parseEverySeconds(s);
     if (sec <= 0) return { ok: false, text: t('every', { expr: s }) };
+    if (sec > MAX_INTERVAL_SECONDS) return { ok: false, text: t('interval', { value: s, max: MAX_INTERVAL_SECONDS }) };
     return { ok: true, kind: 'interval', normalized: s, intervalSeconds: sec };
   }
   const normalized = normalizeCronExpr(s);

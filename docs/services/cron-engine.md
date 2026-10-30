@@ -55,11 +55,11 @@ export type ValidateResult =
 
 失败分支的 `text` 是给人看的原因：`util-cron` 的实现给它字典里的文字对象，第三方引擎交字符串也可以。交给模型与写日志的取 `toSource`；要抛给人看的错时，字符串用 `Error`，文字对象用 `TextError`。
 
-`validate`（即 `util-cron` 的 `validateCronExpr`）是创建期的护栏：逐字段校验，任一字段解析为空集（如 `abc`、`5-`、超界单值）即拒绝，避免静默生成永不触发的死任务。
+`validate`（即 `util-cron` 的 `validateCronExpr`）是创建期的护栏：逐字段校验，任一字段解析为空集（如 `abc`、`5-`、超界单值）即拒绝，避免静默生成永不触发的死任务。`@every` 的间隔超过 `MAX_INTERVAL_SECONDS`（2147483 秒，约 24.8 天）同样拒绝：间隔交给 `setInterval`，延时超过 2^31-1 毫秒时 Node 按 1 毫秒处理，任务会每毫秒触发一次。
 
 ### 2.3 无状态纯函数（`@aalis/util-cron`，可独立 import，不必经服务）
 
-表达式的解析与匹配是 POSIX cron 标准算法，与 Aalis 无关，故落在 util 层而非契约包——契约包只管订阅协议。scheduler / cron-engine 在编译期直接 import 它们做预处理。下表函数均定义在 `packages/util-cron/src/index.ts`：
+表达式的解析与匹配是 POSIX cron 标准算法，与 Aalis 无关，故落在 util 层而非契约包——契约包只管订阅协议。scheduler / workflow / cron-engine 在编译期直接 import 它们做预处理与校验。下表函数与常量均定义在 `packages/util-cron/src/index.ts`：
 
 | 函数 | 签名 | 用途 |
 | --- | --- | --- |
@@ -69,6 +69,8 @@ export type ValidateResult =
 | `matchesCron` | `(expr, date, timeZone?) => boolean` | 判断某时刻是否命中（不处理 `@every`） |
 | `parseEverySeconds` | `(input: string) => number` | 把 `@every 30s/5m/2h` 解析为秒；不识别返回 0 |
 | `validateCronExpr` | `(input) => ValidateResult` | 见 §2.2 |
+| `MAX_INTERVAL_SECONDS` | `number`（2147483） | 间隔的上限（秒）：`setInterval` 能排的最长延时折成的整秒数 |
+| `validateIntervalSeconds` | `(seconds: unknown) => TextRef \| null` | 间隔秒数要是大于 0、不超过上限的数，不通过时给原因；`@every` 与 scheduler 的固定间隔、workflow 的 `interval` 触发器同一条 |
 
 支持的表达式：5 字段标准 cron、别名 `@hourly` `@daily` `@midnight` `@weekly` `@monthly` `@yearly` `@annually`、以及间隔 `@every Ns`/`Nm`/`Nh`。
 
@@ -82,7 +84,7 @@ export type ValidateResult =
 **消费方**：
 
 - `@aalis/plugin-scheduler`：`uses required = ['tools', 'cron-engine']`（`packages/plugin-scheduler/src/index.ts`）。经业务句柄调用：cron 任务 `cronEngine.use.subscribe(jobCfg.cron, ..., tz ? { timeZone: tz } : undefined)`，并用 `cronEngine.use.nextFireTime(job.cron, new Date(), undefined, tz ? { timeZone: tz } : undefined)` 估算下次运行。它在 `initJob` 里先用 `parseEverySeconds` 把 `@every Ns` 折进自己的 interval 通道。
-- `@aalis/plugin-workflow`：`uses required = ['cron-engine']`（`packages/plugin-workflow/src/index.ts`）。`cron` 触发器 `cronEngine.use.subscribe(t.expr, ...)`（`packages/plugin-workflow/src/triggers.ts`）；`interval` 触发器统一转成 `@every ${sec}s` 再 subscribe，避免与 scheduler 维护两份 setInterval（`triggers.ts`）。
+- `@aalis/plugin-workflow`：`uses required = ['cron-engine']`（`packages/plugin-workflow/src/index.ts`）。`cron` 触发器 `cronEngine.use.subscribe(t.expr, ...)`（`packages/plugin-workflow/src/triggers.ts`）；`interval` 触发器统一转成 `@every ${sec}s` 再 subscribe，避免与 scheduler 维护两份 setInterval（`triggers.ts`）；定义时先用 `validate` 与 `validateIntervalSeconds` 校验 `cron`、`interval` 触发器，写错的不保存。
 
 ## 4. 写一个 provider
 

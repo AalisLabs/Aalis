@@ -53,10 +53,12 @@ export default definePlugin({
 | 类型 | 字段 | 说明 |
 |---|---|---|
 | `cron` | `expr` | 按 cron 表达式周期触发，经 `cron-engine` 服务订阅 |
-| `interval` | `seconds` | 每隔 `seconds` 秒触发（向下取整，最小 1），经 `cron-engine` 以 `@every <N>s` 订阅 |
+| `interval` | `seconds` | 每隔 `seconds` 秒触发（向下取整，最小 1），经 `cron-engine` 以 `@every <N>s` 订阅；`seconds` 要是大于 0、不超过 2147483（约 24.8 天）的数 |
 | `once` | `runAt` | 在指定时间触发一次，**一生只触发一次**：触发即把 `firedAt` 记入运行历史文件（`runsFile`），此后重启进程、重新注册、重复 `workflow_define` 都不再触发；**定义不存在时记录随之清除**——`workflow_remove` 清掉记录（有文件的定义删不掉文件时报错，定义与记录都保留；只在内存里的定义照常删除），手动删掉 `defsDir` 里的 yaml 也会在下次启动扫描定义后补清，同 id 重建都算新工作流。`runAt` 须能被 `Date.parse` 解析；时间已过且从未触发过，则注册时立即补触发一次。运行历史文件读不出（不存在以外的读取错误、解析失败、结构不对）时无从判断是否触发过，本次运行不安排任何 once（含 `runAt` 在未来的），也不再写入该文件，`workflow_define` 定义 once 时回执带 `note` 说明本次运行不会触发，工作流页「新建或覆盖」保存 once、「启用」启用 once 时同样显示这句说明；修复文件后重启，或用 `workflow_run` 手动执行 |
 | `event` | `event`, `filter?` | 订阅指定事件；`filter` 的每个键须与事件第一个参数的同名顶层字段严格相等；事件参数数组以运行变量 `args` 注入 |
 | `manual` | — | 不注册触发器，仅手动运行 |
+
+`cron`、`interval`、`once` 写错的，定义时直接报错、不保存，错误写明原因：`cron` 的表达式交 `cron-engine` 校验；`interval` 的 `seconds` 不是大于 0、不超过 2147483 的数（间隔交给定时器，超过 2^31-1 毫秒会溢出成每毫秒触发一次）；`once` 的 `runAt` 解析不了。`workflow_define` 回 `error`，工作流页「新建或覆盖」「启用」「停用」与编排服务的 `defineWorkflow` 报错。已在 `defsDir` 里的定义照常载入、照旧注册触发器：订阅不上的（`cron` 无效、`interval` 的 `seconds` 不是数或超过上限、`once` 的 `runAt` 解析不了）记一条警告、不触发。
 
 `event` 触发器不接受负载带会话内容（会话 id、平台、正文等）的事件：消息与回复（`inbound:message`、`inbound:message:archived`、`assistant:message:archived`、`outbound:message`、`outbound:delivered`、`outbound:stream`），工具调用的参数、结果与输出（`tool:execute`、`tool:output`、`background:changed`），审批（`approval:created`、`approval:settled`），附件的识别结果（`media:processed`），待办（`todo:updated`），会话档案（`session:created`、`session:updated`、`session:completed`），会话的活动（`token:usage`、`token:request`、`llm:usage`、`gateway:phase:done`、`memory:messages-deleted`、`memory:messages-rewritten`、`history:changed`、`session:compressing`、`session:deleted`），以及 `trigger:fired` 与编排自己的运行事件（`workflow:run:start`、`workflow:run:done`、`workflow:run:error`、`workflow:node:done`）。编排按定义者的身份运行（见下文「定义者与运行身份」），事件参数插值进 `tool` 节点的参数、`agent` 节点的指令或 `send-message` 节点的正文时，内容里不可信的部分就以定义者的身份下达，转发到别的会话还会造成跨会话泄露；单是会话 id 也让订阅者看出别人的私聊在活动。
 
