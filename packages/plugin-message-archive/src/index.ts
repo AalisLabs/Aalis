@@ -10,14 +10,12 @@ import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { isTextRef, type TextRef, textOf, toSource, truncateParams } from '@aalis/schema-i18n';
 import type { ArchivedAttachment, IncomingMessage, Message, OutgoingMessage } from '@aalis/schema-message';
 import {
-  ATTACHMENT_REF_KINDS,
   buildIncomingContent,
   extractMentions,
   getMessageName,
   getSenderLabel,
   outboundMarkerMessage,
   outboundMediaMessage,
-  parseAttachmentRefs,
   WellKnownKinds,
   WellKnownMetadataKeys,
 } from '@aalis/schema-message';
@@ -45,15 +43,13 @@ function addressOf(value: string | undefined, roots: ReadonlySet<string>): strin
 }
 
 /**
- * 入站附件的清单：地址取附件的 data；data 不是地址（内联数据、本机路径、预处理器的私有引用）时，取预处理器给它写的描述里
- * 同种附件的引用（formatAttachmentRef 的写法，如媒体识别把上传的图片落盘后写的）
+ * 入站附件的清单：地址取附件的 data；data 不是地址（内联数据、本机路径、预处理器的私有引用）时，取预处理器写在附件 ref 上的
+ * 落盘地址（如媒体识别把上传的图片落盘后、文件读取把 data 换成文件引用前写的）。不从附件描述里取：描述里有群友起的文件名，
+ * 媒体判据把这份清单当作系统记下的引用
  */
 function attachmentList(incoming: IncomingMessage, roots: ReadonlySet<string>): ArchivedAttachment[] {
-  return (incoming.attachments ?? []).map(({ kind, name, data }, i) => {
-    const described = parseAttachmentRefs(incoming._attachmentDescriptions?.[i] ?? '').find(
-      found => found.kind === ATTACHMENT_REF_KINDS[kind],
-    );
-    const ref = addressOf(data, roots) ?? addressOf(described?.ref, roots);
+  return (incoming.attachments ?? []).map(({ kind, name, data, ref: landed }) => {
+    const ref = addressOf(data, roots) ?? addressOf(landed, roots);
     return { kind, ...(name ? { name } : {}), ...(ref ? { ref } : {}) };
   });
 }

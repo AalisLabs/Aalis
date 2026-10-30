@@ -138,19 +138,19 @@ describe('归档', () => {
     expect(message.content).toBe('[甲(30001)]: 看这个\n[引用 乙(30002) 的消息: 原话]\n[图片: 一只猫 | ref:data/a.png]');
   });
 
-  it('另记发言人写的话与附件清单：附件的地址取 data（网址与存储地址，相对路径不算），data 是内联数据的取预处理器给它写的描述里同种附件的引用，都没有的只记种类与名字；存储地址只认存储服务根表里的根', async () => {
+  it('另记发言人写的话与附件清单：附件的地址取 data（网址与存储地址，相对路径不算），data 不是地址的取预处理器写在附件 ref 上的落盘地址，描述里的引用不算，都没有的只记种类与名字；存储地址只认存储服务根表里的根', async () => {
     const K = WellKnownMetadataKeys;
     const archived = await (await archiveService()).archiveIncoming(
       group({
         attachments: [
-          { kind: 'image', name: 'cat.png', data: 'data:image/png;base64,AAAA' },
+          { kind: 'image', name: 'cat.png', data: 'data:image/png;base64,AAAA', ref: 'data:/images/g/media/cat.png' },
           { kind: 'image', data: 'data/images/g/dog.jpg' },
           { kind: 'video', data: 'https://v.example.invalid/a.mp4' },
           { kind: 'file', name: '报告.txt', data: 'workspace:/up/报告.txt' },
           { kind: 'file', name: '笔记.md', data: 'data:text/markdown;base64,AAAA' },
           { kind: 'audio', data: 'file:///tmp/a.wav' },
-          { kind: 'file', name: 'b.txt', data: 'aalis-file://0123abcd' },
-          { kind: 'file', name: 'c.txt', data: 'nowhere:/c.txt' },
+          { kind: 'file', name: 'b.txt', data: 'aalis-file://0123abcd', ref: 'workspace:/up/b.txt' },
+          { kind: 'file', name: 'c.txt', data: 'nowhere:/c.txt', ref: 'nowhere:/d.txt' },
         ],
         _attachmentDescriptions: [
           '[图片: 一只猫 | ref:data:/images/g/media/cat.png]',
@@ -160,7 +160,7 @@ describe('归档', () => {
           '[文件 | ref:workspace:/别的文件.md]',
           '[音频] 你好',
           undefined,
-          '[文件 | ref:nowhere:/d.txt]',
+          undefined,
         ],
       }),
     );
@@ -172,9 +172,9 @@ describe('归档', () => {
       { kind: 'image' },
       { kind: 'video', ref: 'https://v.example.invalid/a.mp4' },
       { kind: 'file', name: '报告.txt', ref: 'workspace:/up/报告.txt' },
-      { kind: 'file', name: '笔记.md', ref: 'workspace:/别的文件.md' },
+      { kind: 'file', name: '笔记.md' },
       { kind: 'audio' },
-      { kind: 'file', name: 'b.txt' },
+      { kind: 'file', name: 'b.txt', ref: 'workspace:/up/b.txt' },
       { kind: 'file', name: 'c.txt' },
     ]);
   });

@@ -257,7 +257,7 @@ interface ArchivedAttachment {
 }
 ```
 
-附件种类（`MessageAttachment['kind']`）到引用种类（`AttachmentRefKind`）的对应只有一份，`ATTACHMENT_REF_KINDS`：写引用与按种类认引用的各方（存档、媒体、OneBot 适配器，以及 `outboundMediaMessage` 自己）都查它，`AttachmentRefKind` 加种类时只改这一处。附件的 `data` 不是地址时（内联数据、本机路径），存档取预处理器给这个附件写的描述里用 `formatAttachmentRef` 写的同种附件的引用作地址：预处理器把附件落盘后，在描述里这样写出落盘的位置，读历史的一方就能显示它。存档怎么取地址见 [plugin-message-archive](../plugins/plugin-message-archive.md)。
+附件种类（`MessageAttachment['kind']`）到引用种类（`AttachmentRefKind`）的对应只有一份，`ATTACHMENT_REF_KINDS`：写引用与按种类认引用的各方（媒体、OneBot 适配器，以及 `outboundMediaMessage` 自己）都查它，`AttachmentRefKind` 加种类时只改这一处。附件的 `data` 不是地址时（内联数据、本机路径、预处理器换上的私有引用），存档取预处理器写在这个附件 `ref` 上的落盘地址：预处理器把附件落盘或换掉 `data` 时把地址写在那里，读历史的一方就能显示它。附件描述只给模型看，存档不从里面取地址：描述里有群友起的文件名，附件清单是媒体判据认的系统记下的引用。存档怎么取地址见 [plugin-message-archive](../plugins/plugin-message-archive.md)。
 
 会话服务读历史只认登记的键，会话服务自己经 `agent:tool:after` 写进工具结果元数据的几个（审批结算、已发出、停止时还没结束、退出码、后台任务 id）除外：api-agent 约定 agent 把这份元数据原样落库。没有 `SpokenContent`、`Attachments` 的旧提问按存档正文原样显示。
 

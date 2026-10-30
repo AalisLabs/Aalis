@@ -391,10 +391,14 @@ export class MediaServiceImpl implements MediaService {
     // 只在本会话内复用（键退回含会话目录的落盘路径），否则会把 A 群语境搬进 B 群。
     const shareable = !ctxText;
 
-    // 落盘后的引用写进描述位；正文里已有这个引用的（适配器落盘后按消息段写下了引用）不再重复写
+    // 落盘后的引用写进描述位；正文里已有这个引用的（适配器落盘后按消息段写下了引用）不再重复写。内联数据落了盘的另记下地址，
+    // 写回时补到附件的 ref 上，存档的附件清单按它记（不读描述）
     const contentRefs = new Set(parseAttachmentRefs(msg.content).map(r => r.ref));
-    const landImage = async (att: MessageAttachment): Promise<string | null> => {
+    const landed: Array<string | undefined> = new Array(attachments.length).fill(undefined);
+    const landImage = async (i: number): Promise<string | null> => {
+      const att = attachments[i];
       const ref = await this.cacheImageRef(att, msg.sessionId);
+      if (ref && ref !== att.data) landed[i] = ref;
       return ref && !contentRefs.has(ref) ? ref : null;
     };
 
@@ -417,7 +421,7 @@ export class MediaServiceImpl implements MediaService {
           if (!this.cfg.vision.recognizeOnArrival || !vision) {
             // 只留指针：不识别（关了到达即识别，或没有模型看得到图）。OneBot 适配器已把 ref 写进正文；WebUI 等平台的
             // base64 上传没有落盘 ref，这里落一份并写指针，否则档案里图片零痕迹、按需看无从下手。
-            const ref = await landImage(att);
+            const ref = await landImage(i);
             item.description = ref ? formatAttachmentRef({ kind: AttachmentRefKind.Image, ref }) : undefined;
             descriptions[i] = item.description;
           } else {
@@ -425,10 +429,10 @@ export class MediaServiceImpl implements MediaService {
             // 缓存里是裸描述（hint/上下文为空时），按新鲜识别的形态重新包装
             const cached = lookupCachedDescription(att.data, shareable);
             if (cached) {
-              item.description = imageDescription(cached, await landImage(att).catch(unstored));
+              item.description = imageDescription(cached, await landImage(i).catch(unstored));
             } else {
               // 先落盘：识别失败或返回空串时引用照留，原图不丢
-              imageRef = await landImage(att).catch(unstored);
+              imageRef = await landImage(i).catch(unstored);
               // 动图（多帧的 GIF、APNG、动态 WebP 与视频容器）走视频帧流程获得综合描述，按读到的字节判；抽不出帧的退回
               // 整图识别，与直通同一条规则
               const bytes = await readSourceBytes(att.data);
@@ -516,11 +520,13 @@ export class MediaServiceImpl implements MediaService {
 
     // 写回 IncomingMessage：只补不换，都按写回这一刻的消息读。识别期间 file-reader 可能已把文件附件
     // 换成 aalis-file:// 引用、写好文件描述（预处理器的先后取决于登记次序；触发判定启动的识别，放行时
-    // 也不等它跑完），整表覆盖会把引用改回原始数据、把文件描述冲掉。attachments 逐项只补 mimeType，
-    // 描述只填本插件写了的位（文件、直通音频等保留已有值）
-    msg.attachments = (msg.attachments ?? []).map((a, i) =>
-      a.mimeType || !attachments[i]?.mimeType ? a : { ...a, mimeType: attachments[i].mimeType },
-    );
+    // 也不等它跑完），整表覆盖会把引用改回原始数据、把文件描述冲掉。attachments 逐项只补 mimeType 与
+    // 落盘的地址（ref），描述只填本插件写了的位（文件、直通音频等保留已有值）
+    msg.attachments = (msg.attachments ?? []).map((a, i) => ({
+      ...a,
+      ...(!a.mimeType && attachments[i]?.mimeType ? { mimeType: attachments[i].mimeType } : {}),
+      ...(landed[i] ? { ref: landed[i] } : {}),
+    }));
     const prev = msg._attachmentDescriptions;
     msg._attachmentDescriptions = prev ? descriptions.map((d, i) => d ?? prev[i]) : descriptions;
     return report;

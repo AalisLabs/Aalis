@@ -1367,9 +1367,9 @@ describe('条目', () => {
       userId: 'console',
       attachments: [
         { kind: 'file', name: '报告.txt', data: 'paper:/up/报告.txt' },
-        { kind: 'image', name: 'cat.png', data: 'data:image/png;base64,AAAA' },
+        { kind: 'image', name: 'cat.png', data: 'data:image/png;base64,AAAA', ref: 'data:/images/s/media/cat.png' },
       ],
-      // 一个第三方的文件预处理器写的描述，与媒体识别落盘后按附件引用写的描述
+      // 一个第三方的文件预处理器写的描述，与媒体识别落盘后按附件引用写的描述（落盘的地址在附件的 ref 上）
       _attachmentDescriptions: [
         '〔附件 报告.txt：三页的周报，ID 9f〕',
         '[图片: 一只橘猫 | ref:data:/images/s/media/cat.png]',
