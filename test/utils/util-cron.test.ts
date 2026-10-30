@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { resolveText } from '../../packages/schema-i18n/src/index.js';
 import {
   dateFieldsInTimeZone,
+  MAX_INTERVAL_SECONDS,
   matchesCron,
   normalizeCronExpr,
   parseCronField,
   validateCronExpr,
+  validateIntervalSeconds,
 } from '../../packages/util-cron/src/index.js';
 
 describe('util-cron: 表达式解析', () => {
@@ -74,6 +76,39 @@ describe('util-cron: 表达式解析', () => {
       en: 'Cron field 2 is invalid (parses to nothing): "99"',
       source: 'cron 第 2 字段非法（解析为空）: "99"',
     });
+  });
+});
+
+// 间隔交给 setInterval：延时超过 2^31-1 毫秒（约 24.8 天）时按 1 毫秒处理，「每 30 天」变成每毫秒触发一次
+describe('util-cron: 间隔的上限', () => {
+  it('上限是定时器能排的最长延时折成的整秒数', () => {
+    expect(MAX_INTERVAL_SECONDS).toBe(2147483);
+    expect(MAX_INTERVAL_SECONDS * 1000).toBeLessThanOrEqual(2 ** 31 - 1);
+  });
+
+  it('@every 超过上限不通过，原因是本包字典里的文字对象；上限本身照收', () => {
+    const tooLong = validateCronExpr('@every 720h');
+    if (tooLong.ok || typeof tooLong.text === 'string') throw new Error('@every 720h 应被拒，原因是文字对象');
+    expect(tooLong.text.source).toBe('间隔须大于 0 且不超过 2,147,483 秒（约 24.8 天）: @every 720h');
+    expect(resolveText(tooLong.text, ['en'])).toBe(
+      'The interval must be greater than 0 and at most 2,147,483 seconds (about 24.8 days): @every 720h',
+    );
+    expect(validateCronExpr('@every 2147484s').ok).toBe(false);
+    expect(validateCronExpr('@every 2147483s')).toEqual({
+      ok: true,
+      kind: 'interval',
+      normalized: '@every 2147483s',
+      intervalSeconds: 2147483,
+    });
+  });
+
+  it('间隔秒数：大于 0、不超过上限的数通过，其余给原因', () => {
+    for (const ok of [0.5, 1, 60, 2147483]) expect(validateIntervalSeconds(ok), String(ok)).toBeNull();
+    for (const bad of [0, -5, Number.NaN, Number.POSITIVE_INFINITY, 2147483.5, 2592000, 'abc', undefined]) {
+      expect(validateIntervalSeconds(bad), String(bad)).not.toBeNull();
+    }
+    expect(validateIntervalSeconds(2592000)?.source).toBe('间隔须大于 0 且不超过 2,147,483 秒（约 24.8 天）: 2592000');
+    expect(validateIntervalSeconds('abc')?.source).toBe('间隔须大于 0 且不超过 2,147,483 秒（约 24.8 天）: abc');
   });
 });
 

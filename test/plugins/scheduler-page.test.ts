@@ -716,6 +716,103 @@ describe('读不出来与没排上的提示', () => {
   });
 });
 
+// 固定间隔交给 setInterval：延时超过 2^31-1 毫秒（约 24.8 天）时 Node 按 1 毫秒处理，「每 30 天」的任务每毫秒触发一次、
+// 每次在目标会话里排一轮。假时钟同样按 1 毫秒处理，只假 setInterval（间隔通道都是它），推进 50 毫秒数开始执行的次数
+describe('固定间隔的上限', () => {
+  const MONTH = 30 * 24 * 3600;
+  const reason = (value: string) => `间隔须大于 0 且不超过 2,147,483 秒（约 24.8 天）: ${value}`;
+
+  /** 假 setInterval 下跑一组用例，回调拿到的 started 记下每次开始执行的任务名 */
+  async function withFakeIntervals(
+    fn: (h: Harness, started: string[]) => Promise<void>,
+    options?: Parameters<typeof withScheduler>[1],
+  ) {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      await withScheduler(async h => {
+        const started: string[] = [];
+        h.host.events.use.on('scheduler:job:start', name => {
+          started.push(name);
+        });
+        await fn(h, started);
+      }, options);
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  it('经服务新建与修改、计划任务页与 scheduler_create_job：不是大于 0 的数或超过上限（含 @every）当场拒收，不入表、不落盘；上限本身照收', async () => {
+    await withFakeIntervals(async ({ svc, create, createByTool, jobs, files, pages }, started) => {
+      const service = svc();
+      if (!service) throw new Error('scheduler 服务未提供');
+      const job = { ...base, interval: MONTH };
+      expect(() => service.addJob(job)).toThrow(reason('2592000'));
+      expect(() => service.setJob(job)).toThrow(reason('2592000'));
+      expect(() => service.addJob({ ...base, cron: '@every 720h' })).toThrow(reason('@every 720h'));
+      for (const interval of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        expect(() => service.addJob({ ...base, interval }), String(interval)).toThrow(reason(String(interval)));
+      }
+      expect(toSource(await create({ ...base, interval: MONTH }))).toEqual(refused(500, reason('2592000')));
+      expect(await createByTool({ name: 'k', interval: MONTH, content: 'x' })).toEqual({ error: reason('2592000') });
+      expect(await createByTool({ name: 'k', cron: '@every 720h', content: 'x' })).toEqual({
+        error: reason('@every 720h'),
+      });
+      expect(jobs()).toEqual([]);
+      expect(files.has('data:/scheduler-jobs.json')).toBe(false);
+      expect(pages.notices(), '拒收的输入不该再发「没有排上」').toEqual([]);
+
+      service.addJob({ ...base, name: 'max', interval: 2147483 });
+      await vi.advanceTimersByTimeAsync(50);
+      expect(started, '溢出的话 50 毫秒里会执行 50 次').toEqual([]);
+      expect(jobs().map(j => j.name)).toEqual(['max']);
+    });
+  });
+
+  it('配置文件与存量文件里超过上限的间隔（含 @every）：插件照常激活，任务列着但不排、发「没有排上」提示，下次执行不显示', async () => {
+    const task = { sessionId: 'internal', platform: 'internal', content: 'x' };
+    await withFakeIntervals(
+      async ({ app, pages, jobs }, started) => {
+        expect(app.plugins.getStatus().find(p => p.name === '@aalis/plugin-scheduler')?.state).toBe('active');
+        expect(toSource(pages.notices())).toEqual([
+          {
+            instance: '@aalis/plugin-scheduler',
+            id: 'unscheduled:static',
+            level: 'error',
+            title: '计划任务「static」没有排上，不会运行',
+            detail: `在配置文件里改正这个任务的 cron 或 timeZone，保存后生效。原因：${reason('2592000')}`,
+            open: 'config',
+          },
+          expect.objectContaining({ id: 'unscheduled:static-every' }),
+          {
+            instance: '@aalis/plugin-scheduler',
+            id: 'unscheduled:stored',
+            level: 'error',
+            title: '计划任务「stored」没有排上，不会运行',
+            detail: `在计划任务页编辑这个任务，改正它的 cron 后保存。原因：${reason('2592000')}`,
+            open: { page: 'scheduler' },
+          },
+        ]);
+        expect(jobs().map(j => [j.name, j.nextRun])).toEqual([
+          ['static', 0],
+          ['static-every', 0],
+          ['stored', 0],
+        ]);
+        await vi.advanceTimersByTimeAsync(50);
+        expect(started).toEqual([]);
+      },
+      {
+        jobs: [
+          { ...task, name: 'static', interval: MONTH },
+          { ...task, name: 'static-every', cron: '@every 720h' },
+        ],
+        persisted: [
+          { ...task, name: 'stored', interval: MONTH, enabled: true, actorPlatform: 'webui', actorUserId: 'console' },
+        ],
+      },
+    );
+  });
+});
+
 describe('计划任务给人看的出口按读者的语言', () => {
   /** cron-engine 拒收时区的配置任务，与一个能立即执行的固定间隔任务 */
   const jobs = [

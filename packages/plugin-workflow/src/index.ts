@@ -13,11 +13,12 @@ import { hooks } from '@aalis/api-hooks';
 import { isStorageUri, storage } from '@aalis/api-storage';
 import { actingIdentity, type BoundTools, tools } from '@aalis/api-tools';
 import { type BoundWebui, markdownCode, webuiServer } from '@aalis/api-webui';
-import type { NodeRunInfo, WorkflowDef, WorkflowRun, WorkflowService } from '@aalis/api-workflow';
+import type { NodeRunInfo, TriggerSpec, WorkflowDef, WorkflowRun, WorkflowService } from '@aalis/api-workflow';
 import { workflow } from '@aalis/api-workflow';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { TextError, type TextRef, textClauses, textOf, toSource } from '@aalis/schema-i18n';
+import { validateIntervalSeconds } from '@aalis/util-cron';
 import { parse, stringify } from 'yaml';
 
 import { errorReason, runDag, validateGraph } from './engine.js';
@@ -556,16 +557,35 @@ async function run(caps: Caps): Promise<void> {
   }
 
   /**
+   * 触发器写错的原因：收下了也订阅不上、永远不会触发。cron 交 cron-engine 校验；interval 与定时任务的固定间隔同一条（大于 0、
+   * 不超过定时器能排的上限，超过的溢出成每毫秒触发）；once 的 runAt 要能解析；event 不能订阅不可作触发源的事件
+   */
+  function triggerError(trigger: TriggerSpec): string | TextRef | null {
+    switch (trigger.type) {
+      case 'cron': {
+        const checked = caps.cronEngine.use.validate(String(trigger.expr ?? ''));
+        return checked.ok ? null : checked.text;
+      }
+      case 'interval':
+        return validateIntervalSeconds(trigger.seconds);
+      case 'once':
+        return Number.isFinite(Date.parse(String(trigger.runAt)))
+          ? null
+          : t('badRunAt', { runAt: String(trigger.runAt) });
+      case 'event':
+        return BLOCKED_EVENT_TRIGGERS.has(trigger.event) ? t('blockedEventTrigger', { event: trigger.event }) : null;
+      default:
+        return null;
+    }
+  }
+
+  /**
    * 定义或覆盖：定义者记进账本，连同写进文件的文本的哈希；只在内存里的定义，定义者也只在内存。id 不合规（它是定义文件的文件名）、
-   * event 触发器订阅不可作触发源的事件的，报错、不保存
+   * 图不合法、触发器写错的，报错、不保存
    */
   async function define(def: WorkflowDef, persist: boolean, definer: UserIdentity | undefined) {
-    const err = validateId(def.id) ?? validateGraph(def);
-    if (err) throw new TextError(err);
-    const { trigger } = def;
-    if (trigger.type === 'event' && BLOCKED_EVENT_TRIGGERS.has(trigger.event)) {
-      throw new TextError(t('blockedEventTrigger', { event: trigger.event }));
-    }
+    const err = validateId(def.id) ?? validateGraph(def) ?? triggerError(def.trigger);
+    if (err) throw typeof err === 'string' ? new Error(err) : new TextError(err);
     if (persist) runStore.recordDefiner(def.id, definer, await loader.saveDef(def));
     loader.putMemory(def, definer);
     // 重新触发器

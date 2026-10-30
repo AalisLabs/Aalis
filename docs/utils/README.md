@@ -11,7 +11,7 @@
 | [util-offline-render](util-offline-render.md) | 浏览器离线渲染与图片重编码；调用方拥有 renderer，并在退出时等待 `dispose()`。 |
 | [network-guard](network-guard.md) | SSRF 防护出口：`safeFetch`（逐跳重定向复核）/`assertSafeUrl`/`assertSafeHost`/`isPrivateAddress`/`setNetworkPolicy`。**任何用户/LLM 可影响的 URL 都应经它**。威胁模型见[概念层 security-model](../concepts/security-model.md)。 |
 | [text-normalize](text-normalize.md) | 净化 LLM 助手输出：`fixGfmTables`（渲染端修 GFM 表格，只改显示）/`stripLeakedSpecialTokens`（拿到完整回复的一方剥泄漏的特殊 token）。 |
-| `util-cron`（无单独页面） | Cron 表达式解析与匹配（POSIX 5 字段 + `@` 别名 + `@every` 间隔）：`validateCronExpr`/`matchesCron`/`parseEverySeconds` 等。消费者：cron-engine、scheduler；`api-cron-engine` 只转发其类型。 |
+| `util-cron`（无单独页面） | Cron 表达式解析与匹配（POSIX 5 字段 + `@` 别名 + `@every` 间隔）：`validateCronExpr`/`matchesCron`/`parseEverySeconds` 等。消费者：cron-engine、scheduler、workflow；`api-cron-engine` 只转发其类型。 |
 | `util-dep-spec`（无单独页面） | npm 依赖声明的来源分档与 semver 版本序比较：`classifyDepSpec`/`isRegistryDep`/`compareVersions`/`isUpgrade`。消费者：package-manager、webui-server 的市场路由。 |
 
 > 其它入口：[概念层](../concepts/README.md) · [服务契约层](../services/README.md) · [脚手架上手](../guide/scaffolding.md) · [插件作者隐式契约指南](../plugin-author-guide.md)

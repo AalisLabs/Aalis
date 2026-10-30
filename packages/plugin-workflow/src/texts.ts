@@ -95,6 +95,7 @@ const SOURCE = {
     'once 记账读取失败（见日志），本次运行不会触发；可用{manualRun}手动执行，修复运行历史文件后重启恢复',
   runNow: '「立即运行」',
   blockedEventTrigger: 'event 触发器订阅的 {event} 负载带会话内容（会话 id、平台、正文等），不能当触发源',
+  badRunAt: 'once 触发器的 runAt 不是能解析的时间: {runAt}',
   definedBy: '定义者',
   anonymous: '匿名',
 } as const;

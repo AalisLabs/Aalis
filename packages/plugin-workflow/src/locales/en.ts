@@ -99,6 +99,7 @@ export default defineLocale<Source>()({
   runNow: '“Run now”',
   blockedEventTrigger:
     'The event trigger subscribes to {event}, whose payload carries session content (session IDs, platforms, message text and the like), so it cannot be a trigger source',
+  badRunAt: 'The runAt of the once trigger is not a time that can be parsed: {runAt}',
   definedBy: 'Defined by',
   anonymous: 'Anonymous',
 });
