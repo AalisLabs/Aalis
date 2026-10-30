@@ -1558,7 +1558,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
       'internal',
       '整理今天的新闻',
     ]);
-    await page.locator(`${aria('编辑', 'dialog')} ${aria('取消', 'button')}`).click();
+    await page.locator(`${aria('编辑', 'dialog')} ${aria('返回', 'button')}`).click();
     await page.waitForSelector(aria('编辑', 'dialog'), { hidden: true });
 
     await page.locator(`tbody tr ${aria('更多', 'button')}`).click();
