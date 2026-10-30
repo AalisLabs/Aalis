@@ -21,10 +21,11 @@ import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/inde
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
-import type {
-  IncomingMessage,
-  OutboundDeliveryResult,
-  OutgoingMessage,
+import {
+  DELIVERY_WAIT_MS,
+  type IncomingMessage,
+  type OutboundDeliveryResult,
+  type OutgoingMessage,
 } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
@@ -1025,6 +1026,24 @@ describe('没送达', () => {
     await settle();
     await vi.advanceTimersByTimeAsync(GRACE_MS);
     expect(second.content).toBeUndefined();
+  });
+
+  const unknown: Array<[string, () => OutboundDeliveryResult | Promise<OutboundDeliveryResult>]> = [
+    ['适配器报结果未知', () => ({ ok: false, error: '回执超时', unconfirmed: true })],
+    ['等满时限没等到回执', () => new Promise(() => {})],
+  ];
+  it.each(unknown)('%s：可能已经送达，不算没收到：她再说话不再发一张，宽限过后照旧等', async (_, deliver) => {
+    const s = await setup({ deliver });
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    await s.say('帮我清一下');
+    const r = s.call();
+    await s.requested();
+    await vi.advanceTimersByTimeAsync(DELIVERY_WAIT_MS);
+    await s.say('我在');
+    expect(s.requests()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(GRACE_MS);
+    await settle();
+    expect(r.content).toBeUndefined();
   });
 });
 

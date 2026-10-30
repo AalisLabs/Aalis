@@ -129,11 +129,17 @@ export default definePlugin({
   apply: runChatApproval,
 });
 
+/**
+ * 一条消息的投递：送达（带平台给的消息 id）、确定没送达，或结果未知（发出去了没等到平台确认，可能已经送达：不能当没送达，
+ * 也不重发）
+ */
+type Delivery = { state: 'delivered'; messageIds: string[] } | { state: 'failed' | 'unknown' };
+
 /** 推到一处、还没结的一张审批 */
 interface Shown {
   approval: Approval;
   /** 投递的结果：还在发时没有 */
-  sent?: 'delivered' | 'failed';
+  sent?: Delivery['state'];
 }
 
 /** 一个身份在一处的接入 */
@@ -264,11 +270,11 @@ function runChatApproval({
   }
 
   /**
-   * 发一句到这一处：宿主提示，正文按纯文字发，网关按会话的语言渲染；交回平台的投递结果。停用之后不发、不等回执；
-   * 发不出或等不到回执时交回 undefined，不抛
+   * 发一句到这一处：宿主提示，正文按纯文字发，网关按会话的语言渲染；交回投递结果，不抛。停用之后不发；网关不在、没有适配器
+   * 接手、发送或回执出错的是没送达；等满时限、等的时候停用了、适配器报结果未知的是结果未知
    */
-  async function send(place: Place, text: TextRef) {
-    if (signal.aborted || !gateway.present) return undefined;
+  async function send(place: Place, text: TextRef): Promise<Delivery> {
+    if (signal.aborted || !gateway.present) return { state: 'failed' };
     const message: OutgoingMessage = {
       content: toSource(text),
       text,
@@ -278,35 +284,36 @@ function runChatApproval({
     };
     try {
       await gateway.use.dispatchOutbound(message);
-      return message.delivery && (await awaitDelivery(message.delivery, signal));
+      if (!message.delivery) return { state: 'failed' };
+      const result = await awaitDelivery(message.delivery, signal);
+      if (result?.ok) return { state: 'delivered', messageIds: result.messageIds ?? [] };
+      return { state: result && !result.unconfirmed ? 'failed' : 'unknown' };
     } catch (err) {
       logger.use.warn('聊天审批发消息出错:', err);
-      return undefined;
+      return { state: 'failed' };
     }
   }
 
   /**
-   * 推一张审批：发到这一处（群窗口就是它的根会话，不按审批所在的会话找）。没送达时这里的人看不到它：这张还在等就对拿着它的
-   * 接入上报离开，审批服务把推给它们、还没结的都算没收到，他们再说话时补推。送达且平台给了消息 id 才认得出引用它的回复；不给时
-   * 补一句这里无法应答。送达之前已经结了的只记下消息 id（引用它的回复回「已经处理过」）
+   * 推一张审批：发到这一处（群窗口就是它的根会话，不按审批所在的会话找）。确定没送达时这里的人看不到它：这张还在等就对拿着它的
+   * 接入上报离开，审批服务把推给它们、还没结的都算没收到，他们再说话时补推。结果未知的可能已经送达：不上报、不补推，只是认不出
+   * 引用它的回复。送达且平台给了消息 id 才认得出引用它的回复；不给时补一句这里无法应答。送达之前已经结了的只记下消息 id（引用
+   * 它的回复回「已经处理过」）
    */
   async function push(place: Place, shown: Shown): Promise<void> {
     const { approval } = shown;
     const source = place.scope.window === undefined ? sourceOf(approval.sessionId) : undefined;
-    const result = await send(place, requestText(approval, source, Date.now()));
+    const delivery = await send(place, requestText(approval, source, Date.now()));
+    shown.sent = delivery.state;
     const waiting = place.shown.get(approval.id) === shown;
-    if (!result?.ok) {
-      shown.sent = 'failed';
-      if (!waiting) return;
+    if (delivery.state === 'failed' && waiting) {
       for (const attendee of place.attendees.values()) {
         if (attendee.held.has(approval.id)) attendee.attendance.presence(false);
       }
-      return;
     }
-    shown.sent = 'delivered';
-    const ids = result.messageIds ?? [];
-    for (const id of ids) quoted.set(keyOf(place.sessionId, id), approval.id);
-    if (waiting && ids.length === 0) await send(place, t('answerElsewhere'));
+    if (delivery.state !== 'delivered') return;
+    for (const id of delivery.messageIds) quoted.set(keyOf(place.sessionId, id), approval.id);
+    if (waiting && delivery.messageIds.length === 0) await send(place, t('answerElsewhere'));
   }
 
   /** 他在这一处的接入，没有就建 */
@@ -322,7 +329,7 @@ function runChatApproval({
         {
           requested: approval => {
             held.add(approval.id);
-            // 同一张在这里只发一条：推给这里别的接入的与补推的同一张，送达过的与还在发的不再发，没送达的重发
+            // 同一张在这里只发一条：推给这里别的接入的与补推的同一张，送达过的、结果未知的与还在发的不再发，确定没送达的重发
             const posted = place.shown.get(approval.id);
             if (posted && posted.sent !== 'failed') return;
             const entry: Shown = { approval };
