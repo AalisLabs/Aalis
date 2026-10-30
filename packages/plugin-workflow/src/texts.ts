@@ -42,7 +42,7 @@ const SOURCE = {
   badDefinition: '定义不合法：缺少 trigger 或 nodes',
   badId: '工作流 id 只能用字母、数字、下划线与连字符（它是定义文件的文件名）：{id}',
   fileTaken:
-    '定义文件 {file} 已被工作流 {other} 占用，工作流 {id} 换一个 id（文件系统不分大小写或字形时，看着不同的 id 也会落到同一个文件）',
+    '定义文件 {file} 已被工作流 {other} 占用，请给工作流 {id} 换一个 id（文件系统不分大小写或字形时，看着不同的 id 也会落到同一个文件）',
   definitions: '定义',
   stateEnabled: '启用',
   stateDisabled: '停用',
