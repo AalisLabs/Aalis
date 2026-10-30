@@ -268,13 +268,15 @@ function registerImageSender(caps: Caps): void {
           via = 'storage_uri';
         } else if (historyRef) {
           refTag = historyRef.replace(/^ref:/, '').trim();
-          // 网址照旧当 url 用；其余只在调用所在会话历史里系统记下的引用中按全等找。找到的就是判据第 1 类里的历史引用，
-          // 不再另判
+          // 网址照旧当 url 用；其余只在调用所在会话历史里系统记下的引用中按全等找，找到的与 storage_uri 过同一份判据：
+          // 会话媒体放行，历史里记过的本机文件照样按本机文件判（按地址取到的是此刻的内容）
           const ref = mediaRef(refTag);
           if (ref && !isStorageUri(ref)) {
             data = ref;
           } else if (!ref || !historyMediaRefs(await recentHistory(callCtx.sessionId)).includes(ref)) {
             return JSON.stringify({ error: `未在本会话历史中找到引用: ${historyRef}` });
+          } else if (!(await mediaScopeOf(callCtx, scopeServices)(ref))) {
+            return JSON.stringify({ error: OUT_OF_SCOPE });
           } else {
             const loaded = await loadStorageMedia(ref, kind);
             if (!loaded.ok) return JSON.stringify({ error: loaded.error });

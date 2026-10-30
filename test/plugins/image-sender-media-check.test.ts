@@ -105,6 +105,9 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     writeFileSync(join(dataDir, 'secret', 'config.yaml'), FAKE_YAML);
     writeFileSync(join(dataDir, 'secret', 'token.txt'), FAKE_TOKEN);
     writeFileSync(join(dataDir, 'secret', 'memory.db'), FAKE_SQLITE);
+    // 不在会话媒体目录里的本机图片（如 owner 发进群的截图），历史里记作发出的附件
+    mkdirSync(join(dataDir, 'shots'), { recursive: true });
+    writeFileSync(join(dataDir, 'shots', 'latest.png'), PNG);
 
     // 真实落库的形状：入站附件的地址在 metadata 的附件清单里，她发出的附件在 SentRef 里；正文只是给模型看的占位符
     const history: Message[] = [
@@ -127,6 +130,12 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
         content: '[音频 | ref:data:/images/s/song.mp3]',
         timestamp: 3,
         metadata: { [WellKnownMetadataKeys.SentRef]: 'data:/images/s/song.mp3' },
+      },
+      {
+        role: 'assistant',
+        content: '[图片 | ref:data:/shots/latest.png]',
+        timestamp: 4,
+        metadata: { [WellKnownMetadataKeys.SentRef]: 'data:/shots/latest.png' },
       },
     ];
     const started = startApp({ [OWNER_SESSION]: history, [ROOM]: history });
@@ -220,6 +229,14 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
     );
     expect(elsewhere.error).toBe('未在本会话历史中找到引用: data:/images/s/cat.png');
     expect(outbound).toHaveLength(0);
+  });
+
+  it('history_ref 找到的是历史里发出过的本机文件：与 storage_uri 同一份判据，owner 自己的会话照发，群友在群里越界拒、不发', async () => {
+    const own = await send({ kind: 'image', history_ref: 'data:/shots/latest.png' });
+    expect(own.ok).toBe(true);
+    const room = await send({ kind: 'image', history_ref: 'data:/shots/latest.png' }, ROOM_CALL);
+    expect(room.error).toMatch(/^这个文件不在这一轮能取的范围里/);
+    expect(outbound).toHaveLength(1);
   });
 
   it('history_ref 找到的是存储库内的非媒体文件 → 按文件头拒发', async () => {
