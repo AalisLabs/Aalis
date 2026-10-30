@@ -245,8 +245,7 @@ async function execAgent(node: AgentNodeSpec, ec: ExecCtx): Promise<string> {
     platform,
     triggerType: 'proactive',
   };
-  // 授权身份透传：同一次 run 里 tool 节点带运行身份而 agent 节点匿名是自相矛盾，
-  // 与 execSendMessage 同源补齐；匿名的不带。
+  // 授权身份透传：同一次 run 里 tool 节点带运行身份，agent 节点匿名就自相矛盾；与 execSendMessage 同源，匿名的不带。
   const runner = actingIdentity(ec.toolCallContext);
   if (runner.userId) incoming.actor = runner;
 

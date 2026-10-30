@@ -745,9 +745,6 @@ class DefaultAgent implements AgentService {
     // 工具上下文与 agent:llm:before 同一个值
     const acceptsImages = llm.capabilities.includes(LLMCapabilities.Vision);
 
-    // 从 LLM model entry 读取参数。contextLength / maxOutputTokens 均为 per-model 属性，
-    // service-granularity 后不再需要 router.getContextLengthFor() 反查，也不再会出现
-    // 默认 provider 全局窗口与会话实际 model 不一致的偏差（Bug F 结构性修复）。
     const maxTokens = getModelMaxOutput(llm);
     const contextLength = llm.contextLength;
     const tokenBudget = this.computeTokenBudget(contextLength, maxTokens);
@@ -1554,7 +1551,7 @@ class DefaultAgent implements AgentService {
         // media 缺席兜底（主模型不能看图时当轮的图不交，正文里的占位照旧）：存储地址（适配器落盘的附件引用）provider 解不了（当 base64 校验，整轮请求被拒，见
         // test/plugins/media-model-images.test.ts 抬头的 400 事故），经 storage 读出转 data URI，保住「视觉主模型
         // 直通」的基础体验；读不出（storage 缺席/读失败）就丢弃该图。其余形态（data URI、http(s)、file:// 等）原样
-        // 透传，与 media 出现之前的行为一致，各 provider 按自己的解析器处置。
+        // 交给 provider，各按自己的解析器处置。
         const images: string[] = [];
         for (const a of imageAtts) {
           const img = await this.materializeImageWithoutMedia(a.data, a.mimeType);
@@ -1788,8 +1785,8 @@ class DefaultAgent implements AgentService {
   /**
    * media 缺席时的图片物化兜底（仅 buildMessages 的 images 拷贝点使用）。
    * 只翻译存储地址（适配器落盘的附件引用）：provider 当 base64 校验 → 400 整轮被拒，经 storage 读出转 data URI；
-   * storage 缺席/读失败返回 null 由调用方丢弃该图。**其余形态原样透传**（data URI、http(s)、file:// 等，各 provider
-   * 自行解析），维持 media 出现之前的既有行为。
+   * storage 缺席/读失败返回 null 由调用方丢弃该图。**其余形态原样交给 provider**（data URI、http(s)、file:// 等，各 provider
+   * 自行解析）。
    */
   private async materializeImageWithoutMedia(data: string, mimeType?: string): Promise<string | null> {
     const t = data.trim();
@@ -1947,10 +1944,10 @@ class DefaultAgent implements AgentService {
         result[i] = shorter;
       }
     }
-    // 仍超时从最靠前的块删起。turn-context 迁移后头部只剩技能正文/会话摘要、档案/记忆类材料都在尾部——正序扫描意味着极端
+    // 仍超时从最靠前的块删起。头部只有技能正文/会话摘要、档案/记忆类材料都在尾部——正序扫描意味着极端
     // 裁剪时**先牺牲头部稳定块**、可再生的尾部材料反而最后动，与理想优先级相反。维持正序是刻意取舍：这是罕见的最后手段，且
     // 反转方向会先删掉紧邻当前消息的当轮提示（focus/平台事件说明），代价更直观；按 injector 分级则是为极端路径引入一张需要
-    // 长期维护的优先级表。真在生产观察到它高频触发时再议。
+    // 长期维护的优先级表。
     let removed = 0;
     for (const i of injected()) {
       if (estimated <= budget) break;

@@ -505,8 +505,7 @@ async function run(caps: Caps): Promise<void> {
       { role: 'system', content: system },
       { role: 'user', content: summaryRequest(previous, conversation) },
     ];
-    // 最浅的思考档写死不设配置——摘要是机械压缩任务，思维链只贡献耗时方差：
-    // DeepSeek v4 全系默认带思考，300 条群聊的摘要曾多次耗时两分钟以上。将来真出现需要思考版摘要的模型再补配置键。
+    // 最浅的思考档写死不设配置：摘要是机械压缩任务，思考只增加耗时。
     const request = {
       messages,
       temperature: 0.3,
