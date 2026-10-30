@@ -49,6 +49,7 @@ type TextParam = string | number | TextRef | readonly (string | number | TextRef
 |---|---|
 | `asText(v)` | 展示值（core 的插件显示名、服务 label 这类 `unknown` 字段）收窄成文字：字符串与文字对象原样，其余 `undefined` |
 | `isTextRef(v)` | 按形状判：`i18n`、`key`、`source` 是字符串，`params` 缺省或为普通对象，没有别的键。从 JSON 读回的、另一份本包产出的都认 |
+| `sameText(a, b)` | 两段文字是不是同一句：有一方是字符串时按原文（`toSource`）比；文字对象之间按所属包、键与参数比，原文的措辞变了也还是同一句。参数按结构比：参数键的先后不算，参数里的文字对象同样按包、键与参数比，数组逐个按位置比，别的值按 `===` 比 |
 | `toSource(v)` / `toSourceReplacer` | 把值里的文字对象换成 source；后者给 `JSON.stringify` 用。写日志、交给模型时用（取生成时的整句） |
 | `localize(v, render, skip?)` | 遍历普通对象与数组，把文字对象换成 `render(text)`；没有文字对象的子树原样返回、不复制。`skip(key, parent)` 为真的属性不进：出口用它避开原样数据（工具参数与结果、审批的逐字参数、用户消息正文），那里形如文字对象的值可能是伪造的 |
 | `textLines(parts)` | 把若干段（字符串或文字对象）按行连成一个文字对象，多行报告、列表类回复用它 |
@@ -75,7 +76,7 @@ type TextParam = string | number | TextRef | readonly (string | number | TextRef
 - `{t, date|time|datetime, short|medium|long}`：t 是毫秒时间戳，样式缺省 medium，时区取渲染参数的 `timeZone`，缺省或不认识时用进程时区。
 - `{items, list}`：罗列，按句子选中的语言取分隔符直接拼接（中文「a、b、c」，英文「a, b, c」），不加「和」「and」。分隔符来自 `@aalis/schema-i18n` 字典的 `listSeparator` 键，自带 zh-CN（「、」）与 en（「, 」）；别的语言由语言包补，没补时按下文的选法回落，同语言的用它（zh-TW 用「、」），其余用 en 的「, 」：日文要用「、」，得在语言包里给 `@aalis/schema-i18n` 的 `listSeparator`（见「语言包」）。不用 `ListFormat` 的窄写法：它在各语言（zh-TW、ko、de 等仍带连接词）与各浏览器里不一致。`{items, list, or}`：`ListFormat` 的 disjunction（「或」，如「可选：a、b或c」）；`{items, lines}`：按行连接。元素各自渲染。`list` 后面的样式只认 `or`。
 - `{ms, duration}`：天、时、分、秒最多两级，按显示的最小一级四舍五入；负数只在第一级带负号。
-- `{n, size}`：B、KB、MB、GB，按 1024 进位，B 以上留一位小数；舍入后到了 1024 就升一级。
+- `{n, size}`：B、kB、MB、GB（Intl 单位的 narrow 写法），按 1024 进位，B 以上至多一位小数、整数不带小数；舍入后到了 1024 就升一级。
 - `{x, code}`：行内代码，x 是字符串或数。围栏比参数里最长的反引号串多一个，参数原样、不转义。参数要放进代码段时用它，不要在模板里写 `` `{x}` ``：Markdown 出口转义后代码段里会显出反斜杠。
 
 plural 与 select 必须有 other；未知类型、`list` 后面不是 `or` 的样式、花括号不配平、重复的分支键、`offset:`、嵌套超过 16 层都算解析失败。plural、number、date、time、datetime、duration、size 要求有限数，list、lines 要求数组，不符算渲染失败。
@@ -115,7 +116,7 @@ ns 不在目录、键不存在、原文解析失败、选中的那条渲染失�
 
 ## 语言包
 
-语言包给字典补它没有的语言：`{ id, language, entries: { [ns]: { [key]: { text, from } } } }`，`from` 是翻译时原文模板的 `fingerprint`。`indexPacks(packs)` 建索引交给 `resolveText`，形状不对或读取时抛错的包、表与条目跳过：字典自带同语言同键时语言包不生效；`from` 与当前原文的指纹不符当作缺失；多个包给同一条时按交来的先后取先（plugin-i18n 按贡献点的全局键交来，包名在前）。
+语言包给字典补它没有的语言：`{ id, language, entries: { [ns]: { [key]: { text, from } } } }`，`from` 是翻译时原文模板的 `fingerprint`。`indexPacks(packs)` 建索引交给 `resolveText`，形状不对或读取时抛错的包、表与条目跳过：补缺按语言标签算，字典自带同一语言标签同键时语言包不生效，字典没有的标签（含地区变体）由包补；`from` 与当前原文的指纹不符当作缺失；多个包给同一条时按交来的先后取先（plugin-i18n 按贡献点的全局键交来，包名在前）。
 
 `{x, list}` 的分隔符也要语言包补：本包字典只带 zh-CN 与 en，别的语言没补时罗列用 en 的「, 」。日文要用「、」就在包里给本包的 `listSeparator`：`entries: { '@aalis/schema-i18n': { listSeparator: { text: '、', from: fingerprint('、') } } }`。
 
