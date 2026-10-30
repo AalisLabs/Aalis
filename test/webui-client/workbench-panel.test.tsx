@@ -560,6 +560,23 @@ describe('右侧面板与会话头', () => {
     expect(requests('session/config/get')).toEqual([]);
   });
 
+  it('功能位推送里 settings 没变（如对话服务重载时 send 先假后真）：正在改的那一行不收起、草稿还在，也不重取设置', async () => {
+    const rows = [row('extra', { field: { type: 'string', label: '额外提示' } })];
+    app = await renderApp('/s/s1/settings', {
+      'session/subscribe': () => snapshot([]),
+      'session/config/get': () => ({ items: rows }),
+    });
+    await panel().findByRole('group', { name: '额外提示' });
+    fireEvent.click(settingRow('额外提示').getByRole('button', { name: /额外提示/ }));
+    fireEvent.change(settingRow('额外提示').getByRole('textbox', { name: '额外提示' }), {
+      target: { value: '<草稿>' },
+    });
+    act(() => server().notify('features/changed', { features: { ...INIT.features, send: false } }));
+    act(() => server().notify('features/changed', { features: INIT.features }));
+    expect(settingRow('额外提示').getByRole<HTMLInputElement>('textbox', { name: '额外提示' }).value).toBe('<草稿>');
+    expect(requests('session/config/get')).toHaveLength(1);
+  });
+
   it('会话头的副信息：场所是窗口的写「类型名 · 平台」，是工作区的写场所的显示名，出生平台是 IM 的另写平台；子会话不写', async () => {
     const headOf = async (session: NonNullable<Parameters<typeof snapshot>[1]>['session']) => {
       app = await renderApp('/s/s1', { 'session/subscribe': () => snapshot([], { session }) });
