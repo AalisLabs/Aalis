@@ -27,7 +27,7 @@ import { type TextRef, textLines, textOf } from '@aalis/schema-i18n';
 import type { Caps } from './caps.js';
 import type { Field, Item, SessionContext, SessionSettingsProvider } from './provider.js';
 import { fixedChoices, readText, writeText } from './text-values.js';
-import { t } from './texts.js';
+import { itemName, t } from './texts.js';
 
 /** --at 收的层：层表从窄到宽 */
 const AT_LAYERS = [...SESSION_LAYERS].reverse().map(layer => layer.name);
@@ -220,7 +220,12 @@ export class SettingsEditor {
     const parsed = readText(item.field, valueText);
     const read = 'invalid' in parsed ? parsed : readFieldValue(item.field, parsed.value);
     if ('invalid' in read)
-      return refuse(this.withChoices(t('invalidValue', { item: name, reason: read.invalid }), item.field));
+      return refuse(
+        this.withChoices(
+          t('invalidValue', { item: itemName(item.field.label, name), reason: read.invalid }),
+          item.field,
+        ),
+      );
     return this.write(identity, target, item, read.value ?? null);
   }
 

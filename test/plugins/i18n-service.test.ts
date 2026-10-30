@@ -135,10 +135,14 @@ describe('按会话设的 language', () => {
     const { admin, svc, set } = await withSessions();
     const refused = await set(ROOM, ['en', 'bad tag!']).catch(err => err);
     expect(isSessionSettingsError(refused)).toBe(true);
-    expect(svc.render(textOf(refused), host)).toBe('Invalid value for language: bad tag! is not a valid language tag');
+    expect(svc.render(textOf(refused), host)).toBe(
+      'Invalid value for Language (language): bad tag! is not a valid language tag',
+    );
     const auto = await set(ROOM, ['auto', 'en']).catch(err => err);
     expect(isSessionSettingsError(auto)).toBe(true);
-    expect(svc.render(textOf(auto), host)).toBe('Invalid value for language: auto is not a valid language tag');
+    expect(svc.render(textOf(auto), host)).toBe(
+      'Invalid value for Language (language): auto is not a valid language tag',
+    );
     await set(ROOM, ['zh-CN', 'en', 'zh-CN']);
     expect(admin.rows({ sessionId: ROOM }).find(row => row.key === 'language')?.value).toEqual(['zh-CN', 'en']);
     await set(ROOM, ['zh_CN']);

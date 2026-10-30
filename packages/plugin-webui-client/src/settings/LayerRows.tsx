@@ -37,6 +37,7 @@ export function LayerRows({
           layer={layer.scope}
           own
           originOf={source => tr('originFrom', { layer: sourceTitle(order, source, at) })}
+          invalidOf={source => tr('invalidHere', { layer: sourceTitle(order, source, at) })}
           update={update}
         />
       )}

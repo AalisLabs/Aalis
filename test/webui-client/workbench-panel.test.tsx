@@ -424,7 +424,7 @@ describe('右侧面板与会话头', () => {
     }
   });
 
-  it('改到全局：生效值出自全局层、等于作者默认的行没有「恢复默认」（与「会话默认」的全局层同一规则），不等于默认的照常有', async () => {
+  it('改到全局：生效值出自全局层、等于作者默认的行标「默认」、没有「恢复默认」（与「会话默认」的全局层同一规则），不等于默认的照常有', async () => {
     const rows = [
       row('style', {
         field: { type: 'string', label: '风格', default: '<默认>' },
@@ -441,9 +441,12 @@ describe('右侧面板与会话头', () => {
       'session/subscribe': () => snapshot([]),
       'session/config/get': () => ({ items: rows }),
     });
+    expect(settingRow('风格').queryByText('默认'), '改到只这个会话时不标').toBeNull();
     choose(await panel().findByRole('combobox', { name: '改到' }), '全局（插件配置）');
     expect(settingRow('风格').queryByRole('button', { name: '恢复默认' })).toBeNull();
+    expect(settingRow('风格').getByText('默认'), '等于作者默认的标「默认」，与「会话默认」的全局层一致').toBeTruthy();
     expect(settingRow('语气').getByRole('button', { name: '恢复默认' })).toBeTruthy();
+    expect(settingRow('语气').queryByText('默认')).toBeNull();
   });
 
   it('没有场所层的根会话（摘要里没有场所，如按 id 兜底建出的空记录）：「改到」只有只这个会话与全局（插件配置）', async () => {

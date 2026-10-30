@@ -576,7 +576,7 @@ describe('会话设置与默认名按全局语言渲染', () => {
     });
   });
 
-  it('写入被拒的原因：取值无效、不适用于这种会话，按全局语言渲染', async () => {
+  it('写入被拒的原因：取值无效、不适用于这种会话，写行上的称呼加键，按全局语言渲染', async () => {
     const { connect, setLanguage } = await setup({ language: ['en'] });
     const c = await connect();
     const { session } = await c.call('session/create', { name: '<我的>' });
@@ -586,11 +586,14 @@ describe('会话设置与默认名按全局语言渲染', () => {
       (await c.fail('session/config/update', { sessionId: session.id, plugin, key: 'tone', value: '<轻快>' })).message,
     ];
     expect(await refusals()).toEqual([
-      'Invalid value for env: expected an object (map), got string',
-      'tone does not apply to owner sessions',
+      'Invalid value for 环境变量 (env): expected an object (map), got string',
+      'Tone (tone) does not apply to owner sessions',
     ]);
     await setLanguage(['zh-CN']);
-    expect(await refusals()).toEqual(['env 的值不合法：期望对象（映射），得到 string', 'tone 不适用于owner 的会话']);
+    expect(await refusals()).toEqual([
+      '环境变量（env）的值不合法：期望对象（映射），得到 string',
+      '语气（tone）不适用于 owner 的会话',
+    ]);
   });
 
   it('没取名的会话与场所：存储里没有生成的名字；en 拿英文默认名，zh-CN 拿原文，时间按服务进程的时区', async () => {

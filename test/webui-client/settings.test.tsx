@@ -264,8 +264,18 @@ describe('会话默认', () => {
       }),
       row('iterations', { field: ITERATIONS, plugin: 'zz-agent', effective: 50, source: 'global' }),
     ],
+    /** 窗口场所：这一层没写，都是继承来的 */
+    place: [
+      row('persona', {
+        field: { type: 'string', label: '人设', default: '<默认人设>' },
+        effective: '<群人设>',
+        source: 'platformType',
+      }),
+      row('iterations', { field: ITERATIONS, plugin: 'zz-agent', effective: 50, source: 'global' }),
+    ],
   };
-  const rowsOf = (layer: SettingLayer) => ROWS[layer.scope === 'global' ? 'global' : 'group'];
+  const rowsOf = (layer: SettingLayer) =>
+    ROWS[layer.scope === 'global' || layer.scope === 'place' ? layer.scope : 'group'];
 
   function handlers(layers = LAYERS, order = LAYER_ORDER) {
     return {
@@ -341,6 +351,31 @@ describe('会话默认', () => {
 
     app = await renderApp('/settings/session-defaults?layer=platform%3Agone', handlers(), settingsRest());
     expect(await section().findByText('先在左边选一层')).toBeTruthy();
+  });
+
+  it('别的层存着不合法的值（生效值落到下一层）：写明这一层的值不合法、按哪层生效，行尾「恢复继承」清掉它', async () => {
+    const invalid = [
+      row('iterations', { field: ITERATIONS, plugin: 'zz-agent', value: -5, effective: 50, source: 'global' }),
+    ];
+    app = await renderApp(
+      '/settings/session-defaults?layer=platformType%3Aonebot%3Agroup',
+      {
+        ...handlers(),
+        'session/config/layer/get': () => ({ items: invalid }),
+        'session/config/layer/update': () => ({ items: invalid }),
+      },
+      settingsRest(),
+    );
+    expect(
+      await settingRow('最大工具迭代').findByText('这一层存的值不合法，生效的是全局（插件配置）的值'),
+    ).toBeTruthy();
+    expect(settingRow('最大工具迭代').queryByText(/^来自：/)).toBeNull();
+    fireEvent.click(settingRow('最大工具迭代').getByRole('button', { name: '恢复继承' }));
+    await vi.waitFor(() =>
+      expect(requests('session/config/layer/update')).toEqual([
+        { layer: ONEBOT_GROUP, plugin: 'zz-agent', key: 'iterations', value: null },
+      ]),
+    );
   });
 
   it('窗口场所这一层：从平台档、平台类型档继承来的项写明取的是哪一份', async () => {
