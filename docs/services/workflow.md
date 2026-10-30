@@ -324,7 +324,7 @@ await events.use.emit('trigger:fired', {
 
 ### storage 不是沙盒
 
-定义存 `defsDir`（默认 `workspace:/workflows`）、运行历史存 `runsFile`（默认 `data:/workflow-runs.json`），都只接受 storage URI，写成相对路径等其它形态时拒绝激活（`index.ts`、`isStorageUri`）。storage 按 root 做权限位但**不是沙盒**，见 [storage-uri-grammar](../concepts/storage-uri-grammar.md)。`send-message` / `tool` 节点能触达任意会话与已注册工具，等价于 owner 资产的执行面——参考实现的 `workflow_define` 每次要 owner 审批，批过的编排按批的人运行：低权限用户能让她写编排，但原文要经 owner 过目。
+定义存 `defsDir`（默认 `workspace:/workflows`）、运行历史存 `runsFile`（默认 `data:/workflow-runs.json`），都只接受 storage URI，写成相对路径等其它形态时拒绝激活（`index.ts`、`isStorageUri`）。storage 按 root 做权限位但**不是沙盒**，见 [storage-uri-grammar](../concepts/storage-uri-grammar.md)。`send-message` / `tool` 节点能触达任意会话与已注册工具，等价于 owner 资产的执行面——参考实现的 `workflow_define` 要 owner 审批（参与者都是 owner 的回合可由免确认白名单免），批过的编排按批的人运行：低权限用户能让她写编排，但原文要经 owner 过目。
 
 ## 7. 边界与注意事项
 

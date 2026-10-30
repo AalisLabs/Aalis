@@ -26,7 +26,7 @@ import { type PageHost, pageHost } from '../fixtures/page-host.js';
 // 账本读不出的没有定义者，按匿名。
 // 权限服务不在时判不出 owner，调用者与定义者不是同一身份的按匿名。
 // 真 storage-local、真工具注册表与权限插件：zz_whoami 记下每次执行时的授权身份；zz_confirm 声明需要确认，确认覆盖设为
-// off（只对 owner 免），没有审批服务，不免的一律拒。workflow_define 每次要 owner 审批，确认覆盖设为 off：owner 定义不问。
+// off（只对 owner 免），没有审批服务，不免的一律拒。workflow_define 要确认（与别的要确认的操作同一规则），确认覆盖设为 off：owner 定义不问。
 // 要审批的用例另装审批替身：记下请求，一律由 OWNER 批准。
 // ════════════════════════════════════════════════════════════
 
@@ -339,9 +339,9 @@ describe('定义者账本', () => {
   });
 });
 
-describe('定义编排每次要 owner 审批', () => {
-  it('免确认白名单全放也不免；没有审批服务时拒绝、不保存', async () => {
-    const s = await boot({ confirmOverrides: { 'tool:zz_confirm': 'off' }, restrictedPolicy: { allow: ['*'] } });
+describe('定义编排要 owner 审批', () => {
+  it('没有免掉、没有审批服务时拒绝、不保存', async () => {
+    const s = await boot({ confirmOverrides: { 'tool:zz_confirm': 'off' } });
     const result = await s.tool('workflow_define', { yaml: MANUAL }, OWNER);
     expect(result.error).toContain('需要批准');
     expect(s.svc.getWorkflow(ID)).toBeUndefined();

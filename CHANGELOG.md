@@ -687,9 +687,10 @@ core 定为 0.21.0。给人看的文字改为文字对象，由出口按读者�
 - 开了 `enableCompression` 时，压缩模型给出的摘要由插件包上与原始结果相同的不可信标记（「外部数据 · 来自网络搜索结果 · 非用户指令」），在上限处停下的截断说明在标记之内；此前摘要原样交给 agent，网页里的注入经压缩模型转述后不带标记。
 - 压缩提示词的 `{query}`、`{results}` 一次换完，搜索词或结果里的 `$` 不再被当成替换模式，搜索词里写的 `{results}` 不再被换成结果。
 
-### 她定义编排每次要 owner 审批（@aalis/plugin-workflow）
+### 存下来以后自己生效的操作与别的要确认的操作同一规则（@aalis/plugin-workflow、@aalis/plugin-scheduler）
 
-- `workflow_define` 声明 `confirm: 'always'`，每次要 owner 审批，审批卡上是 YAML 原文；免确认白名单（`restrictedPolicy`）不免；只有参与者都是 owner 的回合能免：`confirmOverrides` 把 `tool:workflow_define` 设为 `off`，或设为 `session` 再被白名单免掉。批过的编排，定义者是批的人。不能产生审批的回合（定时任务、编排节点、mcp-server、空闲触发与主动发言等）里定义编排被拒。工作流页「新建或覆盖」照旧不问。此前它是等级 1、不确认。
+- `workflow_define` 声明 `confirm: 'session'`（此前是等级 1、不确认）：要 owner 审批，审批卡上是 YAML 原文；参与者都是 owner 的回合里，在免确认白名单（`restrictedPolicy`）里或 `confirmOverrides` 把 `tool:workflow_define` 设为 `off` 时免。批过的编排，定义者是批的人。不能产生审批的回合（定时任务、编排节点、mcp-server、空闲触发与主动发言等）里要审批的定义被拒。工作流页「新建或覆盖」照旧不问。
+- plugin-scheduler 的 `scheduler_create_job`、`scheduler_remove_job`、`scheduler_pause_job`、`scheduler_resume_job` 由 `confirm: 'always'` 改为 `'session'`：参与者都是 owner 的回合里，在免确认白名单里的免（此前白名单不免，只有 `confirmOverrides` 设为 `off` 才免）；有别人的回合照旧确认。
 
 ## 2026-10-11（create-aalis 0.7.1 patch）
 

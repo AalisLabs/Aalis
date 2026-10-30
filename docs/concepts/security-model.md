@@ -272,7 +272,7 @@ commands.use.command('profile.clear.nuke', '【危险】清空所有用户档案
 > 房间会话按出生平台与聊天窗口的类型选档（见 [plugin-session-settings](../plugins/plugin-session-settings.md)），
 > 从 WebUI、CLI 驱动房间不改变工具组：owner 从 WebUI 往群里插话，这一轮仍是该群平台档的工具组。
 > 但 workflow 定义可以让非房间会话按任意平台档运行（agent 节点可配任意 `platform`），`tool` 节点又不过分组闸。
-> `workflow_define` 每次要 owner 审批，批过的编排按批的 owner 运行，所以房间的平台档开了 `workflow` 组之后，
+> `workflow_define` 要 owner 审批，批过的编排按批的 owner 运行，所以房间的平台档开了 `workflow` 组之后，
 > 房间里的成员能让她写编排、交 owner 审批，批了的编排就用得到分组之外的工具，包括以分组闸为前提维持 public 的 `http_request`。
 > 房间的平台档不要开 `workflow` 组；开了的话，审批时看清 YAML 里的 `tool` 节点。
 >
@@ -383,7 +383,7 @@ cron 等于让 LLM 获得持久执行面，那已经越过"只影响自己账号
 
 指令不经模型的工具调用、直接执行，所以只从人亲手写的文字里解析：平台适配器、WebUI 与终端投递的真人消息（不带 `source`），
 以及声明了 `ownerApproved` 的注入（[schema-message](../api/schema-message.md) 的字段）。这个声明表示文字在建立时经 owner 过目过原文，
-第一方只有定时任务：任务内容来自 owner 写的配置与计划任务页，或每次要 owner 审批的 `scheduler_create_job`。
+第一方只有定时任务：任务内容来自 owner 写的配置与计划任务页，或经 owner 审批的 `scheduler_create_job`。
 其余带 `source` 的注入，不论 `source` 写成什么，正文都当普通消息交给她，由模型按这一轮的工具与权限处理：
 子任务的任务正文与追问、编排的发消息节点与 agent 节点、宿主通知（后台任务的结束通知、白纸与作品的通知）、空闲触发。
 
@@ -392,8 +392,8 @@ cron 等于让 LLM 获得持久执行面，那已经越过"只影响自己账号
 派的子任务里的 `/shutdown`），不产生审批，owner 看不到也拦不下。二是按 `source` 的名字认受信：任何注入方写上这个名字，
 都能拿到同样的免确认待遇。所以判据只看声明、不看名字：注入方把 `source` 写成 `scheduler` 却不声明，照样不执行。
 
-例外：参与者都是 owner 的回合里 `scheduler_create_job` 免了确认时（配置的 `confirmOverrides` 把 `tool:scheduler_create_job`
-设为 `off`；或设为 `session`，再被 `restrictedPolicy` 白名单免掉），建定时任务不再逐次审批，任务内容（模型写出的）没经 owner
+例外：参与者都是 owner 的回合里 `scheduler_create_job` 免了确认时（在 `restrictedPolicy` 免确认白名单里，
+或配置的 `confirmOverrides` 把 `tool:scheduler_create_job` 设为 `off`），建定时任务不经审批，任务内容（模型写出的）没经 owner
 过目原文，触发时照样带 `ownerApproved`，其中的指令照样以 owner 的身份执行。这类任务与审批过的不作区分，免掉这道确认就是接受这一点；
 两种免法都只对参与者都是 owner 的回合生效，有别人的回合照旧确认（见上文的轴 B）。
 
