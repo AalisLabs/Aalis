@@ -208,6 +208,7 @@ describe('失败抛错', () => {
             participants: ['甲(30001)'],
             truncatedDepth: false,
             truncatedNodes: true,
+            sessionIds: [GROUP],
           }
         : {},
     );

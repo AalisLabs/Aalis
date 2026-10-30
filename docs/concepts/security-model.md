@@ -322,7 +322,8 @@ close_page）仍为 `sensitive`：会话里在场的人共用这个会话的页�
 只记了出生平台的旧房间记录判不出，取不到，从它们那里也取不了别的会话。
 
 它管 `session_get_history`、`onebot_get_session_history`（`onebot_resolve_session_id` 只拼会话 id、不读）、`onebot_get_msg`、
-`onebot_recall_self`（指到的目标会话：结果与报错带回她在那里发过的话的预览）、
+`onebot_recall_self`（指到的目标会话：结果与报错带回她在那里发过的话的预览）、`onebot_get_forward_msg`（命中适配器缓存的转发按
+收到它的会话，几处之一过得了就行）、
 `recent_messages`、跨会话历史（`plugin-memory-history`）的被动注入，以及发媒体、看图取别的会话的媒体（`send_attachment`、
 `analyze_image` 与她回复里存储地址的媒体标记，按媒体所在的会话目录反查会话，见 §5「媒体工具的取用范围」）。工具按这一轮的
 授权身份认「自己的私聊」（几个人的一轮逐个参与者判，见「多人的一轮」）；被动注入不是谁要的，不传授权身份、不享受，所以默认只带同平台、同一机器人账号的群，别人的私聊、
@@ -336,7 +337,8 @@ owner 与她的私聊、WebUI 与终端的会话都不带；她回复里的媒�
 
 - 向量记忆的被动召回与 `memory_recall` 照旧按 `plugin-memory-vector` 自己的 `crossSessionMode`，默认全部打通：群里的一轮
   仍可能召回别人私聊里的原文，「读别人的私聊」关着也一样；要收窄得按会话设它（§7「召回收窄的范围」）。
-- `onebot_get_forward_msg` 只读收到的合并转发（id 来自收到的消息，经适配器接收时展开的缓存）。
+- `onebot_get_forward_msg` 没命中适配器缓存时（关掉了展开、接收时没拉到、条目过期、嵌套超深没展开的）按 id 向实现端现拉，
+  拉到的内容判不出是在哪个会话收到的，不经这条规则；命中缓存的照上文按收到它的会话判。
 - `plugin-office` 的插图工具与 `pdf_convert` 的输出目录、`system` 组的文件工具不按会话限定，能读写别的会话媒体目录里的
   文件，转出的文件再经 `send_attachment` 就按本会话发出；这些是存储工具，靠工具分组与等级挡。
 - 关系图的召回与抽取、画像的事实给的是整理出的人物、关系、事件摘要与事实，各有自己的范围（§7）。

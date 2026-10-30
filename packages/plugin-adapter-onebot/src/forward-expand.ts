@@ -32,9 +32,14 @@ export const defaultForwardSummaryPrompt = (language: string): string =>
   '- 控制在目标字数以内，优先保留互动细节与可引用发言，寒暄/重复信息略去。';
 
 /**
- * 合并转发原文缓存条目：展开结果（完整原文、元信息与两个截断标志）+ 摘要。
+ * 合并转发原文缓存条目：展开结果（完整原文、元信息与两个截断标志）+ 摘要，与收到这条转发的会话（按收到的先后，同一会话只记
+ * 一次）：工具取原文时按它们过取别的会话的规则。
  */
-export type ForwardEntry = Omit<ExpandedForward, 'id'> & { summary: string | null; expandedAt: number };
+export type ForwardEntry = Omit<ExpandedForward, 'id'> & {
+  summary: string | null;
+  expandedAt: number;
+  sessionIds: string[];
+};
 
 export interface ForwardConfig {
   enabled: boolean;
@@ -95,7 +100,7 @@ export interface ForwardExpander<TState> {
   expandForwards(state: TState, segments: OneBotMessageSegment[], sessionId: string): Promise<ForwardedChat[]>;
   /**
    * 清空转发原文：本展开器的内存缓存与持久化层（/clear all 用），返回持久化层删除的条数。
-   * 条目没有会话维度，没有按会话清理的版本。
+   * 没有按会话清理的版本：条目记下的会话只用于取用判定。
    */
   clearAll(): Promise<number>;
 }
@@ -238,14 +243,18 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     return keys.length;
   }
 
-  /** 从持久化层加载（缓存未命中时尝试） */
+  /** 从持久化层加载（缓存未命中时尝试）。没记会话或记坏了的条目，会话按空的算：取用判定判不出 */
   async function loadPersistedForward(id: string): Promise<ForwardEntry | undefined> {
     if (!memory.present) return undefined;
     const store = memory.use;
     try {
       const data = await store.getMetadata(FORWARD_METADATA_NS, id);
       if (data && typeof data === 'object' && typeof (data as { fullText?: unknown }).fullText === 'string') {
-        return data as unknown as ForwardEntry;
+        const { sessionIds } = data as { sessionIds?: unknown };
+        return {
+          ...(data as unknown as ForwardEntry),
+          sessionIds: Array.isArray(sessionIds) ? sessionIds.filter((s): s is string => typeof s === 'string') : [],
+        };
       }
     } catch (err) {
       logger.debug(`forward metadata 读取失败 id=${id}: ${err}`);
@@ -429,7 +438,13 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     return Promise.all(
       expandIds.map(async (id): Promise<ForwardedChat> => {
         const entry = await getOrLoadForward(id);
-        if (entry) return forwardedChat({ id, ...entry }, entry.summary);
+        if (entry) {
+          // 别的会话又收到同一条转发：记下这个会话，工具在它那里也取得到
+          if (!entry.sessionIds.includes(sessionId)) {
+            setCachedForward(id, { ...entry, sessionIds: [...entry.sessionIds, sessionId] });
+          }
+          return forwardedChat({ id, ...entry }, entry.summary);
+        }
 
         // 顶层拉不到时信封写拉取失败与实现端原话、不进缓存，之后的工具调用照常重新拉；嵌套的拉不到写「拉取失败」一行，原话进日志。
         // 实现端回了成功却什么也没展开出来（数据为空或没有节点）的同一条规则：不带事实、不进缓存、不拿那一行去调摘要，信封照常写出那一行
@@ -457,7 +472,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
           const summary = await summarizeForward(expanded.fullText, expanded);
 
           const { id: _id, ...forward } = expanded;
-          setCachedForward(id, { ...forward, summary, expandedAt: Date.now() });
+          setCachedForward(id, { ...forward, summary, expandedAt: Date.now(), sessionIds: [sessionId] });
 
           const truncFlag = expanded.truncatedDepth || expanded.truncatedNodes ? ' [truncated]' : '';
           // 日志里输出完整摘要（或在无摘要时输出完整原文），便于排查 forward 实际入库内容；

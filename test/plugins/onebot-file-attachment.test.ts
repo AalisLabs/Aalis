@@ -51,7 +51,7 @@ import { storedRoom } from '../fixtures/rooms.js';
 // 内联，其余由适配器去掉、投递报失败（会话表、取用规则与 owner 判定是替身：私聊的对端与 WebUI 的 console 是 owner，取用规则
 // 一律不放行）。入站的引用与撤回按存档反查原文时，按归档时记下的标签去掉发送者前缀。
 // 发送不重试：没等到回执（超时、回执前断线）的记结果未知；逐条发出时一条没发成就停，投递结果与回报写明前几条已发出。实现端回
-// 失败时报错带返回码，「不支持该动作」另标出来；合并转发只按 id 拉，缓存命中时带截断标志。
+// 失败时报错带返回码，「不支持该动作」另标出来；合并转发只按 id 拉，缓存命中时带截断标志与收到它的会话。
 // 本地起一个假的 OneBot 实现端（WebSocket 服务）记录适配器发出的 action。
 // ════════════════════════════════════════════════════════════
 
@@ -952,7 +952,7 @@ describe('onebot 动作：失败带返回码，合并转发只按 id 拉', () =>
     expect(t.actions.filter(a => a.action === 'get_forward_msg').map(a => a.params)).toEqual([{ id: 'zz-forward' }]);
   });
 
-  it('入站展开过的转发：get_forward_msg 命中缓存时带截断标志', async () => {
+  it('入站展开过的转发：get_forward_msg 命中缓存时带截断标志与收到它的会话', async () => {
     const t = await boot({ config: { forward: { maxNodesPerLevel: 2, summarize: false } } });
     const node = (text: string) => ({ type: 'node', data: { nickname: '甲', user_id: 30002, content: text } });
     t.post({
@@ -969,6 +969,7 @@ describe('onebot 动作：失败带返回码，合并转发只按 id 拉', () =>
     expect(await t.callAction('get_forward_msg', { id: 'zz-forward' })).toMatchObject({
       truncatedNodes: true,
       truncatedDepth: false,
+      sessionIds: [GROUP],
     });
   });
 });
