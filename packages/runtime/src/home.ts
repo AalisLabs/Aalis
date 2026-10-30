@@ -216,10 +216,13 @@ export function isHomeInitialized(paths: HostPaths): boolean {
 /**
  * 只有 owner 进得来的平台（本地终端、单 token 的 WebUI）的平台档开箱给全部工具分组，无条件写：平台没装时这一层不起作用，
  * 之后从市场装上即生效。多人平台不代开：带分组的工具默认不暴露，public 工具在群里的可达性靠这道分组闸。平台档按插件实例放
- * 这个实例的值。与 create-aalis 生成的平台档一致
+ * 这个实例的值。与 create-aalis 生成的平台档一致。两档各写一份：共用一个对象会被序列化成 YAML 锚点与别名，读回仍是同一个对象，
+ * 改一个平台档另一个跟着变
  */
-const ALL_TOOL_GROUPS = { '@aalis/plugin-tools': { enabledToolGroups: ['*'] } };
-const OWNER_PLATFORM_PROFILES = { cli: ALL_TOOL_GROUPS, webui: ALL_TOOL_GROUPS };
+const OWNER_PLATFORM_PROFILES = {
+  cli: { '@aalis/plugin-tools': { enabledToolGroups: ['*'] } },
+  webui: { '@aalis/plugin-tools': { enabledToolGroups: ['*'] } },
+};
 
 /** 第一方插件提供的语言：第一方字典都是原文 zh-CN、带 en。与 create-aalis 一致 */
 const FIRST_PARTY_LANGUAGES = ['zh-CN', 'en'];
