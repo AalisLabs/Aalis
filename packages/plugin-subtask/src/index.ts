@@ -44,7 +44,8 @@ const SUBTASK_SOURCE = 'subtask';
  *   自己的 fromTurn），不填 actor；子任务那一轮的参与者取它的，权限服务按它判子任务这一轮的主体，不按父会话里别的哪一轮；
  * - 不在入站回合里（编排的工具节点、mcp-server）：不带 fromTurn，授权身份走 actor（这次调用的唯一参与者；匿名或几个
  *   参与者时不填，子任务同样匿名）。
- * 追问与派发同源，同一子任务会话的权限不在轮次间跳变。
+ * 追问那一轮按发追问那次调用的参与者，同一子任务会话各轮的身份可以不同；send_to_subtask 与 create_subtask
+ * 同为 2 级加确认。
  */
 function taskMessage(callCtx: ToolCallContext, sessionId: string, content: string): IncomingMessage {
   const { platform, userId, participants, inbound } = callCtx;
