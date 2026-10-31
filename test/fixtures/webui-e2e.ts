@@ -237,7 +237,7 @@ export function onViewport(phone: boolean) {
 
     /**
      * 发一条消息：桌面上按回车发；触屏上回车只换行，按发送键发。先等上一轮收尾（输入框空着时出现的是发送键、
-     * 不是停止键）：回合还在跑时发的新消息会让 agent 停掉那一轮
+     * 不是停止键）：回合还在跑时发的新消息会排队或并入那一轮，先等是为了让每条消息各开一轮
      */
     async send(page: Page, message: string) {
       await page.waitForSelector(aria('发送', 'button'));
