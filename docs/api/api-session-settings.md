@@ -79,7 +79,7 @@ type SessionSettingsLayer =
 ```yaml
 sessionConfig:
   platforms:
-    webui: { '@aalis/plugin-tools': { enabledToolGroups: ['*'] } }
+    onebot: { '@aalis/plugin-tools': { enabledToolGroups: ['search'] } }
   platformTypes:
     <平台>:
       group: { '@aalis/plugin-agent': { think: <档位 id> } }
@@ -171,7 +171,7 @@ interface SessionFieldReader<S> {
 | plugin-agent | `maxToolIterations`、`historyLimit` | 全部 | owner | 不限；0 |
 | [plugin-persona](../plugins/plugin-persona.md) | `persona` | 全部 | 1 级 | `default` |
 | plugin-persona | `systemPromptExtra`、`disableOutputFormat`、`clientSideJsonRendering` | 全部 | owner | 空；关；按角色卡 |
-| [plugin-tools](../plugins/plugin-tools.md) | `enabledToolGroups` | 全部 | owner | `[]` |
+| [plugin-tools](../plugins/plugin-tools.md) | `enabledToolGroups` | 全部 | owner | 在本机（WebUI、终端）建的会话全部分组，别的会话不开 |
 | [plugin-skills](../plugins/plugin-skills.md) | `enabledSkills` | 全部 | owner | `['*']` |
 | [plugin-memory-summary](../plugins/plugin-memory-summary.md) | `compressAt` | 全部 | owner | 0.8 |
 | [plugin-checkpoint](../plugins/plugin-checkpoint.md) | `coverage`（记检查点的会话） | 全部 | owner | 按受众（`ownerOnly`） |

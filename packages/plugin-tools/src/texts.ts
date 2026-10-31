@@ -1,5 +1,5 @@
 // 本插件自己的原文字典：显示名与后台任务的配置项，宿主写的后台任务中断原因与结束通知给人看的那句，按会话字段「工具分组」的
-// 称呼与说明，取用判定参与者为空时的拒绝原因（与权限插件守卫判空参与者的同一句）
+// 称呼、说明与没设时的含义，取用判定参与者为空时的拒绝原因（与权限插件守卫判空参与者的同一句）
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
@@ -20,6 +20,7 @@ const SOURCE = {
   noticeFailed: '后台任务 {id}（{tool}）失败，用时 {ms, duration}',
   groupsLabel: '工具分组',
   groupsDescription: '这个会话能用的工具分组，* 为全部；不属于任何分组的工具总是给',
+  groupsUnset: '在本机（WebUI、终端）建的会话：全部分组；别的会话：不开',
   nobodyCan: '这一轮的参与者里没有人能做这件事',
 } as const;
 export type Source = typeof SOURCE;

@@ -6,26 +6,18 @@ import { parse } from 'yaml';
 import { MINIMAL_BASE, pluginSettings, renderConfig } from '../../packages/create-aalis/src/cli.js';
 import { derivePaths, initHome } from '../../packages/runtime/src/home.js';
 import { isLoadablePlugin } from '../../packages/runtime/src/node-modules-loader.js';
-import { defineConfig } from '../../packages/schema-config/src/index.js';
-import { fieldsPlugin, startSettings } from '../fixtures/session-settings.js';
 
-// 脚手架生成的 aalis.config.yaml：owner 专用平台（cli / webui）的平台档开箱给全部工具分组，多人平台不代开——
-// 带分组的工具默认不暴露，public 工具在群里的可达性靠这道分组闸（docs/concepts/security-model.md）。
-// 平台档是会话设置的一层，写在配置文档的 sessionConfig 里、按插件实例嵌套，由会话设置插件读。
+// 脚手架生成的 aalis.config.yaml：插件段，不写平台档。工具分组没设时由 plugin-tools 按会话从哪里建的给
+// （在 WebUI 或终端建的开全部分组，聊天平台与内部会话不开），见 tools-session-groups.test.ts。
 
 const CLI = '@aalis/plugin-cli';
 
 const configOf = (enabled: Set<string>, keys = {}, ollama?: string) =>
   parse(renderConfig(pluginSettings(enabled, keys, ollama), 'zh-CN'));
-const TOOLS = { '@aalis/plugin-tools': { enabledToolGroups: ['*'] } };
-const OWNER_PROFILES = { platforms: { cli: TOOLS, webui: TOOLS } };
 
 describe('create-aalis renderConfig', () => {
-  it.each([
-    [[CLI, '@aalis/plugin-llm-deepseek']],
-    [[]],
-  ])('cli、webui 两个平台档无条件写，与插件段有没有内容无关；多人平台不代开（%j）', plugins => {
-    expect(configOf(new Set(plugins)).sessionConfig).toEqual(OWNER_PROFILES);
+  it.each([[[CLI, '@aalis/plugin-llm-deepseek']], [[]]])('不写平台档，与插件段有没有内容无关（%j）', plugins => {
+    expect(configOf(new Set(plugins))).not.toHaveProperty('sessionConfig');
   });
 
   it('密钥桩照旧写在插件段', () => {
@@ -76,23 +68,24 @@ describe('create-aalis renderConfig', () => {
   });
 });
 
-// `--init` 建的家目录与脚手架生成的家目录写同样的平台档：两份实现（脚手架引用不了 runtime），在这里核完全相等
-describe('平台档：create-aalis 与 --init 一致', () => {
+// `--init` 建的家目录与脚手架生成的家目录都不写平台档：两份实现（脚手架引用不了 runtime），在这里一起核
+describe('平台档：create-aalis 与 --init 都不写', () => {
   const dirs: string[] = [];
   afterEach(() => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  it('两边写出的 sessionConfig 完全相等', () => {
+  it('两边写出的主配置都没有 sessionConfig', () => {
     const dir = mkdtempSync(join(tmpdir(), 'aalis-init-parity-'));
     dirs.push(dir);
     const paths = derivePaths(join(dir, 'home'), join(dir, 'app'));
     initHome(paths);
-    expect(parse(readFileSync(paths.config, 'utf-8')).sessionConfig).toEqual(configOf(new Set()).sessionConfig);
+    expect(parse(readFileSync(paths.config, 'utf-8'))).not.toHaveProperty('sessionConfig');
+    expect(configOf(new Set())).not.toHaveProperty('sessionConfig');
   });
 });
 
-// 最小档装上会话设置插件：靠 aalis-plugin 关键词经插件发现加载，不另手动登记；--init 写出的平台档由它读到
+// 最小档装上会话设置插件：靠 aalis-plugin 关键词经插件发现加载，不另手动登记
 describe('最小档带会话设置', () => {
   it('MINIMAL_BASE 在会话管理之后列出会话设置插件，它的 package.json 带 aalis-plugin 关键词', () => {
     const at = MINIMAL_BASE.indexOf('@aalis/plugin-session-settings');
@@ -101,42 +94,5 @@ describe('最小档带会话设置', () => {
       readFileSync(new URL('../../packages/plugin-session-settings/package.json', import.meta.url), 'utf-8'),
     );
     expect(isLoadablePlugin(manifest)).toBe(true);
-  });
-});
-
-describe('--init 写出的平台档', () => {
-  const dirs: string[] = [];
-  afterEach(() => {
-    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
-  });
-
-  it('终端会话经会话设置读到工具插件在平台档里的全部工具分组', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'aalis-init-profile-'));
-    dirs.push(dir);
-    const paths = derivePaths(join(dir, 'home'), join(dir, 'app'));
-    initHome(paths);
-    const tools = fieldsPlugin(
-      '@aalis/plugin-tools',
-      defineConfig({
-        enabledToolGroups: {
-          type: 'multiselect',
-          label: '<工具分组>',
-          allowCustom: true,
-          default: [],
-          session: { appliesTo: ['owner', 'room', 'task'], prominence: 'common' },
-        },
-      }),
-    );
-    const { app, sm } = await startSettings({
-      doc: parse(readFileSync(paths.config, 'utf-8')),
-      fields: [tools.definition],
-    });
-    try {
-      await sm.ensureSession('cli-default', {}, { createdFrom: 'cli' });
-      expect(tools.reader().get('cli-default', { platform: 'cli' }).enabledToolGroups).toEqual(['*']);
-      expect(tools.reader().get('cli-default', { platform: 'onebot' }).enabledToolGroups).toEqual([]);
-    } finally {
-      await app.stop();
-    }
   });
 });

@@ -33,6 +33,12 @@
 - @aalis/plugin-skills：删配置项 `skillsUri`；技能固定在存储的内容目录 `self:/skills/`，即家目录的 `self/skills`。
 - @aalis/api-reach：家目录的 `self/` 整个归落点：只读、修改确认与工作区档写它要问，全权照写并记审计。宿主控制面与拒读清单对 `self/` 整个放行（原来控制面只放行技能目录），工作区档的可写范围不再含技能目录。
 
+### 工具分组没设时按会话从哪里建的给，不再写平台档
+
+- @aalis/plugin-tools：`enabledToolGroups` 去掉作者默认 `[]`。哪一层都没设时，根会话（子会话取根会话的）带创建来源，即在本机的 WebUI 或终端建的会话，开全部分组；别的会话不开，包括聊天平台的群与私聊（对端是 owner 的私聊也不开）与内部会话；会话管理缺席时不开。显式写的 `[]`（任何一层）照旧是不开，配置里已经写着的值照旧生效。
+- @aalis/runtime：`--init` 写的主配置只有 `name`、`logLevel` 与空的 `plugins`，不再给 `cli`、`webui` 写平台档。
+- create-aalis：生成的主配置不再写 `sessionConfig` 的平台档。
+
 ---
 
 ## 2026-10-31（core 0.21.0 minor；117 个包：110 minor / 7 新包 schema-i18n、api-i18n、plugin-i18n、api-session-settings、plugin-session-settings、plugin-chat-approval、util-file-signature）

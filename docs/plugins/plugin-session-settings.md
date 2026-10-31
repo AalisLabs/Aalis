@@ -48,13 +48,11 @@ export default definePlugin({
 ```yaml
 plugins:
   '@aalis/plugin-agent': { historyLimit: 0 }
-  '@aalis/plugin-tools': { enabledToolGroups: [] }
 pluginServicePreferences:
   '@aalis/plugin-agent': { llm: <llm 实例 id>/<模型 id> }   # agent「模型」的全局层
 sessionConfig:
   platforms:
-    cli:   { '@aalis/plugin-tools': { enabledToolGroups: ['*'] } }
-    webui: { '@aalis/plugin-tools': { enabledToolGroups: ['*'] } }
+    onebot: { '@aalis/plugin-tools': { enabledToolGroups: ['search'] } }
   platformTypes:
     <平台>:
       group: { '@aalis/plugin-agent': { think: <档位 id> } }

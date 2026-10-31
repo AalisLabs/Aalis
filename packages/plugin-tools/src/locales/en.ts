@@ -19,5 +19,6 @@ export default defineLocale<Source>()({
   groupsLabel: 'Tool groups',
   groupsDescription:
     'The tool groups this session can use; * means all. Tools that belong to no group are always given',
+  groupsUnset: 'Sessions created on this machine (WebUI, terminal): all groups; other sessions: none',
   nobodyCan: "Nobody among this turn's participants can do this",
 });

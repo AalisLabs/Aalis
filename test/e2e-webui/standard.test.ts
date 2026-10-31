@@ -34,7 +34,7 @@ import { waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
 // standard 档的端到端：照脚手架 standard 档的默认集组装——它算出的插件集（选了语义记忆，没有 Ollama 时 embedding 用
-// OpenAI）与它写的配置文档（owner 的平台档给全部工具分组）。外部服务换成替身：对话模型是假模型，记忆后端用内存实现（不依赖
+// OpenAI）与它写的配置文档（不写平台档，工具分组没设时按会话从哪里建的给）。外部服务换成替身：对话模型是假模型，记忆后端用内存实现（不依赖
 // 原生模块），OpenAI Embedding 不填 apiKey（照常起不来，向量记忆因此缺服务，两个都进「需要处理」），MCP 不配服务器。
 // 桌面与手机两种宽度走主流程：发消息与流式回复，模型经工具搜索找到工具再调用（工具卡与审批），回滚撤回写的文件，计划，
 // 压缩线，转后台的命令在「后台」里停掉，会话设置与会话默认，插件区与详情，运行状况与「需要处理」，各页面打开不空；
@@ -232,7 +232,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(stack.logged).toEqual(ONLY_UNCONFIGURED);
   }, 90_000);
 
-  it('管理：首页不出「开始使用」；首页与运行状况的「需要处理」列出 OpenAI Embedding 与向量记忆、链写到根，按钮去根的配置；平台连接；插件区的树正是装着的实例；会话默认的 webui 平台档给全部工具分组；各页面打开都有内容、没有报错', async () => {
+  it('管理：首页不出「开始使用」；首页与运行状况的「需要处理」列出 OpenAI Embedding 与向量记忆、链写到根，按钮去根的配置；平台连接；插件区的树正是装着的实例；会话默认的 webui 平台档没设工具分组、标着没设时的含义；各页面打开都有内容、没有报错', async () => {
     const stack = await start();
     const { page, problems } = await openWebui(e2e.browser, stack.origin, viewport, cleanups);
     const home = `${phone ? 'nav[aria-label="会话"]' : 'main'} ${aria('需要处理', 'region')}`;
@@ -286,7 +286,9 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     await page.goto(`${stack.origin}/settings/session-defaults?layer=platform%3Awebui`);
     // 直接读这一行的文字：按文字找的选择器等不到原地换上的值（实测）
     await page.waitForFunction(() =>
-      document.querySelector('main .setting-row[aria-label="工具分组"]')?.textContent?.includes('* （全部分组）'),
+      document
+        .querySelector('main .setting-row[aria-label="工具分组"]')
+        ?.textContent?.includes('在本机（WebUI、终端）建的会话：全部分组；别的会话：不开'),
     );
 
     // 各页面：插件页与设置页打开后都有内容，没有取数失败；会话里的页面在会话面板里

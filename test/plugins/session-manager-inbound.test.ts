@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { SessionInfo } from '../../packages/api-session-manager/src/index.js';
+import { tools } from '../../packages/api-tools/src/index.js';
 import { type App, definePlugin } from '../../packages/core/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { fieldsPlugin, ONEBOT_TYPES, SCHEMA, startSettings } from '../fixtures/session-settings.js';
 
@@ -10,7 +12,7 @@ import { fieldsPlugin, ONEBOT_TYPES, SCHEMA, startSettings } from '../fixtures/s
 // 入站收录先于入站相位：会话管理的 recordInbound 可等待，网关在跑入站相位之前等它。新群的第一条消息进入指令相位时会话已经
 // 建档、带聊天窗口，各层按记下的类型取；网关在收录之后才记代号，问认领者的期间开始删除的那条按新的一代派发。同一会话并发的
 // 入站只收录一次；带 source 的、没有会话 id 的、子会话与已收录的会话不等（已收录的照旧补名、更新窗口的显示名）；WebUI 与终端
-// 的会话不写聊天窗口。
+// 的会话不写聊天窗口，带创建来源的会话收到聊天平台的入站也不补出生平台。
 // ════════════════════════════════════════════════════════════
 
 const GROUP = 'onebot:10000:group:20001';
@@ -238,5 +240,21 @@ describe('recordInbound', () => {
     expect(sm.getSession(webui.id)?.originChat).toBeUndefined();
     expect(sm.getSession(cli.id)?.originChat).toBeUndefined();
     expect(slow.counter.claims).toBe(0);
+  });
+
+  it('带创建来源的会话收到同一个 id 的聊天平台入站：不补出生平台与聊天窗口，仍是本机会话，工具分组没设时照开', async () => {
+    // 守的不变式：创建来源与出生平台不同时出现在一条会话记录上。plugin-tools 没设工具分组时按根会话的创建来源开全部分组，
+    // 补上出生平台就成了聊天平台的会话
+    const { app, sm } = await startSettings({
+      adapters: [{ platform: 'onebot', sessionTypes: ONEBOT_TYPES }],
+      fields: [toolsPlugin],
+    });
+    apps.push(app);
+    await sm.ensureSession(GROUP, {}, { createdFrom: 'webui' });
+    await sm.recordInbound(fromGroup());
+    expect(sm.getSession(GROUP)).toMatchObject({ createdFrom: 'webui' });
+    expect(sm.getSession(GROUP)?.originPlatform).toBeUndefined();
+    expect(sm.getSession(GROUP)?.originChat).toBeUndefined();
+    expect(app.bind({ tools }).tools.use.sessionGroups(GROUP, 'onebot')).toEqual(['*']);
   });
 });
