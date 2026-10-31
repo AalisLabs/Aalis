@@ -4,19 +4,23 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '../../packages');
-const CORE_PEER = '>=0.20.0 <1.0.0';
-/** 本批发布的包里带 core peer 的 112 个（已发布 96 个、首次发布 16 个）一律抬到 0.20 */
-const CORE_PEER_COUNT = 112;
-/** 该节之后新增的包：不计入上面的数，各自的 core peer 下限按实际用到的 core API 定 */
-const ADDED_AFTER = new Map([
-  ['api-i18n', '>=0.20.0 <1.0.0'],
-  // 显示名是文字对象：core 0.21 起展示值才放宽为 unknown
-  ['plugin-i18n', '>=0.21.0 <1.0.0'],
-  ['plugin-chat-approval', '>=0.21.0 <1.0.0'],
-  ['api-session-settings', '>=0.20.0 <1.0.0'],
-  // 显示名与服务条目的展示名是文字对象，同 plugin-i18n
-  ['plugin-session-settings', '>=0.21.0 <1.0.0'],
-]);
+const CORE_PEER = '>=0.21.0 <1.0.0';
+/** 2026-10-31 一节发布的包里带 core peer 的 107 个一律抬到 0.21（新版插件的显示名与页面标题是文字对象，core 0.21 起才收） */
+const CORE_PEER_COUNT = 107;
+/** 没改动、不发版的包留在原下限 */
+const UNRELEASED = [
+  'api-asr = >=0.20.0 <1.0.0',
+  'api-code-sandbox = >=0.20.0 <1.0.0',
+  'api-contributions = >=0.20.0 <1.0.0',
+  'api-flow-control = >=0.20.0 <1.0.0',
+  'api-host-logs = >=0.20.0 <1.0.0',
+  'api-host-paths = >=0.20.0 <1.0.0',
+  'api-plugin-source = >=0.20.0 <1.0.0',
+  'api-todo-list = >=0.20.0 <1.0.0',
+  'api-user-relation = >=0.20.0 <1.0.0',
+  'api-vectorstore = >=0.20.0 <1.0.0',
+  'schema-log = >=0.18.0 <1.0.0',
+];
 
 interface Manifest {
   name?: string;
@@ -52,22 +56,22 @@ function gte(a: [number, number, number], b: [number, number, number]): boolean 
   return true;
 }
 
-describe('发布声明（2026-10-11 一节）', () => {
-  it('带 @aalis/core peer 的包：本批发布的 112 个为 >=0.20.0 <1.0.0，只有没改动、不发版的 schema-log 留在 >=0.18.0', () => {
+describe('发布声明（2026-10-31 一节）', () => {
+  it('带 @aalis/core peer 的包：本批发布的 107 个为 >=0.21.0 <1.0.0，没改动、不发版的 11 个留在原下限', () => {
     const hits: Array<{ dir: string; spec: string }> = [];
     for (const dir of dirs()) {
       const manifest = readManifest(dir);
-      if (manifest.private || ADDED_AFTER.has(dir)) continue; // private 包不发布；该节之后新增的另核
+      if (manifest.private) continue; // private 包不发布
       const spec = manifest.peerDependencies?.['@aalis/core'];
       if (spec === undefined) continue;
       hits.push({ dir, spec });
     }
     expect(hits.filter(h => h.spec === CORE_PEER)).toHaveLength(CORE_PEER_COUNT);
-    expect(hits.filter(h => h.spec !== CORE_PEER).map(h => `${h.dir} = ${h.spec}`)).toEqual([
-      'schema-log = >=0.18.0 <1.0.0',
-    ]);
+    expect(hits.filter(h => h.spec !== CORE_PEER).map(h => `${h.dir} = ${h.spec}`)).toEqual(UNRELEASED);
   });
+});
 
+describe('发布声明（2026-10-11 一节）', () => {
   it('契约包 src/index.ts 不再导出 useXxxService helper', () => {
     const bad: string[] = [];
     for (const dir of dirs().filter(d => d.startsWith('api-'))) {
@@ -121,11 +125,5 @@ describe('发布声明（2026-10-11 一节）', () => {
     const src = readIndex('schema-config');
     expect(src, 'packages/schema-config/src/index.ts 须存在').toBeTruthy();
     expect(/export function removeExtraFields/.test(src ?? ''), src).toBe(true);
-  });
-});
-
-describe('该节之后新增的包', () => {
-  it.each([...ADDED_AFTER])('%s 的 core peer 为 %s', (dir, spec) => {
-    expect(readManifest(dir).peerDependencies?.['@aalis/core']).toBe(spec);
   });
 });

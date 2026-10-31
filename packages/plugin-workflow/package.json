@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-workflow",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -31,15 +31,15 @@
     "@aalis/api-gateway": "workspace:>=0.10.0 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.16.0 <1.0.0",
     "@aalis/api-authority": "workspace:>=0.12.0 <1.0.0",
-    "@aalis/api-cron-engine": "workspace:>=0.8.0 <1.0.0",
-    "@aalis/api-storage": "workspace:>=0.8.0 <1.0.0",
+    "@aalis/api-cron-engine": "workspace:>=0.9.0 <1.0.0",
+    "@aalis/api-storage": "workspace:>=0.9.0 <1.0.0",
     "@aalis/api-tools": "workspace:>=0.12.0 <1.0.0",
     "@aalis/api-webui": "workspace:>=0.13.0 <1.0.0",
     "@aalis/api-workflow": "workspace:>=0.13.0 <1.0.0",
     "yaml": "^2.7.0",
-    "@aalis/api-hooks": "workspace:>=0.2.0 <1.0.0",
+    "@aalis/api-hooks": "workspace:>=0.3.0 <1.0.0",
     "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0",
-    "@aalis/util-cron": "workspace:>=0.1.3 <1.0.0"
+    "@aalis/util-cron": "workspace:>=0.2.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -49,7 +49,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.20.0 <1.0.0"
+    "@aalis/core": ">=0.21.0 <1.0.0"
   },
   "aalis": {
     "service": {
