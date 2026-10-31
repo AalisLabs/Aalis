@@ -24,9 +24,9 @@
   },
   "dependencies": {
     "@aalis/api-agent": "workspace:>=0.11.0 <1.0.0",
-    "@aalis/schema-message": "workspace:>=0.10.0 <1.0.0",
-    "@aalis/api-hooks": "workspace:>=0.2.0 <1.0.0",
-    "@aalis/api-platform": "workspace:>=0.10.0 <1.0.0",
+    "@aalis/schema-message": "workspace:>=0.11.0 <1.0.0",
+    "@aalis/api-hooks": "workspace:>=0.3.0 <1.0.0",
+    "@aalis/api-platform": "workspace:>=0.11.0 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.16.0 <1.0.0",
     "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
   },
@@ -36,7 +36,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.20.0 <1.0.0"
+    "@aalis/core": ">=0.21.0 <1.0.0"
   },
   "keywords": [
     "aalis",

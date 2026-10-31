@@ -8,9 +8,11 @@
 
 ---
 
-## 未发布 · core 0.21（国际化）
+## 2026-10-31（core 0.21.0 minor；117 个包：110 minor / 7 新包 schema-i18n、api-i18n、plugin-i18n、api-session-settings、plugin-session-settings、plugin-chat-approval、util-file-signature）
 
 core 定为 0.21.0。给人看的文字改为文字对象，由出口按读者的语言渲染（新包 `@aalis/schema-i18n`、`@aalis/api-i18n`、`@aalis/plugin-i18n`）；同批还有插件配置按会话覆盖、通道层与各插件的修整。
+
+有改动的已发布包一律按次版本发布，首次发布的 7 个包用源码里的版本。带 core peer 的包下限抬到 `>=0.21.0 <1.0.0`（新版插件的显示名与页面标题是文字对象，core 0.21 起才收），包之间的依赖下限抬到本批新版本。
 
 ### core 0.21
 

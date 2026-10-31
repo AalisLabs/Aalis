@@ -34,6 +34,6 @@
     "aalis-schema"
   ],
   "peerDependencies": {
-    "@aalis/core": ">=0.20.0 <1.0.0"
+    "@aalis/core": ">=0.21.0 <1.0.0"
   }
 }
