@@ -22,6 +22,7 @@ import { RequestError, type SessionSummary, unlessLost } from '../protocol/sessi
 import { paths, useSessionAddress } from '../routes';
 import { useSessionActions } from '../sessions/actions';
 import { BackgroundStatus, backgroundLabel } from '../sessions/status';
+import { type LayerInfo, typeText, useLayers } from '../settings/layers';
 import { useSettingRows } from '../settings/setting-rows';
 import { SessionGate } from '../shell/SessionGate';
 import { Main, usePhone, useShell } from '../shell/Shell';
@@ -85,12 +86,13 @@ function SessionTitle({ summary }: { summary: SessionSummary }) {
 }
 
 /**
- * 头部的副信息：场所是窗口的写「类型名 · 平台」，是工作区的写场所的显示名，出生平台是 IM 的另写平台（owner 的 IM 私聊）。
- * 子会话的标题前已写着各级父会话，不另写
+ * 头部的副信息：场所是窗口的写「类型 · 平台」（类型的写法同设置的层列表，见 typeText），是工作区的写场所的显示名，出生平台是
+ * IM 的另写平台（owner 的 IM 私聊）。子会话的标题前已写着各级父会话，不另写
  */
-function whereOf(summary: SessionSummary): string | undefined {
+function whereOf(summary: SessionSummary, layers: readonly LayerInfo[]): string | undefined {
   if (summary.parentId) return undefined;
-  const head = summary.place?.kind === 'window' ? summary.chat?.type : summary.place?.name;
+  const head =
+    summary.place?.kind === 'window' ? typeText(layers, summary.platform, summary.chat?.type) : summary.place?.name;
   return [head, summary.platform].filter(Boolean).join(' · ');
 }
 
@@ -112,6 +114,7 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
   const composer = useRef<ComposerHandle>(null);
   const fold = useFold();
   const { summary, usage, plan } = live;
+  const layers = useLayers(summary?.place?.kind === 'window' && !summary.parentId);
   const { tasks, error: backgroundError } = useBackground();
   const own = useMemo(
     () => [...(tasks?.values() ?? [])].filter(task => task.sessionId === sessionId),
@@ -221,7 +224,7 @@ function SessionView({ sessionId, tab, panel }: { sessionId: string; tab?: HostP
       <Main>
         <Panel
           title={summary && <SessionTitle summary={summary} />}
-          meta={summary && whereOf(summary)}
+          meta={summary && whereOf(summary, layers.value?.layers ?? [])}
           back={parent ? paths.session(parent.id) : paths.home}
           anchor="end"
           banner={summary?.kind === 'room' && tr('ownerInRoom', { room: summary.title })}

@@ -606,6 +606,27 @@ describe('右侧面板与会话头', () => {
     expect(await headOf({ parentId: 'root', ancestors: [{ id: 'root', title: '根' }] })).toBeUndefined();
   });
 
+  it('会话头的副信息：窗口的类型写适配器声明的显示名，与设置的层列表同一个来源', async () => {
+    app = await renderApp('/s/s1', {
+      'session/subscribe': () =>
+        snapshot([], {
+          session: {
+            platform: 'onebot',
+            chat: { type: 'group', multiParty: true },
+            place: { key: 'onebot:group:1', kind: 'window', name: '读书会' },
+          },
+        }),
+      'session/config/layers': () => ({
+        layers: [
+          { layer: { scope: 'global' } },
+          { layer: { scope: 'platformType', platform: 'onebot', type: 'group' }, label: '群' },
+        ],
+        order: LAYER_ORDER,
+      }),
+    });
+    await vi.waitFor(() => expect(document.querySelector('.panel-meta')?.textContent).toBe('群 · onebot'));
+  });
+
   it('用量：头部百分比在有用量时才出现，达到压缩线换警告色；拆分表的行名与次序取条目里的分项，不显示为 0 的行，带注入者明细的一行按插件合并，写明压缩线', async () => {
     const data = usage({
       contextWindow: 100_000,
