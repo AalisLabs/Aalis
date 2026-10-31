@@ -129,7 +129,7 @@ my-bot/
 ├── package.json        # @aalis/core + @aalis/runtime + 所选插件（版本见下），engines 写 Node 24.15.0 起
 ├── index.mjs           # 一行 startAalis 启动
 ├── home/               # 家目录（**不入库**）：配置、密钥、数据与日志都在这里
-│   ├── aalis.config.yaml   # 主配置：name / logLevel / plugins（含 plugin-i18n 的语言列表）/ sessionConfig / disabledPlugins；密钥字段只放引用
+│   ├── aalis.config.yaml   # 主配置：name / logLevel / plugins（含 plugin-i18n 的语言列表）/ disabledPlugins；密钥字段只放引用
 │   └── secrets.yaml        # 密钥的值（生成时为空，0600）
 ├── .gitignore          # node_modules/ home/ *.log dist/
 └── README.md           # 启动、配置、装更多插件，以及第一次运行与安装排障的文档地址
@@ -172,20 +172,7 @@ startAalis({ appDir: here, defaultHome: join(here, 'home') }).catch(err => {
 - 设了 `OLLAMA_HOST` 时，两个 Ollama 插件写上 `baseUrl`。
 - 这批插件里有 `@aalis/plugin-i18n` 时写它的 `language`：Aalis 的语言列表，交互模式最后一问排，给了 `--lang` 时按它写，都没有时按默认顺序：识别到的系统语言（有插件提供时，写成提供它的那种，`zh-TW` 写 `zh-CN`）、安装界面的语言、其余（一起装了语言包时，它的语言排第一），如中文系统写 `language: ["zh-CN", "en"]`，别的系统写 `["en", "zh-CN"]`。列表只在这时写定一次，Aalis 运行时不看系统语言，之后要改在设置里改。`bare` 档不写。
 
-还会给两个只有 owner 进得来的平台（`cli`、`webui`）各写一个平台档，开放全部工具分组；这两项无条件写，平台没装时不起作用，之后从市场装上即生效。多人平台（如 OneBot）不代开。平台档是会话设置的一层，写在配置文档的顶层字段 `sessionConfig` 里，按插件实例 id 放这个实例的值（见 [plugin-session-settings](../plugins/plugin-session-settings.md)）。runtime 的 `--init` 写同样的平台档：
-
-```yaml
-sessionConfig:
-  platforms:
-    cli:
-      "@aalis/plugin-tools":
-        enabledToolGroups: ["*"]
-    webui:
-      "@aalis/plugin-tools":
-        enabledToolGroups: ["*"]
-```
-
-带分组的工具（`system`、`skills`、`scheduler`、`subtask` 等）默认不暴露（全局层即 plugin-tools 配置里的 `enabledToolGroups` 是 `[]`），平台档列出该**组名**或写 `"*"` 才对模型可见。组名要写准——`plugin-tool-system` 的 shell / 文件 / 系统 / HTTP 工具全部落在 `system` 这**一个**组里（见 [plugin-tool-system](../plugins/plugin-tool-system.md)）。之后接入 OneBot 等多人平台时不会自动开组，需要在平台档里按需列出——群成员能驱动哪些 public 工具靠这道闸控制（见 [security-model](../concepts/security-model.md)）。
+不写平台档；runtime 的 `--init` 同样不写。工具分组（plugin-tools 的 `enabledToolGroups`）哪一层都没设时，在本机（WebUI、终端）建的会话开全部分组，别的会话不开：在 WebUI 与终端里建的会话开箱就有全部工具，聊天平台（如 OneBot）的群与私聊、编排与定时任务这类内部会话没有带分组的工具（`system`、`skills`、`scheduler`、`subtask` 等）。要给聊天平台开组，在会话设置的平台档（写在配置文档的顶层字段 `sessionConfig` 里，按插件实例 id 放这个实例的值，见 [plugin-session-settings](../plugins/plugin-session-settings.md)）或群、会话上列出该**组名**或写 `"*"`。组名要写准——`plugin-tool-system` 的 shell / 文件 / 系统 / HTTP 工具全部落在 `system` 这**一个**组里（见 [plugin-tool-system](../plugins/plugin-tool-system.md)）。之后接入 OneBot 等多人平台时不会自动开组，需要在平台档里按需列出——群成员能驱动哪些 public 工具靠这道闸控制（见 [security-model](../concepts/security-model.md)）。
 
 首次启动时 runtime 会把每个已装插件 `configSchema` 的默认值同步写回该文件（`config-sync`），几行的初始配置会展开成全量键值——这是预期行为，之后可直接在文件里改任意项；WebUI 配置页与文件双向同步。
 

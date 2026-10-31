@@ -357,8 +357,8 @@ const REMOVED: Array<[string, string]> = [
   ['stage.drafts', '宿主路径的舞台 stage（白纸、公开作品与草稿三个目录），随白纸与作品发布移出主仓'],
   // 家目录的 self 合成一个目录：storage-local 的人设卡、技能、编排定义三个内部根合成一个 self 根，插件经 api-storage 的
   // content 取 self:/<目录名>/
-  ['personas:/', '人设卡的内部根 personas，并进 self 根（人设的缺省目录是 content 的 self:/persona/）'],
-  ['skills:/', '技能的内部根 skills，并进 self 根（技能的缺省目录是 content 的 self:/skills/）'],
+  ['personas:/', '人设卡的内部根 personas，并进 self 根（人设的目录是 content 的 self:/persona/）'],
+  ['skills:/', '技能的内部根 skills，并进 self 根（技能的目录是 content 的 self:/skills/）'],
   ['workflows:/', '编排定义的内部根 workflows，并进 self 根'],
   ['self.personas', 'HostPaths.self 下按用途分开的三个目录，合成一个 self'],
   ['self.skills', 'HostPaths.self 下按用途分开的三个目录，合成一个 self'],
@@ -366,6 +366,10 @@ const REMOVED: Array<[string, string]> = [
   ['OwnStorage', '私有目录视图的类型，与内容目录共用后改名 PluginDirStorage'],
   ['personasDir', 'plugin-persona 可配置的人设目录：人设卡固定在存储的内容目录 self:/persona/'],
   ['skillsUri', 'plugin-skills 可配置的技能目录：技能固定在存储的内容目录 self:/skills/'],
+  [
+    'OWNER_PLATFORM',
+    '--init 与 create-aalis 给 cli、webui 写的平台档（OWNER_PLATFORM_PROFILES、OWNER_PLATFORMS）：工具分组没设时由 plugin-tools 按根会话的创建来源给',
+  ],
 ];
 
 /**

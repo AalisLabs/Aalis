@@ -136,7 +136,7 @@ interface ToolService {
 }
 ```
 
-工具分组是 [plugin-tools](../plugins/plugin-tools.md) 的可按会话覆盖的字段 `enabledToolGroups`（全局层默认 `[]`），提供者经 `sessionGroups` 交出这个会话的生效值，第三方工具注册表要实现它。agent 按它填 `ToolCallContext.enabledGroups`。
+工具分组是 [plugin-tools](../plugins/plugin-tools.md) 的可按会话覆盖的字段 `enabledToolGroups`（没有作者默认，哪一层都没设时，在本机（WebUI、终端）建的会话开全部分组，别的会话不开），提供者经 `sessionGroups` 交出这个会话的生效值，第三方工具注册表要实现它。agent 按它填 `ToolCallContext.enabledGroups`。
 
 分组经 `registerGroup` 登记：
 

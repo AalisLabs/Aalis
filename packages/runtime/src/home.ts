@@ -205,18 +205,7 @@ export function isHomeInitialized(paths: HostPaths): boolean {
 }
 
 /**
- * 只有 owner 进得来的平台（本地终端、单 token 的 WebUI）的平台档开箱给全部工具分组，无条件写：平台没装时这一层不起作用，
- * 之后从市场装上即生效。多人平台不代开：带分组的工具默认不暴露，public 工具在群里的可达性靠这道分组闸。平台档按插件实例放
- * 这个实例的值。与 create-aalis 生成的平台档一致。两档各写一份：共用一个对象会被序列化成 YAML 锚点与别名，读回仍是同一个对象，
- * 改一个平台档另一个跟着变
- */
-const OWNER_PLATFORM_PROFILES = {
-  cli: { '@aalis/plugin-tools': { enabledToolGroups: ['*'] } },
-  webui: { '@aalis/plugin-tools': { enabledToolGroups: ['*'] } },
-};
-
-/**
- * 建家目录：目录 0700，写默认主配置与空的密钥文件（0600），建布局里的子目录。主配置里写上 owner 平台的平台档。
+ * 建家目录：目录 0700，写默认主配置与空的密钥文件（0600），建布局里的子目录。主配置只有名字、日志级别与空的插件段。
  * 已初始化时拒绝，不覆盖任何文件。目录已存在时只接受空目录，或只有布局自己条目的目录（上次初始化中途失败），
  * 沿用并收紧为 0700：`--home ~ --init` 这类笔误不能把用户主目录改成 0700、再往里铺一层布局。
  */
@@ -241,8 +230,7 @@ export function initHome(paths: HostPaths): void {
   if (existsSync(paths.secrets)) chmodSync(paths.secrets, 0o600);
   else writeFileSync(paths.secrets, '', { mode: 0o600, flag: 'wx' });
   const { name, logLevel } = defaultsFrom(CORE_CONFIG_SCHEMA);
-  const sessionConfig = { platforms: OWNER_PLATFORM_PROFILES };
-  writeFileSync(paths.config, stringifyYaml({ name, logLevel, plugins: {}, sessionConfig }), {
+  writeFileSync(paths.config, stringifyYaml({ name, logLevel, plugins: {} }), {
     mode: 0o600,
     flag: 'wx',
   });

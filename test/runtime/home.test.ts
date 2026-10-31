@@ -306,23 +306,10 @@ describe('initHome', () => {
     expect(statSync(paths.secrets).mode & 0o777).toBe(0o600);
   });
 
-  it('cli、webui 两个平台档无条件写，按插件实例嵌套，开箱给全部工具分组；多人平台不代开', () => {
+  it('主配置只写名字、日志级别与空的插件段，不写平台档', () => {
     const paths = derivePaths(join(tmp(), 'h'), join(tmp(), 'app'));
     initHome(paths);
-    const tools = { '@aalis/plugin-tools': { enabledToolGroups: ['*'] } };
-    expect(parseYaml(readFileSync(paths.config, 'utf-8'))).toEqual({
-      name: 'Aalis',
-      logLevel: 'info',
-      plugins: {},
-      sessionConfig: { platforms: { cli: tools, webui: tools } },
-    });
-  });
-
-  it('两个平台档读回是各自的映射：改一个平台档，另一个不跟着变', () => {
-    const paths = derivePaths(join(tmp(), 'h'), '/app');
-    initHome(paths);
-    const { cli, webui } = parseYaml(readFileSync(paths.config, 'utf-8')).sessionConfig.platforms;
-    expect(cli).not.toBe(webui);
+    expect(parseYaml(readFileSync(paths.config, 'utf-8'))).toEqual({ name: 'Aalis', logLevel: 'info', plugins: {} });
   });
 
   it('不读安装集的 package.json：它坏了也照常初始化', () => {

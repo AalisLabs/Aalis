@@ -32,6 +32,7 @@ export default definePlugin({
 - `events`：发 `tool:output`、`background:changed` 与后台任务的结束通知；收听 `session:deleted` 与 `app:stopping`。
 - `lifecycle`：停用时把在跑的后台任务落成 `aborted` 并写盘。
 - 可选 `sessionFields`、`document`：按会话读「工具分组」（`sessionGroups`）；会话设置缺席时只取插件配置里的值。
+- 可选 `sessionManager`：工具分组哪一层都没设时看根会话从哪里建的（见下文「配置」）；缺席时这种会话一律不开。
 - 可选 `storage`：后台任务登记写进插件数据 `pluginData:/tools/background-tasks.json`；没有时只记在内存里。存储可能晚于本插件上线，有了插件数据根时读回一次。
 
 权限钩子由消费方通过 `setExecutionGuard()` 注入。
@@ -42,7 +43,7 @@ export default definePlugin({
 |---|---|---|
 | `background.maxWaitSeconds` | 600 | 可转后台的工具调用在前台最多等多少秒：模型给的 `waitSeconds` 与工具声明的让出时限都不超过它。最大 2147483（计时器能表示的最长时限），超出时告警并回落默认 |
 | `background.maxPerSession` | 4 | 同一会话里对话回合中同时在跑的可转后台工具调用（前台与后台一起数，等审批的也算），满了时新的调用在过守卫之前就被拒绝，回给模型在跑的任务与「先等待或停掉一个」；不在对话回合里的调用不会转后台，不占名额 |
-| `enabledToolGroups` | `[]` | 工具分组：这个会话启用哪些分组，`'*'` 为全部分组，不属于任何分组的工具总是给（空列表即只给它们）；可按会话设（平台档、平台类型档、场所与会话），只有 owner 能改 |
+| `enabledToolGroups` | — | 工具分组：这个会话启用哪些分组，`'*'` 为全部分组，不属于任何分组的工具总是给（空列表即只给它们）；可按会话设（平台档、平台类型档、场所与会话），只有 owner 能改。没有作者默认，哪一层都没设时：根会话（子会话取根会话的）带创建来源，即在本机的 WebUI 或终端建的，开全部分组；别的会话不开，包括聊天平台的群与私聊（对端是 owner 的私聊也不开）与内部会话（编排、定时任务、mcp-server、按 id 兜底建档的）。不按 owner 开：开了就看不出 owner 默认用什么工具。显式写的 `[]`（任何一层）是不开 |
 
 ## 主要能力
 
@@ -52,7 +53,7 @@ export default definePlugin({
   未指定 `groups`（或为空）时只返回通用工具。多人平台上 public 工具的可达性靠这道分组闸
   （见 [security-model](../concepts/security-model.md)）；一个会话启用哪些分组由本插件的配置字段 `enabledToolGroups` 决定，
   它可按会话覆盖（[api-session-settings](../api/api-session-settings.md)，只有 owner 能改，显眼程度 common），
-  全局层默认 `[]`，开箱只有 `cli`、`webui` 的平台档写 `['*']`。`sessionGroups(sessionId, platform)` 交出这个会话的生效值。
+  没设时按根会话的创建来源给（见上文「配置」）。`sessionGroups(sessionId, platform)` 交出这个会话的生效值。
 - **分组闸在执行面同样生效**：`execute()` 在调用方传了 `ToolCallContext.enabledGroups` 时按同一判据校验，
   不命中即返回与「工具未找到」同形的错误；近似名建议也不会把闸外的工具名回流给模型。
   只在列举面拦是不够的——被提示注入的模型可以叫出一个本回合没下发给它的名字，而安全模型把

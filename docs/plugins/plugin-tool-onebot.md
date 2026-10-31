@@ -7,7 +7,7 @@
 
 把 OneBot 协议的群管理、群信息、账号查询、特殊交互、会话历史读取，以及好友/群请求处理封装成 LLM 可调用的工具，按职责分为 `onebot-daily`、`onebot-group`、`onebot-personal` 三个工具组。
 
-工具命名统一前缀 `onebot_*`，可在任意会话（包括 webui、其它平台）中调用——只要指定了目标 `group_id` / `user_id`。如未传入，会回退到当前 OneBot 会话上下文。三个工具组默认不对任何平台暴露，需要在 session-manager 的平台档里列出（或写 `'*'`）；`npm create aalis` 生成的配置只给 `cli` / `webui` 写了 `'*'`，接入 OneBot 后要为 onebot 平台单独列组。
+工具命名统一前缀 `onebot_*`，可在任意会话（包括 webui、其它平台）中调用——只要指定了目标 `group_id` / `user_id`。如未传入，会回退到当前 OneBot 会话上下文。三个工具组在聊天平台上默认不暴露，需要在会话设置的平台档里列出（或写 `'*'`）；工具分组没设时只有在本机（WebUI、终端）建的会话开全部分组，接入 OneBot 后要为 onebot 平台单独列组。
 
 ## 插件声明
 

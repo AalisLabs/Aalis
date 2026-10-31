@@ -269,7 +269,7 @@ commands.use.command('profile.clear.nuke', '【危险】清空所有用户档案
 >（`restricted + confirm`）的不对称是有意的：后者上闸因为**写 storage**，与出网无关。
 >
 > 这条判据的前提是分组闸：带分组的工具只在这个会话生效的工具分组（plugin-tools 的会话设置 `enabledToolGroups`）列出该组（或 `'*'`）时才暴露；
-> 全局层是 `[]`，`npm create aalis` 只给已选装的 `cli` / `webui` 的平台档写 `['*']`，多人平台一律不代开。
+> 哪一层都没设时只有在本机（WebUI、终端）建的会话开全部分组，聊天平台的会话（含对端是 owner 的私聊）与内部会话一律不开，多人平台不代开。
 >
 > 房间会话按出生平台与聊天窗口的类型选档（见 [plugin-session-settings](../plugins/plugin-session-settings.md)），
 > 从 WebUI、CLI 驱动房间不改变工具组：owner 从 WebUI 往群里插话，这一轮仍是该群平台档的工具组。

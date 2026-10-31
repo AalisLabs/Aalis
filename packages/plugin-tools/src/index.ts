@@ -1,4 +1,5 @@
 import { ownHostConfig } from '@aalis/api-host-config';
+import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { sessionFields } from '@aalis/api-session-settings';
 import { storage } from '@aalis/api-storage';
 import { backgroundTasks, tools } from '@aalis/api-tools';
@@ -32,15 +33,14 @@ const configSchema = defineConfig({
       },
     },
   },
-  // 按会话字段：空列表即只给不属于任何分组的工具，只有 owner 能改
+  // 按会话字段：空列表即只给不属于任何分组的工具，只有 owner 能改；哪一层都没设时见 unsetGroups
   enabledToolGroups: {
     type: 'multiselect',
     label: t('groupsLabel'),
     description: t('groupsDescription'),
     dynamicOptions: 'toolGroups',
     allowCustom: true,
-    default: [],
-    session: { prominence: 'common', order: 30 },
+    session: { prominence: 'common', order: 30, unset: t('groupsUnset') },
   },
 });
 
@@ -63,6 +63,8 @@ export default definePlugin({
     document: optional(ownHostConfig),
     /** 后台任务登记写进插件数据；没有时只记在内存里 */
     storage: optional(storage),
+    /** 工具分组哪一层都没设时看根会话从哪里建的；缺席时一律不开 */
+    sessionManager: optional(sessionManager),
   },
   apply(caps) {
     const { logger, events, lifecycle } = caps;
@@ -83,8 +85,17 @@ export default definePlugin({
       void tasks.restore(store.own);
     });
 
+    /**
+     * 工具分组哪一层都没设时：根会话（子会话取根会话的）带创建来源，即在本机的 WebUI 或终端建的，开全部分组；聊天平台的
+     * 会话与内部会话不开。不按 owner 开：开了就看不出 owner 默认用什么工具
+     */
+    const unsetGroups = (sessionId: string): string[] => {
+      if (!caps.sessionManager.present) return [];
+      const sm = caps.sessionManager.use;
+      return rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id))?.createdFrom !== undefined ? ['*'] : [];
+    };
     const sessionGroups = (sessionId: string, platform?: string) =>
-      fields.get(sessionId, { platform }).enabledToolGroups;
+      fields.get(sessionId, { platform }).enabledToolGroups ?? unsetGroups(sessionId);
     caps.provide.use(tools, new ToolRegistry(logger.use, tasks, sessionGroups));
     caps.provide.use(backgroundTasks, tasks);
   },
