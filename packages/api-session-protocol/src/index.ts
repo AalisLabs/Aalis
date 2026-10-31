@@ -917,7 +917,7 @@ export const sessionMethods = {
    * 最近一次为真的上报在 10 分钟内即算在场；客户端在有活动时按需重报
    */
   'presence/update': { params: PresenceUpdateParamsSchema, result: EmptySchema },
-  /** 应答一个审批：先答先得，后到的回 approval-settled；应答人须是 owner，内容哈希须一致 */
+  /** 应答一个审批：先答先得，后到的回 approval-settled；应答人须能批这一张（canAnswer），内容哈希须一致 */
   'approval/respond': { params: ApprovalRespondParamsSchema, result: EmptySchema },
   /** 全部会话在跑的与保留的结束的后台任务；没有后台任务登记时回 unsupported */
   'background/list': { params: EmptySchema, result: z.object({ tasks: z.array(BackgroundTaskSchema) }) },
