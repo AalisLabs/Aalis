@@ -8,7 +8,7 @@ import { type PersonaService, type PersonaSessionOptions, persona } from '@aalis
 import { getPlatformSelfIdentity, platform as platformService, sessionTypeLabel } from '@aalis/api-platform';
 import { rootSessionOf, sessionManager as sessionManagerService } from '@aalis/api-session-manager';
 import { sessionFields } from '@aalis/api-session-settings';
-import { isStorageNotFound, type StorageService, storage as storageService, toStorageUri } from '@aalis/api-storage';
+import { isStorageNotFound, type StorageService, storage as storageService } from '@aalis/api-storage';
 import {
   type BoundOf,
   config as configCap,
@@ -55,13 +55,6 @@ interface PersonaIdentity {
 const DEFAULT_PERSONA = 'default';
 
 const configSchema = defineConfig({
-  personasDir: {
-    type: 'string',
-    label: t('personasDirLabel'),
-    description: t('personasDirDescription'),
-    default: 'personas:/',
-    onInvalid: 'error',
-  },
   statePersistence: {
     type: 'boolean',
     label: t('statePersistenceLabel'),
@@ -510,12 +503,12 @@ export default definePlugin({
 async function run(caps: Caps): Promise<void> {
   const { provide, config, logger, events, hooks } = caps;
   const cfg = parseConfig(configSchema, config.use, logger.use);
-  const personasDirRaw = cfg.personasDir || configSchema.personasDir.default;
   const { statePersistence, timeInjection, timeZone } = cfg;
 
   const storage = caps.storage.use;
 
-  const personasDir = toStorageUri(personasDirRaw);
+  /** 人设卡所在的目录：存储的内容目录 self:/persona/ */
+  const cardsDir = storage.content.uri();
 
   /** 读到了但解析不出卡的标记——与"文件不存在"区分开，避免坏卡被当成没有卡 */
   const INVALID = 'invalid' as const;
@@ -583,7 +576,7 @@ async function run(caps: Caps): Promise<void> {
   async function findCard(name: string): Promise<{ card: PersonaCard; uri: string } | typeof INVALID | undefined> {
     let sawInvalid = false;
     for (const ext of ['.yaml', '.yml']) {
-      const uri = joinUri(personasDir, `${name}${ext}`);
+      const uri = joinUri(cardsDir, `${name}${ext}`);
       const card = await tryLoadCardFromUri(uri);
       if (card === INVALID) {
         sawInvalid = true;
@@ -599,7 +592,7 @@ async function run(caps: Caps): Promise<void> {
     const seenNames = new Set<string>();
     let result: Awaited<ReturnType<StorageService['list']>>;
     try {
-      result = await storage.list(personasDir);
+      result = await storage.list(cardsDir);
     } catch (err) {
       if (!isStorageNotFound(err)) throw err;
       return seenNames;
@@ -690,10 +683,10 @@ async function run(caps: Caps): Promise<void> {
         // 首启人设目录尚不存在时 watch 会 ENOENT：先补建。
         // 与监听分开：只读根 / 符号链接目录上 mkdir 会抛，不能连带放弃对已存在目录的监听。
         try {
-          await storage.stat(personasDir);
+          await storage.stat(cardsDir);
         } catch {
           try {
-            await storage.mkdir(personasDir);
+            await storage.mkdir(cardsDir);
           } catch {
             /* 建不了就照旧：下面的监听会给出失败原因 */
           }
@@ -701,9 +694,9 @@ async function run(caps: Caps): Promise<void> {
         if (cancelled) return;
         // 先挂监听再扫描：扫描期间的改动不会漏掉（由它触发的重扫排在本次扫描之后）
         try {
-          offs.push(storage.watch(personasDir, () => void refresh(`目录变化已重新加载（${personasDir}）`)));
+          offs.push(storage.watch(cardsDir, () => void refresh(`目录变化已重新加载（${cardsDir}）`)));
         } catch (err) {
-          logger.use.warn(`persona 目录监听失败（${personasDir}）：${err}`);
+          logger.use.warn(`persona 目录监听失败（${cardsDir}）：${err}`);
         }
         await refresh('扫描完成');
       })();

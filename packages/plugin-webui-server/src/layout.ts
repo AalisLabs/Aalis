@@ -6,7 +6,7 @@
 // 每个操作落盘成功才算数，落盘失败时记录不变。所属插件停用时记录保留，界面按当前的页面表决定显示哪些。
 // ============================================================
 
-import { isStorageNotFound, type OwnStorage } from '@aalis/api-storage';
+import { isStorageNotFound, type PluginDirStorage } from '@aalis/api-storage';
 import {
   HOST_PANEL_TABS,
   type LayoutOperation,
@@ -166,7 +166,7 @@ const recordsOf = (parsed: Record<string, unknown>): LayoutRecords => ({
   panelTabs: panelTabsOf(parsed.panelTabs),
 });
 
-export function createLayoutStore(storage: Pick<OwnStorage, 'readFile' | 'writeFile' | 'uri'>, logger: Logger) {
+export function createLayoutStore(storage: Pick<PluginDirStorage, 'readFile' | 'writeFile' | 'uri'>, logger: Logger) {
   let records: LayoutRecords | undefined;
   let loading: Promise<LayoutRecords> | undefined;
   /** 操作排队：后一个在前一个落盘之后、基于它的结果应用 */

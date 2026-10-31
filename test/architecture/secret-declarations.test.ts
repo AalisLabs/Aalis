@@ -73,7 +73,7 @@ describe('第一方配置字段的 secret 声明', () => {
       maxTokens: { type: 'number', label: 'M' },
       memoryTokenBudget: { type: 'number', label: 'B', secret: false },
       uri: { type: 'string', label: 'U' },
-      skillsUri: { type: 'string', label: 'S' },
+      iconUri: { type: 'string', label: 'S' },
       token: { type: 'string', description: 'tool param' },
     };`;
     expect(undeclaredCredentialFields('x.ts', source)).toEqual(['x.ts:2 apiKey', 'x.ts:6 uri']);

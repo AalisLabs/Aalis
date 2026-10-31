@@ -98,7 +98,9 @@ const PRIVATE = { browsable: false, readable: true, writable: true, deletable: t
  *   不改写历史。可删：/clear 的附件清理依赖它；删除面由各工具自身档位把关。
  * - pluginData：各插件的私有数据目录 state/plugins。
  * - tmp、cache：临时区与缓存；logs：runtime 写文件日志的目录，WebUI 与 CLI 的日志页从这里读，只读。
- * - personas、skills、workflows：self 下按用途分开的三个根，一个根里的路径拼接失误到不了另一个根。
+ * - self：存下来就会自己生效、owner 与她都会读改的内容（人设、技能等），各插件经 api-storage 的 content 在里面按目录名分开。
+ *   原来按用途分开的人设卡、技能、编排定义三个根合成了这一个，self:/persona/../skills/x 仍在 self 根里：一个插件的路径
+ *   拼接失误能碰到另一个插件的内容，这层隔离是有意放弃的。
  * kind 供 checkpoint 等按类判断：data、pluginData、tmp、cache、logs、self 都不记账
  * （self 等访问层限定写入者后再记，见 plugin-checkpoint）。
  */
@@ -118,9 +120,7 @@ function internalRoots(paths: HostPaths): Array<RootEntryConfig & { path: string
       writable: false,
       deletable: false,
     },
-    { name: 'personas', path: paths.self.personas, label: '人设卡', kind: 'self', ...PRIVATE },
-    { name: 'skills', path: paths.self.skills, label: '技能', kind: 'self', ...PRIVATE },
-    { name: 'workflows', path: paths.self.workflows, label: '编排定义', kind: 'self', ...PRIVATE },
+    { name: 'self', path: paths.self, label: '内容', kind: 'self', ...PRIVATE },
   ];
 }
 

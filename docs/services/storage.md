@@ -2,7 +2,7 @@
 
 **定位**：命名根（named root）+ storage URI（`<root>:/path`）的文件后端——为宿主机若干目录赋予稳定名称，对外提供 `read/write/delete/rename/list/stat` 等基于 URI 的文件操作，使上层无需硬编码绝对路径。
 
-- **服务注册名**：描述符 `storage`（`name: 'storage'`），业务层是 `BoundStorage`：调用转发给选中的存储提供者，另带本插件私有目录的视图 `own`。
+- **服务注册名**：描述符 `storage`（`name: 'storage'`），业务层是 `BoundStorage`：调用转发给选中的存储提供者，另带本插件私有目录的视图 `own` 与内容目录的视图 `content`。
 - **契约包**：`@aalis/api-storage`（`packages/api-storage/src/index.ts`）。
 - **参考实现**：`@aalis/plugin-storage-local`（`packages/plugin-storage-local/src/index.ts`）。
 - **它不是沙箱**：见 [§6](#_6-能力-风险-→-影响-安全边界)。
@@ -60,17 +60,19 @@ export interface StorageRootInfo {
 ```ts
 type StorageMethods = StorageService & Required<Pick<StorageService, 'resolveLocalPath' | 'readFileRange' | 'watch'>>;
 
-export type OwnStorage = Omit<StorageMethods, 'listRoots'> & {
+export type PluginDirStorage = Omit<StorageMethods, 'listRoots'> & {
   uri(path?: string): string;
 };
 
 export interface BoundStorage extends StorageMethods {
-  readonly own: OwnStorage;
+  readonly own: PluginDirStorage;     // pluginData:/<目录名>/
+  readonly content: PluginDirStorage; // self:/<目录名>/
 }
 ```
 
 - `caps.storage.use` 的调用转发给本插件选中的存储提供者。`resolveLocalPath` / `readFileRange` / `watch` 在业务层上恒定义（类型不带 `?`）：选中的那一家不支持时，调用本身抛「存储提供者不支持 X」，调用方不必先判方法是否存在。
-- `own` 是本插件私有目录 `pluginData:/<目录名>/` 上的存储视图。目录名是包名去掉 `plugin-` 前缀：`@aalis` 与不带作用域的包只取包名（`@aalis/plugin-file-reader` → `file-reader`），别的作用域另带作用域、以 `+` 相连（`@acme/plugin-file-reader` → `acme+file-reader`），取不出单段目录名的插件名在绑定时抛错；同一插件的多个实例共用这个目录，需要区分时由插件自己分子目录。方法与 `StorageService` 相同（没有 `listRoots`），路径参数相对这个目录：规范化之后越出目录的（`..` 越过目录）、宿主机绝对路径与存储地址都抛错，空路径即目录本身（`own.delete('')` 删掉整个私有目录）；返回值里的地址是完整的存储地址。`own.uri(path)` 给出相对路径对应的完整存储地址（交给别处、写进记录时用），不给参数即目录本身。
+- `own` 是本插件私有目录 `pluginData:/<目录名>/` 上的存储视图，放插件自己的运行数据，依赖名叫 `pluginData` 的根。目录名是包名去掉 `plugin-` 前缀：`@aalis` 与不带作用域的包只取包名（`@aalis/plugin-file-reader` → `file-reader`），别的作用域另带作用域、以 `+` 相连（`@acme/plugin-file-reader` → `acme+file-reader`），取不出单段目录名的插件名在绑定时抛错；同一插件的多个实例共用这个目录，需要区分时由插件自己分子目录。方法与 `StorageService` 相同（没有 `listRoots`），路径参数相对这个目录：规范化之后越出目录的（`..` 越过目录）、宿主机绝对路径与存储地址都抛错，空路径即目录本身（`own.delete('')` 删掉整个私有目录）；返回值里的地址是完整的存储地址。`own.uri(path)` 给出相对路径对应的完整存储地址（交给别处、写进记录时用），不给参数即目录本身。
+- `content` 是本插件内容目录 `self:/<目录名>/` 上的存储视图，依赖名叫 `self` 的根，就像 `own` 依赖 `pluginData`。目录名、路径规则与方法都与 `own` 相同（`@aalis/plugin-persona` → `self:/persona/`）。它放存下来就会自己生效、owner 与她都会读改的内容：人设、技能，以后的用户工具与编排定义；插件自己的运行数据放 `own`。
 
 ---
 
@@ -92,11 +94,11 @@ export interface BoundStorage extends StorageMethods {
 
 ### 提供者（参考实现）
 
-`@aalis/plugin-storage-local`——把 `config.roots` 里声明的用户根（缺省只有 `workspace`），以及按家目录布局派生的内部根（`data`、`pluginData`、`tmp`、`cache`、`logs`、`personas`、`skills`、`workflows`）注册为命名根。全部根就绪之后整体登记**一个**提供者，根在它内部按 URI 根名路由；根名不认识时抛「未知存储根：x（已注册根：…）」。
+`@aalis/plugin-storage-local`——把 `config.roots` 里声明的用户根（缺省只有 `workspace`），以及按家目录布局派生的内部根（`data`、`pluginData`、`tmp`、`cache`、`logs`、`self`）注册为命名根。全部根就绪之后整体登记**一个**提供者，根在它内部按 URI 根名路由；根名不认识时抛「未知存储根：x（已注册根：…）」。
 
 ### 典型消费点
 
-文件工具组、shell、code-runner、skills、file-reader、checkpoint、memory / persona / scheduler / media / onebot / asr / authority / office 等，均经 `caps.storage.use` 消费。插件自己的私有数据（file-reader、session-server、tools、webui-server）经 `caps.storage.use.own` 读写。
+文件工具组、shell、code-runner、skills、file-reader、checkpoint、memory / persona / scheduler / media / onebot / asr / authority / office 等，均经 `caps.storage.use` 消费。插件自己的私有数据（file-reader、session-server、tools、webui-server）经 `caps.storage.use.own` 读写；人设与技能的目录经 `caps.storage.use.content` 取（`self:/persona/`、`self:/skills/`）。
 
 ---
 

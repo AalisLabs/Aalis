@@ -14,19 +14,19 @@ function expectHits(list: 'control' | 'landing' | 'denyRead', cases: Array<[stri
 }
 
 describe('宿主控制面', () => {
-  it('家目录下除默认工作区、临时区与技能目录以外的全部；安装集的依赖与构建产物；安装集外加载的插件目录', () => {
+  it('家目录下除默认工作区、临时区与 self 以外的全部；安装集的依赖与构建产物；安装集外加载的插件目录', () => {
     expectHits('control', [
       [`${PATHS.state}/db`, true],
       [PATHS.config, true],
       [PATHS.secrets, true],
       [`${PATHS.logs}/latest.log`, true],
       [`${PATHS.run}/aalis.sock`, true],
-      [`${PATHS.self.workflows}/daily.yaml`, true],
-      [`${PATHS.self.personas}/default.md`, true],
       [`${PATHS.home}/zz-other/x`, true],
       [`${PATHS.workspace}/a.md`, false],
       [`${PATHS.tmp}/sessions/7331/x`, false],
-      [`${PATHS.self.skills}/s/SKILL.md`, false],
+      // self 不在控制面里，归落点（见下文「self」）
+      [`${PATHS.self}/skills/s/SKILL.md`, false],
+      [`${PATHS.self}/persona/default.yaml`, false],
       ['/opt/aalis/node_modules/@aalis/core/dist/index.js', true],
       ['/opt/aalis/dist/index.js', true],
       ['/opt/aalis/packages/core/dist/index.js', true],
@@ -172,6 +172,16 @@ describe('持久化与自动执行落点', () => {
     );
   });
 
+  it('self：整个目录都是落点（存下来就会自己生效的内容），目录本身也算', () => {
+    expectHits('landing', [
+      [PATHS.self, true],
+      [`${PATHS.self}/skills/s/SKILL.md`, true],
+      [`${PATHS.self}/persona/default.yaml`, true],
+      [`${PATHS.self}/zz-new/x`, true],
+      [`${PATHS.home}/selfie/x`, false],
+    ]);
+  });
+
   it('shell 与登录', () => {
     expectHits('landing', [
       ['/u/.zshrc', true],
@@ -234,7 +244,7 @@ describe('拒读清单', () => {
       [`${PATHS.tmp}/sessions/7331/x`, true], // 本会话临时区由触及按会话放行，清单里不放
       [`${PATHS.home}/zz-other/x`, true],
       [`${PATHS.workspace}/a.md`, false],
-      [`${PATHS.self.skills}/s/SKILL.md`, false],
+      [`${PATHS.self}/skills/s/SKILL.md`, false],
       // 默认工作区与 self 整个放行：两个目录本身与以后新加的条目都读得到
       [PATHS.workspace, false],
       [`${PATHS.home}/self`, false],

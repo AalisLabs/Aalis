@@ -4,11 +4,11 @@ import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
 import { ownHostConfig } from '@aalis/api-host-config';
 import { sessionFields } from '@aalis/api-session-settings';
-import { isStorageNotFound, isStorageUri, type StorageService, storage } from '@aalis/api-storage';
+import { isStorageNotFound, type StorageService, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, defineService, events, logger, optional, provide } from '@aalis/core';
-import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
+import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { TextError, type TextRef, textOf } from '@aalis/schema-i18n';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { t } from './texts.js';
@@ -16,7 +16,7 @@ import { t } from './texts.js';
 // ════════════════════════════════════════════════════════════
 // plugin-skills — Agent Skills（兼容 Anthropic Agent Skills 标准）
 //
-// 每个 skill 是 skills:/<name>/SKILL.md 文件夹（家目录的 self/skills），包含：
+// 每个 skill 是技能目录下的 <name>/SKILL.md 文件夹（缺省为存储的内容目录 self:/skills/，即家目录的 self/skills），包含：
 //   - SKILL.md（必需）：YAML frontmatter（name, description, triggers?, license?）
 //     + Markdown 正文
 //   - scripts/（可选）：可执行脚本
@@ -48,7 +48,7 @@ interface SkillDefinition {
   body: string;
   triggers?: string[];
   license?: string;
-  /** skill 文件夹 storage URI（如 skills:/foo） */
+  /** skill 文件夹 storage URI（如 self:/skills/foo） */
   uri: string;
   /** scripts/ 下的相对路径列表（不含 scripts/ 前缀） */
   scripts: string[];
@@ -118,13 +118,6 @@ export const skills = defineService<SkillsService>('skills');
 // ──────────── 插件元数据 ────────────
 
 const configSchema = defineConfig({
-  skillsUri: {
-    type: 'string',
-    label: t('skillsUriLabel'),
-    default: 'skills:/',
-    onInvalid: 'error',
-    description: t('skillsUriDescription'),
-  },
   maxSkillBytes: {
     type: 'number',
     label: t('maxSkillBytesLabel'),
@@ -305,11 +298,9 @@ function run(caps: Caps): void {
   const logger = caps.logger.use.child('skills');
   const config: SkillsConfig = parseConfig(configSchema, caps.config.use, logger);
   const fields = caps.sessionFields.use.fields(configSchema, caps);
-  if (!isStorageUri(config.skillsUri)) throw configError(t('badSkillsUri'));
-
-  // 通过 storage gateway 访问 skills 目录；不直接耦合 fs。
+  // 通过 storage gateway 访问 skills 目录；不直接耦合 fs。技能目录是存储的内容目录 self:/skills/
   const storage = caps.storage.use;
-  const skillsUri = config.skillsUri;
+  const skillsDir = storage.content.uri();
 
   // 技能的设置页：直接读这次激活自己的服务实例，页面与服务同生共死
   const skillOf = (name: string): SkillDefinition => {
@@ -489,7 +480,7 @@ function run(caps: Caps): void {
         }
       }
     };
-    await walk(skillsUri, 0);
+    await walk(skillsDir, 0);
     // 扫完整体替换；按名字缓存的已编译 triggers 随旧缓存一并作废（改了 triggers 的技能要重新编译）
     skillsCache = found;
     compiledTriggers.clear();
@@ -668,7 +659,7 @@ function run(caps: Caps): void {
         throw new Error(`技能 "${input.name}" 已存在`);
       }
       const folderName = sanitizeFolderName(input.name);
-      const dirUri = joinUri(skillsUri, folderName);
+      const dirUri = joinUri(skillsDir, folderName);
       // 目标目录不能已存在：stat 报不存在才创建，别的错误（没有权限、存储不可用）照样抛出
       const found = await storage.stat(dirUri).catch((err: unknown) => {
         if (isStorageNotFound(err)) return undefined;
@@ -938,7 +929,7 @@ function run(caps: Caps): void {
       function: {
         name: 'skill_create',
         description:
-          '创建一个新的 Agent Skill（生成 skills:/<name>/SKILL.md 文件夹）。' +
+          '创建一个新的 Agent Skill（在技能目录下生成 <name>/SKILL.md 文件夹）。' +
           'name 与 description 必填；description 应包含"何时使用"以提高自动激活准确率。' +
           '可选 files 数组用于一次性写入 scripts/、references/、assets/、LICENSE.txt 等附属资源，' +
           '符合 Anthropic Agent Skills 完整目录结构。',
@@ -1220,7 +1211,7 @@ function run(caps: Caps): void {
   async function rescanAndLog(level: 'info' | 'debug', reason: string): Promise<void> {
     try {
       await service.rescan();
-      logger[level](`skills ${reason} uri=${skillsUri}，现有 ${skillsCache.size} 个技能`);
+      logger[level](`skills ${reason} uri=${skillsDir}，现有 ${skillsCache.size} 个技能`);
     } catch (err) {
       logger.warn(`扫描 skills 失败（${reason}）：${err}`);
     }
@@ -1233,10 +1224,10 @@ function run(caps: Caps): void {
       const task = (async () => {
         // 首启目录尚不存在时 watch 会 ENOENT：先补建；与监听分开，mkdir 失败（只读根 / 符号链接）不连带放弃监听
         try {
-          await storage.stat(skillsUri);
+          await storage.stat(skillsDir);
         } catch {
           try {
-            await storage.mkdir(skillsUri);
+            await storage.mkdir(skillsDir);
           } catch {
             /* 建不了就照旧：下面的监听会给出失败原因 */
           }
@@ -1245,7 +1236,7 @@ function run(caps: Caps): void {
         // 先挂监听再扫描：扫描期间的改动不会漏掉（由它触发的重扫排在本次扫描之后）。
         // storage 层只按路径去抖，多次触发的合并靠 rescanSkills 的串行化
         try {
-          off = storage.watch(skillsUri, () => void rescanAndLog('debug', '目录变化，已重新扫描'));
+          off = storage.watch(skillsDir, () => void rescanAndLog('debug', '目录变化，已重新扫描'));
         } catch (err) {
           logger.warn(`skills 目录监听启动失败，请手动调用 skill_rescan: ${err}`);
         }

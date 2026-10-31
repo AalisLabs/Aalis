@@ -55,7 +55,7 @@ describe('会话级提示选项：真实回合与 token:request 快照', () => {
     await app.plugin(messageArchivePlugin, { debugLogs: false });
     await app.plugin(sessionManagerPlugin, {});
     await app.plugin(sessionSettingsPlugin, {});
-    await app.plugin(personaPlugin, { personasDir: 'personas:/', timeInjection: false });
+    await app.plugin(personaPlugin, { timeInjection: false });
     await app.plugin(agentPlugin, { systemPrompt: '', memoryTokenBudget: 1024, trimThresholdRatio });
     await app.plugins.idle();
     for (const id of [storageLocalPlugin.name, sessionManagerPlugin.name, personaPlugin.name, agentPlugin.name]) {
@@ -84,8 +84,8 @@ describe('会话级提示选项：真实回合与 token:request 快照', () => {
 
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'aalis-session-prompt-'));
-    mkdirSync(join(base, 'self', 'personas'), { recursive: true });
-    writeFileSync(join(base, 'self', 'personas', 'default.yaml'), CARD);
+    mkdirSync(join(base, 'self', 'persona'), { recursive: true });
+    writeFileSync(join(base, 'self', 'persona', 'default.yaml'), CARD);
   });
 
   afterEach(async () => {

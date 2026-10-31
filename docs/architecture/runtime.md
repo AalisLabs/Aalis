@@ -87,13 +87,11 @@ profile 由家目录的路径决定：家目录是 `~/.aalis-<名>` 时就是 pr
   cache/                       缓存
   run/                         实例锁（以后还放 socket）
   tmp/                         临时文件
-  self/personas  self/skills  self/workflows   人设卡、技能、编排定义（编排定义目前仍在 workspace/workflows，见下）
+  self/                        存下来就会自己生效的内容：人设、技能等，各插件按目录名分开（如 self/persona、self/skills）
   workspace/                   默认工作区：owner 本机默认工作区的真实文件夹；storage-local 缺省的 workspace 根与触及的默认主目录都指向它
 ```
 
-`self/workflows` 暂未使用：plugin-workflow 的 `defsDir` 仍是 `workspace:/workflows`，迁到 `workflows:/` 随工作会话的第二切片一起做。
-
-插件经 `@aalis/plugin-storage-local` 的内部根访问这些目录：`state/` 是 `data:/`，`state/plugins/` 是 `pluginData:/`，`tmp/`、`cache/`、`logs/` 分别是 `tmp:/`、`cache:/`、`logs:/`（`logs:/` 只读），`self/` 下三个目录是 `personas:/`、`skills:/`、`workflows:/`。内部根的位置不能配置；`run/` 归 runtime 自用；`workspace/` 是没写 `path` 的用户根（`roots` 缺省时的 `workspace` 根）的位置。见 [plugin-storage-local](../plugins/plugin-storage-local.md)。
+插件经 `@aalis/plugin-storage-local` 的内部根访问这些目录：`state/` 是 `data:/`，`state/plugins/` 是 `pluginData:/`，`tmp/`、`cache/`、`logs/`、`self/` 分别是 `tmp:/`、`cache:/`、`logs:/`（`logs:/` 只读）、`self:/`；插件经 api-storage 的 `content` 取 `self:/<目录名>/`。内部根的位置不能配置；`run/` 归 runtime 自用；`workspace/` 是没写 `path` 的用户根（`roots` 缺省时的 `workspace` 根）的位置。见 [plugin-storage-local](../plugins/plugin-storage-local.md)。
 
 `secrets.yaml` 是「键 → 值」的映射，存 schema 里 `secret: true` 的字段的值，`aalis.config.yaml` 里只写引用 `{ $secret: '<键>' }`。runtime 启动时读它并监听改动，把配置交给插件之前解析引用；直接写进 `aalis.config.yaml` 的明文在同步插件配置时被移进来；保存时先写它、再写主配置。引用的键不在里面时记一条错误，用 `parseConfig` 读配置的插件激活失败，诊断检查 `config.secrets` 也会报出。键名、写入与清理规则见 [运行态与配置文档](../core/config.md#密钥配置)。这两个文件由 runtime 负责读写：经 storage 读写 `secrets.yaml`、改写 `aalis.config.yaml` 都会被拒绝（见 [plugin-storage-local 的「宿主控制文件」](../plugins/plugin-storage-local.md#宿主控制文件)）。
 

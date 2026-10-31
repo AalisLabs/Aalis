@@ -42,7 +42,8 @@ describe('skills updateSkill frontmatter 合并（真 fs）', () => {
     provideHostPaths(app, base);
     await app.plugins.register(storageLocal, {});
     await app.plugins.register(toolsPlugin, {});
-    await app.plugins.register(skillsPlugin, { skillsUri: 'skills:/' });
+    // 技能目录是存储的内容目录 self:/skills/，即家目录的 self/skills
+    await app.plugins.register(skillsPlugin, {});
     await app.plugins.idle();
     svc = app.bind({ services }).services.use.get(skills)!;
     await svc.rescan();

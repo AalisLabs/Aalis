@@ -26,13 +26,13 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
 
   /** 选中的卡写成主卡 default.yaml */
   const boot = async (name: string): Promise<void> => {
-    writeFileSync(join(base, 'self', 'personas', 'default.yaml'), CARDS[name]);
+    writeFileSync(join(base, 'self', 'persona', 'default.yaml'), CARDS[name]);
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     provideHostPaths(app, base);
     // storage 先装：persona 的 storage 是可选依赖，缺席时它照样激活，只是一张卡都读不到
     await app.plugin(storageLocal, {});
-    await app.plugin(personaPlugin, { personasDir: 'personas:/' });
+    await app.plugin(personaPlugin, {});
     await app.plugins.idle();
     // 停在 pending 的插件既不提供服务也不挂中间件，下面的钩子断言会退化成恒真
     expect(app.plugins.getPlugin(storageLocal.name)?.state, 'storage-local 未激活').toBe('active');
@@ -57,7 +57,7 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
 
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'aalis-persona-retries-'));
-    mkdirSync(join(base, 'self', 'personas'), { recursive: true });
+    mkdirSync(join(base, 'self', 'persona'), { recursive: true });
   });
 
   afterEach(async () => {

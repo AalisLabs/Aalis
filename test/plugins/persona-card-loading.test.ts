@@ -22,7 +22,7 @@ import { sessionValuesPlugin } from '../fixtures/session-settings.js';
 //      热改非主卡的 outputFormat 要重启才生效（此时 outputFormatPrompt 已是新文本，两边对不上）。
 //      现按卡对象缓存，重扫换入新卡对象后旧缓存自然失效。
 //   3. 热改主卡：监听触发重扫，经 reloadPrimaryCardFromCache 换入新卡，人设名与提示词不必重启即更新。
-// 真 storage-local（workspace 根 + 内置 personas 根）+ 真 persona；会话用哪张卡由会话设置的替身给（会话 id 即卡名）。
+// 真 storage-local（workspace 根 + 内置 self 根）+ 真 persona；会话用哪张卡由会话设置的替身给（会话 id 即卡名）。
 // ════════════════════════════════════════════════════════════
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
@@ -63,8 +63,8 @@ describe('persona 角色卡载入（真 storage-local）', () => {
   let base: string;
   let app: App;
 
-  const personasDir = (): string => join(base, 'self', 'personas');
-  const writeCard = (file: string, text: string): void => writeFileSync(join(personasDir(), file), text);
+  const cardsDir = (): string => join(base, 'self', 'persona');
+  const writeCard = (file: string, text: string): void => writeFileSync(join(cardsDir(), file), text);
   const getService = (): PersonaService => {
     const svc = app.bind({ services }).services.use.get(persona);
     if (!svc) throw new Error('persona 服务未就绪');
@@ -93,7 +93,7 @@ describe('persona 角色卡载入（真 storage-local）', () => {
   ): Promise<PersonaService> {
     const personaEntry = {
       definition: personaPlugin,
-      // 不传 personasDir：走默认的 personas:/，即家目录的 self/personas
+      // 人设卡在存储的内容目录 self:/persona/，即家目录的 self/persona
       config: { timeInjection: false, ...config },
     };
     const storageEntry = {
@@ -115,7 +115,7 @@ describe('persona 角色卡载入（真 storage-local）', () => {
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'aalis-persona-load-'));
     mkdirSync(join(base, 'workspace'), { recursive: true });
-    mkdirSync(personasDir(), { recursive: true });
+    mkdirSync(cardsDir(), { recursive: true });
   });
 
   afterEach(async () => {
@@ -131,6 +131,11 @@ describe('persona 角色卡载入（真 storage-local）', () => {
     await app.start();
     expect(svc.getPersonaName()).toBe('探针主卡');
     expect(svc.getSystemPrompt()).toContain('主卡正文');
+  });
+
+  it('人设卡在存储的内容目录（self/persona）里', async () => {
+    writeCard('default.yaml', 'name: 内容目录的主卡\ndescription: d\nprompt: p\n');
+    expect((await boot(true)).getPersonaName()).toBe('内容目录的主卡');
   });
 
   it('两张非主卡显示名相同：各自用自己的 outputFormat', async () => {

@@ -144,8 +144,7 @@ toStorageUri('persona', 'data');    // 'data:/persona'
 输入还会先 `trim()` 并剥掉前导 `./`。本机路径直接报配置错误：若按首段当根名，首段与某个根同名时（如 `/data/x`）会悄悄落到那个根里，
 不同名时只会撞上「未知存储根」。要用存储根以外的目录，先在本地存储插件的 `roots` 里加一个指向它的根，并打开它的「允许写」
 （数据库、索引等要写入）；这个根文件工具也能访问。
-真实用法：`plugin-memory-sqlite/src/index.ts` 的 `toUri`（非空走 `toStorageUri(s)`，留空按实例派生 `data:/aalis.db` / `data:/aalis-<后缀>.db`）、
-`plugin-persona/src/index.ts` 的 `toStorageUri(personasDirRaw)`。
+真实用法：`plugin-memory-sqlite/src/index.ts` 的 `toUri`（非空走 `toStorageUri(s)`，留空按实例派生 `data:/aalis.db` / `data:/aalis-<后缀>.db`）。
 
 > **单段裸名归一的设计动机**（`index.ts`）：如果把单段裸名当**根名**处理（→ `name:/`），
 > 存储提供者找不到这个根就抛「未知存储根」。所以约定单段名是 `data` 根下的相对路径——这通常是用户想要的。

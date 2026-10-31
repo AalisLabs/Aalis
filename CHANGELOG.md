@@ -23,6 +23,16 @@
 - @aalis/plugin-storage-local：删内部根 `paper` 与 `public`。`roots` 里条目的 `path` 可以留空，留空即默认工作区目录；缺省的 `workspace` 根不写 `path`，指向 `HostPaths.workspace`。
 - @aalis/plugin-checkpoint：不记账的根类型删 `paper` 与 `public`。
 
+### 家目录的 self 合成一个目录，插件有内容目录
+
+- @aalis/api-host-paths（破坏性）：`HostPaths.self` 由 `{ personas, skills, workflows }` 改为一个字符串 `<家目录>/self`。
+- @aalis/runtime：`--init` 只建 `self/`，不再建 `self/personas`、`self/skills`、`self/workflows`。
+- @aalis/api-storage：`BoundStorage` 加 `content`：本插件内容目录 `self:/<目录名>/` 上的视图，目录名与 `own` 同一规则，依赖名叫 `self` 的根。类型 `OwnStorage` 改名 `PluginDirStorage`，`own` 与 `content` 共用。
+- @aalis/plugin-storage-local：内部根 `personas`、`skills`、`workflows` 合成一个 `self` 根（`<家目录>/self`，kind `self`）。
+- @aalis/plugin-persona：删配置项 `personasDir`；人设卡固定在存储的内容目录 `self:/persona/`，即家目录的 `self/persona`（原来默认是 `self/personas`）。
+- @aalis/plugin-skills：删配置项 `skillsUri`；技能固定在存储的内容目录 `self:/skills/`，即家目录的 `self/skills`。
+- @aalis/api-reach：家目录的 `self/` 整个归落点：只读、修改确认与工作区档写它要问，全权照写并记审计。宿主控制面与拒读清单对 `self/` 整个放行（原来控制面只放行技能目录），工作区档的可写范围不再含技能目录。
+
 ---
 
 ## 2026-10-31（core 0.21.0 minor；117 个包：110 minor / 7 新包 schema-i18n、api-i18n、plugin-i18n、api-session-settings、plugin-session-settings、plugin-chat-approval、util-file-signature）

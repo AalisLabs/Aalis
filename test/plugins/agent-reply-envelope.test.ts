@@ -85,7 +85,7 @@ describe('agent 定稿：空流重试与可见正文落库（outputFormat 人设
   let app: App;
 
   const boot = async (card: string, responses: ChatResponse[]) => {
-    writeFileSync(join(base, 'self', 'personas', 'default.yaml'), CARDS[card]);
+    writeFileSync(join(base, 'self', 'persona', 'default.yaml'), CARDS[card]);
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     provideHostPaths(app, base);
@@ -94,7 +94,7 @@ describe('agent 定稿：空流重试与可见正文落库（outputFormat 人设
     await app.plugin(createMockLLMPlugin({ responses, recorder }));
     await app.plugin(memoryInMemoryPlugin);
     await app.plugin(messageArchivePlugin, { debugLogs: false });
-    await app.plugin(personaPlugin, { personasDir: 'personas:/' });
+    await app.plugin(personaPlugin, {});
     await app.plugin(agentPlugin, AGENT_CONFIG);
     await app.plugins.idle();
     // 依赖没凑齐的插件停在 pending 而不报错，会让「钩子根本没跑」伪装成绿
@@ -135,7 +135,7 @@ describe('agent 定稿：空流重试与可见正文落库（outputFormat 人设
 
   beforeEach(() => {
     base = mkdtempSync(join(tmpdir(), 'aalis-reply-envelope-'));
-    mkdirSync(join(base, 'self', 'personas'), { recursive: true });
+    mkdirSync(join(base, 'self', 'persona'), { recursive: true });
   });
 
   afterEach(async () => {

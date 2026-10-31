@@ -65,11 +65,11 @@ afterEach(async () => {
 
 async function boot() {
   base = mkdtempSync(join(tmpdir(), 'aalis-trigger-persona-session-'));
-  const personasDir = join(base, 'self', 'personas');
+  const cardsDir = join(base, 'self', 'persona');
   mkdirSync(join(base, 'workspace'), { recursive: true });
-  mkdirSync(personasDir, { recursive: true });
-  writeFileSync(join(personasDir, 'default.yaml'), 'name: 主卡名\nnick_name: [主卡昵称]\ndescription: d\nprompt: p\n');
-  writeFileSync(join(personasDir, 'bob.yaml'), 'name: 副卡名\nnick_name: [副卡昵称]\ndescription: d\nprompt: p\n');
+  mkdirSync(cardsDir, { recursive: true });
+  writeFileSync(join(cardsDir, 'default.yaml'), 'name: 主卡名\nnick_name: [主卡昵称]\ndescription: d\nprompt: p\n');
+  writeFileSync(join(cardsDir, 'bob.yaml'), 'name: 副卡名\nnick_name: [副卡昵称]\ndescription: d\nprompt: p\n');
 
   app = new App({ name: 'T', logLevel: 'error' });
   provideHostPaths(app, base);
@@ -82,7 +82,7 @@ async function boot() {
     { definition: sessionValuesPlugin({ [SESSION_BOB]: { persona: 'bob' } }) },
     {
       definition: personaPlugin,
-      config: { personasDir: 'personas:/', timeInjection: false },
+      config: { timeInjection: false },
     },
   ]);
   await app.plugins.idle();

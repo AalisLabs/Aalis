@@ -6,7 +6,7 @@
 
 ## 概述
 
-`StorageService` 把家目录里的若干目录（文件工具的工作根 workspace、插件数据用的 data / pluginData / tmp / cache / logs / personas / skills / workflows，以及用户自定义根）映射成具名 storage URI（`name:/path`），上层用 URI 而非绝对路径访问文件。
+`StorageService` 把家目录里的若干目录（文件工具的工作根 workspace、插件数据用的 data / pluginData / tmp / cache / logs / self，以及用户自定义根）映射成具名 storage URI（`name:/path`），上层用 URI 而非绝对路径访问文件。
 
 定位：
 
@@ -67,17 +67,19 @@ interface StorageService {
 ```ts
 type StorageMethods = StorageService & Required<Pick<StorageService, 'resolveLocalPath' | 'readFileRange' | 'watch'>>;
 
-type OwnStorage = Omit<StorageMethods, 'listRoots'> & {
+type PluginDirStorage = Omit<StorageMethods, 'listRoots'> & {
   uri(path?: string): string;
 };
 
 interface BoundStorage extends StorageMethods {
-  readonly own: OwnStorage;
+  readonly own: PluginDirStorage;     // pluginData:/<目录名>/
+  readonly content: PluginDirStorage; // self:/<目录名>/
 }
 ```
 
 - `resolveLocalPath` / `readFileRange` / `watch` 在业务层上恒定义：选中的那一家不支持时，调用本身抛「存储提供者不支持 X」，调用方不必先判方法是否存在。
-- `own` 是本插件私有目录 `pluginData:/<目录名>/` 上的存储视图。目录名是包名去掉 `plugin-` 前缀：`@aalis` 与不带作用域的包只取包名（`@aalis/plugin-file-reader` → `file-reader`），别的作用域另带作用域、以 `+` 相连（`@acme/plugin-file-reader` → `acme+file-reader`；npm 包名里没有 `+`，两个作用域的同名插件不共用目录）。取不出单段目录名的插件名（空、`.` 或 `..`、含斜杠或反斜杠）在绑定时抛错，插件激活失败。同一插件的多个实例共用这个目录，需要区分时由插件自己分子目录。方法与 `StorageService` 相同（没有 `listRoots`），路径参数相对这个目录：规范化之后越出目录的（`..` 越过目录）、宿主机绝对路径与存储地址都抛错，空路径即目录本身（`own.delete('')` 删掉整个私有目录）；返回值里的地址是完整的存储地址。`own.uri(path)` 给出相对路径对应的完整存储地址，不给参数即目录本身。
+- `own` 是本插件私有目录 `pluginData:/<目录名>/` 上的存储视图，放插件自己的运行数据，依赖名叫 `pluginData` 的根。目录名是包名去掉 `plugin-` 前缀：`@aalis` 与不带作用域的包只取包名（`@aalis/plugin-file-reader` → `file-reader`），别的作用域另带作用域、以 `+` 相连（`@acme/plugin-file-reader` → `acme+file-reader`；npm 包名里没有 `+`，两个作用域的同名插件不共用目录）。取不出单段目录名的插件名（空、`.` 或 `..`、含斜杠或反斜杠）在绑定时抛错，插件激活失败。同一插件的多个实例共用这个目录，需要区分时由插件自己分子目录。方法与 `StorageService` 相同（没有 `listRoots`），路径参数相对这个目录：规范化之后越出目录的（`..` 越过目录）、宿主机绝对路径与存储地址都抛错，空路径即目录本身（`own.delete('')` 删掉整个私有目录）；返回值里的地址是完整的存储地址。`own.uri(path)` 给出相对路径对应的完整存储地址，不给参数即目录本身。
+- `content` 是本插件内容目录 `self:/<目录名>/` 上的存储视图，依赖名叫 `self` 的根，就像 `own` 依赖 `pluginData`。目录名、路径规则与方法都与 `own` 相同（`@aalis/plugin-persona` → `self:/persona/`）。它放存下来就会自己生效、owner 与她都会读改的内容：人设、技能，以后的用户工具与编排定义；插件自己的运行数据放 `own`。
 
 ```ts
 import { storage } from '@aalis/api-storage';
@@ -89,6 +91,7 @@ export default definePlugin({
   apply({ storage }) {
     void storage.use.readFile('data:/example.json', 'utf8');
     void storage.use.own.writeFile('state.json', '{}'); // pluginData:/acme+example-storage/state.json
+    void storage.use.content.list(''); // self:/acme+example-storage
   },
 });
 ```

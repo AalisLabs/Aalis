@@ -1,14 +1,10 @@
-// 本插件自己的原文字典：显示名、配置项与配置报错，技能页的文字、列表、动作回执与报错，删不掉技能目录的报错，工具分组名与概述，
+// 本插件自己的原文字典：显示名、配置项，技能页的文字、列表、动作回执与报错，删不掉技能目录的报错，工具分组名与概述，
 // 按会话字段「启用的技能」的称呼、说明，与它的可选项来源里的「全部技能」
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
 const SOURCE = {
   displayName: '技能系统 (Agent Skills)',
-  skillsUriLabel: '技能存储 URI',
-  skillsUriDescription:
-    '技能文件夹 storage URI（默认 skills:/，即家目录的 self/skills）。每个 skill 为一个子目录，含 SKILL.md。',
-  badSkillsUri: 'skillsUri 必须是 storage URI',
   maxSkillBytesLabel: '单 skill 最大字节数',
   maxSkillBytesDescription: 'SKILL.md 单文件最大字节数，避免一次加载过大内容污染上下文。',
   maxSkillsLabel: '技能数量上限',
