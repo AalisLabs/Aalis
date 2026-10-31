@@ -677,6 +677,7 @@ export default defineLocale<Source>()({
   dependencyNoLevelFallback: 'The current “{dependency}” has no such level; using the default ({fallback})',
   resetInherit: 'Reset to inherited',
   invalidHere: 'The value stored on this layer is invalid; the value from {layer} is in effect',
+  invalidHereDefault: 'The value stored on this layer is invalid; the default value is in effect',
   advanced: 'Advanced',
   pluginNamesFailedGroup: 'Couldn’t load plugin display names ({error}); grouping by plugin instance ID',
   settingsAppearance: 'Appearance',

@@ -378,6 +378,21 @@ describe('会话默认', () => {
     );
   });
 
+  it.each([
+    ['中文', [], '这一层存的值不合法，生效的是默认值'],
+    ['英文', ['en'], 'The value stored on this layer is invalid; the default value is in effect'],
+  ])('别的层存着不合法的值、生效的是作者默认：%s另用一句，不拿「默认」当层名去套', async (_case, chain, text) => {
+    const invalid = [
+      row('iterations', { field: ITERATIONS, plugin: 'zz-agent', value: -5, effective: 30, source: 'default' }),
+    ];
+    app = await renderApp(
+      '/settings/session-defaults?layer=platformType%3Aonebot%3Agroup',
+      { ...handlers(), 'session/config/layer/get': () => ({ items: invalid }) },
+      settingsRest(chain.length > 0 ? language(chain) : {}),
+    );
+    expect(await settingRow('最大工具迭代').findByText(text)).toBeTruthy();
+  });
+
   it('窗口场所这一层：从平台档、平台类型档继承来的项写明取的是哪一份', async () => {
     app = await renderApp(
       `/settings/session-defaults?${new URLSearchParams({ layer: 'place:onebot:group:20001' })}`,
