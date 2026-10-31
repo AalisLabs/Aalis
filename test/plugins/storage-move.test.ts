@@ -53,9 +53,9 @@ describe('storage.move (真 fs)', () => {
 
   it('跨目录移动：自动建目标父目录 + 源消失', async () => {
     writeFileSync(join(ws, 'a.txt'), 'hello');
-    const result = await storage.move('ws:/a.txt', 'ws:/小说/a.txt');
-    expect(result).toBe('ws:/小说/a.txt');
-    expect(existsSync(join(ws, '小说', 'a.txt'))).toBe(true); // 移到位，父目录自动创建
+    const result = await storage.move('ws:/a.txt', 'ws:/笔记/a.txt');
+    expect(result).toBe('ws:/笔记/a.txt');
+    expect(existsSync(join(ws, '笔记', 'a.txt'))).toBe(true); // 移到位，父目录自动创建
     expect(existsSync(join(ws, 'a.txt'))).toBe(false); // 源消失
   });
 
@@ -73,10 +73,10 @@ describe('storage.move (真 fs)', () => {
   });
 
   it('mkdir：递归建目录 + 幂等（已存在无错）', async () => {
-    const r = await storage.mkdir('ws:/小说/淫魔女（原版）');
-    expect(r).toBe('ws:/小说/淫魔女（原版）');
-    expect(existsSync(join(ws, '小说', '淫魔女（原版）'))).toBe(true); // 递归建父目录
-    await expect(storage.mkdir('ws:/小说/淫魔女（原版）')).resolves.toBe('ws:/小说/淫魔女（原版）'); // 幂等
+    const r = await storage.mkdir('ws:/笔记/2026（草稿）');
+    expect(r).toBe('ws:/笔记/2026（草稿）');
+    expect(existsSync(join(ws, '笔记', '2026（草稿）'))).toBe(true); // 递归建父目录
+    await expect(storage.mkdir('ws:/笔记/2026（草稿）')).resolves.toBe('ws:/笔记/2026（草稿）'); // 幂等
   });
 
   it('mkdir：.. 逃逸 → 拒绝（不在根外建目录）', async () => {
