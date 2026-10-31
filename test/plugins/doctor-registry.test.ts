@@ -213,6 +213,15 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     await app.stop();
   });
 
+  it.each([
+    [{ ok: 19, warn: 2, error: 2 }, 'Summary: 19 passed, 2 warnings, 2 errors', '汇总：通过 19　警告 2　错误 2'],
+    [{ ok: 1, warn: 1, error: 1 }, 'Summary: 1 passed, 1 warning, 1 error', '汇总：通过 1　警告 1　错误 1'],
+  ])('formatReport 的汇总行：英文三段用逗号隔开、按单复数写（空白折叠后照样读得通），中文用全角空格隔开', (summary, en, zh) => {
+    const report = formatReport({ generatedAt: new Date(0).toISOString(), summary, checks: [] });
+    expect(resolveText(report, ['en']).split('\n')).toContain(en);
+    expect(resolveSource(report).split('\n')).toContain(zh);
+  });
+
   it('formatReport：两个以上插件缺服务时，详情的每一行都缩进（原文与英文）', async () => {
     const { app, doctor } = await boot();
     for (const name of ['zz-doctor-lacking-a', 'zz-doctor-lacking-b']) {

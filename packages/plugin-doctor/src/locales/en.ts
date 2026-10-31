@@ -65,7 +65,8 @@ export default defineLocale<Source>()({
   preferencesInEffect: 'All service preferences are in effect',
   pluginLine: '{instance}: {reason}',
   reportTitle: '**System diagnostics — {at, datetime, medium}**',
-  reportSummary: 'Summary: passed {ok, number}  warnings {warn, number}  errors {error, number}',
+  reportSummary:
+    'Summary: {ok, number} passed, {warn, plural, one {# warning} other {# warnings}}, {error, plural, one {# error} other {# errors}}',
   reportErrors: '__Errors__',
   reportWarnings: '__Warnings__',
   reportPassed: '__Passed__',

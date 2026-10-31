@@ -135,7 +135,7 @@ describe('/doctor 的报告按会话的语言', () => {
     const s = await setup();
     const english = await s.ask((await s.session(['en'])).id, '/doctor');
     expect(english[0]).toMatch(/^\*\*System diagnostics — .+\*\*$/);
-    expect(english[1]).toMatch(/^Summary: passed \d+ {2}warnings \d+ {2}errors \d+$/);
+    expect(english[1]).toMatch(/^Summary: \d+ passed, \d+ warnings?, \d+ errors?$/);
     expect(english).toContain('__Passed__');
     const chinese = /^汇总：通过 \d+　警告 \d+　错误 \d+$/;
     const zh = await s.ask((await s.session(['zh-CN'])).id, '/doctor');
