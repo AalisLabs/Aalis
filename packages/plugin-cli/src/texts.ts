@@ -1,5 +1,5 @@
 // 本插件自己的原文字典：配置项、聊天区的提示与审批结算行、附件说明、工具调用的一行与收起的一行、审批卡、状态页与帮助页、输入框位置的
-// 视图说明
+// 视图说明、底栏的按键提示
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
@@ -101,6 +101,10 @@ const SOURCE = {
   tipCommands: '• 输入以 / 开头会按命令解析，否则发给 agent。',
   tipKeys: '• ↑/↓、PgUp/PgDn、Home/End 滚动 Logs / Status / Help；选择 / 复制文本直接用终端原生操作。',
   viewLine: '{view} · {total, number} 行 · scroll {scroll}  ·  按 Ctrl+T 回到聊天',
+  footerBack: '返回',
+  footerWrap: '换行：{state}',
+  wrapOn: '开',
+  wrapOff: '关',
 } as const;
 export type Source = typeof SOURCE;
 

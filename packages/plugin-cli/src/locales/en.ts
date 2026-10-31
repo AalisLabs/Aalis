@@ -105,4 +105,8 @@ export default defineLocale<Source>()({
     '• ↑/↓, PgUp/PgDn and Home/End scroll Logs / Status / Help; select and copy text with the terminal’s own controls.',
   viewLine:
     '{view} · {total, plural, one {# line} other {# lines}} · scroll {scroll}  ·  press Ctrl+T to return to chat',
+  footerBack: 'Back',
+  footerWrap: 'Wrap: {state}',
+  wrapOn: 'on',
+  wrapOff: 'off',
 });
