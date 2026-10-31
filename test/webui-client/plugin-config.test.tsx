@@ -529,4 +529,12 @@ describe('动态可选项', () => {
     fireEvent.click(await form().findByRole('button', { name: '不属于任何分组的工具' }));
     expect(form().getByText('file_read')).toBeTruthy();
   });
+
+  it('可选项是动态的字段：「默认：<值>」与控件按同一份可选项写称呼', async () => {
+    const schema = {
+      groups: { type: 'multiselect', label: '工具分组', dynamicOptions: 'toolGroups', default: ['web'] },
+    } satisfies ConfigSchema;
+    await boot('zz-groups', schema, { groups: [] });
+    expect(await form().findByText('默认：网页')).toBeTruthy();
+  });
 });

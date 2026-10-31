@@ -103,11 +103,16 @@ export function FieldInput(props: FieldInputProps) {
   );
 }
 
+/** 编辑控件的可选项：取一次，refetch 让它重取；调用方自己也要用可选项（如写作者默认的称呼）时取了交给 FieldInput */
+export function useInputOptions(field: Field, dependency?: string): FieldOptions {
+  const [version, refetch] = useReducer((n: number) => n + 1, 0);
+  const { options, names, others, error } = useFieldOptions(field, version, dependency);
+  return { options, names, others, error, refetch };
+}
+
 /** 调用方没给可选项：自己取 */
 function OwnOptions(props: FieldInputProps) {
-  const [version, refetch] = useReducer((n: number) => n + 1, 0);
-  const { options, names, others, error } = useFieldOptions(props.field, version, props.dependency);
-  return <FieldInput {...props} options={{ options, names, others, error, refetch }} />;
+  return <FieldInput {...props} options={useInputOptions(props.field, props.dependency)} />;
 }
 
 /** 选择：不是必填的可以选空的一项（交出 undefined）；empty 是空的那一项的名字 */
