@@ -7,7 +7,7 @@ import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
-import { sessionInfoOf } from '../fixtures/paper.js';
+import { sessionInfoOf } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
 // 群聊焦点指引：多方与否取会话管理里根会话记下的聊天窗口（建档时按出生平台的适配器声明算出），每轮开轮时取一次，不按每条

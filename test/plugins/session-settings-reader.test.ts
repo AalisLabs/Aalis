@@ -49,7 +49,7 @@ describe('全局层', () => {
       mode: 'card',
       plain: false,
       language: ['en'],
-      paperName: '',
+      roomNote: '',
       scope: 'all',
     });
     expect(app.plugins.getPlugin('zz-a')?.config).toEqual({ note: '<改过的备注>' });
@@ -238,7 +238,7 @@ describe('两个门面', () => {
       { plugin: 'zz-a', key: 'mode', label: '渲染' },
       { plugin: 'zz-a', key: 'plain', label: '纯文字' },
       { plugin: 'zz-a', key: 'language', label: '语言', minLevel: 1 },
-      { plugin: 'zz-a', key: 'paperName', label: '白纸名' },
+      { plugin: 'zz-a', key: 'roomNote', label: '房间备注' },
       { plugin: 'zz-a', key: 'scope', label: '范围' },
     ]);
     await app.plugins.disable('zz-a');

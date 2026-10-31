@@ -7,7 +7,7 @@ import type { ToolCallContext } from '../../packages/api-tools/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
-import { memoryStorage } from '../fixtures/paper.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { answerOf, cardOf, closeParticipantApps, participantsApp } from '../fixtures/participants.js';
 import { callTool, StepModel, stepModelPlugin } from '../fixtures/step-llm.js';
 import { deferred } from '../helpers/deferred.js';

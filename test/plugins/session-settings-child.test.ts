@@ -74,7 +74,7 @@ describe('建立时写下', () => {
     const written = (sub.metadata?.['session-settings'] as { values: Array<{ key: string }> }).values.map(e => e.key);
     expect(written).not.toContain('think');
     expect(written).not.toContain('language');
-    expect(written).not.toContain('paperName');
+    expect(written).not.toContain('roomNote');
   });
 
   it('严格字段的坏值照原样写', async () => {

@@ -304,15 +304,15 @@ describe('校验', () => {
     await rejectedWith(admin.update({ layer: { scope: 'place', key: 'workspace:<没有>' } }, item('persona', 'x')));
     await rejectedWith(admin.update({ sessionId: '<没有的会话>' }, item('persona', 'x')));
     // 只能设到场所为止的项不收会话；只给房间的项不收 owner 会话与工作区场所
-    await rejectedWith(admin.update({ sessionId: GROUP }, item('paperName', '<白纸>')));
+    await rejectedWith(admin.update({ sessionId: GROUP }, item('roomNote', '<备注>')));
     await rejectedWith(admin.update({ sessionId: webui.id }, item('language', ['zh-CN'])));
     await rejectedWith(
       admin.update({ layer: { scope: 'place', key: 'workspace:default' } }, item('language', ['zh-CN'])),
     );
     // 照收的
-    await admin.update({ layer: { scope: 'place', key: WINDOW } }, item('paperName', '<白纸>'));
+    await admin.update({ layer: { scope: 'place', key: WINDOW } }, item('roomNote', '<备注>'));
     await admin.update({ sessionId: GROUP }, item('language', ['zh-CN']));
-    expect(a.reader().get(GROUP, { platform: 'onebot' })).toMatchObject({ paperName: '<白纸>', language: ['zh-CN'] });
+    expect(a.reader().get(GROUP, { platform: 'onebot' })).toMatchObject({ roomNote: '<备注>', language: ['zh-CN'] });
   });
 });
 

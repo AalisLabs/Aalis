@@ -38,8 +38,8 @@ import {
 } from '../../packages/schema-message/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
-import { memoryStorage } from '../fixtures/paper.js';
 import { recordRoom } from '../fixtures/rooms.js';
 import { client } from '../fixtures/session-client.js';
 import { declareToolSystemDisplays } from '../fixtures/tool-display.js';
@@ -103,7 +103,7 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
     memory,
     compression,
   });
-  // 白纸与插件数据之外再有 data 根：媒体识别把图片落在这里，归档只把根表里有的根记成附件地址
+  // 工作区与插件数据之外再有 data 根：媒体识别把图片落在这里，归档只把根表里有的根记成附件地址
   const files = memoryStorage(new Map());
   const dataRoot = { name: 'data', kind: 'data', browsable: true, readable: true, writable: true, deletable: true };
   host.provide.use(storage, { ...files, listRoots: () => [...files.listRoots(), dataRoot] });
@@ -1367,7 +1367,7 @@ describe('条目', () => {
       platform: 'webui',
       userId: 'console',
       attachments: [
-        { kind: 'file', name: '报告.txt', data: 'paper:/up/报告.txt' },
+        { kind: 'file', name: '报告.txt', data: 'workspace:/up/报告.txt' },
         { kind: 'image', name: 'cat.png', data: 'data:image/png;base64,AAAA', ref: 'data:/images/s/media/cat.png' },
       ],
       // 一个第三方的文件预处理器写的描述，与媒体识别落盘后按附件引用写的描述（落盘的地址在附件的 ref 上）

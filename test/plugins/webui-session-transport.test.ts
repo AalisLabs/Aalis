@@ -31,8 +31,8 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
-import { memoryStorage } from '../fixtures/paper.js';
 import { freePort, upgrade, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════

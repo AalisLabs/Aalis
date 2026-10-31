@@ -288,8 +288,8 @@ const REMOVED: Array<[string, string]> = [
     'media 安全下载的「只收图片」选项：analyze_image 与别的来源同经 readSourceBytes 读，按文件头判在调用处',
   ],
   ['localImageToDataUri', 'tool-onebot 自己读 get_image 给的存储地址转 data URI：交原地址，由 media 按文件头认'],
-  // 下面几个名字别处另有同名的在用（plugin-media 的 guessMime、几个插件的 toUri、api-storage 的 STORAGE_URI_RE、白纸的
-  // MEDIA_TYPES），按名字登记会误撞，登记删掉的那一份的写法
+  // 下面几个名字别处另有同名的在用（plugin-media 的 guessMime、几个插件的 toUri、api-storage 的 STORAGE_URI_RE），
+  // 按名字登记会误撞，登记删掉的那一份的写法
   ['guessMime(path', 'office 按路径扩展名猜插图的 MIME：按文件头判定的格式取'],
   ['toUri(String(args.', 'office 的 pdf_convert 按「:/」认存储地址：走 api-storage 的 resolveAgainstCwd'],
   ['STORAGE_URI.test(uri)', 'WebUI 服务端 /api/media 自带的存储地址正则：按 api-storage 的 isStorageUri 认'],
@@ -413,8 +413,6 @@ const REMOVED_IN_PACKAGE: Array<[string, string, string]> = [
   ]),
   ['plugin-agent', 'this.historyLimit', '对话代理按插件配置读历史条数，改为按会话设置项 historyLimit 读'],
   ['plugin-maimai', 'formatHelp', '手写的 /maimai 帮助，由指令系统生成的用法取代（查询目标与条数是带说明的位置参数）'],
-  // 落盘扩展名表 EXTENSIONS 与留下的 REFUSED_EXTENSIONS 同名，只登记 MIME 表
-  ['plugin-paper', 'MIME_TYPES', '白纸按成品类型各写一份的媒体扩展名与 MIME 表：收成成品类型 → 判定格式的一张表'],
   [
     'plugin-tools',
     "'background-task'",

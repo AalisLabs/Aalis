@@ -24,7 +24,7 @@ import { hostedApp } from '../fixtures/app.js';
 import { attachSessionServer } from '../fixtures/cli-session.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { memoryStorage } from '../fixtures/paper.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { declareToolSystemDisplays } from '../fixtures/tool-display.js';
 import { fakeTty } from '../helpers/tty.js';
 

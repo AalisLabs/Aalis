@@ -13,7 +13,7 @@ import sessionServerPlugin from '../../packages/plugin-session-server/src/index.
 import { type IncomingMessage, type Message, WellKnownMetadataKeys } from '../../packages/schema-message/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { memoryStorage } from '../fixtures/paper.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { client } from '../fixtures/session-client.js';
 
 // ════════════════════════════════════════════════════════════

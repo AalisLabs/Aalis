@@ -30,7 +30,7 @@ import {
 import { hostedApp } from '../fixtures/app.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { memoryStorage } from '../fixtures/paper.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { seedRooms } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════

@@ -37,7 +37,7 @@ import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { i18nSection, setHostLanguage } from '../fixtures/host-language.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { memoryStorage } from '../fixtures/paper.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { expectProcessTimeZoneDistinct } from '../fixtures/process-time-zone.js';
 import { recordRoom } from '../fixtures/rooms.js';
 import { CLIENT, client, type Frame } from '../fixtures/session-client.js';

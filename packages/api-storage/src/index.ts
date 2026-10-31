@@ -401,8 +401,8 @@ type StorageMethods = StorageService & Required<Pick<StorageService, 'resolveLoc
 
 /**
  * 本插件的私有目录 `pluginData:/<目录名>/` 上的存储视图（{@link BoundStorage.own}）。目录名是包名去掉 `plugin-` 前缀：
- * `@aalis` 与不带作用域的包只取包名（`@aalis/plugin-paper` → `paper`），别的作用域另带作用域、以 `+` 相连
- * （`@acme/plugin-paper` → `acme+paper`，npm 包名里没有 `+`，两个作用域的同名插件不共用目录）；取不出单段目录名的
+ * `@aalis` 与不带作用域的包只取包名（`@aalis/plugin-draw` → `draw`），别的作用域另带作用域、以 `+` 相连
+ * （`@acme/plugin-draw` → `acme+draw`，npm 包名里没有 `+`，两个作用域的同名插件不共用目录）；取不出单段目录名的
  * 插件名在绑定时抛错。多实例共用这个目录、由插件自己分子目录。方法与 {@link StorageService} 相同，路径参数相对这个
  * 目录：规范化之后越出目录的（`..` 越过目录）、宿主机绝对路径与存储地址都抛错，空路径即目录本身（`own.delete('')`
  * 删掉整个私有目录）；返回值里的地址是完整的存储地址。

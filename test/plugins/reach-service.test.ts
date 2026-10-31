@@ -3,10 +3,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type OriginTurn, originTurnOf } from '../../packages/api-authority/src/index.js';
 import { isReachCredential, type ReachCredential, type ReachRequest } from '../../packages/api-reach/src/index.js';
-import { placePaperId, type SessionInfo } from '../../packages/api-session-manager/src/index.js';
-import { storage } from '../../packages/api-storage/src/index.js';
+import type { SessionInfo } from '../../packages/api-session-manager/src/index.js';
 import type { App, Logger } from '../../packages/core/src/index.js';
-import { paperDirUri } from '../../packages/plugin-paper/src/artifacts.js';
 import { sessionTmpOf, sweepSessionTmp } from '../../packages/plugin-reach/src/session-tmp.js';
 import type { FromTurn, IncomingMessage } from '../../packages/schema-message/src/index.js';
 import {
@@ -211,14 +209,6 @@ describe('场所、绑定与档位', () => {
     expect(await svc.forCall(ownerTurn(project))).toMatchObject({ home: root, paper });
     const home = paperOf(dirs.home, DEFAULT_WORKSPACE);
     expect(await svc.forCall(ownerTurn(webui))).toMatchObject({ home, paper: home });
-  });
-
-  it('白纸插件与触及对同一场所取同一个白纸目录', async () => {
-    const { app, sm, svc, webui } = await start();
-    const files = app.bind({ storage }).storage.use;
-    await files.writeFile(`${paperDirUri(placePaperId(sm.placeOf(webui).key))}/zz-same.md`, 'x');
-    const { paper } = await svc.forCall(ownerTurn(webui));
-    expect(paper && existsSync(join(paper, 'zz-same.md'))).toBe(true);
   });
 
   it('项目会话绑定在 worktree 上：仓库的 git 目录可写、落点要问，仓库的其他 worktree 不可写', async () => {

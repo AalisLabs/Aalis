@@ -23,7 +23,6 @@ const DECLARING = [
   '@aalis/plugin-i18n',
   '@aalis/plugin-memory-summary',
   '@aalis/plugin-memory-vector',
-  '@aalis/plugin-paper',
   '@aalis/plugin-persona',
   '@aalis/plugin-session-manager',
   '@aalis/plugin-skills',

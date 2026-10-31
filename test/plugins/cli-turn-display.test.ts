@@ -19,7 +19,7 @@ import sessionServerPlugin from '../../packages/plugin-session-server/src/index.
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { memoryStorage } from '../fixtures/paper.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { StepModel, stepModelPlugin } from '../fixtures/step-llm.js';
 import { deferred } from '../helpers/deferred.js';
 import { fakeTty } from '../helpers/tty.js';

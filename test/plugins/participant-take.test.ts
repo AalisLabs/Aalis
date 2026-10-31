@@ -4,7 +4,7 @@ import type { StorageService } from '../../packages/api-storage/src/index.js';
 import type { ToolCallRequest } from '../../packages/api-tools/src/index.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
-import { memoryStorage } from '../fixtures/paper.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { answerOf, cardOf, closeParticipantApps, participantsApp } from '../fixtures/participants.js';
 import { adapterPlugin, ONEBOT_TYPES } from '../fixtures/session-settings.js';
 

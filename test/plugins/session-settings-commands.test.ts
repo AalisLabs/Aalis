@@ -150,9 +150,9 @@ describe('本会话层', () => {
 
   it('只能设到场所的项写本会话：回 update 给的原因', async () => {
     const { run, value } = await setup();
-    const reply = await run(OWNER, GROUP, 'session.set paperName <白纸>');
+    const reply = await run(OWNER, GROUP, 'session.set roomNote <备注>');
     expect(reply).toContain('场所');
-    expect(value('paperName')).toBe('');
+    expect(value('roomNote')).toBe('');
   });
 
   it('文字读法：开关、数字、列表、选项值；select 只收选项值、回执写选项标签；外来类型没有 fromText 时写不进去', async () => {
@@ -331,7 +331,7 @@ describe('/session', () => {
     const { run } = await setup();
     const member = await run(L1, GROUP, 'session');
     for (const key of ['llm', 'think', 'persona', 'language']) expect(member).toContain(key);
-    for (const key of ['groups', 'iterations', 'paperName']) expect(member).not.toContain(key);
+    for (const key of ['groups', 'iterations', 'roomNote']) expect(member).not.toContain(key);
     expect(member).toContain('只列出你能改的项');
     const owner = await run(OWNER, GROUP, 'session');
     for (const key of ['llm', 'groups', 'iterations', 'scope']) expect(owner).toContain(key);

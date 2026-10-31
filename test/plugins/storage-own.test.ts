@@ -56,17 +56,10 @@ describe('插件的私有目录 storage.own', () => {
 
   it('目录名：@aalis 与不带作用域的包是包名去掉 plugin-，别的作用域另带作用域，两个作用域的同名插件不共用目录', async () => {
     const dirs = [];
-    for (const name of [
-      '@aalis/plugin-paper',
-      'plugin-solo',
-      'bare',
-      '@zz/plugin-probe',
-      '@yy/plugin-probe',
-      '@zz/raw',
-    ])
+    for (const name of ['@aalis/plugin-draw', 'plugin-solo', 'bare', '@zz/plugin-probe', '@yy/plugin-probe', '@zz/raw'])
       dirs.push((await ownOf(name)).uri());
     expect(dirs).toEqual([
-      'pluginData:/paper',
+      'pluginData:/draw',
       'pluginData:/solo',
       'pluginData:/bare',
       'pluginData:/zz+probe',

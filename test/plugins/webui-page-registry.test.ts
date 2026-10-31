@@ -131,22 +131,22 @@ describe('页面与提示按条目身份撤回', () => {
 
   it('不同实例的同名页面各是各的', () => {
     const { pages } = registry();
-    pages.addPage(page('works'), '@aalis/plugin-works-site');
-    pages.addPage(page('works'), '@aalis/plugin-works-site:draw');
+    pages.addPage(page('tasks'), '@aalis/plugin-scheduler');
+    pages.addPage(page('tasks'), '@aalis/plugin-scheduler:second');
     expect(pages.views().map(v => [v.instance, v.key, v.placement])).toEqual([
-      ['@aalis/plugin-works-site', 'works', 'plugin'],
-      ['@aalis/plugin-works-site:draw', 'works', 'plugin'],
+      ['@aalis/plugin-scheduler', 'tasks', 'plugin'],
+      ['@aalis/plugin-scheduler:second', 'tasks', 'plugin'],
     ]);
   });
 
   it('提示：同一个 id 替换，旧的撤回不摘掉新的；open 要指向本实例已登记的页面', () => {
     const { pages, logs } = registry();
-    pages.addPage(page('works'), 'p');
-    const notice = (title: string): Notice => ({ id: 'pending', level: 'action', title, open: { page: 'works' } });
-    const first = pages.addNotice(notice('1 件作品待裁决'), 'p');
-    const second = pages.addNotice(notice('2 件作品待裁决'), 'p');
+    pages.addPage(page('tasks'), 'p');
+    const notice = (title: string): Notice => ({ id: 'pending', level: 'action', title, open: { page: 'tasks' } });
+    const first = pages.addNotice(notice('1 项待处理'), 'p');
+    const second = pages.addNotice(notice('2 项待处理'), 'p');
     expect(pages.notices()).toEqual([
-      { instance: 'p', id: 'pending', level: 'action', title: '2 件作品待裁决', open: { page: 'works' } },
+      { instance: 'p', id: 'pending', level: 'action', title: '2 项待处理', open: { page: 'tasks' } },
     ]);
     first();
     expect(pages.notices()).toHaveLength(1);

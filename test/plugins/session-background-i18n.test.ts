@@ -16,7 +16,7 @@ import { hostedApp } from '../fixtures/app.js';
 import { i18nSection } from '../fixtures/host-language.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { memoryStorage } from '../fixtures/paper.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { client } from '../fixtures/session-client.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 

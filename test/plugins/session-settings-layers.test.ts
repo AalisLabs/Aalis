@@ -270,14 +270,14 @@ describe('一个实例写过的各处', () => {
     const child = await sm.createSession({ parentId: GROUP });
     await admin.update(
       { layer: { scope: 'place', key: WINDOW } },
-      { plugin: 'zz-a', key: 'paperName', value: '<白纸>' },
+      { plugin: 'zz-a', key: 'roomNote', value: '<备注>' },
     );
     await admin.update({ sessionId: child.id }, { plugin: 'zz-a', key: 'persona', value: '<子会话>' });
     expect(admin.placements('zz-a')).toEqual(
       expect.arrayContaining([
         { key: 'persona', value: '<平台档>', at: { layer: { scope: 'platform', platform: 'onebot' } } },
         { key: 'mode', value: 'off', at: { layer: { scope: 'platformType', platform: 'onebot', type: 'group' } } },
-        { key: 'paperName', value: '<白纸>', at: { layer: { scope: 'place', key: WINDOW }, placeKind: 'room' } },
+        { key: 'roomNote', value: '<备注>', at: { layer: { scope: 'place', key: WINDOW }, placeKind: 'room' } },
         { key: 'persona', value: '<子会话>', at: { sessionId: child.id } },
       ]),
     );
@@ -286,7 +286,7 @@ describe('一个实例写过的各处', () => {
       { layer: { scope: 'global' }, values: { persona: '<全局>' } },
       { layer: { scope: 'platform', platform: 'onebot' }, values: { persona: '<平台档>' } },
       { layer: { scope: 'platformType', platform: 'onebot', type: 'group' }, values: { mode: 'off' } },
-      { layer: { scope: 'place', key: WINDOW }, placeKind: 'room', values: { paperName: '<白纸>' } },
+      { layer: { scope: 'place', key: WINDOW }, placeKind: 'room', values: { roomNote: '<备注>' } },
     ]);
   });
 

@@ -416,9 +416,6 @@ const STATIC_OTHERS = [
   'mcp-server',
   'office',
   'okx-trading',
-  'paper',
-  'publish-review',
-  'remote-agent-cursor',
   'tool-browser',
   'tool-code-runner',
   'tool-math',
@@ -426,7 +423,6 @@ const STATIC_OTHERS = [
   'usage-stats',
   'websearch-serper',
   'workflow',
-  'works-site',
 ].map(s => `@aalis/plugin-${s}`);
 
 interface CatalogEntry {

@@ -109,9 +109,9 @@ export const SCHEMA = defineConfig({
     session: { appliesTo: ['room'], prominence: 'common', minLevel: 1 },
   },
   /** 只能设到场所为止 */
-  paperName: {
+  roomNote: {
     type: 'string',
-    label: '白纸名',
+    label: '房间备注',
     default: '',
     session: { appliesTo: ['room'], prominence: 'advanced', narrowest: 'place' },
   },
