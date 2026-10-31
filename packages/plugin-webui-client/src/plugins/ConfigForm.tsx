@@ -6,7 +6,7 @@ import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { tr } from '../language';
 import { isRecord, putJson, RestError } from '../rest';
-import { type FieldCommon, FieldInput, FieldRow, UNREADABLE } from '../settings/FieldInput';
+import { type FieldCommon, FieldInput, FieldRow, UNREADABLE, useInputOptions } from '../settings/FieldInput';
 import { authorDefault, dependencyText, isSessionEntry, sameValue } from '../settings/field';
 import { type PluginRow, usePlugins } from './list';
 import { type SessionPlaces, useSessionMarks } from './session-marks';
@@ -487,8 +487,9 @@ function ConfigRow({
   onDefault,
 }: ConfigRowProps) {
   const marks = useSessionMarks(field, name, places);
-  // 数组元素里的不单写作者默认
-  const fallback = inArray ? undefined : authorDefault(field, value);
+  const options = useInputOptions(field, dependency);
+  // 数组元素里的不单写作者默认；作者默认与控件里的值按同一份可选项写称呼
+  const fallback = inArray ? undefined : authorDefault(field, value, [...options.options, ...(options.names ?? [])]);
   return (
     <FieldRow
       field={field}
@@ -542,7 +543,7 @@ function ConfigRow({
             onChange={onChange}
             common={common}
             placeholder={formatPlaceholder(field.format)}
-            dependency={dependency}
+            options={options}
           />
         )
       }

@@ -57,7 +57,9 @@ export function SettingRows({ rows, layer, own = false, originOf, invalidOf, upd
         value={row.effective}
         source={(authored ? fallback?.isDefault : global && atDefault(row)) ? tr('sourceDefault') : undefined}
         note={note(row)}
-        defaultNote={fallback?.isDefault === false ? fallback.note : undefined}
+        defaultNote={
+          fallback?.isDefault === false ? options => authorDefault(row.field, row.value, options)?.note : undefined
+        }
         reset={resettable ? reset : undefined}
         dependency={dependencyOf(rows, row)}
         unset={unsetOf(row, authored)}

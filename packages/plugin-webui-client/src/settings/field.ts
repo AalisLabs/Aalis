@@ -180,10 +180,15 @@ export function sameValue(a: unknown, b: unknown): boolean {
 
 /**
  * 作者默认的说法，插件详情的配置表与设置的全局层共用这一处：取值等于作者默认（没有取值按作者默认算）时 isDefault；不等时 note
- * 是「默认：<作者默认>」。没有作者默认的项：没设时 isDefault，note 是「不设时：<没设时的含义>」；设了时 note 是「默认：不设」。
- * 密钥字段不写作者默认；必填又没有作者默认的项没有可回去的默认，也不写
+ * 是「默认：<作者默认>」，作者默认按 options 写称呼（与写这一项的值同一份可选项，动态的一并给）。没有作者默认的项：没设时
+ * isDefault，note 是「不设时：<没设时的含义>」；设了时 note 是「默认：不设」。密钥字段不写作者默认；必填又没有作者默认的项
+ * 没有可回去的默认，也不写
  */
-export function authorDefault(field: Field, value: unknown): { isDefault: boolean; note?: string } | undefined {
+export function authorDefault(
+  field: Field,
+  value: unknown,
+  options: readonly Option[] = staticOptions(field),
+): { isDefault: boolean; note?: string } | undefined {
   if (field.secret === true) return undefined;
   if (field.default === undefined) {
     if (field.required) return undefined;
@@ -192,7 +197,7 @@ export function authorDefault(field: Field, value: unknown): { isDefault: boolea
     return { isDefault: true, note: unset === undefined ? undefined : tr('unsetIs', { unset }) };
   }
   if (value === undefined || sameValue(value, field.default)) return { isDefault: true };
-  return { isDefault: false, note: tr('defaultIs', { value: formatValue(field, field.default) }) };
+  return { isDefault: false, note: tr('defaultIs', { value: formatValue(field, field.default, options) }) };
 }
 
 /**

@@ -437,6 +437,35 @@ describe('会话默认', () => {
     );
   });
 
+  it('全局层：可选项是动态的字段，「默认：<值>」与值按同一份可选项写称呼', async () => {
+    const languages = row('language', {
+      field: {
+        type: 'multiselect',
+        label: '语言',
+        ordered: true,
+        dynamicOptions: 'zz-languages',
+        default: ['en'],
+      },
+      value: ['zh-CN', 'en'],
+      effective: ['zh-CN', 'en'],
+      source: 'global',
+    });
+    app = await renderApp(
+      '/settings/session-defaults?layer=global',
+      { ...handlers(), 'session/config/layer/get': () => ({ items: [languages] }) },
+      settingsRest({
+        '/api/models/zz-languages': {
+          details: [
+            { value: 'zh-CN', label: '中文（中国）' },
+            { value: 'en', label: 'English' },
+          ],
+        },
+      }),
+    );
+    expect(await settingRow('语言').findByText('中文（中国）、English')).toBeTruthy();
+    expect(settingRow('语言').getByText('默认：English')).toBeTruthy();
+  });
+
   it('写进配置文件失败：这一行下面写回包里 unsaved 的那一句', async () => {
     app = await renderApp(
       '/settings/session-defaults?layer=global',

@@ -6,7 +6,7 @@ import { Toggle } from '../components/Toggle';
 import { composing } from '../keys';
 import { tr } from '../language';
 import { FieldInput, type FieldOptions, UNREADABLE } from './FieldInput';
-import { type Dependency, type Field, formatValue, isModelField, optionLabel, valueKey } from './field';
+import { type Dependency, type Field, formatValue, isModelField, type Option, optionLabel, valueKey } from './field';
 import { useFieldOptions } from './options';
 import './SettingRow.css';
 
@@ -14,7 +14,7 @@ import './SettingRow.css';
 // 改完即存；开关直接拨。编辑控件就是表单用的 FieldInput，
 // 可选项由这一行取一次交给它：选择与多选选了即存，其余回车或离开时存，Esc 放弃；数字清空、选择选空的一项写 null，与行尾的
 // 恢复按钮一样回到下一层，文字与列表清空写的是空值。存的时候编辑控件不可用；写进去了、只是没落盘时写回来的那一句。
-// 值按可选项的标签显示（动态可选项一并取来，不在可选项里的按来源另给的名字）；没有值时写可选项接口标了默认的那一项，
+// 值与作者默认按可选项的标签显示（动态可选项一并取来，不在可选项里的按来源另给的名字）；没有值时写可选项接口标了默认的那一项，
 // 没有就写声明给的「没设时」。可选项依赖另一项的，那一项眼下给不出可选项时不能改、写明不能调，生效值不在可选项里时
 // 写明按默认的哪一项
 
@@ -26,8 +26,11 @@ interface SettingRowProps {
   source?: string;
   /** 值下面的一句：来源（「来自：工作区「论文」（场所）」）、被下层盖住的提示等 */
   note?: string;
-  /** 作者默认的那一句（「默认：30」，见 field.ts 的 authorDefault）：只占一行，悬停看全文 */
-  defaultNote?: string;
+  /**
+   * 作者默认的那一句（「默认：30」，见 field.ts 的 authorDefault），交给它这一行的可选项，作者默认与值的称呼出自同一份；
+   * 只占一行，悬停看全文
+   */
+  defaultNote?(options: readonly Option[]): string | undefined;
   /** 什么时候生效，例如要重启的写「重启后生效」 */
   timing?: string;
   /** 这一处写了值时行尾的恢复按钮上的字（恢复继承、恢复默认），点了写 null */
@@ -79,12 +82,9 @@ export function SettingRow({
   };
 
   const fallback = options.find(option => option.isDefault);
-  const shown =
-    value === undefined
-      ? fallback
-        ? optionLabel(fallback)
-        : unset
-      : formatValue(field, value, [...options, ...names]);
+  /** 写取值的称呼：可选项与来源另给的名字；值与作者默认都按它写 */
+  const known = [...options, ...names];
+  const shown = value === undefined ? (fallback ? optionLabel(fallback) : unset) : formatValue(field, value, known);
   const fixed = dependency !== undefined && loaded && options.length === 0;
   const note =
     dependency === undefined || !loaded
@@ -96,9 +96,10 @@ export function SettingRow({
             ? tr('dependencyNoLevelFallback', { dependency: dependency.label, fallback: fallback.label })
             : tr('dependencyNoLevel', { dependency: dependency.label })
           : extra;
-  const defaultLine = defaultNote && (
-    <span className="setting-row-note field-default" title={defaultNote}>
-      {defaultNote}
+  const defaultText = defaultNote?.(known);
+  const defaultLine = defaultText && (
+    <span className="setting-row-note field-default" title={defaultText}>
+      {defaultText}
     </span>
   );
   const head = (
