@@ -8,7 +8,8 @@ import { useSettingRows } from './setting-rows';
 
 /**
  * 会话之上一层的设置行（设置的「会话默认」、房间的「场所设置」）：与会话的「设置」标签同一套，改动写进这一层，这一层没写的项
- * 写它从哪一层继承来（称呼按层表，at 是取的是哪一份）。取不到时写明原因、可以重试；what 是出错时写的「<哪里>没取到」
+ * 写它从哪一层继承来（称呼按层表，at 是取的是哪一份）；这一层存的值不合法时写生效的是哪一层的值，生效的是作者默认时另用一句。
+ * 取不到时写明原因、可以重试；what 是出错时写的「<哪里>没取到」
  */
 export function LayerRows({
   layer,
@@ -37,7 +38,11 @@ export function LayerRows({
           layer={layer.scope}
           own
           originOf={source => tr('originFrom', { layer: sourceTitle(order, source, at) })}
-          invalidOf={source => tr('invalidHere', { layer: sourceTitle(order, source, at) })}
+          invalidOf={source =>
+            source === 'default'
+              ? tr('invalidHereDefault')
+              : tr('invalidHere', { layer: sourceTitle(order, source, at) })
+          }
           update={update}
         />
       )}
