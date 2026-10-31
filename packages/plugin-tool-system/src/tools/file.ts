@@ -745,7 +745,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
       function: {
         name: 'file_move',
         description:
-          '移动或重命名受控存储中的文件/目录。from 与 to 都用 storage URI（如 workspace:/a.txt → workspace:/小说/a.txt），' +
+          '移动或重命名受控存储中的文件/目录。from 与 to 都用 storage URI（如 workspace:/a.txt → workspace:/notes/a.txt），' +
           '或相对当前 cwd 的路径。自动创建目标父目录；目标已存在则拒绝（不覆盖）。底层原子 rename，大文件也瞬间完成。' +
           '不允许宿主机绝对路径、不能跨存储根——整理/归档文件请用本工具，勿用 shell mv（shell 不认 storage URI）。',
         parameters: {
@@ -789,7 +789,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
         name: 'file_mkdir',
         description:
           '在受控存储中创建目录（递归，自动建所有缺失的父目录；已存在则无操作）。' +
-          'path 用 storage URI（如 workspace:/小说/淫魔女（原版）），或相对当前 cwd 的路径。' +
+          'path 用 storage URI（如 workspace:/notes/2026），或相对当前 cwd 的路径。' +
           '不允许宿主机绝对路径。整理/归档需要建目录时用本工具，勿用 shell mkdir（shell 不认 storage URI，会造出字面目录）。',
         parameters: {
           type: 'object',
