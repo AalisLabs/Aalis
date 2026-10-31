@@ -236,7 +236,7 @@ describe('derivePaths', () => {
       cache: '/h/cache',
       run: '/h/run',
       tmp: '/h/tmp',
-      self: { personas: '/h/self/personas', skills: '/h/self/skills', workflows: '/h/self/workflows' },
+      self: '/h/self',
       workspace: '/h/workspace',
     });
     expect('profile' in derivePaths('/h', '/app')).toBe(false);
@@ -245,7 +245,6 @@ describe('derivePaths', () => {
   it('交给插件的路径对象是冻结的：一处改了不会带偏别的插件', () => {
     const p = derivePaths('/h', '/app');
     expect(Object.isFrozen(p)).toBe(true);
-    expect(Object.isFrozen(p.self)).toBe(true);
   });
 });
 
@@ -271,6 +270,7 @@ describe('initHome', () => {
     expect(statSync(paths.secrets).mode & 0o777).toBe(0o600);
     expect(readFileSync(paths.secrets, 'utf-8')).toBe('');
     expect(statSync(paths.workspace).isDirectory()).toBe(true);
+    expect(statSync(paths.self).isDirectory()).toBe(true);
   });
 
   it('已存在的空目录沿用并收紧为 0700', () => {
@@ -295,7 +295,7 @@ describe('initHome', () => {
   it('上次初始化中途失败（布局与 secrets.yaml 在、主配置没写）时可以重来：不清掉 secrets.yaml，并收紧它的权限', () => {
     const paths = derivePaths(tmp(), '/app');
     mkdirSync(paths.state);
-    mkdirSync(paths.self.skills, { recursive: true });
+    mkdirSync(paths.self);
     mkdirSync(paths.workspace);
     writeFileSync(paths.secrets, 'k: v\n');
     chmodSync(paths.secrets, 0o644);

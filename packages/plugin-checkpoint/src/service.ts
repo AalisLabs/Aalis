@@ -11,7 +11,7 @@ import { t } from './texts.js';
 
 /**
  * 不记录的根类型：多会话/多平台共享写入区（data、pluginData、logs）、回合结束前就清掉的临时目录与缓存（tmp、cache），
- * 以及 self 下的人设卡、技能、编排定义根（self）：现在任何会话都能经工具写技能、人设，写入没有会话归属，
+ * 以及 self 根（self）：现在任何会话都能经工具写技能、人设，写入没有会话归属，
  * 与 data 同理不记录；等访问层限定只有 owner 的干净线程能写 self 之后，再按计划书给它记录。
  */
 const UNPROTECTED_ROOT_KINDS: ReadonlySet<string> = new Set(['data', 'tmp', 'cache', 'pluginData', 'logs', 'self']);
@@ -187,7 +187,7 @@ export class CheckpointServiceImpl implements CheckpointService {
     if (this.isOwnUri(uri)) return;
     // data / pluginData / logs 是多会话、多平台共享的写入区：既有别处落盘的附件与插件状态，也有本回合自己
     // 经工具产生的图片，回滚这些会误删别人刚落盘的文件、把插件状态写回旧版，故整根不记录（这些改动不可回滚）；
-    // self 根（skill / persona / 编排定义）现在任何会话都能写，同理不记录；
+    // self 根现在任何会话都能写，同理不记录；
     // tmp、cache 是回合结束前就清掉的临时目录与缓存，记录只会让回滚必报 ENOENT。
     // 其余根（workspace 与用户自建的 custom 等）照常记录。
     if (this.isUnprotectedRootUri(uri)) return;

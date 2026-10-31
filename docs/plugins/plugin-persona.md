@@ -33,7 +33,6 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `personasDir` | string | `'personas:/'` | 人设目录：人设文件所在目录的 storage URI（默认 `personas:/`，即家目录的 `self/personas`；不含 `:/` 时首段视为存储根名，单段裸名归 `data` 根） |
 | `statePersistence` | boolean | `false` | 状态持久化：启用后，角色状态（心情、当前行为等 outputFormat 字段）会在同一会话内延续并注入到下一轮提示中 |
 | `timeInjection` | boolean | `true` | 时间注入：启用后，当前时间会自动注入到系统提示中 |
 | `timeZone` | string | `''` | 时区 (IANA)：例如 Asia/Shanghai、Europe/London、America/New_York。留空使用系统本地时区。只管模型看到的当前时间；给人看的时间一律按服务进程的时区 |
@@ -48,7 +47,7 @@ export default definePlugin({
 
 ## 角色卡格式
 
-人设以 YAML 文件定义，放在 `personasDir` 下，文件名（不含 `.yaml` / `.yml` 后缀）即会话设置 `persona` 的取值。主卡是 `default`（`default.yaml`），会话没设人设、或设的卡找不到时用它；目录里没有 `default.yaml`（或它解析失败）时，主卡是内置的默认角色。插件监听该目录（需存储支持 watch），文件变化后自动重新加载；存储提供者重启、改配置或晚于启动上线时自动重挂监听并重新扫描。
+人设以 YAML 文件定义，放在存储的内容目录 `self:/persona/`（`caps.storage.use.content`，即家目录的 `self/persona`）下，目录不能配置；文件名（不含 `.yaml` / `.yml` 后缀）即会话设置 `persona` 的取值。主卡是 `default`（`default.yaml`），会话没设人设、或设的卡找不到时用它；目录里没有 `default.yaml`（或它解析失败）时，主卡是内置的默认角色。插件监听该目录（需存储支持 watch），文件变化后自动重新加载；存储提供者重启、改配置或晚于启动上线时自动重挂监听并重新扫描。
 
 ```yaml
 name: Alice
@@ -97,6 +96,3 @@ outputFormat:
 - `getNickNames(options?)`: 返回角色卡的 `nick_name` 列表，供触发检测使用；按 `options` 取卡，同上
 - `listModels()`: 列出可用的人设文件供 WebUI 下拉选择
 
-## 配置校验
-
-`personasDir` 的显式无效类型会报配置错误；空字符串按缺省值处理。`personasDir` 的相对路径、裸名与 storage URI 仍走统一的 `toStorageUri` 归一规则；写成本机路径（绝对路径或 `~/…`）时报配置错误，写明要填 storage URI 并举例。

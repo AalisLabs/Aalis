@@ -9,7 +9,7 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 
 // ════════════════════════════════════════════════════════════
 // storage-local 的内部路由根按家目录布局派生（host-paths），不受用户 roots 影响：
-// 附件句柄里的 data 根映射到 state/，self 下人设卡、技能、编排定义各一个根。
+// 附件句柄里的 data 根映射到 state/，self 根映射到 self/（人设、技能这类存下来就生效的内容）。
 // 用户 roots 里同名的旧条目（升级前持久化的 data、tmp、pluginData、logs）被跳过并告警。
 // ════════════════════════════════════════════════════════════
 
@@ -52,9 +52,7 @@ describe('storage-local 内部路由根', () => {
       tmp: 'tmp',
       cache: 'cache',
       logs: 'logs',
-      personas: 'self/personas',
-      skills: 'self/skills',
-      workflows: 'self/workflows',
+      self: 'self',
       workspace: 'workspace',
     };
     for (const [name, rel] of Object.entries(expected)) {
@@ -68,7 +66,7 @@ describe('storage-local 内部路由根', () => {
     ).toEqual(Object.keys(expected).sort());
   });
 
-  it('内部根的 kind：self 下三个根为 self，其余各自的 kind', async () => {
+  it('内部根的 kind：各自同名', async () => {
     await start([]);
     const kinds = Object.fromEntries(storage.listRoots().map(r => [r.name, r.kind]));
     expect(kinds).toMatchObject({
@@ -77,9 +75,7 @@ describe('storage-local 内部路由根', () => {
       tmp: 'tmp',
       cache: 'cache',
       logs: 'logs',
-      personas: 'self',
-      skills: 'self',
-      workflows: 'self',
+      self: 'self',
     });
   });
 

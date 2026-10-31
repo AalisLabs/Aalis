@@ -3,7 +3,7 @@
 // 换连接、换设备、会话服务重启都一致。她最近一次开口晚于这个时刻，会话就是完成未读。
 // ════════════════════════════════════════════════════════════
 
-import { isStorageNotFound, type OwnStorage } from '@aalis/api-storage';
+import { isStorageNotFound, type PluginDirStorage } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
 
 /** 私有目录下的已读记录 */
@@ -22,7 +22,7 @@ export interface SeenStore {
  * 读不出来（权限、存储不可用）直接抛出：照空表落盘会覆盖原有记录。
  */
 export async function openSeenStore(
-  storage: Pick<OwnStorage, 'readFile' | 'writeFile' | 'uri'>,
+  storage: Pick<PluginDirStorage, 'readFile' | 'writeFile' | 'uri'>,
   logger: Logger,
 ): Promise<SeenStore> {
   const seen = new Map<string, number>();

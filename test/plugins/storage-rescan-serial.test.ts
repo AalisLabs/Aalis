@@ -46,16 +46,16 @@ function recordingLogger(sink: string[]): Logger {
   return logger;
 }
 
-/** 单个 data 根的内存 storage：键为完整 URI，目录由文件路径隐含 */
+/** 单个 self 根的内存 storage（人设与技能都在内容目录里）：键为完整 URI，目录由文件路径隐含 */
 function gatedStorage(seed: Record<string, string>) {
   const files = new Map<string, string>(Object.entries(seed));
   const listCalls = new Map<string, number>();
   const listeners = new Set<StorageWatchListener>();
   let hold: { uri: string; gate: ReturnType<typeof deferred<StorageListResult | undefined>> } | undefined;
   const rootInfo = {
-    name: 'data',
-    label: 'data(内存)',
-    kind: 'data',
+    name: 'self',
+    label: 'self(内存)',
+    kind: 'self',
     browsable: true,
     readable: true,
     writable: true,
@@ -160,10 +160,10 @@ describe('persona / skills 的目录重扫', () => {
   }
 
   it('persona：扫描进行中的多次目录变化只排一次尾随重扫，新卡不被进行中那次的旧清单剔掉', async () => {
-    const DIR = 'data:/personas';
+    const DIR = 'self:/persona';
     const fake = gatedStorage({ [`${DIR}/default.yaml`]: cardYaml('Main'), [`${DIR}/a.yaml`]: cardYaml('A') });
     await bootWith(fake);
-    await app.plugin(personaPlugin, { personasDir: DIR, timeInjection: false });
+    await app.plugin(personaPlugin, { timeInjection: false });
     await app.plugins.idle();
     await app.start();
     const svc = app.bind({ services }).services.use.get(persona);
@@ -186,10 +186,10 @@ describe('persona / skills 的目录重扫', () => {
   });
 
   it('persona：目录列不出（不是不存在）时扫描失败并记 warn，已载入的卡不被剔掉', async () => {
-    const DIR = 'data:/personas';
+    const DIR = 'self:/persona';
     const fake = gatedStorage({ [`${DIR}/default.yaml`]: cardYaml('Main'), [`${DIR}/a.yaml`]: cardYaml('A') });
     await bootWith(fake);
-    await app.plugin(personaPlugin, { personasDir: DIR, timeInjection: false });
+    await app.plugin(personaPlugin, { timeInjection: false });
     await app.plugins.idle();
     await app.start();
     const svc = app.bind({ services }).services.use.get(persona);
@@ -198,7 +198,7 @@ describe('persona / skills 的目录重扫', () => {
 
     const gate = fake.holdNextList(DIR);
     fake.fire(`${DIR}/a.yaml`);
-    gate.reject(new Error('未知存储根: data'));
+    gate.reject(new Error('未知存储根: self'));
     await sleep(20);
 
     expect((await svc.listModels()).sort(), '按空目录处理会剔掉 a').toEqual(['a', 'default']);
@@ -206,10 +206,10 @@ describe('persona / skills 的目录重扫', () => {
   });
 
   it('skills：扫描进行中的并发 rescan 合并为一次尾随重扫，不报虚假的重复名称', async () => {
-    const DIR = 'data:/skills';
+    const DIR = 'self:/skills';
     const fake = gatedStorage({ [`${DIR}/s1/SKILL.md`]: skillMd('s1'), [`${DIR}/s2/SKILL.md`]: skillMd('s2') });
     await bootWith(fake);
-    await app.plugin(skillsPlugin, { skillsUri: DIR });
+    await app.plugin(skillsPlugin, {});
     await app.plugins.idle();
     const svc = app.bind({ services }).services.use.get(skills);
     if (!svc) throw new Error('skills 服务未就绪');
@@ -233,10 +233,10 @@ describe('persona / skills 的目录重扫', () => {
   });
 
   it('skills：进行中的那次扫描失败，排着的尾随重扫照常执行，之后的 rescan 也不受影响', async () => {
-    const DIR = 'data:/skills';
+    const DIR = 'self:/skills';
     const fake = gatedStorage({ [`${DIR}/s1/SKILL.md`]: skillMd('s1') });
     await bootWith(fake);
-    await app.plugin(skillsPlugin, { skillsUri: DIR });
+    await app.plugin(skillsPlugin, {});
     await app.plugins.idle();
     const svc = app.bind({ services }).services.use.get(skills);
     if (!svc) throw new Error('skills 服务未就绪');
@@ -261,10 +261,10 @@ describe('persona / skills 的目录重扫', () => {
   });
 
   it('skills：根目录列不出（不是不存在）时 rescan 拒绝，保留上一版缓存', async () => {
-    const DIR = 'data:/skills';
+    const DIR = 'self:/skills';
     const fake = gatedStorage({ [`${DIR}/s1/SKILL.md`]: skillMd('s1') });
     await bootWith(fake);
-    await app.plugin(skillsPlugin, { skillsUri: DIR });
+    await app.plugin(skillsPlugin, {});
     await app.plugins.idle();
     const svc = app.bind({ services }).services.use.get(skills);
     if (!svc) throw new Error('skills 服务未就绪');
@@ -273,7 +273,7 @@ describe('persona / skills 的目录重扫', () => {
 
     const gate = fake.holdNextList(DIR);
     const scan = svc.rescan();
-    gate.reject(new Error('未知存储根: data'));
+    gate.reject(new Error('未知存储根: self'));
     await expect(scan).rejects.toThrow('未知存储根');
     expect(
       svc.listSkills().map(s => s.name),
@@ -282,10 +282,10 @@ describe('persona / skills 的目录重扫', () => {
   });
 
   it('skills：扫描卡住期间读者仍看到上一版完整缓存，扫完整体替换', async () => {
-    const DIR = 'data:/skills';
+    const DIR = 'self:/skills';
     const fake = gatedStorage({ [`${DIR}/s1/SKILL.md`]: skillMd('s1'), [`${DIR}/s2/SKILL.md`]: skillMd('s2') });
     await bootWith(fake);
-    await app.plugin(skillsPlugin, { skillsUri: DIR });
+    await app.plugin(skillsPlugin, {});
     await app.plugins.idle();
     const svc = app.bind({ services }).services.use.get(skills);
     if (!svc) throw new Error('skills 服务未就绪');
@@ -309,10 +309,10 @@ describe('persona / skills 的目录重扫', () => {
   });
 
   it('skills：扫描进行中经服务创建的技能不被收尾的整体替换盖掉', async () => {
-    const DIR = 'data:/skills';
+    const DIR = 'self:/skills';
     const fake = gatedStorage({ [`${DIR}/s1/SKILL.md`]: skillMd('s1') });
     await bootWith(fake);
-    await app.plugin(skillsPlugin, { skillsUri: DIR });
+    await app.plugin(skillsPlugin, {});
     await app.plugins.idle();
     const svc = app.bind({ services }).services.use.get(skills);
     if (!svc) throw new Error('skills 服务未就绪');
@@ -335,7 +335,7 @@ describe('persona / skills 的目录重扫', () => {
   });
 
   it('skills：load_skill 的按需重扫同样作废已编译的 triggers，改过的触发正则随之生效', async () => {
-    const DIR = 'data:/skills';
+    const DIR = 'self:/skills';
     const wx = (trigger: string) => `---\nname: wx\ndescription: d\ntriggers:\n  - ${trigger}\n---\nbody\n`;
     const fake = gatedStorage({ [`${DIR}/wx/SKILL.md`]: wx('天气') });
     await bootWith(fake);
@@ -347,7 +347,7 @@ describe('persona / skills 的目录重扫', () => {
       },
       registerGroup: () => () => {},
     } as never);
-    await app.plugin(skillsPlugin, { skillsUri: DIR });
+    await app.plugin(skillsPlugin, {});
     await app.plugins.idle();
     const host = app.bind({ services, hooks });
     const svc = host.services.use.get(skills);

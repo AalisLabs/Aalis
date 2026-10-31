@@ -41,19 +41,14 @@ async function setup(enabledSkills?: string[], options: { settings?: boolean } =
   const base = mkdtempSync(join(tmpdir(), 'zz-skills-enabled-'));
   dirs.push(base);
   for (const name of ['alpha', 'beta']) {
-    mkdirSync(join(base, 'skills', name), { recursive: true });
+    mkdirSync(join(base, 'self', 'skills', name), { recursive: true });
     writeFileSync(
-      join(base, 'skills', name, 'SKILL.md'),
+      join(base, 'self', 'skills', name, 'SKILL.md'),
       `---\nname: ${name}\ndescription: ${name} 技能\ntriggers:\n  - 天气\n---\n正文\n`,
     );
   }
   const doc: Partial<AalisConfig> = {
-    plugins: {
-      '@aalis/plugin-storage-local': {
-        roots: [{ name: 'store', path: base, label: 'store', kind: 'custom', browsable: true, readable: true }],
-      },
-      [SKILLS]: { skillsUri: 'store:/skills', ...(enabledSkills ? { enabledSkills } : {}) },
-    },
+    plugins: { [SKILLS]: enabledSkills ? { enabledSkills } : {} },
   };
   const started = await startSettings({
     doc,

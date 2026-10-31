@@ -12,15 +12,14 @@ import { HUB_PLUGINS } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // skills 与 persona 的目录监听曾只在自己的 app:ready 里挂一次，挂在当时的 storage 提供者上：
-// - storage 改配置换了目录：新目录的变化感知不到，旧目录的监听还在报；
 // - storage 晚于 app:ready 上线：从不扫描、不监听，技能为空、人设停在内置默认；
 // - storage 重启后热重载还能用，只因旧提供者的 fs 监听器没随它关闭（泄漏）。
 // 现改为跟随 storage（follow）：在场即挂监听并全量扫描，换代时先关旧监听再重挂；
 // storage-local 关闭时也会关掉自己建的监听器；skills / persona 自己卸载时由 follow 的清理关掉监听。
 // 重启那条用例守住两处必须同批：
 // 只修提供者一侧、消费者不重挂，它会变红。
-// 真 storage-local（workspace + 自定义根 store）+ 真 skills / persona。技能与人设放在自定义根下：
-// 内置的 skills、personas 根按家目录派生，改配置换不了目录，测不到「换了目录」那一条。
+// 真 storage-local + 真 skills / persona。技能与人设在存储的内容目录里（家目录的 self/skills、self/persona），
+// 目录按家目录布局派生、不能配置。
 // ════════════════════════════════════════════════════════════
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
@@ -48,23 +47,12 @@ function recordingLogger(sink: string[]): Logger {
   return logger;
 }
 
-const root = (name: string, path: string) => ({
-  name,
-  path,
-  label: name,
-  kind: name,
-  browsable: true,
-  readable: true,
-  writable: true,
-  deletable: true,
-});
-
 const writeSkill = (skillsDir: string, name: string): void => {
   mkdirSync(join(skillsDir, name), { recursive: true });
   writeFileSync(join(skillsDir, name, 'SKILL.md'), `---\nname: ${name}\ndescription: d\n---\nbody\n`);
 };
-const writeCard = (personasDir: string, name: string): void => {
-  writeFileSync(join(personasDir, `${name}.yaml`), `name: ${name}\ndescription: d\nprompt: p\n`);
+const writeCard = (dir: string, name: string): void => {
+  writeFileSync(join(dir, `${name}.yaml`), `name: ${name}\ndescription: d\nprompt: p\n`);
 };
 
 describe('skills / persona 的目录监听跟随 storage 提供者', () => {
@@ -72,13 +60,9 @@ describe('skills / persona 的目录监听跟随 storage 提供者', () => {
   let app: App;
   let logs: string[];
 
-  const storageConfig = (storeDir: string) => ({
-    roots: [root('workspace', join(base, 'workspace')), root('store', join(base, storeDir))],
-  });
-  const consumers = () => [
-    { definition: personaPlugin, config: { personasDir: 'store:/personas' } },
-    { definition: skillsPlugin, config: { skillsUri: 'store:/skills' } },
-  ];
+  const skillsDir = () => join(base, 'self', 'skills');
+  const cardsDir = () => join(base, 'self', 'persona');
+  const consumers = () => [{ definition: personaPlugin }, { definition: skillsPlugin }];
   const skillNames = (): string[] =>
     (app.bind({ services }).services.use.get(skills)?.listSkills() ?? []).map(s => s.name);
   const personaNames = async (): Promise<string[]> =>
@@ -93,7 +77,7 @@ describe('skills / persona 的目录监听跟随 storage 提供者', () => {
     await app.pluginAll([
       ...HUB_PLUGINS.map(definition => ({ definition })),
       ...consumers(),
-      { definition: storageLocal, config: storageConfig('store') },
+      { definition: storageLocal },
     ]);
     await app.plugins.idle();
     await app.start();
@@ -103,33 +87,12 @@ describe('skills / persona 的目录监听跟随 storage 提供者', () => {
   beforeEach(() => {
     logs = [];
     base = mkdtempSync(join(tmpdir(), 'aalis-watch-follow-'));
-    for (const d of ['workspace', 'store/skills', 'store/personas', 'store2/skills', 'store2/personas']) {
-      mkdirSync(join(base, d), { recursive: true });
-    }
+    for (const d of ['self/skills', 'self/persona']) mkdirSync(join(base, d), { recursive: true });
   });
 
   afterEach(async () => {
     await app?.stop();
     rmSync(base, { recursive: true, force: true });
-  });
-
-  it('storage 改配置换了 store 根的目录：新目录的变化被感知，旧目录不再触发重扫', async () => {
-    await boot();
-    await app.plugins.updateConfig(storageLocal.name, storageConfig('store2'));
-    await app.plugins.idle();
-    await sleep(250);
-
-    writeSkill(join(base, 'store2', 'skills'), 'zz-new-root');
-    writeCard(join(base, 'store2', 'personas'), 'zznew');
-    expect(await waitUntil(() => skillNames().includes('zz-new-root')), '新目录的技能未被感知').toBe(true);
-    expect(await waitUntil(async () => (await personaNames()).includes('zznew')), '新目录的人设未被感知').toBe(true);
-
-    await sleep(300); // 让新目录写入引起的重扫落定
-    const before = rescans();
-    writeSkill(join(base, 'store', 'skills'), 'zz-poke-old');
-    writeCard(join(base, 'store', 'personas'), 'zzold');
-    await sleep(600);
-    expect(rescans() - before, '旧目录的监听仍在触发重扫').toBe(0);
   });
 
   it('storage 重启后同一目录的变化仍被感知', async () => {
@@ -138,8 +101,8 @@ describe('skills / persona 的目录监听跟随 storage 提供者', () => {
     await app.plugins.idle();
     await sleep(250);
 
-    writeSkill(join(base, 'store', 'skills'), 'zz-after-bounce');
-    writeCard(join(base, 'store', 'personas'), 'zzbounce');
+    writeSkill(skillsDir(), 'zz-after-bounce');
+    writeCard(cardsDir(), 'zzbounce');
     expect(await waitUntil(() => skillNames().includes('zz-after-bounce'))).toBe(true);
     expect(await waitUntil(async () => (await personaNames()).includes('zzbounce'))).toBe(true);
   });
@@ -152,15 +115,15 @@ describe('skills / persona 的目录监听跟随 storage 提供者', () => {
     await sleep(300); // 让卸载前的重扫与迟到的 fs 事件落定，之后只数增量
 
     const before = rescans();
-    writeSkill(join(base, 'store', 'skills'), 'zz-after-unload');
-    writeCard(join(base, 'store', 'personas'), 'zzunload');
+    writeSkill(skillsDir(), 'zz-after-unload');
+    writeCard(cardsDir(), 'zzunload');
     await sleep(800);
     expect(rescans() - before, '卸载后的监听仍在触发重扫').toBe(0);
   });
 
   it('storage 在 app:ready 之后才上线：已有的技能与人设被扫到，之后的变化也被感知', async () => {
-    writeSkill(join(base, 'store', 'skills'), 'zz-pre');
-    writeCard(join(base, 'store', 'personas'), 'zzpre');
+    writeSkill(skillsDir(), 'zz-pre');
+    writeCard(cardsDir(), 'zzpre');
     app = new App({ name: 'T', logLevel: 'error' });
     provideHostPaths(app, base);
     await app.pluginAll([...HUB_PLUGINS.map(definition => ({ definition })), ...consumers()]);
@@ -168,24 +131,24 @@ describe('skills / persona 的目录监听跟随 storage 提供者', () => {
     await app.start();
     expect(skillNames()).toEqual([]);
 
-    await app.plugin(storageLocal, storageConfig('store'));
+    await app.plugin(storageLocal);
     await app.plugins.idle();
     expect(await waitUntil(() => skillNames().includes('zz-pre')), '已有技能未被扫到').toBe(true);
     expect(await waitUntil(async () => (await personaNames()).includes('zzpre')), '已有人设未被扫到').toBe(true);
 
     await sleep(250);
-    writeSkill(join(base, 'store', 'skills'), 'zz-late');
+    writeSkill(skillsDir(), 'zz-late');
     expect(await waitUntil(() => skillNames().includes('zz-late')), '上线后的新增技能未被感知').toBe(true);
   });
 
   it('首启目录不存在：补建后监听生效', async () => {
-    rmSync(join(base, 'store', 'skills'), { recursive: true, force: true });
-    rmSync(join(base, 'store', 'personas'), { recursive: true, force: true });
+    rmSync(skillsDir(), { recursive: true, force: true });
+    rmSync(cardsDir(), { recursive: true, force: true });
     await boot();
-    expect(existsSync(join(base, 'store', 'skills'))).toBe(true);
-    expect(existsSync(join(base, 'store', 'personas'))).toBe(true);
+    expect(existsSync(skillsDir())).toBe(true);
+    expect(existsSync(cardsDir())).toBe(true);
 
-    writeSkill(join(base, 'store', 'skills'), 'zz-first-boot');
+    writeSkill(skillsDir(), 'zz-first-boot');
     expect(await waitUntil(() => skillNames().includes('zz-first-boot'))).toBe(true);
   });
 });

@@ -7,7 +7,7 @@ const SOURCE = {
   provideLabel: '本地存储',
   rootsLabel: '存储根目录',
   rootsDescription:
-    '文件工具与 agent 寻址用的根（缺省只有 workspace）；插件自己的数据在内置根里（data、pluginData、tmp、cache、logs、personas、skills、workflows），这里同名的项会被跳过。直接编辑这个数组：删除不要的、修改 path、加自定义根、加 host:/ 直通根。browsable 是给文件浏览器类界面的 hint（WebUI 没有文件浏览页，不读它）。',
+    '文件工具与 agent 寻址用的根（缺省只有 workspace）；插件自己的数据在内置根里（data、pluginData、tmp、cache、logs、self），这里同名的项会被跳过。直接编辑这个数组：删除不要的、修改 path、加自定义根、加 host:/ 直通根。browsable 是给文件浏览器类界面的 hint（WebUI 没有文件浏览页，不读它）。',
   nameLabel: '根名 (URI scheme)',
   nameDescription: '只允许字母/数字/下划线/连字符，且需以字母开头；如 workspace、share',
   pathLabel: '本机路径',

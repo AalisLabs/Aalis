@@ -29,14 +29,8 @@ export interface HostPaths {
   readonly run: string;
   /** 临时区，按会话分子目录 */
   readonly tmp: string;
-  readonly self: {
-    /** 人设卡 */
-    readonly personas: string;
-    /** 技能 */
-    readonly skills: string;
-    /** 存下来的编排定义 */
-    readonly workflows: string;
-  };
+  /** 存下来就会自己生效、owner 与她都会读改的内容（人设、技能等），各插件在里面按目录名分开（api-storage 的 content） */
+  readonly self: string;
   /** 默认工作区：owner 本机默认工作区的真实文件夹，`$AALIS_HOME/workspace` */
   readonly workspace: string;
 }

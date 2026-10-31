@@ -7,7 +7,7 @@ persona 服务负责把「角色卡」渲染成 system prompt，并在回复链�
 - 服务注册名：`'persona'`，消费方经 `persona.use` 调用。
 - 契约包：`@aalis/api-persona`。
 - 这个契约带有运行时服务，不是纯类型契约。`-api` 包只导出 interface、类型与服务描述符 `persona`，不含实现；参考实现是 `@aalis/plugin-persona`，也是目前唯一的实现。
-- 角色卡按名分文件存放在 `personasDir`（一个 storage 路径，见 §6）。storage 在场时全量预扫进缓存并挂监听热重载；storage 提供者重启、改配置或晚于启动上线时重挂监听并重扫。
+- 角色卡按名分文件存放在存储的内容目录 `self:/persona/`（见 §6）。storage 在场时全量预扫进缓存并挂监听热重载；storage 提供者重启、改配置或晚于启动上线时重挂监听并重扫。
 
 ## 2. 契约
 
@@ -136,7 +136,7 @@ export default definePlugin({
 
 ## 6. 能力 / 风险 → 影响
 
-**`personasDir` 是 storage 路径，经 `toStorageUri` 归一。** 参考实现只在 `toStorageUri(personasDirRaw)` 这一个目录下找卡。`toStorageUri` 的文法是：已经是 URI（含 `:/`）的原样返回；`foo/bar` 归一为 `foo:/bar`（首段当作根名）；单段裸名 `name` 归一为 `data:/name`（默认归入 `data` 根）。读卡时经 `caps.storage.use`，按 URI 路由。需要注意 storage 不是沙箱：路径授权由 storage 的 root 权限位决定，persona 能读到哪些卡取决于你授予的 root。详见 `docs/concepts/storage-uri-grammar.md` 与 `docs/services/storage.md`。
+**角色卡只在存储的内容目录里找。** 参考实现只在 `self:/persona/`（`caps.storage.use.content`，即家目录的 `self/persona`）这一个目录下找卡，目录不能配置。读卡时经 `caps.storage.use`，按 URI 路由。需要注意 storage 不是沙箱：路径授权由 storage 的 root 权限位决定，persona 能读到哪些卡取决于你授予的 root。详见 `docs/concepts/storage-uri-grammar.md` 与 `docs/services/storage.md`。
 
 **跨会话身份隔离（防止会话间串档）。** 参考实现把当前消息的会话身份（platform、sessionId、群号、自身与发送者的角色头衔）放进 `AsyncLocalStorage`，并在一轮开始的 `agent:turn:before` 用 `runWithIdentity()` 包住后续的异步链。这样身份能穿透 `await` 而不串，并发会话各自隔离，从而杜绝把 A 会话的发送者信息泄漏进 B 会话的 LLM 提示。会话管理在场时，平台取它记下的出生平台（子任务取根会话的）；记下的聊天窗口是多方会话时，群号取窗口的目标；类型名在消息上没有时（定时、编排、空闲这类合成回合不经适配器）取聊天窗口的类型。这些只用于提示词，不写回消息。会话事实取自开轮的输入；说话人事实（发送者 ID、昵称、群身份与头衔）只在这一轮各条输入的说话人相同时写，几个人的话一起开的一轮没有单一的当前发送者，不写。
 
@@ -164,6 +164,6 @@ export default definePlugin({
 
 ## 8. 交叉链接
 
-- 概念：`docs/concepts/service-model.md`（按名 DI、挑选规则）、`docs/concepts/lazy-service-access.md`（业务句柄是活的）、`docs/concepts/manifest-metadata.md`（aalis.service 与 definePlugin provides/uses 双源）、`docs/concepts/storage-uri-grammar.md`（`<root>:/path` 与 `personasDir`）、`docs/concepts/message-llm-pipeline.md`（`agent:turn:before` 与 `agent:reply:before` 钩子的时序，以及 persona 在其中的位置）。
+- 概念：`docs/concepts/service-model.md`（按名 DI、挑选规则）、`docs/concepts/lazy-service-access.md`（业务句柄是活的）、`docs/concepts/manifest-metadata.md`（aalis.service 与 definePlugin provides/uses 双源）、`docs/concepts/storage-uri-grammar.md`（`<root>:/path`）、`docs/concepts/message-llm-pipeline.md`（`agent:turn:before` 与 `agent:reply:before` 钩子的时序，以及 persona 在其中的位置）。
 - 服务：`docs/services/agent.md`（主消费者，system prompt 组装与重试循环）、`docs/services/storage.md`（角色卡的读取后端与 root 权限）、`docs/services/commands.md`（session 与 persona 配置）。
 - 核心：`docs/core/service.md`、`docs/core/context.md`、`docs/core/plugin.md`。

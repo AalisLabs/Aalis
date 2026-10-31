@@ -54,7 +54,7 @@ afterEach(async () => {
 
 async function boot(sessions: Record<string, Record<string, unknown>>) {
   base = mkdtempSync(join(tmpdir(), 'aalis-persona-fields-'));
-  const dir = join(base, 'self', 'personas');
+  const dir = join(base, 'self', 'persona');
   mkdirSync(join(base, 'workspace'), { recursive: true });
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'default.yaml'), formatCard('主卡'));

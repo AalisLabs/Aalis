@@ -37,7 +37,7 @@ type BoundaryPolicy = 'ask' | 'deny';
 |---|---|---|---|---|---|
 | 只读 `readonly` | 全机减拒读清单 | 本会话临时区 | 沙箱内 | 问 | 其余写入、宿主执行、联网、写落点 |
 | 修改确认 `confirm` | 同上 | 无 | 宿主上，每次问 | 不问 | 每一次写与执行、写落点 |
-| 工作区 `workspace` | 同上 | 主目录、附加可写目录、本会话树建的 worktree、仓库的 git 目录、本会话临时区、技能目录 | 沙箱内 | 不问 | 范围外的写、宿主执行、写落点 |
+| 工作区 `workspace` | 同上 | 主目录、附加可写目录、本会话树建的 worktree、仓库的 git 目录、本会话临时区 | 沙箱内 | 不问 | 范围外的写、宿主执行、写落点 |
 | 全权 `full` | 同上 | 全机减宿主控制面 | 宿主上 | 不问 | 不问；写落点照写，另记审计 |
 
 - 宿主控制面任何档位都拒写，不可申请；拒读清单在任何档位都约束工具边界，沙箱里同样读不到；在宿主上执行的命令（全权、修改确认，以及批准过的宿主执行）约束不到。
@@ -120,12 +120,13 @@ function matchesRule(rule: PathRule, path: string, platform: NodeJS.Platform): b
 
 **宿主控制面**（`control`，一律拒写，不可申请）：
 
-- 家目录下除默认工作区（`workspace`）、临时区（`tmp`）、技能目录（`self/skills`）以外的全部：插件状态、主配置、`secrets.yaml`、日志、`run`、`cache`、人设卡、编排定义（只经定义工具写入）；
+- 家目录下除默认工作区（`workspace`）、临时区（`tmp`）与 `self/`（归落点）以外的全部：插件状态、主配置、`secrets.yaml`、日志、`run`、`cache`；
 - 守护进程加载的代码：安装集的 `node_modules`、`dist`，源码形态下各包的 `dist` 与 `node_modules`，以及 `codeDirs`。源码本身不在内；
 - npm 形态下另有守护进程的入口文件（`entry`）与安装集的 `package.json`（插件发现读它的依赖）。源码形态下它们是在改的源码，不在内。
 
 **持久化与自动执行落点**（`landing`）：
 
+- 家目录的 `self/` 整个（目录本身也算）：人设、技能等存下来就会自己生效的内容。写它按落点判：只读、修改确认与工作区档要问，全权照写并记审计；
 - git：`.git` 本身（目录形式的，与子模块工作树里文件形式的），它里面的 `hooks/**`、`config`、`config.worktree`、`commondir`（git 把它指向的目录当共用目录，配置与钩子都从那里取）、整棵 `modules/**`（子模块的名字可以带斜杠、可以嵌套，按目录名列不全），`worktrees` 与 `worktrees/<名>` 这两级目录本身及其下的 `config.worktree`、`commondir`。代价是沙箱里的 `git worktree add`、`git worktree prune` 与子模块的拉取、检出写不了这些地方，要宿主执行。伪装裸仓库的 `HEAD` 与不叫 `.git` 的 git 目录由触及按它的 git 目录补上（见上文「这份触及的落点」）；
 - shell 与登录：各 shell 的 rc 与 profile 文件、`~/.config/fish`、`~/.ssh`、`~/.gitconfig`、`~/.config/git`；macOS 的 `~/Library/LaunchAgents`，Linux 的 `~/.config/systemd/user` 与 `~/.config/autostart`；
 - 项目里会被工具自动执行的配置：`.envrc`、`.vscode/tasks.json`、`.vscode/settings.json`、`*.code-workspace`、`.husky/**`、`.pre-commit-config.yaml`，以及其他代理与编辑器的可执行配置（`.claude/settings.json`、`.claude/settings.local.json`、`.mcp.json`、`.cursor/` 下的 `hooks.json` 等五个、`.codex/` 下的 `config.toml`、`rules/` 与 hooks）；

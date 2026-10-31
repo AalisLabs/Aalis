@@ -60,7 +60,7 @@ export interface StorageReadStreamResult {
  */
 export interface StorageWatchEvent {
   type: 'change';
-  /** 完整 storage URI，如 `skills:/foo/SKILL.md` */
+  /** 完整 storage URI，如 `self:/skills/foo/SKILL.md` */
   uri: string;
   /** 根内相对路径 */
   path: string;
@@ -137,7 +137,7 @@ export interface StorageService {
   /**
    * 监听某个 URI（文件或目录）下的变化。返回取消监听的函数。
    *
-   * - 目录 URI（如 `skills:/`）：递归监听其下所有文件/子目录。
+   * - 目录 URI（如 `self:/skills`）：递归监听其下所有文件/子目录。
    * - 文件 URI（如 `data:/persona.yaml`）：仅监听该文件本身。
    * - 后端可能对事件做去抖处理；调用方不应假定一次写操作必定对应一次事件。
    * - 远程/纯虚拟根可能不支持，此时方法本身可能不存在或调用抛错。
@@ -400,44 +400,70 @@ export async function readTailLines(
 type StorageMethods = StorageService & Required<Pick<StorageService, 'resolveLocalPath' | 'readFileRange' | 'watch'>>;
 
 /**
- * 本插件的私有目录 `pluginData:/<目录名>/` 上的存储视图（{@link BoundStorage.own}）。目录名是包名去掉 `plugin-` 前缀：
- * `@aalis` 与不带作用域的包只取包名（`@aalis/plugin-draw` → `draw`），别的作用域另带作用域、以 `+` 相连
- * （`@acme/plugin-draw` → `acme+draw`，npm 包名里没有 `+`，两个作用域的同名插件不共用目录）；取不出单段目录名的
- * 插件名在绑定时抛错。多实例共用这个目录、由插件自己分子目录。方法与 {@link StorageService} 相同，路径参数相对这个
- * 目录：规范化之后越出目录的（`..` 越过目录）、宿主机绝对路径与存储地址都抛错，空路径即目录本身（`own.delete('')`
- * 删掉整个私有目录）；返回值里的地址是完整的存储地址。
+ * 本插件在某个根下的目录上的存储视图：私有目录 {@link BoundStorage.own} 与内容目录 {@link BoundStorage.content}。目录名是
+ * 包名去掉 `plugin-` 前缀：`@aalis` 与不带作用域的包只取包名（`@aalis/plugin-draw` → `draw`），别的作用域另带作用域、
+ * 以 `+` 相连（`@acme/plugin-draw` → `acme+draw`，npm 包名里没有 `+`，两个作用域的同名插件不共用目录）；取不出单段
+ * 目录名的插件名在绑定时抛错。多实例共用这个目录、由插件自己分子目录。方法与 {@link StorageService} 相同，路径参数
+ * 相对这个目录：规范化之后越出目录的（`..` 越过目录）、宿主机绝对路径与存储地址都抛错，空路径即目录本身
+ * （`own.delete('')` 删掉整个私有目录）；返回值里的地址是完整的存储地址。
  */
-export type OwnStorage = Omit<StorageMethods, 'listRoots'> & {
+export type PluginDirStorage = Omit<StorageMethods, 'listRoots'> & {
   /** 相对路径对应的完整存储地址（要交给别处、写进记录时用）；不给即目录本身 */
   uri(path?: string): string;
 };
 
-/** `storage` 的业务层：调用转发给选中的那一家，另带本插件的私有目录 */
+/** `storage` 的业务层：调用转发给选中的那一家，另带本插件的两个目录 */
 export interface BoundStorage extends StorageMethods {
-  readonly own: OwnStorage;
+  /** 私有目录 `pluginData:/<目录名>/`：插件自己的运行数据。依赖名叫 pluginData 的根 */
+  readonly own: PluginDirStorage;
+  /**
+   * 内容目录 `self:/<目录名>/`：存下来就会自己生效、owner 与她都会读改的内容（人设、技能、以后的用户工具、编排定义）。
+   * 依赖名叫 self 的根，就像 own 依赖 pluginData
+   */
+  readonly content: PluginDirStorage;
 }
 
-/** 插件名 → 私有目录名（规则见 {@link OwnStorage}） */
-function ownDir(moduleName: string): string {
+/** 插件名 → 目录名（规则见 {@link PluginDirStorage}） */
+function pluginDirName(moduleName: string): string {
   const scoped = /^@([^/]+)\/(.*)$/.exec(moduleName);
   const name = (scoped ? scoped[2] : moduleName).replace(/^plugin-/, '');
   const dir = !scoped || scoped[1] === 'aalis' ? name : `${scoped[1]}+${name}`;
   if (!name || name === '.' || name === '..' || /[/\\]/.test(dir)) {
-    throw new Error(`插件名 "${moduleName}" 取不出私有目录名（要是单段、不是 . 或 ..）`);
+    throw new Error(`插件名 "${moduleName}" 取不出目录名（要是单段、不是 . 或 ..）`);
   }
   return dir;
 }
 
-/** 私有目录下的相对路径 → 完整存储地址；越不出目录 */
-function ownUri(dir: string, path: string): string {
-  if (isHostAbsolutePath(path) || STORAGE_URI_RE.test(path)) throw new Error(`插件私有目录只收相对路径: ${path}`);
+/** 根 root 下插件目录 dir 里的相对路径 → 完整存储地址；越不出目录 */
+function pluginDirUri(root: string, dir: string, path: string): string {
+  if (isHostAbsolutePath(path) || STORAGE_URI_RE.test(path)) throw new Error(`插件目录只收相对路径: ${path}`);
   const segments: string[] = [];
   for (const segment of unifySlashes(path).split('/')) {
     if (!segment || segment === '.') continue;
     if (segment !== '..') segments.push(segment);
-    else if (segments.pop() === undefined) throw new Error(`路径越出插件私有目录 pluginData:/${dir}/: ${path}`);
+    else if (segments.pop() === undefined) throw new Error(`路径越出插件的 ${root}:/${dir}/: ${path}`);
   }
-  return joinStorageUri('pluginData', [dir, ...segments]);
+  return joinStorageUri(root, [dir, ...segments]);
+}
+
+/** 根 root 下插件目录 dir 上的视图：每个方法把相对路径换成完整地址，转给业务层 */
+function pluginDir(methods: StorageMethods, root: string, dir: string): PluginDirStorage {
+  const uri = (path = '') => pluginDirUri(root, dir, path);
+  return {
+    uri,
+    list: path => methods.list(uri(path)),
+    stat: path => methods.stat(uri(path)),
+    readFile: (path, encoding) => methods.readFile(uri(path), encoding),
+    readFileRange: (path, start, end) => methods.readFileRange(uri(path), start, end),
+    createReadStream: path => methods.createReadStream(uri(path)),
+    writeFile: (path, data, options) => methods.writeFile(uri(path), data, options),
+    rename: (path, newName) => methods.rename(uri(path), newName),
+    move: (from, to) => methods.move(uri(from), uri(to)),
+    mkdir: path => methods.mkdir(uri(path)),
+    delete: path => methods.delete(uri(path)),
+    resolveLocalPath: (path, access) => methods.resolveLocalPath(uri(path), access),
+    watch: (path, listener) => methods.watch(uri(path), listener),
+  };
 }
 
 export const storage = defineService<StorageService, BoundStorage>('storage', port => {
@@ -453,22 +479,9 @@ export const storage = defineService<StorageService, BoundStorage>('storage', po
     watch: (uri, listener) => supported('watch')(uri, listener),
   };
   const methods: StorageMethods = Object.assign(Object.create(provider) as StorageMethods, extra);
-  const dir = ownDir(parseInstanceId(port.id).moduleName);
-  const uri = (path = '') => ownUri(dir, path);
-  const own: OwnStorage = {
-    uri,
-    list: path => methods.list(uri(path)),
-    stat: path => methods.stat(uri(path)),
-    readFile: (path, encoding) => methods.readFile(uri(path), encoding),
-    readFileRange: (path, start, end) => methods.readFileRange(uri(path), start, end),
-    createReadStream: path => methods.createReadStream(uri(path)),
-    writeFile: (path, data, options) => methods.writeFile(uri(path), data, options),
-    rename: (path, newName) => methods.rename(uri(path), newName),
-    move: (from, to) => methods.move(uri(from), uri(to)),
-    mkdir: path => methods.mkdir(uri(path)),
-    delete: path => methods.delete(uri(path)),
-    resolveLocalPath: (path, access) => methods.resolveLocalPath(uri(path), access),
-    watch: (path, listener) => methods.watch(uri(path), listener),
-  };
-  return Object.assign(methods, { own });
+  const dir = pluginDirName(parseInstanceId(port.id).moduleName);
+  return Object.assign(methods, {
+    own: pluginDir(methods, 'pluginData', dir),
+    content: pluginDir(methods, 'self', dir),
+  });
 });

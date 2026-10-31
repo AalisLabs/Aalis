@@ -1,11 +1,11 @@
-import type { BoundStorage, OwnStorage, StorageService } from '../../packages/api-storage/src/index.js';
+import type { BoundStorage, PluginDirStorage, StorageService } from '../../packages/api-storage/src/index.js';
 
 /**
- * 插件私有目录视图的替身：相对路径接到 `pluginData:/<dir>/` 下转给 storage，地址与真实视图一致。
+ * 插件目录视图的替身：相对路径接到 `<root>:/<dir>/` 下转给 storage（缺省是私有目录的 pluginData 根），地址与真实视图一致。
  * 越界检查归 api-storage 的绑定（见 storage-own.test.ts），替身不查
  */
-export function ownView(storage: StorageService, dir: string): OwnStorage {
-  const uri = (path = '') => `pluginData:/${[dir, ...path.split('/').filter(Boolean)].join('/')}`;
+export function ownView(storage: StorageService, dir: string, root = 'pluginData'): PluginDirStorage {
+  const uri = (path = '') => `${root}:/${[dir, ...path.split('/').filter(Boolean)].join('/')}`;
   return {
     uri,
     list: path => storage.list(uri(path)),
@@ -23,7 +23,10 @@ export function ownView(storage: StorageService, dir: string): OwnStorage {
   };
 }
 
-/** 业务层替身：storage 上的方法照原样，另带名为 dir 的插件的私有目录 */
+/** 业务层替身：storage 上的方法照原样，另带名为 dir 的插件的私有目录与内容目录 */
 export function boundStorage(storage: StorageService, dir: string): BoundStorage {
-  return Object.assign(Object.create(storage) as BoundStorage, { own: ownView(storage, dir) });
+  return Object.assign(Object.create(storage) as BoundStorage, {
+    own: ownView(storage, dir),
+    content: ownView(storage, dir, 'self'),
+  });
 }

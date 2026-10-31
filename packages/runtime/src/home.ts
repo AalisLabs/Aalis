@@ -194,11 +194,7 @@ export function derivePaths(home: string, app: string, profile?: string): HostPa
     cache: join(home, 'cache'),
     run: join(home, 'run'),
     tmp: join(home, 'tmp'),
-    self: Object.freeze({
-      personas: join(home, 'self', 'personas'),
-      skills: join(home, 'self', 'skills'),
-      workflows: join(home, 'self', 'workflows'),
-    }),
+    self: join(home, 'self'),
     workspace: join(home, 'workspace'),
   });
 }
@@ -237,16 +233,7 @@ export function initHome(paths: HostPaths): void {
   }
   mkdirSync(paths.home, { recursive: true, mode: 0o700 });
   chmodSync(paths.home, 0o700);
-  for (const dir of [
-    paths.state,
-    paths.logs,
-    paths.cache,
-    paths.run,
-    paths.self.personas,
-    paths.self.skills,
-    paths.self.workflows,
-    paths.workspace,
-  ]) {
+  for (const dir of [paths.state, paths.logs, paths.cache, paths.run, paths.self, paths.workspace]) {
     mkdirSync(dir, { recursive: true });
   }
   mkdirSync(paths.tmp, { recursive: true, mode: 0o700 });

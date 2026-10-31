@@ -147,16 +147,14 @@ export function protectedLists(input: ProtectedListsInput): ProtectedLists {
   // 用户家目录是根目录（容器里常见）时拼出的是 /.ssh，不是 //.ssh
   const userHome = input.userHome.replace(/\/+$/, '');
   const inUserHome = (...rels: string[]): PathRule[] => rels.map(rel => ({ path: `${userHome}/${rel}` }));
-  /** 路径的上一级 */
-  const parentOf = (path: string) => path.slice(0, Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')));
   /** 任何目录下的同名条目 */
   const named = (tail: string): PathRule => ({ pattern: `/${tail}` });
   return {
     platform,
     control: [
-      // 家目录下只有默认工作区、临时区与技能目录可写：编排定义只经定义工具写入。主配置与 secrets.yaml 常链接到别处
-      // （dotfiles 仓库），另以它们为根各列一条，才能按真实路径补上（withRealRoots）
-      { path: paths.home, except: [{ path: paths.workspace }, { path: paths.tmp }, { path: paths.self.skills }] },
+      // 家目录下除默认工作区、临时区与 self（归落点）以外的全部。主配置与 secrets.yaml 常链接到别处（dotfiles 仓库），
+      // 另以它们为根各列一条，才能按真实路径补上（withRealRoots）
+      { path: paths.home, except: [{ path: paths.workspace }, { path: paths.tmp }, { path: paths.self }] },
       { path: paths.config },
       { path: paths.secrets },
       // 守护进程加载的代码：安装集的依赖与构建产物（源码形态下另有各包的），以及安装集以外加载的插件
@@ -170,6 +168,8 @@ export function protectedLists(input: ProtectedListsInput): ProtectedLists {
         : []),
     ],
     landing: [
+      // self：存下来就会自己生效的内容（人设、技能等），整个目录都算
+      { path: paths.self },
       // git：.git 本身（子模块工作树里文件形式的也是），与它里面的落点
       named(`\\.git($|/${GIT_DIR_LANDING})`),
       // shell 与登录
@@ -220,10 +220,7 @@ export function protectedLists(input: ProtectedListsInput): ProtectedLists {
     denyRead: [
       // 家目录下只放行默认工作区、self 两个目录整个、本实例的日志与主配置；本会话临时区由触及按会话放回。secrets.yaml
       // 另列一条，理由同宿主控制面
-      {
-        path: paths.home,
-        except: [paths.workspace, parentOf(paths.self.skills), paths.logs, paths.config].map(path => ({ path })),
-      },
+      { path: paths.home, except: [paths.workspace, paths.self, paths.logs, paths.config].map(path => ({ path })) },
       { path: paths.secrets },
       // 同一用户下其他实例的家目录
       { pattern: `^${literal(userHome, platform)}/\\.aalis(-[^/]*)?(/|$)`, except: [{ path: paths.home }] },
@@ -309,7 +306,7 @@ export interface LocalReach {
   /** 工作区档的可写范围：场所的主目录、附加可写目录、本会话树建的 worktree；其余档位为空 */
   readonly workRoots: readonly string[];
   /**
-   * 沙箱两档不问就能写的根：只读档只有本会话临时区；工作区档是 workRoots、仓库的 git 目录、本会话临时区与技能目录。
+   * 沙箱两档不问就能写的根：只读档只有本会话临时区；工作区档是 workRoots、仓库的 git 目录与本会话临时区。
    * 修改确认与全权为空
    */
   readonly writable: readonly string[];
@@ -337,7 +334,7 @@ export function resolveReach(input: ReachInput): Reach {
       : [];
   const writable =
     tier === 'workspace'
-      ? [...new Set([...workRoots, ...input.gitDirs, input.sessionTmp, input.paths.self.skills])]
+      ? [...new Set([...workRoots, ...input.gitDirs, input.sessionTmp])]
       : tier === 'readonly'
         ? [input.sessionTmp]
         : [];

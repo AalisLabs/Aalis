@@ -10,8 +10,6 @@ import commands from '../../packages/plugin-commands/src/index.js';
 import { Registry as ContributionRegistry } from '../../packages/plugin-contributions/src/index.js';
 import { Registry as HookRegistry } from '../../packages/plugin-hooks/src/index.js';
 import office from '../../packages/plugin-office/src/index.js';
-import persona from '../../packages/plugin-persona/src/index.js';
-import skills from '../../packages/plugin-skills/src/index.js';
 import subtask from '../../packages/plugin-subtask/src/index.js';
 import todo from '../../packages/plugin-todo-list/src/index.js';
 import flat from '../../packages/plugin-vectorstore-flat/src/index.js';
@@ -68,8 +66,6 @@ describe('配置解析先于资源访问与工具注册', () => {
   it.each([
     { plugin: cli, config: { sessionId: {} }, field: 'sessionId' },
     { plugin: commands, config: { commandPrefix: [] }, field: 'commandPrefix' },
-    { plugin: persona, config: { personasDir: [] }, field: 'personasDir' },
-    { plugin: skills, config: { skillsUri: [] }, field: 'skillsUri' },
     { plugin: subtask, config: { enabled: 'false' }, field: 'enabled' },
     { plugin: todo, config: { enabled: 'false' }, field: 'enabled' },
     { plugin: flat, config: { path: [] }, field: 'path' },
@@ -108,7 +104,6 @@ describe('配置解析先于资源访问与工具注册', () => {
   });
 
   it.each([
-    { plugin: skills, config: { skillsUri: 'data/skills' }, field: 'skillsUri' },
     { plugin: lancedb, config: { tableName: '' }, field: 'tableName' },
     { plugin: office, config: { docx: { enabled: 'false' } }, field: 'docx.enabled' },
   ])('$plugin.name：后置语义与分组开关拒绝无效值', async ({ plugin, config, field }) => {

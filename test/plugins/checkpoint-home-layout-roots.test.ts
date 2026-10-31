@@ -12,8 +12,8 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
-// checkpoint × 按家目录布局派生的内置根：缓存区（cache）与 self 下的人设卡、技能、编排定义根（kind self）
-// 都不记录：任何会话都能经工具写技能与人设，写入没有会话归属，记进正在进行的回合会被那一轮的回滚误撤。
+// checkpoint × 按家目录布局派生的内置根：缓存区（cache）与 self 根（kind self）都不记录：任何会话都能经工具写技能与人设，
+// 写入没有会话归属，记进正在进行的回合会被那一轮的回滚误撤。
 // 工作根（workspace）照常记录。
 // ════════════════════════════════════════════════════════════
 
@@ -46,12 +46,12 @@ describe('checkpoint × 家目录布局的内置根', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
-  it('写 cache:/、skills:/、personas:/ 不记录，回滚不动它们；同一轮写工作根的照常回滚', async () => {
+  it('写 cache:/、self:/ 不记录，回滚不动它们；同一轮写工作根的照常回滚', async () => {
     await svc.runTurn('turn-s1', 's1', async () => {
       await storage.writeFile('ws:/note.txt', 'w');
       await storage.writeFile('cache:/thumb.png', 'c');
-      await storage.writeFile('skills:/demo/SKILL.md', 'skill');
-      await storage.writeFile('personas:/main.yaml', 'name: x\n');
+      await storage.writeFile('self:/skills/demo/SKILL.md', 'skill');
+      await storage.writeFile('self:/persona/main.yaml', 'name: x\n');
     });
 
     const [turn] = await svc.listTurns('s1');
@@ -62,7 +62,7 @@ describe('checkpoint × 家目录布局的内置根', () => {
     const rolled = await svc.rollback('s1', turnId);
     expect(rolled, JSON.stringify(rolled)).toMatchObject({ ok: true });
     await expect(storage.stat('ws:/note.txt')).rejects.toThrow();
-    expect(await storage.readFile('skills:/demo/SKILL.md', 'utf-8')).toBe('skill');
+    expect(await storage.readFile('self:/skills/demo/SKILL.md', 'utf-8')).toBe('skill');
     expect(await storage.readFile('cache:/thumb.png', 'utf-8')).toBe('c');
   });
 });

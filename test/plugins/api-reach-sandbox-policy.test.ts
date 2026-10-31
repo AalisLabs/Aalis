@@ -53,7 +53,7 @@ describe('工作区档', () => {
       ['/u/code/proj-wt-a/x', true],
       ['/u/code/proj/.git/objects/ab/cd', true],
       [`${SESSION_TMP}/x`, true],
-      [`${PATHS.self.skills}/s/SKILL.md`, true],
+      [`${PATHS.self}/skills/s/SKILL.md`, false], // self 是落点，沙箱里拒写
       ['/u/code/proj-wt-b/x', false],
       ['/u/elsewhere/x', false],
       ['/u/code/proj/.git/hooks/pre-commit', false],
@@ -68,7 +68,7 @@ describe('工作区档', () => {
       ['/u/code/proj/packages/a/node_modules/pkg/.husky/x', true],
       ['/u/extra/node_modules/pkg/.vscode/settings.json', true],
       [`${SESSION_TMP}/node_modules/pkg/.vscode/settings.json`, false], // 临时区不是锚定的根
-      [`${PATHS.self.skills}/s/node_modules/pkg/.vscode/settings.json`, false], // 技能目录也不是
+      [`${PATHS.self}/skills/s/node_modules/pkg/.vscode/settings.json`, false], // self 也不是
       [`${PATHS.state}/db`, false],
     ];
     expect(cases.map(([path]) => [path, canWrite(policy, path)])).toEqual(cases);
@@ -147,10 +147,10 @@ describe('批准过的提权', () => {
   it('宿主控制面批准了也不行', () => {
     const policy = sandboxPolicyOf(reachOf(PROJECT), {
       writePaths: [`${PATHS.state}/db`],
-      landingPaths: [`${PATHS.self.workflows}/daily.yaml`],
+      landingPaths: [PATHS.config],
     });
     expect(canWrite(policy, `${PATHS.state}/db`)).toBe(false);
-    expect(canWrite(policy, `${PATHS.self.workflows}/daily.yaml`)).toBe(false);
+    expect(canWrite(policy, PATHS.config)).toBe(false);
     expect(policy.network).toBe('on');
   });
 });
@@ -165,7 +165,7 @@ describe('与工具边界同源', () => {
     '/u/code/proj/.git/objects/ab/cd',
     '/u/code/proj/.git/worktrees/wt/HEAD',
     `${SESSION_TMP}/x`,
-    `${PATHS.self.skills}/s/SKILL.md`,
+    `${PATHS.self}/skills/s/SKILL.md`,
     '/u/code/proj-wt-b/x',
     '/u/elsewhere/x',
     `${PATHS.workspace}/x`,

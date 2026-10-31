@@ -4,9 +4,6 @@ import en from './locales/en.js';
 
 const SOURCE = {
   displayName: '人设系统',
-  personasDirLabel: '人设目录',
-  personasDirDescription:
-    "人设文件所在目录的 storage URI（默认 personas:/，即家目录的 self/personas；不含 ':/' 时首段视为存储根名，单段裸名归 data 根）",
   statePersistenceLabel: '状态持久化',
   statePersistenceDescription:
     '启用后，角色状态（心情、当前行为等 outputFormat 字段）会在同一会话内延续并注入到下一轮提示中',

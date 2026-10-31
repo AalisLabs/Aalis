@@ -34,7 +34,6 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `skillsUri` | string | `'skills:/'` | 技能存储 URI：技能文件夹 storage URI（默认 `skills:/`，即家目录的 `self/skills`）。每个 skill 为一个子目录，含 SKILL.md。 |
 | `maxSkillBytes` | number | `200000` | 单 skill 最大字节数：SKILL.md 单文件最大字节数，避免一次加载过大内容污染上下文。 |
 | `maxSkills` | number | `200` | 技能数量上限：扫描时最多加载的 skill 数量。 |
 | `enabledSkills` | multiselect | `['*']` | 启用的技能：`*` 即全部技能，空列表一个都不启用；可选项是现有的技能。可按会话设（平台档、平台类型档、群与会话），只有 owner 能改 |
@@ -47,7 +46,7 @@ export default definePlugin({
 |---|---|
 | `list_skills` | 列出可用技能（只列这个会话启用的），可按关键词模糊匹配 name/description，支持 offset 翻页 |
 | `load_skill` | 激活指定技能（这个会话没启用的拒绝）：从下一次模型调用起，向该会话注入其 SKILL.md 正文（不含 frontmatter）与附属资源清单（需 `discoveryEnabled` 开启）；无会话上下文时直接在工具结果中返回正文与资源清单 |
-| `skill_create` | 创建技能（在 `skillsUri` 下生成 `<name>/SKILL.md`，目录名经字符清洗；可一次性写入附属文件） |
+| `skill_create` | 创建技能（在技能目录下生成 `<name>/SKILL.md`，目录名经字符清洗；可一次性写入附属文件） |
 | `skill_update` | 更新已有技能的 description / body / triggers / license / frontmatter / files。`frontmatter` 里传的 `name` 会被忽略：技能名在创建时钉死（技能目录名就是由它清洗而来），改名请重建技能 |
 | `skill_delete` | 删除技能（连同整个文件夹） |
 | `skill_add_file` | 为指定技能写入一个附属文件，同名覆盖 |
@@ -68,4 +67,4 @@ WebUI 设置里的「技能」一节（`key: 'skills'`，位置 `settings`）：
 
 ## 配置校验
 
-`skillsUri` 必须是 storage URI；显式无效类型或非法 URI 在扫描与工具注册前报配置错误。数字字符串上限按数值解析，其余错误类型回落默认值并告警。
+数字字符串上限按数值解析，其余错误类型回落默认值并告警。

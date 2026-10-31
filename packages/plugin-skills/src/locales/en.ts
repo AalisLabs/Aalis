@@ -3,10 +3,6 @@ import type { Source } from '../texts.js';
 
 export default defineLocale<Source>()({
   displayName: 'Skills (Agent Skills)',
-  skillsUriLabel: 'Skill storage URI',
-  skillsUriDescription:
-    'Storage URI of the skills folder (skills:/ by default, i.e. self/skills in the home directory). Each skill is a subdirectory containing SKILL.md.',
-  badSkillsUri: 'skillsUri must be a storage URI',
   maxSkillBytesLabel: 'Max bytes per skill',
   maxSkillBytesDescription:
     'Maximum size of a single SKILL.md in bytes, so loading too much at once does not pollute the context.',

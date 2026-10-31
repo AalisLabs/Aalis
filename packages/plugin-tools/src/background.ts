@@ -5,7 +5,7 @@
 // ════════════════════════════════════════════════════════════
 
 import type { UserIdentity, Verdict } from '@aalis/api-authority';
-import { isStorageNotFound, type OwnStorage } from '@aalis/api-storage';
+import { isStorageNotFound, type PluginDirStorage } from '@aalis/api-storage';
 import {
   BACKGROUND_TASK_NOTICE,
   type BackgroundTask,
@@ -315,7 +315,7 @@ export class BackgroundTasks implements BackgroundTaskService {
   private readonly runTag = crypto.randomUUID().slice(0, 6);
   private counter = 0;
   /** 读回成功之后才写盘；读不出来时本次运行只记在内存里，不覆盖原文件 */
-  private storage?: Pick<OwnStorage, 'readFile' | 'writeFile' | 'uri'>;
+  private storage?: Pick<PluginDirStorage, 'readFile' | 'writeFile' | 'uri'>;
   private writing: Promise<void> = Promise.resolve();
   /** 已排上、还没开始的一次写：之后的变化由它一并写入 */
   private writeQueued = false;
@@ -468,7 +468,7 @@ export class BackgroundTasks implements BackgroundTaskService {
    * 变了就写。文件不存在按没有记录起步；内容读不懂告警后同样起步，下次写盘时覆盖；读不出来（权限、存储不可用）告警，
    * 本次运行只记在内存里，不覆盖它
    */
-  async restore(storage: Pick<OwnStorage, 'readFile' | 'writeFile' | 'uri'>): Promise<void> {
+  async restore(storage: Pick<PluginDirStorage, 'readFile' | 'writeFile' | 'uri'>): Promise<void> {
     const where = storage.uri(STORE);
     let text: string | undefined;
     try {
