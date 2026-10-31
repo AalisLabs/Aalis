@@ -21,7 +21,7 @@ import { fixedRef } from '../fixtures/service-ref.js';
 // ════════════════════════════════════════════════════════════
 // 记忆后端与嵌入服务给人看的报错按读者的语言：MongoDB 连接失败、库名超长与 SQLite 两个实例共用一个库是插件失败原因，
 // 挂着文字对象、按配置错误的照旧是 ConfigError；Ollama 嵌入的诊断项端点回 404 时，诊断项的包装句按读者的
-// 语言，上游原话原样在里面。中文与改动前逐字相同。MongoDB 用替身客户端直接调 openAndProvide（经 apply 会连真实的
+// 语言，上游原话原样在里面。MongoDB 用替身客户端直接调 openAndProvide（经 apply 会连真实的
 // mongod），SQLite 开在临时目录里，fetch 用替身。
 // ════════════════════════════════════════════════════════════
 
@@ -87,7 +87,7 @@ const mongoFailure = (run: Promise<void>) =>
     (failure: unknown) => failure,
   );
 
-describe('记忆后端的插件失败原因：带文字对象，en 是英文，zh-CN 与改动前逐字相同', () => {
+describe('记忆后端的插件失败原因：带文字对象，en 是英文，zh-CN 是中文', () => {
   it.each([
     {
       name: 'MongoDB 连接失败',

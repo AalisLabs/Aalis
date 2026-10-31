@@ -197,7 +197,7 @@ describe('OneBot 戳一戳与群文件上传：给模型的正文与给人看的
     ]);
   });
 
-  it('查得到昵称：给人看的那句里的人一律写「昵称(id)」，content 与改动前逐字相同', async () => {
+  it('查得到昵称：给人看的那句里的人一律写「昵称(id)」，content 里只有戳人的一方带昵称', async () => {
     const t = await boot('v11', { 30001: '甲', 30002: '乙', 30003: '丙' });
     t.poke(30001, 30002, 20001);
     await until(() => t.inbound.length === 1);

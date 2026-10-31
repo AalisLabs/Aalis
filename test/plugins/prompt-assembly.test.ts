@@ -121,7 +121,7 @@ describe('assemblePromptContributions', () => {
       ]);
     }
     // 普通轮有易变块：材料落其前——历史/当前轮的分界线，focus 与 turn-hint
-    // 保持与改动前相同的先行语邻接，不被整批材料隔断
+    // 保持先行语邻接，不被整批材料隔断
     {
       const h = await boot();
       await h.contribute('p-tctx', spec('tc', 'turn-context', 'TC'));

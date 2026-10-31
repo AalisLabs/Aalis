@@ -217,7 +217,7 @@ describe('/relation 整理与体检：立即反馈与结果按会话的语言', 
     });
   });
 
-  it('zh-CN 与改动前逐字相同', async () => {
+  it('zh-CN：原文', async () => {
     expect(await consolidateAndMaintain('zh-CN')).toEqual({
       acks: [
         '正在整理关系图（autoLink=off，LLM=on），请稍候…',
@@ -318,7 +318,7 @@ describe('/relation consolidation-status 按会话的语言', () => {
     ]);
   });
 
-  it('zh-CN 与改动前逐字相同', async () => {
+  it('zh-CN：原文', async () => {
     expect(await statuses('zh-CN')).toEqual([
       '注意：本次运行以来尚未执行过整理。\n触发方式：/relation consolidate（手动）、/relation maintain（先整理后压缩），或容量淘汰前自动触发。',
       `最近一次整理：2026/10/29 06:05:03（触发方式：手动）\n${COUNTED}，重复事件候选 12（合并 13），LLM 通过 9 否决 10（缓存命中 14） 摘要重写 11`,
