@@ -30,7 +30,7 @@ import { fakeTty } from '../helpers/tty.js';
 
 // ════════════════════════════════════════════════════════════
 // 终端界面是 owner 自己看的，按全局层的语言（{ host: true }，plugin-i18n 的插件配置）显示，不看终端会话自己的语言设置：欢迎行、
-// 帮助页、审批卡的标题与按键提示、附件类别取 plugin-cli 的字典；审批的事实是逐字的参数，里面伪造的文字对象原样显示。
+// 帮助页、审批卡的标题与按键提示、附件类别、底栏的按键提示取 plugin-cli 的字典；审批的事实是逐字的参数，里面伪造的文字对象原样显示。
 // 宿主配置里的语言变了立即重绘；帮助页按终端宽度折行，审批卡上事实的标签补齐到同一宽度（译文长短不一）。
 // i18n 缺席或渲染抛错时按原文，抛错只告警一次。送达失败（含只带附件的出站）的原因是挂着文字对象的报错时交出文字对象。
 // 真的 plugin-i18n、会话管理与会话设置、会话服务（审批服务）与 TUI（假 TTY，收集 stdout 帧），记忆是内存实现，存储与 owner
@@ -232,6 +232,19 @@ describe('终端界面按全局层的语言', () => {
     await settle();
     expect(s.frame()).toContain(ZH.help);
     expect(s.frame()).not.toContain(EN.help);
+  });
+
+  it.each([
+    ['zh-CN', '^T 聊天  ·  ^L 日志  ·  ^S 状态  ·  ^G 帮助  ·  Esc 返回  ·  ^C 退出', '换行：关', '换行：开'],
+    ['en', '^T Chat  ·  ^L Logs  ·  ^S Status  ·  ^G Help  ·  Esc Back  ·  ^C Exit', 'Wrap: off', 'Wrap: on'],
+  ])('底栏的按键提示按 %s：按键记号照旧，后面的词取字典；日志页另有换行的开关', async (language, keys, off, on) => {
+    const s = await setup({ language: [language] });
+    const footer = () => s.frame().split('\n').at(-1)?.trim();
+    expect(footer()).toBe(keys);
+    await s.ctrl('l');
+    expect(footer()).toBe(`${keys}  ·  ^W ${off}`);
+    await s.ctrl('w');
+    expect(footer()).toBe(`${keys}  ·  ^W ${on}`);
   });
 
   it('帮助页按终端宽度折行：80 列下英文的每一句都完整，没有截断的行，断行落在空格处', async () => {

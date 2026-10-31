@@ -296,7 +296,7 @@ describe('卡片显示', () => {
     expect(frame).toMatch(new RegExp(`省略 [\\d,]+ ${unit}`));
     // 卡片挤不掉标题栏与页脚
     expect(frame).toContain('[CHAT]');
-    expect(frame).toContain('^C exit');
+    expect(frame).toContain('^C 退出');
   });
 
   it('子会话里的审批：事实之前多一行「子任务」，写根会话以下的各级标题；名字里的转义序列照清洗显示，换行与别的多行事实一样成续行、缩进到值的那一列；根会话的卡没有这一行', async () => {

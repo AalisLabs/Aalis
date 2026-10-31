@@ -1165,21 +1165,22 @@ class CliTui {
     return `${chalk.gray('…')} ${' '.repeat(this.config.prompt.length)} `;
   }
 
+  /** 底栏：按键记号后面写它的作用（视图名同启动视图的选项，退出同帮助页），日志页另写换行的开关；按显示宽度截到一行 */
   private renderFooter(width: number): string {
-    const baseItems = [
-      `${chalk.cyan('^T')} chat`,
-      `${chalk.cyan('^L')} logs`,
-      `${chalk.cyan('^S')} status`,
-      `${chalk.cyan('^G')} help`,
-      `${chalk.cyan('Esc')} back`,
-      `${chalk.cyan('^C')} exit`,
+    const keys: Array<[string, TextRef]> = [
+      ['^T', t('viewChat')],
+      ['^L', t('viewLogs')],
+      ['^S', t('viewStatus')],
+      ['^G', t('viewHelp')],
+      ['Esc', t('footerBack')],
+      ['^C', t('helpExit')],
     ];
+    const items = keys.map(([key, text]) => `${chalk.cyan(key)} ${this.localize(text)}`);
     if (this.view === 'logs') {
-      baseItems.push(`${chalk.cyan('^W')} wrap:${this.logWrap ? chalk.green('on') : chalk.gray('off')}`);
+      const state = this.logWrap ? chalk.green(this.localize(t('wrapOn'))) : chalk.gray(this.localize(t('wrapOff')));
+      items.push(`${chalk.cyan('^W')} ${this.localize(t('footerWrap', { state }))}`);
     }
-    const items = baseItems.join(chalk.gray('  ·  '));
-    const left = ` ${items} `;
-    return padAnsi(chalk.gray.dim(left), width);
+    return padAnsi(chalk.gray.dim(` ${items.join(chalk.gray('  ·  '))} `), width);
   }
 }
 
