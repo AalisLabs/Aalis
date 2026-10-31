@@ -2,6 +2,7 @@ import { expect, vi } from 'vitest';
 import { commands } from '../../packages/api-commands/src/index.js';
 import { gateway, windowKey } from '../../packages/api-gateway/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
+import { type SessionInfo, sessionKind } from '../../packages/api-session-manager/src/index.js';
 import { type App, type Events, events } from '../../packages/core/src/index.js';
 import type { IncomingMessage, OutgoingMessage } from '../../packages/schema-message/src/index.js';
 
@@ -53,6 +54,30 @@ export function storedRoom(sessionId: string, name?: string): Record<string, unk
     originPlatform: platform,
     originChat: { type: sessionType, multiParty: sessionType !== 'private', selfId, targetId },
   };
+}
+
+/**
+ * session-manager 替身回的会话档：OneBot 写法的房间 id（四段）带上收录时记下的出生平台与聊天窗口（与预置会话表的
+ * {@link storedRoom} 相同），种类按父会话与出生平台推出，与参考实现同一口径
+ */
+export function sessionInfoOf(id: string, parentId?: string): SessionInfo {
+  const { originPlatform, originChat } =
+    parentId === undefined && id.split(':').length >= 4
+      ? storedRoom(id)
+      : { originPlatform: undefined, originChat: undefined };
+  const info = {
+    id,
+    name: id,
+    parentId,
+    children: [],
+    status: 'active' as const,
+    createdAt: 0,
+    updatedAt: 0,
+    ...(originPlatform === undefined
+      ? {}
+      : { originPlatform: originPlatform as string, originChat: originChat as SessionInfo['originChat'] }),
+  };
+  return { ...info, kind: sessionKind(info) };
 }
 
 /**

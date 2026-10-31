@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { llm } from '../../packages/api-llm/src/index.js';
 import { platform } from '../../packages/api-platform/src/index.js';
 import { processService } from '../../packages/api-process/src/index.js';
-import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
@@ -15,7 +14,6 @@ import mcpClientPlugin from '../../packages/plugin-mcp-client/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import officePlugin from '../../packages/plugin-office/src/index.js';
 import okxPlugin from '../../packages/plugin-okx-trading/src/index.js';
-import paperPlugin from '../../packages/plugin-paper/src/index.js';
 import schedulerPlugin from '../../packages/plugin-scheduler/src/index.js';
 import skillsPlugin from '../../packages/plugin-skills/src/index.js';
 import subtaskPlugin from '../../packages/plugin-subtask/src/index.js';
@@ -32,8 +30,8 @@ import websearchPlugin from '../../packages/plugin-websearch-serper/src/index.js
 import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
 import { isTextRef, resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
-import { memoryStorage } from '../fixtures/paper.js';
 import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // ════════════════════════════════════════════════════════════
@@ -41,7 +39,7 @@ import { makeToolRegistry } from '../fixtures/tool-registry.js';
 // 只给模型。每个插件单独起在一个 App 里，存储是内存替身、进程服务是空替身（只为让要它们的插件激活），WebUI 是测试台，另有真的
 // cron-engine（定时与编排要它），要凭据的插件给占位凭据。OKX 的概述按模拟盘与实盘分两句；mcp-client 按服务器桥接的分组也有，服务器是一启动就退出的 node 进程。
 // tool-onebot 只在出现 OneBot 平台时登记，激活之后另登记一个 OneBot 平台的替身；user-profile 要记忆（内存实现）与对话模型（替身），
-// user-relation 只要记忆，同用这一份；白纸要会话管理（替身）。
+// user-relation 只要记忆，同用这一份。
 // ════════════════════════════════════════════════════════════
 
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
@@ -70,17 +68,6 @@ const onebotOnline: Around = {
       sendMessage: async () => {},
     });
     await new Promise(resolve => setTimeout(resolve, 0));
-  },
-};
-
-/** 会话管理的替身：没有会话，场所都是默认工作区 */
-const noSessions: Around = {
-  async before(app) {
-    app.bind({ provide }).provide.use(sessionManager, {
-      placeOf: () => ({ kind: 'workspace', key: 'workspace:default' }),
-      listSessions: () => [],
-      getSession: () => undefined,
-    } as never);
   },
 };
 
@@ -120,7 +107,6 @@ const CASES: [string, PluginDefinition, string[], Record<string, unknown>?, Arou
   ['tool-onebot', toolOnebotPlugin, ['onebot-daily', 'onebot-group', 'onebot-personal'], {}, onebotOnline],
   ['user-profile', userProfilePlugin, ['user-profile'], {}, memoryAndModel],
   ['user-relation', userRelationPlugin, ['user-relation'], {}, memoryAndModel],
-  ['paper', paperPlugin, ['paper', 'works'], {}, noSessions],
 ];
 
 /** 只起这一个插件（宿主另做的见 around），交出它登记的分组 */

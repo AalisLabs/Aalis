@@ -12,7 +12,6 @@ import ollama from '../../packages/plugin-llm-ollama/src/index.js';
 import maimai from '../../packages/plugin-maimai/src/index.js';
 import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
 import okx from '../../packages/plugin-okx-trading/src/index.js';
-import cursor from '../../packages/plugin-remote-agent-cursor/src/index.js';
 import browser from '../../packages/plugin-tool-browser/src/index.js';
 import serper from '../../packages/plugin-websearch-serper/src/index.js';
 import { parseConfig, validateConfig } from '../../packages/schema-config/src/index.js';
@@ -138,7 +137,6 @@ describe('请求基址带查询串或片段：读配置时报错，不发请求'
   const plugins = [
     { plugin: okx, extra: { apiKey: 'k', secretKey: 's', passphrase: 'p' } },
     { plugin: maimai, extra: { developerToken: 'zz-placeholder-token' } },
-    { plugin: cursor, extra: { apiKey: 'zz-placeholder-key' } },
   ];
   // 按原文判：末尾单个问号与片段解析后查询串为空，拼出来的地址照样是坏的
   const forms = [
@@ -163,7 +161,6 @@ describe('请求基址解析不了或带用户名、密码：读配置时报错�
   const plugins = [
     { plugin: okx, extra: { apiKey: 'k', secretKey: 's', passphrase: 'p' } },
     { plugin: maimai, extra: { developerToken: 'zz-placeholder-token' } },
-    { plugin: cursor, extra: { apiKey: 'zz-placeholder-key' } },
   ];
   const forms = [
     { form: '解析不了', baseUrl: 'not-a-url' },

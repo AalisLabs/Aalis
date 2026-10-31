@@ -20,8 +20,8 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
-import { memoryStorage } from '../fixtures/paper.js';
 
 // ════════════════════════════════════════════════════════════
 // 无人值守：不连任何界面，owner 在自己的会话里交代一个多步任务，其中一步需要确认。整条真实链路

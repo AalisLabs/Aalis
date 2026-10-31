@@ -502,11 +502,9 @@ describe('WebUI 客户端只认契约不认插件', () => {
   const excluded = new Set([...protocolFields(), ...adminFields(), ...frameFields(), llm.name]);
 
   it('收集到的登记与排除表不空：判据没有因为写法变化失效', () => {
-    expect([...pages]).toEqual(expect.arrayContaining(['paper', 'paper-room', 'skills', 'doctor', 'uploads']));
-    expect([...actions]).toEqual(
-      expect.arrayContaining(['cancelTask', 'runDiagnostics', 'approveWork', 'deleteUpload']),
-    );
-    expect([...settings]).toEqual(expect.arrayContaining(['llm', 'persona', 'enabledToolGroups', 'paperEnabled']));
+    expect([...pages]).toEqual(expect.arrayContaining(['scheduler', 'authority', 'skills', 'doctor', 'uploads']));
+    expect([...actions]).toEqual(expect.arrayContaining(['createJob', 'runDiagnostics', 'deleteUpload']));
+    expect([...settings]).toEqual(expect.arrayContaining(['llm', 'persona', 'enabledToolGroups', 'language']));
     expect([...tools]).toEqual(expect.arrayContaining(['exec', 'file_write', 'analyze_image']));
     expect([...excluded]).toEqual(
       expect.arrayContaining(['sessionId', 'epoch', 'seq', 'type', 'entry', 'nonce', 'target', 'tokens', 'code']),

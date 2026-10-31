@@ -24,8 +24,8 @@ import { defineTexts, localize, resolveText, TextError } from '../../packages/sc
 import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { createMockLLMPlugin, MockLLMService } from '../fixtures/mock-llm.js';
-import { memoryStorage } from '../fixtures/paper.js';
 import { storedRoom } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════

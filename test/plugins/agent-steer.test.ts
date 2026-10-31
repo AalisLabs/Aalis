@@ -30,7 +30,7 @@ import {
 } from '../../packages/schema-message/src/index.js';
 import { command, hanging, withCommands } from '../fixtures/clearing.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { sessionInfoOf } from '../fixtures/paper.js';
+import { sessionInfoOf } from '../fixtures/rooms.js';
 import { callTool, StepModel, stepModelPlugin } from '../fixtures/step-llm.js';
 import { deferred } from '../helpers/deferred.js';
 

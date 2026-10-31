@@ -5,8 +5,11 @@ import { describe, expect, it } from 'vitest';
 
 const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '../../packages');
 const CORE_PEER = '>=0.21.0 <1.0.0';
-/** 2026-10-31 一节发布的包里带 core peer 的 107 个一律抬到 0.21（新版插件的显示名与页面标题是文字对象，core 0.21 起才收） */
-const CORE_PEER_COUNT = 107;
+/**
+ * 2026-10-31 一节发布的包里带 core peer 的 107 个一律抬到 0.21（新版插件的显示名与页面标题是文字对象，core 0.21 起才收）；
+ * 其中六个之后移出主仓、改做仓外的扩展插件，仓里剩 101 个
+ */
+const CORE_PEER_COUNT = 101;
 /** 没改动、不发版的包留在原下限 */
 const UNRELEASED = [
   'api-asr = >=0.20.0 <1.0.0',
@@ -57,7 +60,7 @@ function gte(a: [number, number, number], b: [number, number, number]): boolean 
 }
 
 describe('发布声明（2026-10-31 一节）', () => {
-  it('带 @aalis/core peer 的包：本批发布的 107 个为 >=0.21.0 <1.0.0，没改动、不发版的 11 个留在原下限', () => {
+  it('带 @aalis/core peer 的包：本批发布、仍在仓里的 101 个为 >=0.21.0 <1.0.0，没改动、不发版的 11 个留在原下限', () => {
     const hits: Array<{ dir: string; spec: string }> = [];
     for (const dir of dirs()) {
       const manifest = readManifest(dir);

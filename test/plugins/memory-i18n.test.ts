@@ -22,8 +22,8 @@ import { hostedApp } from '../fixtures/app.js';
 import { i18nSection } from '../fixtures/host-language.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { fakeSummaryLLM } from '../fixtures/memory-summary.js';
-import { memoryStorage } from '../fixtures/paper.js';
 import { roomCommands, seedRooms } from '../fixtures/rooms.js';
 import { client } from '../fixtures/session-client.js';
 

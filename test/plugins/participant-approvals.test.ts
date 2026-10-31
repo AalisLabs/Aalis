@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Verdict } from '../../packages/api-authority/src/index.js';
 import type { ToolCallContext, ToolCallRequest } from '../../packages/api-tools/src/index.js';
 import type { FromTurn, IncomingMessage } from '../../packages/schema-message/src/index.js';
-import { memoryStorage } from '../fixtures/paper.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { answerOf, cardOf, closeParticipantApps, participantsApp } from '../fixtures/participants.js';
 
 // ════════════════════════════════════════════════════════════

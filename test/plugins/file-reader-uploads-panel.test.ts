@@ -9,8 +9,9 @@ import type { IncomingMessage } from '../../packages/schema-message/src/index.js
 import { png } from '../fixtures/file-heads.js';
 import { renderIn } from '../fixtures/host-language.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
-import { memoryStorage, sessionInfoOf } from '../fixtures/paper.js';
+import { sessionInfoOf } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
 // file-reader 的会话面板「上传的文件」：取代宿主写死的文件标签。只在本会话有上传文件时出现，列出本会话的文件，

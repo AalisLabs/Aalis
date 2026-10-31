@@ -30,7 +30,7 @@ import type { IncomingMessage } from '../../packages/schema-message/src/index.js
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
-import { memoryStorage } from '../fixtures/paper.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { recordRoom } from '../fixtures/rooms.js';
 import { CLIENT, client, DETACHED_SURFACE, type Frame } from '../fixtures/session-client.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
@@ -814,7 +814,7 @@ describe('会话设置', () => {
     expect(find(items, 'persona')).toMatchObject({ effective: 'default', source: 'default' });
     expect(find(items, 'persona')).not.toHaveProperty('actual');
     // 只能设到场所为止与不适用于 owner 会话的项不列
-    expect(items.map(r => r.key)).not.toEqual(expect.arrayContaining(['paperName']));
+    expect(items.map(r => r.key)).not.toEqual(expect.arrayContaining(['roomNote']));
     expect(items.map(r => r.key)).not.toEqual(expect.arrayContaining(['language']));
     expect((await c.fail('session/config/get', { sessionId: 'session-nope' })).data?.code).toBe('not-found');
   });
@@ -842,7 +842,7 @@ describe('会话设置', () => {
       ['zz-agent', 'iterations', 0],
       ['zz-agent', 'bogus', 1],
       ['zz-nope', 'persona', 'x'],
-      ['zz-agent', 'paperName', '<白纸>'],
+      ['zz-agent', 'roomNote', '<备注>'],
       ['zz-agent', 'language', ['en']],
     ] as const) {
       const err = await c.fail('session/config/update', { sessionId: s.id, plugin, key, value });
@@ -886,10 +886,10 @@ describe('会话设置', () => {
     const written = await c.call('session/config/layer/update', {
       layer: WINDOW,
       plugin: 'zz-agent',
-      key: 'paperName',
-      value: '<群白纸>',
+      key: 'roomNote',
+      value: '<群备注>',
     });
-    expect(find(written.items, 'paperName')).toMatchObject({ value: '<群白纸>', source: 'place' });
+    expect(find(written.items, 'roomNote')).toMatchObject({ value: '<群备注>', source: 'place' });
     const room = await c.call('session/config/get', { sessionId: ROOM });
     expect(find(room.items, 'think')).toMatchObject({ effective: 'high', source: 'platformType' });
     expect(room.platform, '房间按出生平台取平台档').toBe('onebot');

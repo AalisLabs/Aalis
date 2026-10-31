@@ -18,8 +18,8 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
-import { memoryStorage } from '../fixtures/paper.js';
 import { client } from '../fixtures/session-client.js';
 
 // ════════════════════════════════════════════════════════════

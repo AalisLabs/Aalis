@@ -6,7 +6,7 @@ import sessionManagerPlugin from '../../packages/plugin-session-manager/src/inde
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
 import { provideHostPaths } from './host-paths.js';
 import { registerHubs } from './hubs.js';
-import { memoryStorage } from './paper.js';
+import { memoryStorage } from './memory-files.js';
 
 /**
  * 给终端接上会话服务：钩子与贡献点枢纽、内存记忆、宿主路径（home）、存储替身、会话管理与会话服务，再给终端的会话（cli-default）
