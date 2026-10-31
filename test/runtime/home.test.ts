@@ -225,7 +225,7 @@ describe('isFullyAbsolute', () => {
 describe('derivePaths', () => {
   it('布局全部挂在家目录下，安装集单独给', () => {
     const p = derivePaths('/h', '/app', 'p');
-    expect(p).toMatchObject({
+    expect(p).toEqual({
       home: '/h',
       profile: 'p',
       app: '/app',
@@ -233,10 +233,11 @@ describe('derivePaths', () => {
       secrets: '/h/secrets.yaml',
       state: '/h/state',
       logs: '/h/logs',
+      cache: '/h/cache',
       run: '/h/run',
       tmp: '/h/tmp',
       self: { personas: '/h/self/personas', skills: '/h/self/skills', workflows: '/h/self/workflows' },
-      stage: { drafts: '/h/stage/drafts', public: '/h/stage/public', paper: '/h/stage/paper' },
+      workspace: '/h/workspace',
     });
     expect('profile' in derivePaths('/h', '/app')).toBe(false);
   });
@@ -245,7 +246,6 @@ describe('derivePaths', () => {
     const p = derivePaths('/h', '/app');
     expect(Object.isFrozen(p)).toBe(true);
     expect(Object.isFrozen(p.self)).toBe(true);
-    expect(Object.isFrozen(p.stage)).toBe(true);
   });
 });
 
@@ -270,7 +270,7 @@ describe('initHome', () => {
     expect(statSync(paths.config).mode & 0o777).toBe(0o600);
     expect(statSync(paths.secrets).mode & 0o777).toBe(0o600);
     expect(readFileSync(paths.secrets, 'utf-8')).toBe('');
-    expect(statSync(paths.stage.paper).isDirectory()).toBe(true);
+    expect(statSync(paths.workspace).isDirectory()).toBe(true);
   });
 
   it('已存在的空目录沿用并收紧为 0700', () => {
@@ -296,6 +296,7 @@ describe('initHome', () => {
     const paths = derivePaths(tmp(), '/app');
     mkdirSync(paths.state);
     mkdirSync(paths.self.skills, { recursive: true });
+    mkdirSync(paths.workspace);
     writeFileSync(paths.secrets, 'k: v\n');
     chmodSync(paths.secrets, 0o644);
     writeFileSync(join(paths.home, '.DS_Store'), '');

@@ -14,7 +14,7 @@
 - 选择层（`list()` / `use` / `of(id)` / `present` / `follow`）由 core 定义，每个服务都一样，契约改不了。契约不在业务层上另写挑选哪一家的逻辑：固定某一家用 `of(id)`，要全部提供者就遍历 `list()`。
 - 业务层是契约的接口，插件经活句柄调用（`caps.x.use`、`of(id)`、`list()` 条目的 `use`）。不给 `bind` 时业务层就是提供者接口；给 `bind` 时只包装业务方法或加登记方法：`Bound*` 接口 `extends` 提供者接口，实现写 `Object.assign(Object.create(port.provider), { ... })`。
 - 提供者接口不依赖句柄截下的那些行为：业务成员不叫 `then`、不用 symbol 键，不要求调用方迭代、展开或序列化句柄本身。句柄的全部边界见 [句柄的边界](../core/context.md#句柄的边界)。
-- 按领域键（模型、平台、远端类型）区分的提供者，条目 id 就是领域键，调用方用 `of(id)` 取，或在 `list()` 上筛（如 `caps.llm.of('<provider>/<model>')`）。契约提供的筛选辅助函数收 `Pick<ServiceSelection<P>, 'list'>`，返回 `ProviderEntry`。
+- 按领域键（模型、平台）区分的提供者，条目 id 就是领域键，调用方用 `of(id)` 取，或在 `list()` 上筛（如 `caps.llm.of('<provider>/<model>')`）。契约提供的筛选辅助函数收 `Pick<ServiceSelection<P>, 'list'>`，返回 `ProviderEntry`。
 
 ## 登记方法
 

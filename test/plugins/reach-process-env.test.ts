@@ -121,21 +121,23 @@ async function start() {
   const sm = started.host.sessionManager.use;
   const svc = started.host.reach.use;
   const webui = (await sm.createSession({ name: 'w' }, { createdFrom: 'webui' })).id;
-  return { sm, svc, webui };
+  return { sm, svc, webui, paths: started.paths };
 }
 
 const shellCalls = () => readFileSync(log, 'utf8').trim().split('\n');
 
 describe('取 login shell 的环境', () => {
-  it('在场所的主目录下取（主目录还没建时在用户家目录下取），同一个主目录只取一次；宿主执行用完整的环境', async () => {
+  it('在场所的主目录下取（主目录不在时在用户家目录下取），同一个主目录只取一次；宿主执行用完整的环境', async () => {
     process.env.SHELL = fakeShell();
-    const { sm, svc, webui } = await start();
+    const { paths, sm, svc, webui } = await start();
+    // 默认工作区目录由 runtime 初始化时建；不在（如被删掉）时与新开一个终端相同
+    rmSync(paths.workspace, { recursive: true, force: true });
     const cred = await svc.forCall(ownerTurn(webui));
     const host = await cred.processEnv('host');
     expect(host).toMatchObject({ ...RC_DROPPED, ...RC_KEPT, ZZ_DAEMON_ONLY: '1', HOME: dirs.user });
     await cred.processEnv('sandbox');
     await (await svc.forCall(ownerTurn(webui))).processEnv('host');
-    expect(shellCalls(), '默认工作区的白纸首次写入时才建').toEqual([dirs.user]);
+    expect(shellCalls(), '默认工作区目录不在').toEqual([dirs.user]);
 
     const proj = join(dirs.base, 'code', 'proj');
     mkdirSync(proj, { recursive: true });

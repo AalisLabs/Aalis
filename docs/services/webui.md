@@ -71,9 +71,6 @@ export interface WebuiClientProvider {
 
 | 插件 | 页面 |
 | --- | --- |
-| `plugin-paper` | 白纸（插件详情）与本群白纸（会话面板），另发未读告警与账本读取失败的提示 |
-| `plugin-publish-review` | 作品审核，另发待裁决数与账本读取失败的提示 |
-| `plugin-works-site` | 作品站（每个实例一页），健康状况不正常时发提示 |
 | `plugin-scheduler` | 计划任务 |
 | `plugin-authority` | 权限（设置） |
 | `plugin-skills` | 技能（设置） |

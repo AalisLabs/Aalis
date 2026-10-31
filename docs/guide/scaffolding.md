@@ -135,7 +135,7 @@ my-bot/
 └── README.md           # 启动、配置、装更多插件，以及第一次运行与安装排障的文档地址
 ```
 
-首次启动后，`home/` 里还会出现 `state/`（数据库、向量库、会话、附件、checkpoint、WebUI 凭据等）、`self/`（人设与技能）、`stage/`（白纸成品与发布的作品）、`tmp/`、`cache/`、`logs/`（`latest.log`）、`run/`（实例锁）与 `workspace/`（文件工具的默认工作根）。这些子目录由用到它们的部分在启动时建出（多数是存储插件的内部根），完整布局见 [runtime 的「家目录」](../architecture/runtime.md#家目录)；其中还没有使用方的 `stage/drafts` 不会出现。
+首次启动后，`home/` 里还会出现 `state/`（数据库、向量库、会话、附件、checkpoint、WebUI 凭据等）、`self/`（人设与技能）、`tmp/`、`cache/`、`logs/`（`latest.log`）、`run/`（实例锁）与 `workspace/`（文件工具的默认工作根）。这些子目录由用到它们的部分在启动时建出（多数是存储插件的内部根），完整布局见 [runtime 的「家目录」](../architecture/runtime.md#家目录)。
 
 入口 `index.mjs`：
 

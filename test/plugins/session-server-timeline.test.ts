@@ -1188,11 +1188,11 @@ describe('条目', () => {
       nickname: '阿七',
     });
     await archive.archiveIncoming({
-      content: '白纸任务完成',
+      content: '报告任务完成',
       sessionId: ROOM,
       platform: 'onebot',
-      source: 'paper:1',
-      hostNotice: { kind: 'paper-task', id: 'n1' },
+      source: 'zz-reporter:1',
+      hostNotice: { kind: 'zz-report', id: 'n1' },
     });
     await archive.archiveIncoming({
       content: '写给模型的那句话',
@@ -1219,7 +1219,7 @@ describe('条目', () => {
         attachments: [],
         speaker: { platform: 'onebot', userId: '7', nickname: '阿七', owner: false },
       },
-      { kind: 'notice', topic: 'paper-task', text: '白纸任务完成', attachments: [], noticeId: 'n1' },
+      { kind: 'notice', topic: 'zz-report', text: '报告任务完成', attachments: [], noticeId: 'n1' },
       {
         kind: 'notice',
         topic: 'zz-kind',

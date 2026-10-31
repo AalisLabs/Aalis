@@ -47,15 +47,15 @@ async function world(showToolNames = true, firstGroupTools = 0, maxSearchResults
       });
     }
   }
-  service.registerGroup({ name: 'paper', label: '白纸创作', description: '把需求交给代理制作网页、图像和动画' });
-  service.registerGroup({ name: 'works', label: '作品发布', description: '把成品提名审核并公开展示' });
+  service.registerGroup({ name: 'canvas', label: '画布创作', description: '按需求制作网页、图像和动画' });
+  service.registerGroup({ name: 'billing', label: '账单结算', description: '核对并结清待付账单' });
   service.registerGroup({ name: 'secret', label: '私密管理', description: '处理受限资料' });
   for (const [name, description, groups] of [
-    ['read_note', '读取 paper_task 指令笔记', ['paper']],
-    ['paper_status', '查看任务状态', ['paper']],
-    ['paper_task', '提交制作任务', ['paper']],
-    ['works_nominate', '提名作品', ['works']],
-    ['bridge', '两组共用的工具', ['paper', 'secret']],
+    ['read_note', '读取 canvas_task 指令笔记', ['canvas']],
+    ['canvas_status', '查看任务状态', ['canvas']],
+    ['canvas_task', '提交制作任务', ['canvas']],
+    ['billing_settle', '结清账单', ['billing']],
+    ['bridge', '两组共用的工具', ['canvas', 'secret']],
     ['helper', '通用帮助', []],
   ] as const) {
     service.register({
@@ -95,17 +95,17 @@ async function world(showToolNames = true, firstGroupTools = 0, maxSearchResults
 describe('search_tools 可用能力目录', () => {
   it('只概括本轮已启用分组，组描述和组内工具名帮助发现能力，禁用组不泄漏', async () => {
     const h = await world();
-    const definitions = await h.visible(['paper']);
+    const definitions = await h.visible(['canvas']);
     const catalog = definitions[0].function.description;
-    expect(catalog).toContain('白纸创作');
+    expect(catalog).toContain('画布创作');
     expect(catalog).toContain('制作网页、图像和动画');
-    expect(catalog).toContain('paper_task');
-    expect(catalog).not.toContain('作品发布');
-    expect(catalog).not.toContain('works_nominate');
+    expect(catalog).toContain('canvas_task');
+    expect(catalog).not.toContain('账单结算');
+    expect(catalog).not.toContain('billing_settle');
     expect(catalog).not.toContain('私密管理');
-    expect((await h.search('白纸创作', ['paper'])).tools.map(tool => tool.name)).toContain('paper_task');
-    expect((await h.search('作品发布', ['paper'])).tools).toEqual([]);
-    expect((await h.search('私密管理', ['paper'])).tools).toEqual([]);
+    expect((await h.search('画布创作', ['canvas'])).tools.map(tool => tool.name)).toContain('canvas_task');
+    expect((await h.search('账单结算', ['canvas'])).tools).toEqual([]);
+    expect((await h.search('私密管理', ['canvas'])).tools).toEqual([]);
   });
 
   it('分组名是文字对象：目录与搜索按它的原文', async () => {
@@ -126,10 +126,10 @@ describe('search_tools 可用能力目录', () => {
 
   it('名称精确和前缀优先，同分结果保持注册顺序', async () => {
     const h = await world();
-    expect((await h.search('paper_task', ['paper'])).tools.map(tool => tool.name)[0]).toBe('paper_task');
-    expect((await h.search('paper', ['paper'])).tools.map(tool => tool.name).slice(0, 2)).toEqual([
-      'paper_status',
-      'paper_task',
+    expect((await h.search('canvas_task', ['canvas'])).tools.map(tool => tool.name)[0]).toBe('canvas_task');
+    expect((await h.search('canvas', ['canvas'])).tools.map(tool => tool.name).slice(0, 2)).toEqual([
+      'canvas_status',
+      'canvas_task',
     ]);
   });
 
@@ -178,15 +178,15 @@ describe('search_tools 可用能力目录', () => {
 
   it('showToolNames 关闭时不注入能力目录，搜索仍按分组可用', async () => {
     const h = await world(false);
-    const catalog = (await h.visible(['paper']))[0].function.description;
-    expect(catalog).not.toContain('白纸创作');
-    expect(catalog).not.toContain('paper_task');
-    expect((await h.search('白纸创作', ['paper'])).tools.map(tool => tool.name)).toContain('paper_task');
+    const catalog = (await h.visible(['canvas']))[0].function.description;
+    expect(catalog).not.toContain('画布创作');
+    expect(catalog).not.toContain('canvas_task');
+    expect((await h.search('画布创作', ['canvas'])).tools.map(tool => tool.name)).toContain('canvas_task');
   });
 
   it('大量组说明受固定长度预算约束', async () => {
     const h = await world();
-    const enabled = ['paper'];
+    const enabled = ['canvas'];
     for (let i = 0; i < 80; i++) {
       const group = `group_${i}`;
       enabled.push(group);
@@ -207,14 +207,14 @@ describe('search_tools 可用能力目录', () => {
 
   it('前组有 200 个工具时，有限目录仍保留后组能力和工具示例', async () => {
     const h = await world(true, 200);
-    const catalog = (await h.visible(['bulk', 'paper']))[0].function.description;
+    const catalog = (await h.visible(['bulk', 'canvas']))[0].function.description;
     expect(catalog.length).toBeLessThan(4000);
     expect(catalog).toContain('庞大操作集');
-    expect(catalog).toContain('白纸创作');
+    expect(catalog).toContain('画布创作');
     expect(catalog).toContain('制作网页、图像和动画');
-    expect(catalog).toContain('paper_task');
-    expect(catalog).not.toContain('作品发布');
-    expect(catalog).not.toContain('works_nominate');
+    expect(catalog).toContain('canvas_task');
+    expect(catalog).not.toContain('账单结算');
+    expect(catalog).not.toContain('billing_settle');
   });
 
   it('模型请求过大仍受宿主单次上限约束，较小 limit 与分页不漏结果', async () => {

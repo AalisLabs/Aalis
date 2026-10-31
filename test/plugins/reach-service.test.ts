@@ -11,7 +11,6 @@ import {
   OWNER_QQ,
   OWNER_TURN,
   ownerTurn,
-  paperOf,
   projectSession,
   type ReachDirs,
   reachDirs,
@@ -31,7 +30,6 @@ const MEMBER = '30001';
 const OWNER_DM = `onebot:10000:private:${OWNER_QQ}`;
 const MEMBER_DM = `onebot:10000:private:${MEMBER}`;
 const GROUP = 'onebot:10000:group:20001';
-const DEFAULT_WORKSPACE = 'workspace:default';
 
 let dirs: ReachDirs;
 let savedHome: string | undefined;
@@ -107,12 +105,10 @@ describe('上限：主体是 owner 的一轮有本地效果，不论在哪个会
     );
   });
 
-  it('owner 在群里亲手发起：主目录与白纸是这个群所在场所的白纸', async () => {
-    const { host, sm, svc } = await start();
+  it('owner 在群里亲手发起：主目录是默认工作区目录', async () => {
+    const { host, paths, svc } = await start();
     await recordRoom(host.events.use, GROUP);
-    const paper = paperOf(dirs.home, sm.placeOf(GROUP).key);
-    expect(paper).not.toBe(paperOf(dirs.home, DEFAULT_WORKSPACE));
-    expect(await svc.forCall(handTurn(GROUP, OWNER_QQ))).toMatchObject({ exec: 'sandbox', home: paper, paper });
+    expect(await svc.forCall(handTurn(GROUP, OWNER_QQ))).toMatchObject({ exec: 'sandbox', home: paths.workspace });
   });
 
   it('群里没点名、被频率触发挑中的话按说话的人算：owner 的有，群成员的没有', async () => {
@@ -143,7 +139,7 @@ describe('上限：主体是 owner 的一轮有本地效果，不论在哪个会
     expect((await svc.forCall(resume(MEMBER))).exec).toBe('none');
   });
 
-  it('没有本地效果的凭据：读写执行一律拒，不带主目录与白纸，没有子进程环境与沙箱策略', async () => {
+  it('没有本地效果的凭据：读写执行一律拒，不带主目录，没有子进程环境与沙箱策略', async () => {
     const { host, svc } = await start();
     await recordRoom(host.events.use, GROUP);
     const cred = await svc.forCall(handTurn(GROUP, MEMBER));
@@ -153,7 +149,6 @@ describe('上限：主体是 owner 的一轮有本地效果，不论在哪个会
     expect(isReachCredential({ ...cred, allows: () => true })).toBe(false);
     expect(isReachCredential(Object.assign({}, cred))).toBe(false);
     expect(cred).not.toHaveProperty('home');
-    expect(cred).not.toHaveProperty('paper');
     expect(await verdict(cred, read(join(dirs.user, 'notes.md')))).toBe(
       `读 ${join(dirs.user, 'notes.md')}：这一轮不只有 owner 的话，没有本地效果`,
     );
@@ -165,8 +160,8 @@ describe('上限：主体是 owner 的一轮有本地效果，不论在哪个会
 });
 
 describe('场所、绑定与档位', () => {
-  it('owner 的 IM 私聊与 WebUI 的会话在同一个工作区、同一档位时结果相同', async () => {
-    const { host, svc, webui } = await start();
+  it('owner 的 IM 私聊与 WebUI 的会话在同一个工作区、同一档位时结果相同：主目录是默认工作区目录，可写', async () => {
+    const { host, paths, svc, webui } = await start();
     await recordRoom(host.events.use, OWNER_DM);
     const fromWeb = await svc.forCall(ownerTurn(webui));
     const fromDm = await svc.forCall({
@@ -176,9 +171,8 @@ describe('场所、绑定与档位', () => {
       participants: [{ platform: 'onebot', userId: OWNER_QQ }],
       inbound: {},
     });
-    const paper = paperOf(dirs.home, DEFAULT_WORKSPACE);
     const requests: ReachRequest[] = [
-      write(join(paper, 'a.md')),
+      write(join(paths.workspace, 'a.md')),
       write(join(dirs.user, 'code', 'x.ts')),
       read(join(dirs.user, '.ssh', 'id_ed25519')),
       write(join(dirs.home, 'state', 'x')),
@@ -191,24 +185,23 @@ describe('场所、绑定与档位', () => {
     const summary = async (cred: ReachCredential) => ({
       exec: cred.exec,
       home: cred.home,
-      paper: cred.paper,
       verdicts: await Promise.all(requests.map(r => verdict(cred, r))),
     });
     expect(await summary(fromDm)).toEqual(await summary(fromWeb));
-    expect(fromWeb).toMatchObject({ exec: 'sandbox', home: paper, paper });
+    expect(fromWeb).toMatchObject({ exec: 'sandbox', home: paths.workspace });
+    expect(Object.keys(fromWeb).sort()).toEqual(['allows', 'exec', 'home', 'processEnv', 'require', 'sandboxPolicy']);
+    expect(await verdict(fromWeb, write(join(paths.workspace, 'a.md')))).toBe('allow');
+    expect(fromWeb.allows('read', join(paths.workspace, 'a.md'))).toBe(true);
   });
 
-  it('项目工作区里的 owner 会话：主目录是绑定目录，白纸是这个工作区的；默认工作区的会话主目录与白纸都是默认工作区的白纸', async () => {
-    const { sm, svc, webui } = await start();
+  it('项目工作区里的 owner 会话：主目录是绑定目录；没有绑定目录的会话主目录是默认工作区目录', async () => {
+    const { paths, sm, svc, webui } = await start();
     const root = join(dirs.base, 'code', 'proj');
     mkdirSync(root, { recursive: true });
     const project = await projectSession(sm, root);
 
-    const paper = paperOf(dirs.home, sm.placeOf(project).key);
-    expect(paper).not.toBe(paperOf(dirs.home, DEFAULT_WORKSPACE));
-    expect(await svc.forCall(ownerTurn(project))).toMatchObject({ home: root, paper });
-    const home = paperOf(dirs.home, DEFAULT_WORKSPACE);
-    expect(await svc.forCall(ownerTurn(webui))).toMatchObject({ home, paper: home });
+    expect(await svc.forCall(ownerTurn(project))).toMatchObject({ home: root });
+    expect(await svc.forCall(ownerTurn(webui))).toMatchObject({ home: paths.workspace });
   });
 
   it('项目会话绑定在 worktree 上：仓库的 git 目录可写、落点要问，仓库的其他 worktree 不可写', async () => {
@@ -303,14 +296,14 @@ describe('子任务随派它的那一轮', () => {
   const SCHEDULED: FromTurn = { platform: 'webui', participants: [OWNER_TURN], source: 'scheduler' };
 
   it('owner 亲手那一轮派的（那一轮没签发过凭据）：子任务与父会话一样，写自己的临时区；子任务里转后台的调用的续做随之', async () => {
-    const { host, sm, svc, webui } = await start();
+    const { host, paths, sm, svc, webui } = await start();
     const child = (await sm.createChildSession(webui, {})).id;
     const turn = await dispatch(host, child, webui, { fromTurn: OWNER_HAND });
 
     const issued = await svc.forCall(turn);
-    expect(issued).toMatchObject({ exec: 'sandbox', home: paperOf(dirs.home, DEFAULT_WORKSPACE) });
+    expect(issued).toMatchObject({ exec: 'sandbox', home: paths.workspace });
     expect(issued.allows('write', join(sessionTmpIn(dirs.home, child), 'x'))).toBe(true);
-    const note = join(paperOf(dirs.home, DEFAULT_WORKSPACE), 'a.md');
+    const note = join(paths.workspace, 'a.md');
     expect(issued.allows('write', note)).toBe(true);
 
     const resumed: OriginTurn = {
@@ -638,11 +631,9 @@ describe('本会话临时区', () => {
 
 describe('沙箱策略', () => {
   it('只读与工作区档有：可写根含场所的主目录与本会话临时区', async () => {
-    const { svc, webui } = await start();
+    const { paths, svc, webui } = await start();
     const policy = (await svc.forCall(ownerTurn(webui))).sandboxPolicy();
-    expect(policy.write).toEqual(
-      expect.arrayContaining([paperOf(dirs.home, DEFAULT_WORKSPACE), sessionTmpIn(dirs.home, webui)]),
-    );
+    expect(policy.write).toEqual(expect.arrayContaining([paths.workspace, sessionTmpIn(dirs.home, webui)]));
     expect(policy.network).toBe('on');
   });
 });

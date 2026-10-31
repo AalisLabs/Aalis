@@ -632,7 +632,7 @@ describe('状态在回合开始时翻 active', () => {
     expect(sm.getSession(GROUP)?.status).toBe('completed');
   });
 
-  it('回合中途发出的出站消息（send_attachment、paper_send 在工具执行中直接发）不收口，回合结束才收口', async () => {
+  it('回合中途发出的出站消息（send_attachment 在工具执行中直接发）不收口，回合结束才收口', async () => {
     const { sm, host, inbound, running } = await setup();
     await inbound({ sessionId: GROUP, platform: 'onebot', groupName: '<群名>' });
     let during: string | undefined;

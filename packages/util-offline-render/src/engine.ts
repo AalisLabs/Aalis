@@ -46,7 +46,7 @@ export type RenderClip =
   | { kind: 'page'; maxHeight: number };
 
 export interface RenderRequest {
-  /** 文档网址，必须是 resources 的键、https 网址的规范写法；用保留域名，如 https://render.invalid/<作品编号>/ */
+  /** 文档网址，必须是 resources 的键、https 网址的规范写法；用保留域名，如 https://render.invalid/<编号>/ */
   entry: string;
   /** 网址 → 内容：只有这里精确列出的网址会被响应 */
   resources: ReadonlyMap<string, RenderResource>;

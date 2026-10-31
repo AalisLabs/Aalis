@@ -8,6 +8,23 @@
 
 ---
 
+## 未发布
+
+### 白纸、远端代理与作品发布移出主仓
+
+白纸、远端代理与作品发布改做仓外的扩展插件，主仓不再含有它们，也不再认识白纸。
+
+- 删除六个包：@aalis/plugin-paper、@aalis/api-remote-agent、@aalis/plugin-remote-agent-cursor、@aalis/api-publish、@aalis/plugin-publish-review、@aalis/plugin-works-site。代码已归档，npm 上已标弃用。`npm create aalis` 的离线回退列表不再列出其中的四个插件。
+- @aalis/api-host-paths（破坏性）：`HostPaths` 删 `stage`（`drafts`、`public`、`paper`），加 `workspace`：默认工作区目录 `<家目录>/workspace`，owner 本机默认工作区的真实文件夹。读 `stage` 的代码在类型上报错。
+- @aalis/runtime：家目录布局删 `stage/`、加 `workspace/`；`--init` 建出 `workspace/`（在写主配置之前），不再建 `stage/` 下的目录；中途失败重来时目录里可以已有 `workspace`。
+- @aalis/api-session-manager：删 `placePaperId` 与 `paperDirName`。
+- @aalis/api-reach：`ReachInput.place`、`LocalReach` 与 `ReachCredential` 删 `paper`；工作区档的可写范围是主目录、附加可写目录与本会话树建的 worktree。受保护清单里家目录的例外由白纸目录与 `stage/` 换成默认工作区：宿主控制面放行默认工作区、临时区与技能目录，拒读清单放行默认工作区、`self/`、日志与主配置。
+- @aalis/plugin-reach：没有绑定目录的会话，主目录是默认工作区目录 `HostPaths.workspace`，不再按场所取白纸。
+- @aalis/plugin-storage-local：删内部根 `paper` 与 `public`。`roots` 里条目的 `path` 可以留空，留空即默认工作区目录；缺省的 `workspace` 根不写 `path`，指向 `HostPaths.workspace`。
+- @aalis/plugin-checkpoint：不记账的根类型删 `paper` 与 `public`。
+
+---
+
 ## 2026-10-31（core 0.21.0 minor；117 个包：110 minor / 7 新包 schema-i18n、api-i18n、plugin-i18n、api-session-settings、plugin-session-settings、plugin-chat-approval、util-file-signature）
 
 core 定为 0.21.0。给人看的文字改为文字对象，由出口按读者的语言渲染（新包 `@aalis/schema-i18n`、`@aalis/api-i18n`、`@aalis/plugin-i18n`）；同批还有插件配置按会话覆盖、通道层与各插件的修整。

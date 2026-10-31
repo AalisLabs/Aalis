@@ -384,7 +384,7 @@ export interface Notice {
   id: string;
   /** action 需要你处理，error 出错 */
   level: 'action' | 'error';
-  /** 出了什么事；数量写进标题，例如「3 件作品待裁决」 */
+  /** 出了什么事；数量写进标题，例如「诊断有 2 项错误」 */
   title: string | TextRef;
   /** 用户该做什么，具体到配置项、命令或页面 */
   detail?: string | TextRef;

@@ -93,13 +93,12 @@ const reply = typeof parsed.response === 'string' ? parsed.response : '';
 
 ## 4. 谁在用（真实消费点）
 
-依赖声明：`plugin-persona` / `plugin-user-profile` / `plugin-user-relation` / `plugin-publish-review` 四个插件的 `package.json` 都依赖本包。
+依赖声明：`plugin-persona` / `plugin-user-profile` / `plugin-user-relation` 三个插件的 `package.json` 都依赖本包。
 
 - **`@aalis/plugin-persona`** —— `src/index.ts` 直接 import 本包：
   - `src/index.ts` 有 `outputFormat` 时，`extractJsonCandidate` + `tryParseJsonObject` 结构化解析，并把 `repairsApplied` 写进 debug 日志。
 - **`@aalis/plugin-user-profile`** —— `src/index.ts` import `parseLLMJsonObject` 解析事实提取结果，是范本：首解析失败或回复报了 `finishReason: 'length'`（看着完整也不收）后**带显式反馈重试一次**（写明是截断还是不合法，提示模型「第一个字符必须是 `{`」），仍失败才放弃本批次。
 - **`@aalis/plugin-user-relation`** —— `src/extractor.ts` import，`src/extractor.ts` 的 `parseExtraction` 用 `parseLLMJsonObject` 解析图谱抽取结果，截断的回复同 user-profile 按解析失败重试。注意它把所有 `persons`/`events`/`edges` 等**数组都包在一个顶层对象里**（`extractor.ts`），所以能用本库——这正是「对象内可以有数组、但顶层不能是数组」的正面示范。
-- **`@aalis/plugin-publish-review`** —— `src/classify.ts` 的 `parseClassification` 用 `parseLLMJsonObject` 解析作品审核的分类结果；回复报了 `finishReason: 'length'` 时不解析，按分类不可用转人工。
 
 ---
 

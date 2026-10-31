@@ -317,8 +317,8 @@ export interface IncomingMessage {
    * - agent 渲染为 system 通知，归档为 role 'notice'、kind {@link WellKnownKinds}.HostNotice；
    * - 不进向量记忆、抽取与记忆扩窗。
    *
-   * `kind` 是通知的子类（如 'paper-task'），`id` 是注入方生成的通知标识（日志与账本对位用，存档记下；含义随 kind，
-   * 如后台任务结束通知的是任务 id）。
+   * `kind` 是通知的子类（如后台任务的结束通知 'background-task'），`id` 是注入方生成的通知标识（日志与账本对位用，存档
+   * 记下；含义随 kind，如后台任务结束通知的是任务 id）。
    * `untrusted` 是注入方已用 wrapUntrustedContent 包好的不可信段：只在当轮渲染时接在正文之后，
    * 不归档、不进任何存储。宿主撰写的行一律放在 content 里。
    */

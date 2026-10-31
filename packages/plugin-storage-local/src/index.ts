@@ -70,11 +70,13 @@ const PLUGIN_NAME = '@aalis/plugin-storage-local';
  *     宿主机任何位置（高危，启动时会有 WARN 日志）
  */
 
-/** 用户 roots 缺省时注册的根：只有文件工具的工作根。插件自己的数据都在下面的内部路由根里 */
+/**
+ * 用户 roots 缺省时注册的根：只有文件工具的工作根，没写 path，指向默认工作区目录（host-paths 的 workspace）。插件自己的数据
+ * 都在下面的内部路由根里
+ */
 const DEFAULT_ROOTS: RootEntryConfig[] = [
   {
     name: 'workspace',
-    path: 'workspace',
     label: 'Workspace',
     kind: 'workspace',
     browsable: true,
@@ -97,11 +99,10 @@ const PRIVATE = { browsable: false, readable: true, writable: true, deletable: t
  * - pluginData：各插件的私有数据目录 state/plugins。
  * - tmp、cache：临时区与缓存；logs：runtime 写文件日志的目录，WebUI 与 CLI 的日志页从这里读，只读。
  * - personas、skills、workflows：self 下按用途分开的三个根，一个根里的路径拼接失误到不了另一个根。
- * - paper：白纸枢纽存放远端任务成品；public：发布服务存放审核通过的作品，作品站从这里读出来部署。
- * kind 供 checkpoint 等按类判断：data、pluginData、tmp、cache、logs、paper、public、self 都不记账
+ * kind 供 checkpoint 等按类判断：data、pluginData、tmp、cache、logs、self 都不记账
  * （self 等访问层限定写入者后再记，见 plugin-checkpoint）。
  */
-function internalRoots(paths: HostPaths): RootEntryConfig[] {
+function internalRoots(paths: HostPaths): Array<RootEntryConfig & { path: string }> {
   return [
     { name: 'data', path: paths.state, label: '状态', kind: 'data', ...PRIVATE },
     { name: 'pluginData', path: join(paths.state, 'plugins'), label: '插件数据', kind: 'pluginData', ...PRIVATE },
@@ -120,8 +121,6 @@ function internalRoots(paths: HostPaths): RootEntryConfig[] {
     { name: 'personas', path: paths.self.personas, label: '人设卡', kind: 'self', ...PRIVATE },
     { name: 'skills', path: paths.self.skills, label: '技能', kind: 'self', ...PRIVATE },
     { name: 'workflows', path: paths.self.workflows, label: '编排定义', kind: 'self', ...PRIVATE },
-    { name: 'paper', path: paths.stage.paper, label: '白纸', kind: 'paper', ...PRIVATE },
-    { name: 'public', path: paths.stage.public, label: '公开作品', kind: 'public', ...PRIVATE },
   ];
 }
 
@@ -143,7 +142,6 @@ const configSchema = defineConfig({
       path: {
         type: 'string',
         label: t('pathLabel'),
-        required: true,
         onInvalid: 'error',
         description: t('pathDescription'),
       },
@@ -170,7 +168,8 @@ const configSchema = defineConfig({
 
 interface RootEntryConfig {
   name: string;
-  path: string;
+  /** 没写时指向默认工作区目录 */
+  path?: string;
   label?: string;
   kind?: string;
   browsable?: boolean;
@@ -846,7 +845,11 @@ async function createRoot(
 const ROOT_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 
 /** 按一条根配置建目录、解析真实路径并打注册日志；失败时告警并返回 undefined */
-async function openRoot(home: string, item: RootEntryConfig, logger: Logger): Promise<RootDefinition | undefined> {
+async function openRoot(
+  home: string,
+  item: RootEntryConfig & { path: string },
+  logger: Logger,
+): Promise<RootDefinition | undefined> {
   const { name } = item;
   try {
     const root = await createRoot(home, name, item.label || name, item.kind || 'custom', item.path, {
@@ -875,11 +878,11 @@ async function openRoot(home: string, item: RootEntryConfig, logger: Logger): Pr
 }
 
 /**
- * 从已校验的 roots 构造用户根；空数组时注册默认的 workspace 根。与内部根同名的项跳过并告警，告警里写明配置的路径
- * 与内部根实际指向的位置：升级前把 data、tmp 等根指到别处的配置，那里的数据要搬过去。
+ * 从已校验的 roots 构造用户根；空数组时注册默认的 workspace 根。没写 path 的项指向默认工作区目录。与内部根同名的项跳过并
+ * 告警，告警里写明配置的路径与内部根实际指向的位置：升级前把 data、tmp 等根指到别处的配置，那里的数据要搬过去。
  */
 async function buildRoots(
-  home: string,
+  paths: HostPaths,
   parsedRoots: RootEntryConfig[],
   internal: ReadonlyMap<string, string>,
   logger: Logger,
@@ -894,9 +897,9 @@ async function buildRoots(
   const seen = new Set<string>();
   for (const item of entries) {
     const name = item.name.trim();
-    const path = item.path.trim();
-    if (!name || !path) {
-      logger.warn('roots 跳过无效项：name/path 为空');
+    const path = item.path?.trim() || paths.workspace;
+    if (!name) {
+      logger.warn('roots 跳过无效项：name 为空');
       continue;
     }
     if (!ROOT_NAME_RE.test(name)) {
@@ -916,7 +919,7 @@ async function buildRoots(
       continue;
     }
     seen.add(name);
-    const root = await openRoot(home, { ...item, name, path }, logger);
+    const root = await openRoot(paths.home, { ...item, name, path }, logger);
     if (root) out.push(root);
   }
   return out;
@@ -938,7 +941,7 @@ export default definePlugin({
     const home = paths.home;
     const guard = new HostFileGuard({ secrets: paths.secrets, config: paths.config });
     const internal = internalRoots(paths);
-    const roots = await buildRoots(home, cfg.roots, new Map(internal.map(r => [r.name, r.path])), logger);
+    const roots = await buildRoots(paths, cfg.roots, new Map(internal.map(r => [r.name, r.path])), logger);
     // 插件自己的数据都在内部根里；用户根一个都没有时只是缺了文件工具的工作根，照常提供存储
     if (roots.length === 0) logger.warn('没有可用的用户根（文件工具的工作根），请检查 roots 配置');
     for (const item of internal) {

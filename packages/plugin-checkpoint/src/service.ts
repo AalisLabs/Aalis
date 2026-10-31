@@ -11,21 +11,10 @@ import { t } from './texts.js';
 
 /**
  * 不记账的根类型：多会话/多平台共享写入区（data、pluginData、logs）、回合结束前就清掉的临时目录与缓存（tmp、cache），
- * 白纸根（paper：枢纽在任意会话的回合进行中写入远端成品，记进那一轮的话回滚会删掉无关的成品），
- * 公开根（public：发布服务在审核结束、裁决与撤下时写删已发布的作品，同样不属于当时进行中的回合），
  * 以及 self 下的人设卡、技能、编排定义根（self）：现在任何会话都能经工具写技能、人设，写入没有会话归属，
  * 与 data 同理不记账；等访问层限定只有 owner 的干净线程能写 self 之后，再按计划书给它记账。
  */
-const UNPROTECTED_ROOT_KINDS: ReadonlySet<string> = new Set([
-  'data',
-  'tmp',
-  'cache',
-  'pluginData',
-  'logs',
-  'paper',
-  'public',
-  'self',
-]);
+const UNPROTECTED_ROOT_KINDS: ReadonlySet<string> = new Set(['data', 'tmp', 'cache', 'pluginData', 'logs', 'self']);
 
 interface CheckpointFileRecord {
   uri: string;
@@ -85,7 +74,7 @@ interface ServiceConfig {
  * Checkpoint 服务实现
  *
  * 在一轮对话期间记录受控存储中的写入/删除/重命名操作（data / tmp / cache / pluginData /
- * logs / paper / public / self 这几类共享根、临时根、白纸根、公开根与 self 根除外，见 beforeMutate），
+ * logs / self 这几类共享根、临时根与 self 根除外，见 beforeMutate），
  * 在改动发生前自动备份原始文件内容，使用户可以一键回滚整轮操作。
  *
  * 协作模型：
@@ -199,8 +188,7 @@ export class CheckpointServiceImpl implements CheckpointService {
     // data / pluginData / logs 是多会话、多平台共享的写入区：既有别处落盘的附件与插件状态，也有本回合自己
     // 经工具产生的图片，回滚这些会误删别人刚落盘的文件、把插件状态写回旧版，故整根不记账（这些改动不可回滚）；
     // self 根（skill / persona / 编排定义）现在任何会话都能写，同理不记账；
-    // tmp、cache 是回合结束前就清掉的临时目录与缓存，记账只会让回滚必报 ENOENT；paper 是白纸根，枢纽在任意会话的回合进行中写入远端成品，
-    // public 是公开根，发布服务在审核结束、裁决与撤下时写删已发布的作品，这些写入都不属于那一轮。
+    // tmp、cache 是回合结束前就清掉的临时目录与缓存，记账只会让回滚必报 ENOENT。
     // 其余根（workspace 与用户自建的 custom 等）照常记账。
     if (this.isUnprotectedRootUri(uri)) return;
     // 去重按 uri，但 rename 不能因此被吞掉：同一回合里「先 write/改写 f，再把 f 移走」时，

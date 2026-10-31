@@ -103,9 +103,6 @@
 - **`plugin-mcp-server`** — `node:http`（`createServer`）+ `node:crypto`（`createHash` / `timingSafeEqual`）
   HTTP/SSE 形式的 MCP 服务端，对外暴露工具/资源/提示词。每个请求的访问令牌两边先取 SHA-256 摘要再定时比较：Web Crypto 没有定时比较。
 
-- **`plugin-publish-review/src/preview.ts`** — `node:http`（`createServer`）
-  作品审核的隔离预览：只监听 `127.0.0.1:0`，随机令牌仅在内存，关闭时销毁连接。不放行整个审核包。
-
 ### 系统信息工具
 
 - **`plugin-tool-system/src/tools/system.ts`** — `node:os`

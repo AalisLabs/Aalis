@@ -333,7 +333,7 @@ pnpm 可以直接引用根依赖的范围：
 | 跨 entry helper | `api-llm` (`resolveLLMModel`)、`api-platform` (`resolvePlatformBySession`) |
 | 工具注入 | `plugin-todo-list`, `plugin-tool-search` |
 | 命令注入 | `plugin-commands` |
-| WebUI 页面与提示 | `plugin-scheduler`（新建与编辑是带输入的动作）、`plugin-paper`（标签页、详情与会话面板）、`plugin-doctor`（运行后发出或撤回提示） |
+| WebUI 页面与提示 | `plugin-scheduler`（新建与编辑是带输入的动作）、`plugin-file-reader`（会话面板）、`plugin-doctor`（运行后发出或撤回提示） |
 | `follow` | `plugin-session-manager`（`memory.follow` 会话表跟随记忆后端换人）、`plugin-subtask`（`sessionManager.follow` 按选中的会话管理排子任务的定时器） |
 
 ## 9. 进一步阅读

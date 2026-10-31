@@ -77,7 +77,7 @@ const PLUGINS: FakeRest = {
   '/api/plugins': {
     plugins: [
       { name: '@aalis/plugin-a', instanceId: '@aalis/plugin-a', displayName: '对话代理', state: 'active' },
-      { name: '@aalis/plugin-b', instanceId: '@aalis/plugin-b', displayName: '白纸', state: 'active' },
+      { name: '@aalis/plugin-b', instanceId: '@aalis/plugin-b', displayName: '绘图', state: 'active' },
       { name: '@aalis/plugin-c', instanceId: '@aalis/plugin-c', displayName: '跨会话历史', state: 'active' },
       { name: '@aalis/plugin-c', instanceId: '@aalis/plugin-c:two', displayName: '跨会话历史', state: 'active' },
     ],
@@ -120,7 +120,7 @@ const ROWS: SettingRow[] = [
     source: 'global',
   }),
   row('roomOnly', {
-    field: { type: 'boolean', label: '开启白纸' },
+    field: { type: 'boolean', label: '开启绘图' },
     plugin: '@aalis/plugin-b',
     prominence: 'advanced',
   }),
@@ -189,7 +189,7 @@ describe('右侧面板与会话头', () => {
     const agent = within(panel().getByRole('region', { name: '对话代理' }));
     expect(within(agent.getByRole('group', { name: '最大工具迭代' })).getByText('20')).toBeTruthy();
     expect(within(agent.getByRole('group', { name: '最大工具迭代' })).getByText('来自：全局（插件配置）')).toBeTruthy();
-    expect(within(panel().getByRole('region', { name: '白纸' })).getByRole('group', { name: '开启白纸' })).toBeTruthy();
+    expect(within(panel().getByRole('region', { name: '绘图' })).getByRole('group', { name: '开启绘图' })).toBeTruthy();
     expect(within(panel().getByRole('region', { name: '跨会话历史' })).getByText('<主实例>')).toBeTruthy();
     expect(within(panel().getByRole('region', { name: '跨会话历史 · two' })).getByText('<第二个实例>')).toBeTruthy();
   });

@@ -1416,7 +1416,7 @@ async function run(caps: Caps): Promise<void> {
   //（触发判定在入站相位，挡下的消息到不了这里）。同一个中间件在 finally 里记下这一轮并收口，根会话与子会话一样，这是
   // 唯一的收口：next() 返回时整轮已跑完、agent:turn:after 也已执行（agent 只在这个钩子的默认动作里发它），结局已经记下；
   // 后面的中间件不调 next() 或抛错时 agent 不发回合收尾，同样由这里兜住。按回合 id 登记在飞的回合，会话里没有别的在飞回合
-  // 时才收口；回合中途的出站（send_attachment、paper_send 在工具执行中直接发）不收口。
+  // 时才收口；回合中途的出站（send_attachment 在工具执行中直接发）不收口。
   hooks.use.middleware('agent:turn:before', async (data, next) => {
     manager.beginTurn(data.sessionId, data.turnId);
     try {

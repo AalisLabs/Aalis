@@ -32,7 +32,7 @@ const LAYOUT_ENTRIES: ReadonlySet<string> = new Set([
   'run',
   'tmp',
   'self',
-  'stage',
+  'workspace',
   SECRETS_FILE,
   '.DS_Store',
 ]);
@@ -199,11 +199,7 @@ export function derivePaths(home: string, app: string, profile?: string): HostPa
       skills: join(home, 'self', 'skills'),
       workflows: join(home, 'self', 'workflows'),
     }),
-    stage: Object.freeze({
-      drafts: join(home, 'stage', 'drafts'),
-      public: join(home, 'stage', 'public'),
-      paper: join(home, 'stage', 'paper'),
-    }),
+    workspace: join(home, 'workspace'),
   });
 }
 
@@ -249,9 +245,7 @@ export function initHome(paths: HostPaths): void {
     paths.self.personas,
     paths.self.skills,
     paths.self.workflows,
-    paths.stage.drafts,
-    paths.stage.public,
-    paths.stage.paper,
+    paths.workspace,
   ]) {
     mkdirSync(dir, { recursive: true });
   }

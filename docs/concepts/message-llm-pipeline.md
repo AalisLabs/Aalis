@@ -47,7 +47,7 @@ export type MessageRole = WellKnownRole | (string & {});
 | `OutboundAudio` | `'outbound-audio'` | assistant 已发出的音频占位 | assistant |
 | `OutboundVideo` | `'outbound-video'` | assistant 已发出的视频占位 | assistant |
 | `OutboundFile` | `'outbound-file'` | assistant 已发出的文件占位（描述位是文件名） | assistant |
-| `HostNotice` | `'host-notice'` | 宿主撰写的事件通知（入站消息带 `hostNotice`，如白纸的任务完成通知） | notice |
+| `HostNotice` | `'host-notice'` | 宿主撰写的事件通知（入站消息带 `hostNotice`，如后台任务的结束通知） | notice |
 | `IdlePrompt` | `'idle-prompt'` | 空闲开话题的提示（`triggerType: 'idle'`）交给模型时那条指令块的 `metadata.injector`；它不落档，没有这个 kind 的归档消息 | 请求期为 system |
 | `OutboundDeliveryFailed` | `'outbound-delivery-failed'` | 平台适配器记下的投递失败：她发出的消息平台没收下或结果未知，进下一轮的上下文。`metadata` 带 `error`（与投递结果同一句原因）与那条消息的 `turnId`（一轮的回复）或 `callId`（经工具发出的），逐条发出停在中途的另带 `sentPieces`（已发出的条数），会话服务据此在历史里标出没发出的回复 | system |
 | `TurnStopped` | `'turn-stopped'` | agent 记下的停下标记：一轮在回复之前被停下、会话历史里已有这一轮的输入或工具调用时写，进下一轮的上下文，让她知道那一轮停下了、没说完的话没有留下；有停下的人时写是谁。`metadata` 带这一轮的 `turnId`，回合记录照旧另落事件标记 | system |

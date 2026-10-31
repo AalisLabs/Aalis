@@ -149,7 +149,7 @@ function script(replies: Record<string, string>) {
 const LONG_NAME = '把这个季度的周报整理进 weekly_summary_final_2026_q3_reviewed_by_everyone.md 再发给负责人确认';
 
 /** 带原因的失败状态：窄时折行，不撑出横向滚动，也不把同一行的第一列挤成一字一行 */
-const LONG_FAILURE = '失败：远端代理返回 500 Internal Server Error，请稍后再试';
+const LONG_FAILURE = '失败：上游服务返回 500 Internal Server Error，请稍后再试';
 
 /** 慢慢流出来的长回复：每块 4 个字，整段要十几秒才出完，够从面板里停掉它 */
 const SLOW_REPLY = '这是一段很长的回复，'.repeat(24);
@@ -297,7 +297,7 @@ const needsConfig = definePlugin({
   },
 });
 
-/** 发一条提示的插件：跳到它的「作品审核」页 */
+/** 发一条提示的插件：跳到它的「工单队列」页 */
 const NOTICE_PROBE = 'zz-e2e-notice';
 const noticeProbe = definePlugin({
   name: NOTICE_PROBE,
@@ -306,14 +306,14 @@ const noticeProbe = definePlugin({
   apply({ webui }) {
     webui.use.definePage({
       key: 'queue',
-      title: '作品审核',
+      title: '工单队列',
       content: [{ type: 'markdown', id: 'note', data: () => '' }],
     });
     webui.use.notify({
       id: 'pending',
       level: 'action',
-      title: '2 件作品待裁决',
-      detail: '最早的一件已等 3 天',
+      title: '2 张工单待处理',
+      detail: '最早的一张已等 3 天',
       open: { page: 'queue' },
     });
   },
@@ -1217,11 +1217,11 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     await stack.app.plugins.idle();
     const { page, problems } = await openPage(stack, viewport);
     const summary = `${phone ? 'nav[aria-label="会话"]' : 'main'} ${aria('需要处理', 'region')}`;
-    await page.waitForSelector(`${summary} ${text('打开作品审核')}`);
+    await page.waitForSelector(`${summary} ${text('打开工单队列')}`);
     expect(await page.$eval(`${summary} h2`, heading => heading.textContent)).toBe('需要处理 · 2');
     expect(await attentionRows(page, summary)).toEqual([
       ['要配置的探针', '待配置：endpoint', '去配置'],
-      ['2 件作品待裁决', '提示的探针 · 最早的一件已等 3 天', '打开作品审核'],
+      ['2 张工单待处理', '提示的探针 · 最早的一张已等 3 天', '打开工单队列'],
     ]);
     await page.waitForFunction(() => document.title === '(2) T');
     const entry = `${phone ? '[aria-label="入口"]' : '.shell-rail'} a[href="/health"]`;
@@ -1241,15 +1241,15 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
 
     await page.goto(`${stack.origin}/plugins/${NOTICE_PROBE}`);
     const block = `main ${aria('需要处理', 'region')}`;
-    await page.waitForSelector(`${block} ${text('打开作品审核')}`);
-    expect(await attentionRows(page, block)).toEqual([['2 件作品待裁决', '最早的一件已等 3 天', '打开作品审核']]);
-    await page.locator(`${block} ${aria('打开作品审核', 'link')}`).click();
+    await page.waitForSelector(`${block} ${text('打开工单队列')}`);
+    expect(await attentionRows(page, block)).toEqual([['2 张工单待处理', '最早的一张已等 3 天', '打开工单队列']]);
+    await page.locator(`${block} ${aria('打开工单队列', 'link')}`).click();
     await page.waitForFunction(path => location.pathname === path, {}, pagePath(NOTICE_PROBE, 'queue'));
 
     await page.goto(`${stack.origin}/health`);
-    await page.waitForSelector(`${block} ${text('打开作品审核')}`);
+    await page.waitForSelector(`${block} ${text('打开工单队列')}`);
     expect(await attentionRows(page, block)).toEqual([
-      ['2 件作品待裁决', '提示的探针 · 最早的一件已等 3 天', '打开作品审核'],
+      ['2 张工单待处理', '提示的探针 · 最早的一张已等 3 天', '打开工单队列'],
     ]);
     if (!phone) expect(await page.$eval(`${entry} .badge`, badge => badge.textContent)).toBe('1');
     expect(problems).toEqual([]);

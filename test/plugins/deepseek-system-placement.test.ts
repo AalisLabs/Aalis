@@ -73,7 +73,7 @@ describe('normalizeSystemPlacement', () => {
       { role: 'user', content: '(今天 09:00) [张三(10001)]: 旧消息', name: '10001' },
       {
         role: 'system',
-        content: '[宿主通知]\n白纸任务 T-1 已完成',
+        content: '[宿主通知]\n报告任务 R-1 已完成',
         metadata: { injector: 'host-notice' },
       },
     ]);

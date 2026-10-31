@@ -13,7 +13,7 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 // ════════════════════════════════════════════════════════════
 
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
-const INTERNAL = ['data', 'pluginData', 'tmp', 'cache', 'logs', 'personas', 'skills', 'workflows', 'paper', 'public'];
+const INTERNAL = ['data', 'pluginData', 'tmp', 'cache', 'logs', 'personas', 'skills', 'workflows'];
 
 describe('storage-local 整体登记一个提供者', () => {
   let home: string;

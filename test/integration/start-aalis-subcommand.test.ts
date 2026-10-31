@@ -295,7 +295,7 @@ describe('startAalis 家目录（真实子进程）', () => {
         },
       },
     });
-    for (const sub of ['state', 'logs', 'run', 'tmp', 'self/skills', 'stage/paper']) {
+    for (const sub of ['state', 'logs', 'run', 'tmp', 'self/skills', 'workspace']) {
       expect(existsSync(join(home, sub)), sub).toBe(true);
     }
     expect(existsSync(join(dir, 'first-config.json'))).toBe(false);

@@ -24,18 +24,18 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 // ════════════════════════════════════════════════════════════
 
 const SESSION = 'onebot:10000:group:20001';
-const HOST_BODY = '白纸任务 T-1 已完成，远端说明见 paper_status T-1';
+const HOST_BODY = '报告任务 R-1 已完成，外部说明见 zz_report_status R-1';
 const SENTINEL = 'UNTRUSTED-SENTINEL-7f3a';
 
-/** 与白纸枢纽注入的通知同形：带 source 与无主体 actor，不带 userId、nickname、sessionType、triggerType */
+/** 与插件注入的宿主通知同形：带 source 与无主体 actor，不带 userId、nickname、sessionType、triggerType */
 function hostNotice(extra: Partial<IncomingMessage> = {}): IncomingMessage {
   return {
     content: HOST_BODY,
     sessionId: SESSION,
     platform: 'onebot',
-    source: 'paper',
+    source: 'zz-reporter',
     actor: selfInitiatedActor('onebot'),
-    hostNotice: { kind: 'paper-task', id: 'n-1', untrusted: `<remote>${SENTINEL}</remote>` },
+    hostNotice: { kind: 'zz-report', id: 'n-1', untrusted: `<external>${SENTINEL}</external>` },
     ...extra,
   };
 }
@@ -158,7 +158,7 @@ describe('plugin-agent：宿主通知回合', () => {
     await h.send(humanMessage);
     expect(h.outbound.map(m => [m.hostNotice, m.replyTo])).toEqual([
       [{ kind: 'background-task', id: 'bg_x_1' }, 'zz-msg-1'],
-      [{ kind: 'paper-task', id: 'n-1' }, undefined],
+      [{ kind: 'zz-report', id: 'n-1' }, undefined],
       [undefined, undefined],
     ]);
   });

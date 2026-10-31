@@ -779,8 +779,8 @@ describe('时间线', () => {
                 { kind: 'file', src: 'h-readme', name: 'README' },
               ],
             }),
-            notice('n1', '作品已完成', {
-              topic: 'works',
+            notice('n1', '报告已生成', {
+              topic: 'zz-report',
               attachments: [
                 { kind: 'file', src: 'h-log', name: 'build.log' },
                 { kind: 'file', src: 'h-cfg', name: 'notes.cfg' },

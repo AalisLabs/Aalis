@@ -7,7 +7,7 @@ import {
   type SandboxPolicy,
   sandboxPolicyOf,
 } from '../../packages/api-reach/src/index.js';
-import { DEFAULT_PLACE, PAPERS, PATHS, PROJECT, reachOf, SESSION_TMP } from '../fixtures/reach.js';
+import { DEFAULT_PLACE, PATHS, PROJECT, reachOf, SESSION_TMP } from '../fixtures/reach.js';
 
 // ════════════════════════════════════════════════════════════
 // 沙箱策略只由触及生成，与工具边界同一份清单。各段的先后（后面的压过前面的）：
@@ -49,7 +49,6 @@ describe('工作区档', () => {
   it('写：可写范围放行，落点拒，项目里的 node_modules 例外只在锚定的根下，宿主控制面排在最后', () => {
     const cases: Array<[string, boolean]> = [
       ['/u/code/proj/src/a.ts', true],
-      [`${PAPERS}/p-proj/out.md`, true],
       ['/u/extra/x', true],
       ['/u/code/proj-wt-a/x', true],
       ['/u/code/proj/.git/objects/ab/cd', true],
@@ -76,16 +75,14 @@ describe('工作区档', () => {
   });
 
   it('绑定目录就是运行中的安装集时，宿主控制面压过 node_modules 例外', () => {
-    const running = sandboxPolicyOf(reachOf({ place: { home: '/opt/aalis', paper: `${PAPERS}/p-aalis` } }));
+    const running = sandboxPolicyOf(reachOf({ place: { home: '/opt/aalis' } }));
     expect(canWrite(running, '/opt/aalis/packages/core/src/index.ts')).toBe(true);
     expect(canWrite(running, '/opt/aalis/node_modules/x/.vscode/settings.json')).toBe(false);
     expect(canWrite(running, '/opt/aalis/packages/core/dist/index.js')).toBe(false);
   });
 
   it('git 目录不叫 .git 时按这份触及的 git 目录拒写落点，它里面的 HEAD 照常可写', () => {
-    const bare = sandboxPolicyOf(
-      reachOf({ place: { home: '/u/code/proj-wt', paper: `${PAPERS}/p-proj` }, gitDirs: ['/u/code/proj.git'] }),
-    );
+    const bare = sandboxPolicyOf(reachOf({ place: { home: '/u/code/proj-wt' }, gitDirs: ['/u/code/proj.git'] }));
     expect(canWrite(bare, '/u/code/proj.git/hooks/pre-commit')).toBe(false);
     expect(canWrite(bare, '/u/code/proj.git/config')).toBe(false);
     expect(canWrite(bare, '/u/code/proj.git/worktrees/wt/HEAD')).toBe(true);
@@ -102,8 +99,8 @@ describe('工作区档', () => {
       [`${PATHS.tmp}/sessions/b3Q/x`, false],
       ['/u/.ssh/id_ed25519', false],
       ['/u/code/proj/.env', false],
-      [`${PAPERS}/p-window/a.md`, true],
-      [`${PAPERS}/p-proj/out.md`, true],
+      [`${PATHS.workspace}/a.md`, true],
+      [`${PATHS.state}/db`, false],
     ];
     expect(cases.map(([path]) => [path, canRead(policy, path)])).toEqual(cases);
   });
@@ -112,7 +109,7 @@ describe('工作区档', () => {
     expect(policy.network).toBe('on');
     expect(policy.localPorts).toEqual([27017, 8080]);
     expect([...policy.unixSockets].sort()).toEqual(
-      ['/u/code/proj', `${PAPERS}/p-proj`, '/u/extra', '/u/code/proj-wt-a', SESSION_TMP].sort(),
+      ['/u/code/proj', '/u/extra', '/u/code/proj-wt-a', SESSION_TMP].sort(),
     );
   });
 });
@@ -162,7 +159,6 @@ describe('与工具边界同源', () => {
   // 落点在工具边界上是问、在沙箱里是拒，不在比对之列
   const paths = [
     '/u/code/proj/src/a.ts',
-    `${PAPERS}/p-proj/out.md`,
     DEFAULT_PLACE.home,
     '/u/extra/x',
     '/u/code/proj-wt-a/x',
@@ -172,13 +168,13 @@ describe('与工具边界同源', () => {
     `${PATHS.self.skills}/s/SKILL.md`,
     '/u/code/proj-wt-b/x',
     '/u/elsewhere/x',
-    `${PAPERS}/p-window/x`,
+    `${PATHS.workspace}/x`,
     `${PATHS.tmp}/sessions/b3Q/x`,
     `${PATHS.state}/db`,
     PATHS.config,
     PATHS.secrets,
     `${PATHS.logs}/latest.log`,
-    `${PATHS.stage.public}/x`,
+    `${PATHS.home}/zz-other/x`,
     '/u/.ssh/id_ed25519',
     '/u/code/proj/.env',
     '/opt/aalis/node_modules/x/index.js',
