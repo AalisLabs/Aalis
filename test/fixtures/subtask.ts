@@ -36,7 +36,6 @@ export interface SubtaskHubOptions {
   /** assignModel 抛错 */
   assignFails?: boolean;
   plugins?: PluginDefinition[];
-  stored?: Record<string, Record<string, unknown>>;
 }
 
 export async function startSubtaskHub(opts: SubtaskHubOptions = {}) {
@@ -110,7 +109,6 @@ export async function startSubtaskHub(opts: SubtaskHubOptions = {}) {
     first: [toolsPlugin, gatewayPlugin],
     plugins: [...(opts.plugins ?? []), subtask],
     fields: [agentPlugin],
-    stored: opts.stored,
   });
   const host = started.app.bind({ hooks });
   /** 派发与追问的入站消息，各带派发那一刻读到的子会话设置 */
