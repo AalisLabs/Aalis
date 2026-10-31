@@ -1,7 +1,7 @@
 // ============================================================
 // 触及凭据：按一次工具调用签发，带品牌符号，冻结
 //
-// 签发时的触及定下命令在哪执行、场所的主目录与白纸、子进程环境；判定、存储兜底与沙箱策略每次按当时的触及。
+// 签发时的触及定下命令在哪执行、场所的主目录、子进程环境；判定、存储兜底与沙箱策略每次按当时的触及。
 // ============================================================
 
 import {
@@ -29,7 +29,7 @@ export function issueCredential(current: () => Reach, deps: CredentialDeps): Rea
   const local = issued.exec === 'none' ? undefined : issued;
   const credential: Omit<ReachCredential, typeof REACH_CREDENTIAL> = {
     exec: issued.exec,
-    ...(local && { home: local.home, paper: local.paper }),
+    ...(local && { home: local.home }),
     async require(request) {
       const decision = judgeReach(current(), request);
       return decision.verdict === 'allow' ? { allowed: true } : { allowed: false, message: explain(decision, request) };

@@ -6,12 +6,12 @@ export default defineLocale<Source>()({
   provideLabel: 'Local storage',
   rootsLabel: 'Storage roots',
   rootsDescription:
-    'Roots that file tools and the agent address (only workspace by default); plugin data lives in the built-in roots (data, pluginData, tmp, cache, logs, personas, skills, workflows, paper, public), and entries here with the same names are skipped. Edit this array directly: remove the ones you do not need, change path, add custom roots, add a host:/ passthrough root. browsable is a hint for file-browser interfaces (WebUI has no file browser page and does not read it).',
+    'Roots that file tools and the agent address (only workspace by default); plugin data lives in the built-in roots (data, pluginData, tmp, cache, logs, personas, skills, workflows), and entries here with the same names are skipped. Edit this array directly: remove the ones you do not need, change path, add custom roots, add a host:/ passthrough root. browsable is a hint for file-browser interfaces (WebUI has no file browser page and does not read it).',
   nameLabel: 'Root name (URI scheme)',
   nameDescription: 'Only letters, digits, underscores and hyphens, starting with a letter; e.g. workspace, share',
   pathLabel: 'Local path',
   pathDescription:
-    'Absolute, or relative to the home directory; created if missing. Pointing it at / registers a host passthrough root (high risk).',
+    'Absolute, or relative to the home directory; leave it empty for the default workspace directory; created if missing. Pointing it at / registers a host passthrough root (high risk).',
   labelLabel: 'Display name',
   kindLabel: 'Kind tag',
   kindDescription: 'Semantic hint: workspace / data / tmp / pluginData / logs / custom / external / shared / host',

@@ -4,12 +4,7 @@ import { join } from 'node:path';
 import type { OriginTurn } from '../../packages/api-authority/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { reach } from '../../packages/api-reach/src/index.js';
-import {
-  paperDirName,
-  placePaperId,
-  type SessionManagerService,
-  sessionManager,
-} from '../../packages/api-session-manager/src/index.js';
+import { type SessionManagerService, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { events, type Logger, provide } from '../../packages/core/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import processLocalPlugin from '../../packages/plugin-process-local/src/index.js';
@@ -26,10 +21,6 @@ import { fakeMemory } from './session-memory.js';
 
 export const OWNER_QQ = '99999';
 export const OWNER_TURN = { platform: 'webui', userId: 'console' } as const;
-
-/** 场所的白纸目录：stage/paper 下按白纸 id 取的子目录 */
-export const paperOf = (home: string, placeKey: string) =>
-  join(home, 'stage', 'paper', paperDirName(placePaperId(placeKey)));
 
 /** 在项目工作区里建一个 owner 的会话，返回会话 id：工作区的目录是 workspaceRoot（缺省为绑定目录），绑定在 root 上 */
 export async function projectSession(sm: SessionManagerService, root: string, workspaceRoot = root): Promise<string> {
@@ -74,7 +65,7 @@ export function removeDirs(dirs: ReachDirs): void {
 
 /**
  * 起一个实例。`appPath` 是交给 host-paths 的安装集路径（缺省为 dirs.app）；`stored` 预置会话表；`logger` 接住各插件的日志。
- * 操作系统用户的家目录取 HOME：调用方先把 HOME 指到 dirs.user
+ * 操作系统用户的家目录取 HOME：调用方先把 HOME 指到 dirs.user。交回的 paths 是交给插件的家目录布局
  */
 export async function startReach(
   dirs: ReachDirs,
@@ -85,7 +76,7 @@ export async function startReach(
     opts.logger ? { logger: opts.logger } : {},
   );
   await registerHubs(app);
-  provideHostPaths(app, dirs.home, opts.appPath ?? dirs.app);
+  const paths = provideHostPaths(app, dirs.home, opts.appPath ?? dirs.app);
   const host = app.bind({ provide, events, sessionManager, reach });
   host.provide.use(memory, fakeMemory(opts.stored) as never);
   await app.plugin(storageLocalPlugin);
@@ -94,5 +85,5 @@ export async function startReach(
   await registerFromDoc(app, store, authorityPlugin);
   await app.plugin(reachPlugin);
   await app.plugins.idle();
-  return { app, host };
+  return { app, host, paths };
 }

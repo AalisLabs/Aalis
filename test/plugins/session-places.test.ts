@@ -3,12 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { memory } from '../../packages/api-memory/src/index.js';
-import {
-  placePaperId,
-  type SessionInfo,
-  type SessionPlace,
-  sessionManager,
-} from '../../packages/api-session-manager/src/index.js';
+import { type SessionInfo, type SessionPlace, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type App, events, type Logger, provide } from '../../packages/core/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
@@ -21,8 +16,7 @@ import { adapterPlugin, fieldsPlugin, ONEBOT_TYPES, SCHEMA, startSettings } from
 // 场所：每个会话恰好一个，子会话取根会话的。有聊天窗口的根会话是窗口（键 `平台:类型:目标`，不含机器人账号），
 // 一对一而对端是 owner 的（owner 的 IM 私聊）是默认工作区；其余按根会话记下的工作区，没记的是默认工作区。
 // 场所记录存在记忆后端里，带显示名与插件的 metadata（会话设置的场所层就在那里），换会话照样生效；默认工作区没有名字，显示名由
-// 读者经 placeLabel 给。工作区由 owner 登记，以随机的固定编号标识，取消登记只删记录（连同它的设置），原属会话归默认工作区。每个场所一张白纸，
-// 白纸 id 由场所键算出。
+// 读者经 placeLabel 给。工作区由 owner 登记，以随机的固定编号标识，取消登记只删记录（连同它的设置），原属会话归默认工作区。
 // ════════════════════════════════════════════════════════════
 
 const GROUP = 'onebot:10000:group:20001';
@@ -191,7 +185,6 @@ describe('placeOf', () => {
 
     const keys = ['zz:1', 'zz:2', 'zz:3'].map(id => sm.placeOf(id).key);
     expect(new Set(keys).size).toBe(3);
-    expect(placePaperId(keys[0])).not.toBe(placePaperId(keys[1]));
     expect(placeRow(keys[2], 'persona')?.source).toBe('platform');
     expect(reader().get('zz:3').persona).toBe('<平台>');
   });
@@ -414,22 +407,6 @@ describe('工作区', () => {
 
     const second = await setup({ places: Object.fromEntries(first.mem.places) });
     expect(second.sm.listWorkspaces().map(w => w.id)).toEqual(['default']);
-  });
-});
-
-describe('白纸 id', () => {
-  it('对同一个场所键稳定，不同键不同；同一个群里两个机器人账号的会话用同一张白纸', async () => {
-    expect(placePaperId(WINDOW)).toBe(placePaperId(WINDOW));
-    expect(placePaperId(WINDOW)).toBe(`p:${Buffer.from(WINDOW).toString('hex')}`);
-    expect(placePaperId(WINDOW)).not.toBe(placePaperId('onebot:group:20002'));
-    expect(placePaperId('workspace:default')).not.toBe(placePaperId('workspace:defaulu'));
-    // 白纸目录按 id 取名：大小写不敏感的文件系统上，只差大小写的两个 id 会落进同一个目录
-    expect(placePaperId('tg:private:aaa').toLowerCase()).not.toBe(placePaperId('tg:private:Gaa').toLowerCase());
-
-    const { sm, inbound } = await setup();
-    await inbound({ sessionId: GROUP, platform: 'onebot', sessionType: 'group', groupId: '20001', selfId: '10000' });
-    await inbound({ sessionId: GROUP_B, platform: 'onebot', sessionType: 'group', groupId: '20001', selfId: '20000' });
-    expect(placePaperId(sm.placeOf(GROUP).key)).toBe(placePaperId(sm.placeOf(GROUP_B).key));
   });
 });
 

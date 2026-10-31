@@ -97,13 +97,13 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
     expect(data.retryRequested).toBe(true);
   });
 
-  it('纯文本作品链接触发重试时，只要求修正格式并保留应传达的正文', async () => {
+  it('带链接的纯文本回复触发重试时，只要求修正格式并保留应传达的正文', async () => {
     await boot('zz-default');
-    const url = 'https://example.com/works/new-story';
+    const url = 'https://example.com/reports/weekly';
     const data: Record<string, unknown> = {
       sessionId: 'zz-work',
       platform: 'test',
-      content: `作品已完成：${url}`,
+      content: `报告已生成：${url}`,
       attempt: 0,
     };
     await host.hooks.use.run('agent:reply:before', data as never);
@@ -116,13 +116,13 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
     const corrected: Record<string, unknown> = {
       sessionId: 'zz-work',
       platform: 'test',
-      content: JSON.stringify({ message: `作品已完成：${url}`, mood: '开心' }),
+      content: JSON.stringify({ message: `报告已生成：${url}`, mood: '开心' }),
       attempt: 1,
     };
     await host.hooks.use.run('agent:reply:before', corrected as never);
 
-    expect(corrected.content).toBe(`作品已完成：${url}`);
-    expect(corrected.visibleContent).toBe(`作品已完成：${url}`);
+    expect(corrected.content).toBe(`报告已生成：${url}`);
+    expect(corrected.visibleContent).toBe(`报告已生成：${url}`);
     expect(corrected.retryRequested).not.toBe(true);
   });
 
@@ -142,7 +142,7 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
     const invalid: Record<string, unknown> = {
       sessionId: 'zz-invalid',
       platform: 'test',
-      content: '作品已完成：https://example.com/works/new-story',
+      content: '报告已生成：https://example.com/reports/weekly',
       attempt: 1,
     };
     await host.hooks.use.run('agent:reply:before', invalid as never);

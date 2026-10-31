@@ -24,14 +24,13 @@ export const LISTS = protectedLists({
   codeDirs: [CODE_DIR],
 });
 export const SESSION_TMP = `${PATHS.tmp}/sessions/7331`;
-export const PAPERS = PATHS.stage.paper;
 
-/** 默认工作区：主目录就是它的白纸 */
-export const DEFAULT_PLACE = { home: `${PAPERS}/p-default`, paper: `${PAPERS}/p-default` };
+/** 默认工作区：主目录是 owner 本机的默认工作区目录 */
+export const DEFAULT_PLACE = { home: PATHS.workspace };
 
-/** 项目工作区：主目录是绑定目录，白纸另一张；附加可写目录、本会话树建的 worktree 与仓库的 git 目录 */
+/** 项目工作区：主目录是绑定目录；附加可写目录、本会话树建的 worktree 与仓库的 git 目录 */
 export const PROJECT = {
-  place: { home: '/u/code/proj', paper: `${PAPERS}/p-proj` },
+  place: { home: '/u/code/proj' },
   binding: { extraRoots: ['/u/extra'], worktrees: ['/u/code/proj-wt-a'] },
   gitDirs: ['/u/code/proj/.git'],
 } satisfies Partial<ReachInput>;

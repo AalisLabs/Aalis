@@ -514,7 +514,7 @@ const itemBase = {
  *   再推一次，发起时就结算、没推给审批面的（没人在场、发起者不能产生审批、频率上限）同样带；没批准的（拒绝、
  *   没人应答、撤销）状态是 denied。转到后台的调用带 taskId（后台任务的 id），结果是转后台时回给模型的那段，任务的状态、
  *   最后一行与输出看后台任务。sentToRoom、approvalId、settlement、taskId 与停止时还没结束随工具结果落库，历史里同样还原；
- * - notice：宿主事件（压缩、插件的成品通知、工具调用达到上限等），topic 区分种类，canContinue 表示可以 turn/continue。
+ * - notice：宿主事件（压缩、插件发的宿主通知、工具调用达到上限等），topic 区分种类，canContinue 表示可以 turn/continue。
  *   宿主通知（schema-message 的 hostNotice）的 topic 是它的 kind，另带 noticeId（hostNotice.id）与 facts（hostNotice.facts，
  *   给界面的事实，键由定义这个 kind 的契约约定）；text 是给人看的那句（hostNotice.text），通知没给时是写给模型的正文。
  *   界面认得的 kind 按事实画成状态、不显示 text，如后台任务的结束通知（api-tools 的 BACKGROUND_TASK_NOTICE，noticeId

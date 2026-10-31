@@ -83,7 +83,7 @@ async function loadAttachmentBuffer(
   maxBytes = Number.POSITIVE_INFINITY,
 ): Promise<Buffer<ArrayBuffer> | null> {
   try {
-    // 存储地址只来自出站附件（本机插件发出的，如 send_attachment 与白纸成品）。storage URI 优先：data:/ 也是 storage
+    // 存储地址只来自出站附件（本机插件发出的，如 send_attachment）。storage URI 优先：data:/ 也是 storage
     // （根名 data），不能被下面的 data: 分支误当 data-URI。
     if (isStorageUri(source)) {
       // 读前先量：http 分支有 readBodyCapped 限额，这条此前整份读进内存再由

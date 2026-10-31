@@ -28,8 +28,8 @@ function problems(page: Record<string, unknown>): string[] {
 describe('页面登记的质量门槛', () => {
   it('合格的页面通过：标签页、带详情的表格、行动作与页面动作、会话面板的 applies', () => {
     const result = checkPage({
-      key: 'paper',
-      title: '白纸',
+      key: 'tasks',
+      title: '任务',
       icon: 'file-text',
       order: 1,
       actions: {
@@ -39,10 +39,10 @@ describe('页面登记的质量门槛', () => {
       content: {
         tabs: [
           {
-            key: 'papers',
-            title: '白纸',
+            key: 'jobs',
+            title: '任务列表',
             content: [
-              table('papers', {
+              table('jobs', {
                 rowActions: [{ action: 'cancel', visibleWhen: 'running' }],
                 detail: [md('ledger'), { type: 'actions', actions: ['cancel'] }],
               }),
@@ -70,7 +70,7 @@ describe('页面登记的质量门槛', () => {
     if (!result.ok || result.page.kind !== 'declarative') throw new Error('应当登记成声明式页面');
     expect(result.page.placement).toBe('plugin');
     expect([...result.page.sources].map(([id, s]) => [id, s.inDetail])).toEqual([
-      ['papers', false],
+      ['jobs', false],
       ['ledger', true],
       ['g', false],
       ['node', true],
@@ -347,16 +347,16 @@ describe('插件前端页面登记时的校验', () => {
 
 describe('提示登记时的校验', () => {
   const placements: Record<string, 'plugin' | 'settings' | 'session'> = {
-    works: 'plugin',
+    tasks: 'plugin',
     authority: 'settings',
     files: 'session',
   };
   const placementOf = (pageKey: string) => placements[pageKey];
 
   it('open 只收 config 与本插件位置为 plugin 或 settings 的页面', () => {
-    const base = { id: 'n', level: 'action', title: '3 件作品待裁决' };
+    const base = { id: 'n', level: 'action', title: '3 个任务待处理' };
     expect(checkNotice({ ...base, open: 'config' }, placementOf)).toEqual([]);
-    expect(checkNotice({ ...base, open: { page: 'works' } }, placementOf)).toEqual([]);
+    expect(checkNotice({ ...base, open: { page: 'tasks' } }, placementOf)).toEqual([]);
     expect(checkNotice({ ...base, open: { page: 'authority' } }, placementOf)).toEqual([]);
     const refused = ['open：只收 config，或本插件已登记、位置为 plugin 或 settings 的页面 { page }'];
     expect(checkNotice({ ...base, open: { page: 'files' } }, placementOf), '会话面板的页面打不开').toEqual(refused);

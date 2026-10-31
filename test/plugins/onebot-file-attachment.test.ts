@@ -77,7 +77,7 @@ const PRIVATE = `onebot:${SELF}:private:30001`;
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(24)]);
 const WAV = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WAVEfmt '), Buffer.alloc(24)]);
 const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom'), Buffer.alloc(24)]);
-const HTML = Buffer.from('<!doctype html><title>占位成品</title><p>占位</p>');
+const HTML = Buffer.from('<!doctype html><title>占位报告</title><p>占位</p>');
 const le32 = (n: number) => Buffer.from([n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff]);
 const be32 = (n: number) => Buffer.from([n >>> 24, (n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff]);
 /** ISO 基础媒体文件的 ftyp 盒：主品牌、次版本 0、兼容品牌表，后面补零 */
@@ -439,13 +439,13 @@ const reasonOf = (result: OutboundDeliveryResult | undefined) =>
 
 describe('onebot 出站：文件附件', () => {
   it('群会话：文字与消息段先发，文件随后经 upload_group_file 以 base64:// 上传，不进消息段', async () => {
-    const t = await boot({ files: { 'data:/paper-out/a.html': HTML, 'data:/paper-out/a.png': PNG } });
+    const t = await boot({ files: { 'data:/out/a.html': HTML, 'data:/out/a.png': PNG } });
     await t.send({
       sessionId: GROUP,
-      content: '成品在这',
+      content: '文件在这',
       attachments: [
-        { kind: 'image', data: 'data:/paper-out/a.png' },
-        { kind: 'file', data: 'data:/paper-out/a.html', name: '占位成品.html' },
+        { kind: 'image', data: 'data:/out/a.png' },
+        { kind: 'file', data: 'data:/out/a.html', name: '占位报告.html' },
       ],
     });
     await until(() => t.sent().some(a => a.action === 'upload_group_file'));
@@ -455,7 +455,7 @@ describe('onebot 出站：文件附件', () => {
     expect(upload?.params.group_id).toBe(20001);
     expect(String(upload?.params.file).startsWith('base64://')).toBe(true);
     expect(decode(upload?.params.file).equals(HTML)).toBe(true);
-    expect(upload?.params.name).toBe('占位成品.html');
+    expect(upload?.params.name).toBe('占位报告.html');
 
     const messages = sent.filter(a => a.action === 'send_group_msg');
     expect(messages.length).toBeGreaterThan(0);
@@ -468,17 +468,17 @@ describe('onebot 出站：文件附件', () => {
     expect(JSON.stringify(messages)).not.toContain(HTML.toString('base64'));
     // 送达快照：文字发出了，带 content
     await until(() => t.delivered.length > 0);
-    expect(t.delivered.map(msg => msg.content)).toEqual(['成品在这']);
+    expect(t.delivered.map(msg => msg.content)).toEqual(['文件在这']);
   });
 
-  it('存储地址的附件（如白纸成品，没带 ref）：落盘的副本只用来发，记进历史的是原来的地址；data URL 的图记落盘的副本', async () => {
-    const t = await boot({ files: { 'data:/paper-out/a.html': HTML } });
+  it('存储地址的附件（如工具产出的文件，没带 ref）：落盘的副本只用来发，记进历史的是原来的地址；data URL 的图记落盘的副本', async () => {
+    const t = await boot({ files: { 'data:/out/a.html': HTML } });
     await t.send({
       sessionId: GROUP,
       content: '',
       source: 'agent',
       attachments: [
-        { kind: 'file', data: 'data:/paper-out/a.html', name: '占位成品.html' },
+        { kind: 'file', data: 'data:/out/a.html', name: '占位报告.html' },
         { kind: 'image', data: `data:image/png;base64,${PNG.toString('base64')}` },
       ],
     });
@@ -486,45 +486,45 @@ describe('onebot 出站：文件附件', () => {
     // 送达快照里消息段发出的附件在前、上传的文件在后
     expect(t.notes.map(n => [n.message.kind, n.message.metadata?.ref])).toEqual([
       ['outbound-image', expect.stringMatching(/^data:\/images\/onebot_10000_group_20001\/onebot\/[0-9a-f]{16}\.png$/)],
-      ['outbound-file', 'data:/paper-out/a.html'],
+      ['outbound-file', 'data:/out/a.html'],
     ]);
   });
 
   it('文字没发出、文件上传成功：送达快照的 content 是空串，只带上传了的文件', async () => {
-    const t = await boot({ replyToSend: 'failText', files: { 'data:/paper-out/a.html': HTML } });
+    const t = await boot({ replyToSend: 'failText', files: { 'data:/out/a.html': HTML } });
     await t.send({
       sessionId: GROUP,
-      content: '成品在这',
+      content: '文件在这',
       source: 'command',
-      attachments: [{ kind: 'file', data: 'data:/paper-out/a.html', name: '占位成品.html' }],
+      attachments: [{ kind: 'file', data: 'data:/out/a.html', name: '占位报告.html' }],
     });
     await until(() => t.delivered.length > 0);
     expect(t.delivered.map(msg => [msg.content, msg.attachments?.map(att => att.name)])).toEqual([
-      ['', ['占位成品.html']],
+      ['', ['占位报告.html']],
     ]);
   });
 
   it('私聊：经 upload_private_file 上传，文件名去掉路径分隔符', async () => {
-    const t = await boot({ files: { 'data:/paper-out/a.html': HTML } });
+    const t = await boot({ files: { 'data:/out/a.html': HTML } });
     await t.send({
       sessionId: PRIVATE,
       content: '',
-      attachments: [{ kind: 'file', data: 'data:/paper-out/a.html', name: '../占位/目录\\成品.html' }],
+      attachments: [{ kind: 'file', data: 'data:/out/a.html', name: '../占位/目录\\报告.html' }],
     });
     await until(() => t.sent().some(a => a.action === 'upload_private_file'));
     const upload = t.sent().find(a => a.action === 'upload_private_file');
     expect(upload?.params.user_id).toBe(30001);
     expect(decode(upload?.params.file).equals(HTML)).toBe(true);
-    expect(upload?.params.name).toBe('..占位目录成品.html');
+    expect(upload?.params.name).toBe('..占位目录报告.html');
     expect(t.sent().some(a => a.action === 'upload_group_file')).toBe(false);
   });
 
   it('超过内联上限的文件附件不发、warn，agent 发出的在会话记忆里留投递失败记录', async () => {
-    const t = await boot({ files: { 'data:/paper-out/big.html': Buffer.alloc(10 * MIB + 1, 0x61) } });
+    const t = await boot({ files: { 'data:/out/big.html': Buffer.alloc(10 * MIB + 1, 0x61) } });
     await t.send({
       sessionId: GROUP,
       content: '',
-      attachments: [{ kind: 'file', data: 'data:/paper-out/big.html', name: 'big.html' }],
+      attachments: [{ kind: 'file', data: 'data:/out/big.html', name: 'big.html' }],
       source: 'agent',
     });
     await until(() => t.failureNotes().length > 0);
@@ -535,8 +535,8 @@ describe('onebot 出站：文件附件', () => {
   });
 
   it('投递失败记录带这条消息的回合或调用 id，原因与投递结果同一句', async () => {
-    const t = await boot({ files: { 'data:/paper-out/big.html': Buffer.alloc(10 * MIB + 1, 0x61) } });
-    const big = { kind: 'file' as const, data: 'data:/paper-out/big.html', name: 'big.html' };
+    const t = await boot({ files: { 'data:/out/big.html': Buffer.alloc(10 * MIB + 1, 0x61) } });
+    const big = { kind: 'file' as const, data: 'data:/out/big.html', name: 'big.html' };
     const reply: OutgoingMessage = {
       sessionId: GROUP,
       content: '',
@@ -564,13 +564,13 @@ describe('onebot 出站：文件附件', () => {
   });
 
   it('selfId 无匹配连接时不误发到其他机器人', async () => {
-    const t = await boot({ files: { 'data:/paper-out/a.html': HTML } });
+    const t = await boot({ files: { 'data:/out/a.html': HTML } });
     // selfId 对不上：当前适配器不认领该会话
     const other = `onebot:99999:group:20001`;
     await t.send({
       sessionId: other,
       content: '',
-      attachments: [{ kind: 'file', data: 'data:/paper-out/a.html', name: 'a.html' }],
+      attachments: [{ kind: 'file', data: 'data:/out/a.html', name: 'a.html' }],
       source: 'agent',
     });
     await t.flush();
@@ -616,11 +616,11 @@ describe('onebot 出站：文件附件', () => {
   });
 
   it('v12 连接：文件附件不支持，warn 并按投递失败处理', async () => {
-    const t = await boot({ protocol: 'v12', files: { 'data:/paper-out/a.html': HTML } });
+    const t = await boot({ protocol: 'v12', files: { 'data:/out/a.html': HTML } });
     await t.send({
       sessionId: GROUP,
       content: '',
-      attachments: [{ kind: 'file', data: 'data:/paper-out/a.html', name: 'a.html' }],
+      attachments: [{ kind: 'file', data: 'data:/out/a.html', name: 'a.html' }],
       source: 'agent',
     });
     await until(() => t.failureNotes().length > 0);
@@ -630,14 +630,14 @@ describe('onebot 出站：文件附件', () => {
   });
 
   it('上传超时：报结果未知、不要重发，不说未能送达', async () => {
-    const t = await boot({ replyToSend: 'hold', files: { 'data:/paper-out/a.html': HTML } });
+    const t = await boot({ replyToSend: 'hold', files: { 'data:/out/a.html': HTML } });
     // 只伪造计时器、且随真实时间推进：until() 的轮询照常，再一次性跳过 action 的 30 秒上限
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
     try {
       const msg: OutgoingMessage = {
         sessionId: GROUP,
         content: '',
-        attachments: [{ kind: 'file', data: 'data:/paper-out/a.html', name: 'a.html' }],
+        attachments: [{ kind: 'file', data: 'data:/out/a.html', name: 'a.html' }],
         source: 'agent',
       };
       await t.send(msg);
@@ -659,7 +659,7 @@ describe('onebot 出站：文件附件', () => {
   it('上传超时夹着确定没发出的附件：照样标结果未知，原因里写着结果未知的那个', async () => {
     const t = await boot({
       replyToSend: 'hold',
-      files: { 'data:/paper-out/a.html': HTML, 'data:/paper-out/big.html': Buffer.alloc(10 * MIB + 1, 0x61) },
+      files: { 'data:/out/a.html': HTML, 'data:/out/big.html': Buffer.alloc(10 * MIB + 1, 0x61) },
     });
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
     try {
@@ -667,8 +667,8 @@ describe('onebot 出站：文件附件', () => {
         sessionId: GROUP,
         content: '',
         attachments: [
-          { kind: 'file', data: 'data:/paper-out/a.html', name: 'a.html' },
-          { kind: 'file', data: 'data:/paper-out/big.html', name: 'big.html' },
+          { kind: 'file', data: 'data:/out/a.html', name: 'a.html' },
+          { kind: 'file', data: 'data:/out/big.html', name: 'big.html' },
         ],
         source: 'agent',
       };
@@ -851,7 +851,7 @@ describe('onebot 出站：发送不重试，停在没发成的那一条', () => 
     const t = await boot({
       replyToSend: 'hold',
       failActions: { upload_group_file: { retcode: 100, message: '<占位原话>' } },
-      files: { 'data:/paper-out/a.html': HTML },
+      files: { 'data:/out/a.html': HTML },
       config: { splitMessage: { enabled: true, delayPerChar: 0, maxDelay: 0, patterns: ['。'] } },
     });
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
@@ -861,7 +861,7 @@ describe('onebot 出站：发送不重试，停在没发成的那一条', () => 
         content: '第一句足够长的一段话。第二句也足够长的一段话。',
         source: 'agent',
         markup: true,
-        attachments: [{ kind: 'file', data: 'data:/paper-out/a.html', name: 'a.html' }],
+        attachments: [{ kind: 'file', data: 'data:/out/a.html', name: 'a.html' }],
       };
       await t.send(msg);
       await until(() => textSends(t).length === 1);
@@ -904,7 +904,7 @@ describe('onebot 出站：发送不重试，停在没发成的那一条', () => 
     const t = await boot({
       failSendAt: 2,
       failActions: { upload_group_file: { retcode: 100, message: '<占位原话>' } },
-      files: { 'data:/paper-out/a.html': HTML },
+      files: { 'data:/out/a.html': HTML },
       config: { splitMessage: { enabled: true, delayPerChar: 0, maxDelay: 0, patterns: ['。'] } },
     });
     const msg: OutgoingMessage = {
@@ -912,7 +912,7 @@ describe('onebot 出站：发送不重试，停在没发成的那一条', () => 
       content: THREE_PIECES,
       source: 'agent',
       markup: true,
-      attachments: [{ kind: 'file', data: 'data:/paper-out/a.html', name: 'a.html' }],
+      attachments: [{ kind: 'file', data: 'data:/out/a.html', name: 'a.html' }],
     };
     await t.send(msg);
     expect(await msg.delivery).toMatchObject({ ok: false, sentPieces: 1 });
@@ -1587,12 +1587,12 @@ describe('onebot 出站：send_attachment 投递结果', () => {
 
 describe('onebot 出站：安全', () => {
   it('超限的 storage 文件与超限的 http 文件：发出的 action 里没有 file:// 与 http 形态，按失败处理', async () => {
-    const t = await boot({ files: { 'data:/paper-out/big.html': Buffer.alloc(10 * MIB + 1, 0x61) } });
+    const t = await boot({ files: { 'data:/out/big.html': Buffer.alloc(10 * MIB + 1, 0x61) } });
     await t.send({
       sessionId: GROUP,
       content: '',
       attachments: [
-        { kind: 'file', data: 'data:/paper-out/big.html', name: 'big.html' },
+        { kind: 'file', data: 'data:/out/big.html', name: 'big.html' },
         { kind: 'file', data: `${httpBase}/big.html`, name: 'remote.html' },
       ],
       source: 'agent',

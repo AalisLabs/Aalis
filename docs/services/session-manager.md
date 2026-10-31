@@ -160,12 +160,12 @@ interface SessionInfo {
 
 ### 2.7 场所与工作区
 
-每个会话恰好一个场所（`SessionPlace`：`kind` 为 `window` 或 `workspace`，`key` 是场所键），子会话取根会话的；场所只管归属与插件按场所存的数据（白纸、会话设置的场所层），不管权限。`placeOf(sessionId)` 按根会话取第一条：
+每个会话恰好一个场所（`SessionPlace`：`kind` 为 `window` 或 `workspace`，`key` 是场所键），子会话取根会话的；场所只管归属与插件按场所存的数据（如会话设置的场所层），不管权限。`placeOf(sessionId)` 按根会话取第一条：
 
 1. 有出生平台：一对一而对端是 owner 身份的（owner 的 IM 私聊）为默认工作区 `workspace:default`；其余为窗口，键是 api-gateway 的 `windowKey` 拼出的 `平台:类型:目标`，不含机器人账号，同一个群里两个账号的会话是同一个窗口。聊天窗口缺失（读表时类型不对被去掉）或目标为空的坏数据同样为窗口，键里缺的段按空串拼，日志点名一次，不落进默认工作区，免得 owner 给工作区设的值套到房间上。owner 谓词取 authority 的 `isOwner`，与房间类别同一判据；参考实现以 `optional(authority)` 取它，没有 authority 时一对一窗口按窗口算。
 2. 没有出生平台的按根会话记下的工作区：有值的为 `workspace:<id>`，不看绑定目录；没有的为默认工作区（默认工作区里建的 WebUI 与终端会话、`mcp-server`、编排与定时任务的会话、按 id 建档且还没补记来源字段的会话、会话表里没有的 id）。记下的工作区没有记录（坏数据）时按默认工作区，日志点名。
 
-场所记录 `{ key, kind, name?, root?, metadata?, createdAt, updatedAt }` 存在 metadata 命名空间 `places`，与会话表一同跟随本插件选中的记忆后端加载与写回；必填字段不对（含类别与键对不上）的不载入，移到 `places-rejected`。默认工作区的记录（没有名字，显示经 `placeLabel` 写「默认工作区」）在加载后补上；窗口的记录在 IM 房间建档或补记来源字段时建（§6.6），显示名取群名或对方昵称、随出生平台的入站更新，owner 的 IM 私聊在默认工作区、不建；删除会话不删场所，同一窗口换了会话（另一个机器人账号的会话、以后的 `/new`）照样取到场所的数据。`getPlace(key)` 回这条记录（工作区的目录经 `listWorkspaces` 取），`listPlaces()` 列出全部，`updatePlace` 合并式改它的 `metadata`、随会话表落盘，没有这个键的记录时抛错。场所的白纸 id 由 `placePaperId(key)` 算出（`p:` 加场所键的 UTF-8 十六进制，只有小写，白纸目录在大小写不敏感的文件系统上也不撞），一个场所一张；白纸在白纸根里的目录名由 `paperDirName(paperId)` 给出，白纸插件与触及都调它。
+场所记录 `{ key, kind, name?, root?, metadata?, createdAt, updatedAt }` 存在 metadata 命名空间 `places`，与会话表一同跟随本插件选中的记忆后端加载与写回；必填字段不对（含类别与键对不上）的不载入，移到 `places-rejected`。默认工作区的记录（没有名字，显示经 `placeLabel` 写「默认工作区」）在加载后补上；窗口的记录在 IM 房间建档或补记来源字段时建（§6.6），显示名取群名或对方昵称、随出生平台的入站更新，owner 的 IM 私聊在默认工作区、不建；删除会话不删场所，同一窗口换了会话（另一个机器人账号的会话、以后的 `/new`）照样取到场所的数据。`getPlace(key)` 回这条记录（工作区的目录经 `listWorkspaces` 取），`listPlaces()` 列出全部，`updatePlace` 合并式改它的 `metadata`、随会话表落盘，没有这个键的记录时抛错。
 
 工作区由 owner 经会话服务登记，会话管理只管记录：
 
@@ -213,7 +213,7 @@ interface SessionInfo {
 
 绝大多数作者**不需要**重写本服务——它是单一参考实现，替换它意味着接管整套生命周期、场所与会话树。若确有需要（如换持久化后端或自定义会话模型），按下表实现。
 
-**最小必须**：接口里被实际消费的这几个方法务必正确——`createSession` / `getSession` / `listSessions` / `updateSession` / `ensureSession` / `deleteSession` / `recordInbound` / `generationOf` / `canTake` / `createChildSession` / `completeSession` / `placeOf`。`canTake` 是必填成员：读历史的工具、跨会话历史、按 id 取消息与取别的会话的媒体都只调它（经 `takeFrom`），实现得比 §2.8 宽，这些取用就跟着放宽。其余（场所与工作区、`updateSessionTitle` / ...）主要服务于会话服务、会话设置与白纸，可保守实现。`SessionInfo.kind` 是必填字段，建档时按 `sessionKind` 填上。
+**最小必须**：接口里被实际消费的这几个方法务必正确——`createSession` / `getSession` / `listSessions` / `updateSession` / `ensureSession` / `deleteSession` / `recordInbound` / `generationOf` / `canTake` / `createChildSession` / `completeSession` / `placeOf`。`canTake` 是必填成员：读历史的工具、跨会话历史、按 id 取消息与取别的会话的媒体都只调它（经 `takeFrom`），实现得比 §2.8 宽，这些取用就跟着放宽。其余（场所与工作区、`updateSessionTitle` / ...）主要服务于会话服务与会话设置，可保守实现。`SessionInfo.kind` 是必填字段，建档时按 `sessionKind` 填上。
 
 **必须复刻的语义**：
 
@@ -542,7 +542,7 @@ onebot 等平台派生的房间会话在首条真人入站到达时由 §6.6 的
 - 排在它后面的输入中间件不调用 `next()` 拦下消息，或者抛错时，agent 不发 `agent:turn:after`，由这里的 `finally` 收口，会话不会停在「进行中」；
 - 排在它前面的中间件拦下消息时，它根本不运行，会话也不会被翻成 `active`。
 
-这是唯一的收口。子会话以回复完成时，plugin-subtask 在 `agent:turn:after` 里先以回复为结果调 `completeSession()`，这里见它已不是 `active` 就不再改；出错、被停止或静默的子会话由这里收口，父会话的 `wait_subtasks` 随即返回，不等到超时。同一会话一轮接一轮（排着的输入在上一轮结束后开下一轮），中间件按回合 id 登记在飞的回合，会话里没有别的在飞回合时这一轮结束才收口，按的是这一轮的结局。回合中途发出的出站消息（`send_attachment`、`paper_send` 在工具执行中直接发）不收口。
+这是唯一的收口。子会话以回复完成时，plugin-subtask 在 `agent:turn:after` 里先以回复为结果调 `completeSession()`，这里见它已不是 `active` 就不再改；出错、被停止或静默的子会话由这里收口，父会话的 `wait_subtasks` 随即返回，不等到超时。同一会话一轮接一轮（排着的输入在上一轮结束后开下一轮），中间件按回合 id 登记在飞的回合，会话里没有别的在飞回合时这一轮结束才收口，按的是这一轮的结局。回合中途发出的出站消息（`send_attachment` 在工具执行中直接发）不收口。
 
 结局为 `replied` 的一轮结束时写入 `lastReplyAt`（她最近开口的时间），别的回合还在跑也照写，随 `session:updated` 推出并落盘；`silent`、`aborted`、`error` 不改它。
 

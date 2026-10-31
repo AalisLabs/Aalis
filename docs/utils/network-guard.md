@@ -182,7 +182,6 @@ await assertSafeHost(parsedUrl.hostname);
 | office | 拉远程文档解析 |
 | ollama | 下载消息里的图片网址（带 30s 超时） |
 | file-reader | 下载网址形式的附件 |
-| 远端代理 | 下载远端代理产出的成品（预签名链接） |
 | 策略注入方 | `plugin-authority` 读宿主配置文档：`setNetworkPolicy(config.get('network') ?? {})`，激活时注入，宿主文档变了再注入 |
 
 其中两处做法值得参考：图片代理显式不带 cookie、只给一个伪 UA；media 与 http 工具在 `safeFetch` 之外自行做体积上限与流式累计——util 只负责校验、不限制体积，详见 §5。

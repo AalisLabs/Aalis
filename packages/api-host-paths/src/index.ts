@@ -1,7 +1,7 @@
 /**
  * @aalis/api-host-paths — 宿主路径契约
  *
- * 家目录装着一个实例的全部状态：配置、密钥、数据库、日志、人设卡、技能、舞台。安装集是放 package.json 与
+ * 家目录装着一个实例的全部状态：配置、密钥、数据库、日志、人设卡、技能、默认工作区。安装集是放 package.json 与
  * node_modules 的目录。两者都由宿主在启动时解析一次，之后不变；进程的 cwd 不带任何语义。
  * Node 宿主 @aalis/runtime 把解析结果作为 host-paths 服务独占登记在根上；别的宿主要让插件定位这些目录，
  * 自己提供本描述符。插件要用时在 uses 里声明，不读 `process.cwd()`。
@@ -37,14 +37,8 @@ export interface HostPaths {
     /** 存下来的编排定义 */
     readonly workflows: string;
   };
-  readonly stage: {
-    /** 草稿，不对外 */
-    readonly drafts: string;
-    /** 发布后对外的作品 */
-    readonly public: string;
-    /** 各房间的白纸 */
-    readonly paper: string;
-  };
+  /** 默认工作区：owner 本机默认工作区的真实文件夹，`$AALIS_HOME/workspace` */
+  readonly workspace: string;
 }
 
 export const hostPaths = defineService<HostPaths>('host-paths');

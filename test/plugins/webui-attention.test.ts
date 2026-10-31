@@ -393,16 +393,16 @@ describe('「需要处理」的读口与 attention.changed', () => {
     const service = app.bind({ services }).services.use.get(webuiServer)!;
 
     const off = service.addNotice(
-      { id: 'pending', level: 'action', title: '1 件作品待裁决', open: 'config' },
+      { id: 'pending', level: 'action', title: '1 张工单待处理', open: 'config' },
       'zz-owner',
     );
     expect(await next(0)).toEqual([
       { kind: 'plugin', instance: failing.name, state: 'error', error: '缺少服务地址', ...clear },
-      { kind: 'notice', instance: 'zz-owner', id: 'pending', level: 'action', title: '1 件作品待裁决', open: 'config' },
+      { kind: 'notice', instance: 'zz-owner', id: 'pending', level: 'action', title: '1 张工单待处理', open: 'config' },
     ]);
 
-    const replace = service.addNotice({ id: 'pending', level: 'action', title: '2 件作品待裁决' }, 'zz-owner');
-    expect((await next(1)).at(-1)).toMatchObject({ kind: 'notice', title: '2 件作品待裁决' });
+    const replace = service.addNotice({ id: 'pending', level: 'action', title: '2 张工单待处理' }, 'zz-owner');
+    expect((await next(1)).at(-1)).toMatchObject({ kind: 'notice', title: '2 张工单待处理' });
     const pending = approval('ap-1', 's-1');
     shown.push(pending);
     void emit('approval:created', pending);

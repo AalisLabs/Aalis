@@ -111,7 +111,7 @@ export interface ToolCallContext {
 export type ToolCallRequest = Omit<ToolCallContext, 'approveFor'>;
 
 /**
- * 要记一个人时这次调用的授权身份（定时任务的创建者、编排的调用者、白纸的发起人，以及不挂审批的取别的会话的东西）：参与者
+ * 要记一个人时这次调用的授权身份（定时任务的创建者、编排的调用者，以及不挂审批的取别的会话的东西）：参与者
  * 只有一个时是他，有几个（或没有）时是无主体，账号为空串，与 schema-message 的 selfInitiatedActor 同形（本包不依赖
  * schema-message，照写一份）。批过的调用参与者已换成批的人，记的就是批的人
  */

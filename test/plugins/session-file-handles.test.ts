@@ -20,7 +20,7 @@ import { client } from '../fixtures/session-client.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
-// 会话条目里的文件句柄：她发到 WebUI 会话的文件（白纸成品等）在条目里给会话服务签发的句柄，不给存储地址；
+// 会话条目里的文件句柄：她发到 WebUI 会话的文件（工作区里的文件等）在条目里给会话服务签发的句柄，不给存储地址；
 // WebUI 按句柄下载（GET /api/session-file），一律当附件以 octet-stream 下发。
 // 真 storage-local（data 根映射到家目录的 state/）、真会话服务、真 HTTP。
 // ════════════════════════════════════════════════════════════
@@ -73,9 +73,9 @@ async function setup() {
   await app.start();
   await waitListening(port);
 
-  /** 存储根在家目录里的位置：paper 是白纸成品，data 是 state/，pluginData 是 state/plugins */
+  /** 存储根在家目录里的位置：workspace 是默认工作区，data 是 state/，pluginData 是 state/plugins */
   const rootDirs: Record<string, string> = {
-    paper: paths.stage.paper,
+    workspace: paths.workspace,
     data: paths.state,
     pluginData: join(paths.state, 'plugins'),
   };
@@ -90,7 +90,7 @@ async function setup() {
     writeFileSync(file, content);
   };
 
-  /** 她往 WebUI 会话发一条只有附件的消息（白纸交付成品就是这样发的），等回执 */
+  /** 她往 WebUI 会话发一条只有附件的消息（send_attachment 发文件就是这样发的），等回执 */
   const send = async (sessionId: string, attachments: MessageAttachment[]) => {
     const out: OutgoingMessage = { sessionId, platform: 'webui', content: '', source: 'agent', attachments };
     await host.events.use.emit('outbound:message', out);
@@ -126,13 +126,13 @@ describe('会话条目里的文件句柄', () => {
   it('她发到 WebUI 会话的文件：条目带句柄而不是存储地址；按句柄下载到原文件，以附件、octet-stream 下发；快照的历史给出同一个句柄；没给名字的取存储地址的最后一段', async () => {
     const { sm, put, send, download, watch } = await setup();
     const s = await sm.createSession({ name: 'S' });
-    put('paper:/n-a/tasks/t-1/out/a-1.html', PAGE);
-    put('paper:/n-a/tasks/t-1/out/a-2.txt', 'zz-unnamed');
+    put('workspace:/out/a-1.html', PAGE);
+    put('workspace:/out/a-2.txt', 'zz-unnamed');
     const live = await watch(s.id);
 
     await send(s.id, [
-      { kind: 'file', data: 'paper:/n-a/tasks/t-1/out/a-1.html', name: '主页.html' },
-      { kind: 'file', data: 'paper:/n-a/tasks/t-1/out/a-2.txt' },
+      { kind: 'file', data: 'workspace:/out/a-1.html', name: '主页.html' },
+      { kind: 'file', data: 'workspace:/out/a-2.txt' },
     ]);
     await vi.waitFor(() => expect(live.items()).toHaveLength(2));
     const [item, unnamed] = live.items();
@@ -142,7 +142,7 @@ describe('会话条目里的文件句柄', () => {
       attachments: [{ kind: 'file', name: '主页.html', src: expect.any(String) }],
     });
     const handle = handleOf(item);
-    expect(handle).not.toContain('paper:/');
+    expect(handle).not.toContain('workspace:/');
 
     const res = await download(s.id, handle);
     expect(res.status).toBe(200);
@@ -167,10 +167,10 @@ describe('会话条目里的文件句柄', () => {
     const { sm, put, send, download, watch } = await setup();
     const a = await sm.createSession({ name: 'A' });
     const b = await sm.createSession({ name: 'B' });
-    put('paper:/p/a.html', PAGE);
-    put('paper:/p/other.html', 'zz-other-file');
+    put('workspace:/p/a.html', PAGE);
+    put('workspace:/p/other.html', 'zz-other-file');
     const live = await watch(a.id);
-    await send(a.id, [{ kind: 'file', data: 'paper:/p/a.html', name: 'a.html' }]);
+    await send(a.id, [{ kind: 'file', data: 'workspace:/p/a.html', name: 'a.html' }]);
     await vi.waitFor(() => expect(live.items()).toHaveLength(1));
     const handle = handleOf(live.items()[0]);
 
@@ -179,8 +179,8 @@ describe('会话条目里的文件句柄', () => {
     const flipped = (signature[0] === 'A' ? 'B' : 'A') + signature.slice(1);
     const attempts: Record<string, string> = {
       乱写的: 'zz-not-a-handle',
-      自己编的签名: `${encode(['paper:/p/other.html', 'other.html'])}.AAAA`,
-      载荷换成别的文件: `${encode(['paper:/p/other.html', 'other.html'])}.${signature}`,
+      自己编的签名: `${encode(['workspace:/p/other.html', 'other.html'])}.AAAA`,
+      载荷换成别的文件: `${encode(['workspace:/p/other.html', 'other.html'])}.${signature}`,
       载荷换成状态目录里的文件: `${encode(['data:/webui/access.txt', 'access.txt'])}.${signature}`,
       签名改了一位: `${payload}.${flipped}`,
     };
@@ -202,14 +202,14 @@ describe('会话条目里的文件句柄', () => {
     const { sm, put, send, watch } = await setup();
     const s = await sm.createSession({ name: 'S' });
     put('pluginData:/file-reader/x/a.txt', 'zz-plugin-data');
-    put('paper:/p/ok.html', PAGE);
+    put('workspace:/p/ok.html', PAGE);
     const live = await watch(s.id);
 
     await send(s.id, [
       { kind: 'file', data: 'data:/webui/access.txt', name: 'access.txt' },
       { kind: 'file', data: 'pluginData:/file-reader/x/a.txt', name: 'a.txt' },
       { kind: 'file', data: 'gone:/a.txt', name: 'gone.txt' },
-      { kind: 'file', data: 'paper:/p/ok.html', name: 'ok.html' },
+      { kind: 'file', data: 'workspace:/p/ok.html', name: 'ok.html' },
     ]);
     await vi.waitFor(() => expect(live.items()).toHaveLength(4));
     const attachments = live.items().flatMap(item => (item.kind === 'agent-message' ? item.attachments : []));
@@ -248,9 +248,9 @@ describe('会话条目里的文件句柄', () => {
   it('存储地址与文件名里带「]」：条目里的名字与下载到的文件都和原来一样', async () => {
     const { sm, put, send, download, watch } = await setup();
     const s = await sm.createSession({ name: 'S' });
-    put('paper:/p/报告[终稿].html', PAGE);
+    put('workspace:/p/报告[终稿].html', PAGE);
     const live = await watch(s.id);
-    await send(s.id, [{ kind: 'file', data: 'paper:/p/报告[终稿].html', name: '报告[终稿].html' }]);
+    await send(s.id, [{ kind: 'file', data: 'workspace:/p/报告[终稿].html', name: '报告[终稿].html' }]);
     await vi.waitFor(() => expect(live.items()).toHaveLength(1));
     expect(live.items()[0]).toMatchObject({ attachments: [{ kind: 'file', name: '报告[终稿].html' }] });
     const res = await download(s.id, handleOf(live.items()[0]));
@@ -266,9 +266,9 @@ describe('会话条目里的文件句柄', () => {
   it('文件名带撇号、括号与星号：filename* 里按 RFC 8187 编码，另有 ASCII 的 filename= 退路', async () => {
     const { sm, put, send, download, watch } = await setup();
     const s = await sm.createSession({ name: 'S' });
-    put('paper:/p/draft.html', PAGE);
+    put('workspace:/p/draft.html', PAGE);
     const live = await watch(s.id);
-    await send(s.id, [{ kind: 'file', data: 'paper:/p/draft.html', name: "Aalis's (草稿)*.html" }]);
+    await send(s.id, [{ kind: 'file', data: 'workspace:/p/draft.html', name: "Aalis's (草稿)*.html" }]);
     await vi.waitFor(() => expect(live.items()).toHaveLength(1));
     const res = await download(s.id, handleOf(live.items()[0]));
     const header = res.headers.get('content-disposition') ?? '';
@@ -282,30 +282,30 @@ describe('会话条目里的文件句柄', () => {
   it('文件读不出（不是不存在：同一个位置换成了目录）：回 500 并记告警，不说成文件不在', async () => {
     const { sm, put, fileOf, send, download, watch } = await setup();
     const s = await sm.createSession({ name: 'S' });
-    put('paper:/p/a.html', PAGE);
+    put('workspace:/p/a.html', PAGE);
     const live = await watch(s.id);
-    await send(s.id, [{ kind: 'file', data: 'paper:/p/a.html', name: 'a.html' }]);
+    await send(s.id, [{ kind: 'file', data: 'workspace:/p/a.html', name: 'a.html' }]);
     await vi.waitFor(() => expect(live.items()).toHaveLength(1));
     const handle = handleOf(live.items()[0]);
 
-    rmSync(fileOf('paper:/p/a.html'));
-    mkdirSync(fileOf('paper:/p/a.html'));
+    rmSync(fileOf('workspace:/p/a.html'));
+    mkdirSync(fileOf('workspace:/p/a.html'));
     const res = await download(s.id, handle);
     expect(res.status).toBe(500);
-    expect(warns.filter(w => w.includes('读取会话文件 paper:/p/a.html 失败'))).toHaveLength(1);
+    expect(warns.filter(w => w.includes('读取会话文件 workspace:/p/a.html 失败'))).toHaveLength(1);
   });
 
   it('文件删掉之后，原来的句柄回 404', async () => {
     const { sm, put, fileOf, send, download, watch } = await setup();
     const s = await sm.createSession({ name: 'S' });
-    put('paper:/p/a.html', PAGE);
+    put('workspace:/p/a.html', PAGE);
     const live = await watch(s.id);
-    await send(s.id, [{ kind: 'file', data: 'paper:/p/a.html', name: 'a.html' }]);
+    await send(s.id, [{ kind: 'file', data: 'workspace:/p/a.html', name: 'a.html' }]);
     await vi.waitFor(() => expect(live.items()).toHaveLength(1));
     const handle = handleOf(live.items()[0]);
     expect((await download(s.id, handle)).status).toBe(200);
 
-    rmSync(fileOf('paper:/p/a.html'));
+    rmSync(fileOf('workspace:/p/a.html'));
     const res = await download(s.id, handle);
     expect(res.status).toBe(404);
   });
@@ -313,9 +313,9 @@ describe('会话条目里的文件句柄', () => {
   it('会话服务重启之后旧句柄回 403；重新订阅拿到的新句柄能取', async () => {
     const { app, sm, put, send, download, watch } = await setup();
     const s = await sm.createSession({ name: 'S' });
-    put('paper:/p/a.html', PAGE);
+    put('workspace:/p/a.html', PAGE);
     const live = await watch(s.id);
-    await send(s.id, [{ kind: 'file', data: 'paper:/p/a.html', name: 'a.html' }]);
+    await send(s.id, [{ kind: 'file', data: 'workspace:/p/a.html', name: 'a.html' }]);
     await vi.waitFor(() => expect(live.items()).toHaveLength(1));
     const before = handleOf(live.items()[0]);
 

@@ -232,7 +232,7 @@ export default definePlugin({
 - **授权身份用 `actor` 而非 `userId`**：系统侧触发器（scheduler / idle / workflow）投递的 `IncomingMessage` 应填 `actor: { platform, userId }`，表示「AI 代谁执行」；agent 算工具调用上下文的参与者时优先用 `actor`、按它查权限等级，避免提权（`packages/schema-message/src/index.ts`）。`actor` 不能由 LLM 在工具入参里自由指定。
 - **`source` 标识系统侧注入**：闲置触发、定时任务、workflow 等触发器投递的消息必须设置 `IncomingMessage.source`；平台适配器投递真人消息**不得**设置。带 `source` 的消息被视为内部注入：不经触发策略（不计数、不改写 `triggerType`），不过回复后冷却，不过指令解析（声明了 `ownerApproved` 的除外，见 [注入的文字不执行指令](../concepts/security-model.md#注入的文字不执行指令)），禁言与限速照常生效。带 `source` 的输入在 agent 里各自成一轮，不与别的输入叠加，注入方的来源应当标识发送方（`packages/schema-message/src/index.ts`）。
 - **到达序号**：每条入站在所有相位之前打一个这次运行内递增的到达序号（`IncomingMessage.arrival`，网关重载后从头计），被指令相位吞掉的也有。它只用于日志关联：触发插件的判定行、流控与网关的吞噬行、agent 每条输入的去向与回合结束行都带 `#序号`，不落库、不进模型。
-- **`ingressMessage` 在这条输入落定时返回**：注入方（编排的 agent 节点、子任务的追问、作品通知）据此知道它没开轮：返回时还没认到这一轮的结局，就是在相位里被挡下或被放掉。
+- **`ingressMessage` 在这条输入落定时返回**：注入方（编排的 agent 节点、子任务的追问）据此知道它没开轮：返回时还没认到这一轮的结局，就是在相位里被挡下或被放掉。
 - gateway 自身不碰 storage / 网络出口；附件落盘、SSRF 守卫（`safeFetch`）等是适配器与 media 层的事，见 `concepts/storage-uri-grammar.md` / `concepts/security-model.md`。
 
 ## 8. 边界与注意事项

@@ -70,7 +70,7 @@ export interface BoundStorage extends StorageMethods {
 ```
 
 - `caps.storage.use` 的调用转发给本插件选中的存储提供者。`resolveLocalPath` / `readFileRange` / `watch` 在业务层上恒定义（类型不带 `?`）：选中的那一家不支持时，调用本身抛「存储提供者不支持 X」，调用方不必先判方法是否存在。
-- `own` 是本插件私有目录 `pluginData:/<目录名>/` 上的存储视图。目录名是包名去掉 `plugin-` 前缀：`@aalis` 与不带作用域的包只取包名（`@aalis/plugin-paper` → `paper`），别的作用域另带作用域、以 `+` 相连（`@acme/plugin-paper` → `acme+paper`），取不出单段目录名的插件名在绑定时抛错；同一插件的多个实例共用这个目录，需要区分时由插件自己分子目录。方法与 `StorageService` 相同（没有 `listRoots`），路径参数相对这个目录：规范化之后越出目录的（`..` 越过目录）、宿主机绝对路径与存储地址都抛错，空路径即目录本身（`own.delete('')` 删掉整个私有目录）；返回值里的地址是完整的存储地址。`own.uri(path)` 给出相对路径对应的完整存储地址（交给别处、写进记录时用），不给参数即目录本身。
+- `own` 是本插件私有目录 `pluginData:/<目录名>/` 上的存储视图。目录名是包名去掉 `plugin-` 前缀：`@aalis` 与不带作用域的包只取包名（`@aalis/plugin-file-reader` → `file-reader`），别的作用域另带作用域、以 `+` 相连（`@acme/plugin-file-reader` → `acme+file-reader`），取不出单段目录名的插件名在绑定时抛错；同一插件的多个实例共用这个目录，需要区分时由插件自己分子目录。方法与 `StorageService` 相同（没有 `listRoots`），路径参数相对这个目录：规范化之后越出目录的（`..` 越过目录）、宿主机绝对路径与存储地址都抛错，空路径即目录本身（`own.delete('')` 删掉整个私有目录）；返回值里的地址是完整的存储地址。`own.uri(path)` 给出相对路径对应的完整存储地址（交给别处、写进记录时用），不给参数即目录本身。
 
 ---
 
@@ -92,11 +92,11 @@ export interface BoundStorage extends StorageMethods {
 
 ### 提供者（参考实现）
 
-`@aalis/plugin-storage-local`——把 `config.roots` 里声明的用户根（缺省只有 `workspace`），以及按家目录布局派生的内部根（`data`、`pluginData`、`tmp`、`cache`、`logs`、`personas`、`skills`、`workflows`、`paper`、`public`）注册为命名根。全部根就绪之后整体登记**一个**提供者，根在它内部按 URI 根名路由；根名不认识时抛「未知存储根：x（已注册根：…）」。
+`@aalis/plugin-storage-local`——把 `config.roots` 里声明的用户根（缺省只有 `workspace`），以及按家目录布局派生的内部根（`data`、`pluginData`、`tmp`、`cache`、`logs`、`personas`、`skills`、`workflows`）注册为命名根。全部根就绪之后整体登记**一个**提供者，根在它内部按 URI 根名路由；根名不认识时抛「未知存储根：x（已注册根：…）」。
 
 ### 典型消费点
 
-文件工具组、shell、code-runner、skills、file-reader、checkpoint、memory / persona / scheduler / media / onebot / asr / authority / office 等，均经 `caps.storage.use` 消费。插件自己的私有数据（file-reader、paper、publish-review、session-server、tools、webui-server、works-site）经 `caps.storage.use.own` 读写。
+文件工具组、shell、code-runner、skills、file-reader、checkpoint、memory / persona / scheduler / media / onebot / asr / authority / office 等，均经 `caps.storage.use` 消费。插件自己的私有数据（file-reader、session-server、tools、webui-server）经 `caps.storage.use.own` 读写。
 
 ---
 
@@ -261,7 +261,7 @@ root 的 `readable/writable/deletable` 就是该根的访问策略。这与 auth
 2. **rename 仅同目录改名**。同根跨目录移动改用 `move`。
 3. **同名 root**：参考实现在一个提供者里管全部根，`roots` 里与内置根同名或重复的项被跳过并告警，不存在遮蔽。
 4. **watch 去抖 + 平台降级**：事件统一为 `change`。消费者不应假定「一次写 = 一次事件」。参考实现的监听器归提供者的这次激活所有，提供者关闭（重启、改配置、卸载）时一并关闭；需要持续监听的消费者用 `caps.storage.follow` 在新提供者上重挂。
-5. **checkpoint 写前快照耦合**：自定义后端若希望兼容 checkpoint 回滚，需复刻 `beforeMutate` 钩子：每次改动前经 `services.use.get(checkpoint)`（描述符来自 `@aalis/api-checkpoint`）取服务，在场就调 `beforeMutate`（写入不在回合里时它直接返回，不读原文件），见 [api-checkpoint](../api/api-checkpoint.md)。checkpoint 按根的 `kind` 决定是否记录：`data` / `pluginData` / `tmp` / `cache` / `logs` / `paper` / `public` / `self` 不记录，其余（如 `workspace`、`custom`）记录。
+5. **checkpoint 写前快照耦合**：自定义后端若希望兼容 checkpoint 回滚，需复刻 `beforeMutate` 钩子：每次改动前经 `services.use.get(checkpoint)`（描述符来自 `@aalis/api-checkpoint`）取服务，在场就调 `beforeMutate`（写入不在回合里时它直接返回，不读原文件），见 [api-checkpoint](../api/api-checkpoint.md)。checkpoint 按根的 `kind` 决定是否记录：`data` / `pluginData` / `tmp` / `cache` / `logs` / `self` 不记录，其余（如 `workspace`、`custom`）记录。
 
 ---
 

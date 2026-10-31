@@ -15,7 +15,7 @@
   max-width: 100%;
 }
 
-/* 文件与成品：一行图标、名字与类型；能点的（下载、预览）悬停有底色 */
+/* 文件：一行图标、名字与类型；能点的（下载、预览）悬停有底色 */
 .attachment-file {
   display: inline-flex;
   align-items: center;

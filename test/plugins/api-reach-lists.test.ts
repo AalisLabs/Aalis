@@ -14,7 +14,7 @@ function expectHits(list: 'control' | 'landing' | 'denyRead', cases: Array<[stri
 }
 
 describe('宿主控制面', () => {
-  it('家目录下除白纸、临时区与技能目录以外的全部；安装集的依赖与构建产物；安装集外加载的插件目录', () => {
+  it('家目录下除默认工作区、临时区与技能目录以外的全部；安装集的依赖与构建产物；安装集外加载的插件目录', () => {
     expectHits('control', [
       [`${PATHS.state}/db`, true],
       [PATHS.config, true],
@@ -23,8 +23,8 @@ describe('宿主控制面', () => {
       [`${PATHS.run}/aalis.sock`, true],
       [`${PATHS.self.workflows}/daily.yaml`, true],
       [`${PATHS.self.personas}/default.md`, true],
-      [`${PATHS.stage.public}/index.html`, true],
-      [`${PATHS.stage.paper}/p-default/a.md`, false],
+      [`${PATHS.home}/zz-other/x`, true],
+      [`${PATHS.workspace}/a.md`, false],
       [`${PATHS.tmp}/sessions/7331/x`, false],
       [`${PATHS.self.skills}/s/SKILL.md`, false],
       ['/opt/aalis/node_modules/@aalis/core/dist/index.js', true],
@@ -81,9 +81,9 @@ describe('按真实路径补上链接出去的根', () => {
       'control',
       [
         ['/data/aalis/state/db', true],
-        ['/data/aalis/stage/paper/p-default/a.md', false],
+        ['/data/aalis/workspace/a.md', false],
         ['/data/aalis/tmp/sessions/7331/x', false],
-        [`${PATHS.stage.paper}/p-default/a.md`, false],
+        [`${PATHS.workspace}/a.md`, false],
         ['/u/dotfiles/secrets.yaml', true],
       ],
       lists,
@@ -218,27 +218,27 @@ describe('持久化与自动执行落点', () => {
       ['/u/code/proj/docs/AGENTS.md', true],
       ['/u/code/proj/README.md', false],
       ['/u/code/proj/.aalis/settings.json', true],
-      [`${PATHS.stage.paper}/p-default/a.md`, false], // 实例家目录本身叫 .aalis，不算项目的 .aalis/
-      [`${PATHS.stage.paper}/p-default/repo/.aalis/settings.json`, true], // 白纸里项目自己的 .aalis/ 照样算
+      [`${PATHS.workspace}/a.md`, false], // 实例家目录本身叫 .aalis，不算项目的 .aalis/
+      [`${PATHS.workspace}/repo/.aalis/settings.json`, true], // 默认工作区里项目自己的 .aalis/ 照样算
     ]);
   });
 });
 
 describe('拒读清单', () => {
-  it('家目录里只放行舞台、self、本实例的日志与主配置；其他实例的家目录整个拒读', () => {
+  it('家目录里只放行默认工作区、self、本实例的日志与主配置；其他实例的家目录整个拒读', () => {
     expectHits('denyRead', [
       [PATHS.secrets, true],
       [`${PATHS.state}/db`, true],
       [`${PATHS.run}/aalis.sock`, true],
       [`${PATHS.cache}/x`, true],
       [`${PATHS.tmp}/sessions/7331/x`, true], // 本会话临时区由触及按会话放行，清单里不放
-      [`${PATHS.stage.paper}/p-default/a.md`, false],
-      [`${PATHS.stage.public}/index.html`, false],
+      [`${PATHS.home}/zz-other/x`, true],
+      [`${PATHS.workspace}/a.md`, false],
       [`${PATHS.self.skills}/s/SKILL.md`, false],
-      // 舞台与 self 整个放行：两个目录本身与以后新加的条目都读得到
-      [`${PATHS.home}/stage`, false],
+      // 默认工作区与 self 整个放行：两个目录本身与以后新加的条目都读得到
+      [PATHS.workspace, false],
       [`${PATHS.home}/self`, false],
-      [`${PATHS.home}/stage/zz-new/x`, false],
+      [`${PATHS.workspace}/zz-new/x`, false],
       [`${PATHS.home}/self/zz-new`, false],
       [`${PATHS.logs}/latest.log`, false],
       [PATHS.config, false],
@@ -367,7 +367,7 @@ describe('大小写与分隔符', () => {
       'control',
       [
         ['/Users/u/.AALIS/state/db', true],
-        ['/Users/u/.aalis/STAGE/PAPER/p/a.md', false],
+        ['/Users/u/.aalis/WORKSPACE/a.md', false],
       ],
       mac,
     );

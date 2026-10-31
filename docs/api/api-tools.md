@@ -107,7 +107,7 @@ function actingIdentity(ctx: { platform?: string; participants: readonly UserIde
 
 `participants` 是这一轮的参与者，即授权身份，与 `platform`、`userId` 解耦。agent 按 api-authority 的 `originTurnOf` 算：各条输入的 `actor`，没有时是发言者，带起它的那一轮的取那一轮的参与者，owner 的各个身份算一个；执行守卫对每个参与者各裁决一次（见 [api-authority](./api-authority.md#守卫流程-授权与确认)）。不在入站回合里的调用方填它自己的身份：编排填运行身份，mcp-server 填 `mcp:mcp-client`，没有身份的填一个无主体（`{ platform, userId: '' }`）。`userId` 只在这一轮各条输入的发言者相同时有；续做的一轮没有发言者时取起它的那一轮的，工具眼里是起它的人在调。
 
-要记一个人的（定时任务的创建者、编排的定义者与调用者、白纸的发起人）取 `actingIdentity(ctx)`：参与者只有一个时是他；批过的调用参与者已换成批的人，记的就是批的人；几个人都能做、没经审批的按无主体记。按条过滤的取用（`recent_messages`）同样取它，几个人的一轮不带谁自己的私聊。
+要记一个人的（定时任务的创建者、编排的定义者与调用者）取 `actingIdentity(ctx)`：参与者只有一个时是他；批过的调用参与者已换成批的人，记的就是批的人；几个人都能做、没经审批的按无主体记。按条过滤的取用（`recent_messages`）同样取它，几个人的一轮不带谁自己的私聊。
 
 `approveFor(check)` 给取用类工具判「这一次取别的会话的东西或不属于任何会话的本机文件」：`check(who)` 判只有这一位参与者时能不能取，回 `{ ok: true }` 或 `{ ok: false, reason }`，要同步、不抛错。执行器按这次调用的参与者交给执行守卫，与等级裁决同一条三分：参与者都过放行、不出审批；有人过不了时发一道参与者审批，能批的是过得了的人，事实是这次调用的工具与参数；都过不了回原因（一位参与者时是它的，几位时是第一位的）。守卫不在、调用不在回合里或已转到后台（带 `runInBackground` 的从一开始）时只按参与者都过判、不出审批：回合结束时没结的审批会被撤掉。参与者为空的不跑 `check`、直接拒绝，与守卫判空参与者同一结论。审批随 `signal` 撤销。批过只放行这一次取用，不换这次调用的参与者。第一方的取用类工具（`send_attachment`、`analyze_image`、读历史的两个工具经会话历史服务的 `getHistory`、`onebot_get_msg`）都经它；直接调处理函数的调用方要给一份。
 
@@ -240,7 +240,7 @@ export const backgroundTasks = defineService<BackgroundTaskService>('background-
 
 由 [plugin-tools](../plugins/plugin-tools.md) 提供，现在唯一的登记方是它的执行器（转到后台的工具调用）。会话服务（[plugin-session-server](../plugins/plugin-session-server.md)）把它投影成会话协议的后台任务（[api-session-protocol](./api-session-protocol.md#后台任务) 的 `background/*`），不下发参数与结果。
 
-**局限：** 契约只有列出、取输出与停止，没有登记的口。别的插件自己的长任务进不了 WebUI 的「后台」标签与运行状况的「正在运行」，第三方的替代面板也只看得到转后台的工具调用与子会话。通用的登记口（经 registrar 登记、随激活撤回，执行器也改走同一个口，`kind` 按加法加一个通用种类）在远端任务拆成独立插件时开，那是第一个执行器之外的登记方。
+**局限：** 契约只有列出、取输出与停止，没有登记的口。别的插件自己的长任务进不了 WebUI 的「后台」标签与运行状况的「正在运行」，第三方的替代面板也只看得到转后台的工具调用与子会话。通用的登记口（经 registrar 登记、随激活撤回，执行器也改走同一个口，`kind` 按加法加一个通用种类）等出现执行器之外的第一个登记方时再开。
 
 - `list`：在跑的与保留的结束的任务（每个会话留最近 20 条结束的），给 `sessionId` 时只列这个会话的。
 - `output`：`text` 是 `after` 之后的输出；`end` 是至今的输出总字数，下次带作 `after` 只取新增的；缓冲只留末尾 64 KiB，早于缓冲的部分取不到时 `truncated` 为 true。Aalis 重启前的任务没有留下输出。

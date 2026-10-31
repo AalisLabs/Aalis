@@ -81,7 +81,7 @@ describe('历史归并', () => {
       {
         role: 'assistant',
         kind: 'outbound-video',
-        content: '[视频 | ref:paper:/n-a/tasks/t-1/out/a-2.mp4]',
+        content: '[视频 | ref:workspace:/out/a-2.mp4]',
         timestamp: 4,
       },
       { role: 'user', content: '好看', timestamp: 5 },
@@ -90,7 +90,7 @@ describe('历史归并', () => {
       { kind: 'user', text: '画只猫', files: [] },
       { kind: 'agent', text: '画好了', attachments: [] },
       { kind: 'agent', text: '', attachments: [{ kind: 'image', src: 'data:/images/cat.png' }] },
-      { kind: 'agent', text: '', attachments: [{ kind: 'video', src: 'paper:/n-a/tasks/t-1/out/a-2.mp4' }] },
+      { kind: 'agent', text: '', attachments: [{ kind: 'video', src: 'workspace:/out/a-2.mp4' }] },
       { kind: 'user', text: '好看', files: [] },
     ]);
   });
@@ -153,9 +153,9 @@ describe('历史归并', () => {
       {
         role: 'notice',
         kind: 'host-notice',
-        content: '白纸完成',
+        content: '报告已生成',
         timestamp: 7,
-        metadata: { [K.Source]: 'paper:1', [K.HostNoticeKind]: 'paper-task' },
+        metadata: { [K.Source]: 'zz-reporter:1', [K.HostNoticeKind]: 'zz-report' },
       },
     ];
     const memory = { getHistory: async () => raw } as unknown as MemoryService;
@@ -192,7 +192,7 @@ describe('历史归并', () => {
     expect(items[4]).toMatchObject({
       attachments: [{ kind: 'file', name: '周报].md', src: '句柄 workspace:/out/周报].md 周报].md' }],
     });
-    expect(items[5]).toMatchObject({ topic: 'paper-task', text: '白纸完成' });
+    expect(items[5]).toMatchObject({ topic: 'zz-report', text: '报告已生成' });
     for (const item of items) expect(SessionItemSchema.safeParse(item).success, item.itemId).toBe(true);
   });
 
@@ -489,15 +489,15 @@ describe('历史归并', () => {
       {
         role: 'notice',
         kind: 'host-notice',
-        content: '白纸完成',
+        content: '报告已生成',
         timestamp: 5,
-        metadata: { hostNoticeKind: 'paper-task' },
+        metadata: { hostNoticeKind: 'zz-report' },
       },
     ]);
     expect(entries).toEqual([
       { kind: 'notice', text: '对话已压缩' },
       { kind: 'notice', text: '小明戳了戳你' },
-      { kind: 'notice', text: '白纸完成' },
+      { kind: 'notice', text: '报告已生成' },
     ]);
   });
 
@@ -710,9 +710,9 @@ describe('服务端归并的条目', () => {
       {
         role: 'notice',
         kind: 'host-notice',
-        content: '白纸完成',
+        content: '报告已生成',
         timestamp: 4,
-        metadata: { hostNoticeKind: 'paper-task' },
+        metadata: { hostNoticeKind: 'zz-report' },
       },
       { role: 'assistant', kind: 'outbound-audio', content: '[音频: 一段话 | ref:data:/a.wav]', timestamp: 5 },
     ];
@@ -728,7 +728,7 @@ describe('服务端归并的条目', () => {
     expect(items[0]).toMatchObject({ speaker: { platform: 'webui', userId: 'console', owner: true } });
     expect(items[1]).toMatchObject({ speaker: { platform: 'onebot', userId: '7', nickname: '阿七', owner: false } });
     expect(items[2]).toMatchObject({ status: 'failed', durationMs: 5 });
-    expect(items[4]).toMatchObject({ topic: 'paper-task' });
+    expect(items[4]).toMatchObject({ topic: 'zz-report' });
     // 语音按存档格式（音频）还原
     expect(items[5]).toMatchObject({ attachments: [{ kind: 'audio', src: 'data:/a.wav' }] });
     expect(new Set(items.map(i => i.itemId)).size).toBe(items.length);

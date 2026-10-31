@@ -5,7 +5,6 @@
 // 下游应 `import { sessionManager } from '@aalis/api-session-manager'`
 // 写入 uses；不要依赖 impl 包，以免工作区依赖与编译循环。
 
-import { Buffer } from 'node:buffer';
 // 锚定 @aalis/core，使下方 declare module 的 AalisEvents 增强生效。
 import type {} from '@aalis/core';
 import { defineService, type ServiceSelection } from '@aalis/core';
@@ -32,7 +31,7 @@ export function placeKind(place: Pick<SessionPlace, 'kind'>): SessionKind {
   return place.kind === 'window' ? 'room' : 'owner';
 }
 
-/** 场所：会话长期所在的地方，每个会话恰好一个，子会话取根会话的。场所只管归属与插件按场所存的数据（白纸、设置），不管权限 */
+/** 场所：会话长期所在的地方，每个会话恰好一个，子会话取根会话的。场所只管归属与插件按场所存的数据（如设置），不管权限 */
 export interface SessionPlace {
   /** window：IM 的群与别人的私聊；workspace：本机的工作区（默认工作区、项目工作区） */
   kind: 'window' | 'workspace';
@@ -65,19 +64,6 @@ export interface WorkspaceInfo {
   name?: string;
   /** 目录的真实路径：只有项目工作区带 */
   root?: string;
-}
-
-/**
- * 场所的白纸 id：`p:` 加场所键的 UTF-8 十六进制。同一个场所一张白纸，换会话照样是它。白纸目录按 id 取名，十六进制只有
- * 小写，大小写不敏感的文件系统上不同的键不会落进同一个目录
- */
-export function placePaperId(key: string): string {
-  return `p:${Buffer.from(key, 'utf8').toString('hex')}`;
-}
-
-/** 白纸在白纸根（宿主家目录的 stage/paper）里的目录名：白纸 id 的 `:` 换成 `-`。白纸插件与触及都按它取，不各写一份 */
-export function paperDirName(paperId: string): string {
-  return paperId.replace(':', '-');
 }
 
 /**

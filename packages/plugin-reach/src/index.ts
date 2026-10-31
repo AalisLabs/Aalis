@@ -2,7 +2,6 @@
 import { mkdir, realpath, rm } from 'node:fs/promises';
 // biome-ignore lint/style/noRestrictedImports: 拒读清单与落点按操作系统用户的家目录生成
 import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { authority } from '@aalis/api-authority';
 import { type HostPaths, hostPaths } from '@aalis/api-host-paths';
 import { processService } from '@aalis/api-process';
@@ -17,7 +16,7 @@ import {
   resolveReach,
   withRealRoots,
 } from '@aalis/api-reach';
-import { paperDirName, placePaperId, rootSessionOf, sessionManager } from '@aalis/api-session-manager';
+import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { type BoundOf, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { issueCredential } from './credential.js';
 import { codeDirsOf, entryOf, formOf, gitDirOf, realRootsOf } from './host-dirs.js';
@@ -29,9 +28,9 @@ import { t } from './texts.js';
 // plugin-reach —— 触及服务（契约见 @aalis/api-reach）
 //
 // 按一次工具调用签发凭据：主体取权限服务的 principalOf（类别为人亲手、这次调用的参与者都是 owner 的为 owner；续做与子任务的
-// 类别随起它的那一轮，批过的调用参与者是批的人），不看会话的受众；场所与绑定取会话管理里的记录，档位与越界策略固定（工作区档、
-// 越界要问），仓库的 git 目录按磁盘找，三张清单在激活时按家目录布局与真实路径算好；交给 api-reach 的 resolveReach 定上限。
-// 绑定与 git 目录在签发时取好，场所每次判定时取当时的。另管本会话临时区与子进程环境。
+// 类别随起它的那一轮，批过的调用参与者是批的人），不看会话的受众；绑定取会话管理里的记录，主目录是绑定目录、没有绑定的是默认
+// 工作区目录，档位与越界策略固定（工作区档、越界要问），仓库的 git 目录按磁盘找，三张清单在激活时按家目录布局与真实路径算好；
+// 交给 api-reach 的 resolveReach 定上限。绑定与 git 目录在签发时取好。另管本会话临时区与子进程环境。
 // ════════════════════════════════════════════════════════════
 
 /** 档位与越界策略：还不能按会话设，固定为工作区档、越界要问 */
@@ -43,7 +42,7 @@ const uses = {
   events,
   lifecycle,
   logger,
-  /** 家目录布局：三张清单、白纸与本会话临时区都按它 */
+  /** 家目录布局：三张清单、默认工作区与本会话临时区都按它 */
   paths: hostPaths,
   /** 会话记录与绑定 */
   sessionManager,
@@ -85,29 +84,21 @@ async function run(caps: Caps): Promise<void> {
   const realRoots = await realRootsOf(declared, logger.use);
   const lists = withRealRoots(declared, root => realRoots.get(root));
   const loginEnv = loginEnvs({ process: caps.process, userHome, logger: logger.use });
-  /**
-   * 会话所在场所的白纸目录：白纸 id 由场所键算出，目录名与白纸插件同取 paperDirName。房间写的具名白纸只决定白纸任务用哪一块，
-   * 不换这里
-   */
-  const paperOf = (sessionId: string) => join(paths.stage.paper, paperDirName(placePaperId(sm.placeOf(sessionId).key)));
 
   /** 删会话时在后台删着的临时区 */
   const deleting = new Map<string, Promise<void>>();
 
-  /**
-   * 一个会话的触及，返回每次调用都重算的函数：绑定与仓库的 git 目录（按磁盘找，异步）在这里取好；场所在每次调用时取当时的
-   */
+  /** 一个会话的触及，返回每次调用都重算的函数：绑定与仓库的 git 目录（按磁盘找，异步）在这里取好 */
   async function reachOf(sessionId: string, principal: ReachPrincipal): Promise<() => Reach> {
     const work = rootSessionOf(sm.getSession(sessionId), lookup)?.work;
     const gitDir = work && (await gitDirOf(work.root));
-    return () => {
-      const paper = paperOf(sessionId);
-      return resolveReach({
+    return () =>
+      resolveReach({
         principal,
         tier: DEFAULT_TIER,
         onBoundary: DEFAULT_BOUNDARY,
-        // 主目录：项目工作区是绑定目录，其余是场所的白纸
-        place: { home: work?.root ?? paper, paper },
+        // 主目录：项目工作区是绑定目录，其余是默认工作区目录
+        place: { home: work?.root ?? paths.workspace },
         binding: work,
         gitDirs: gitDir ? [gitDir] : [],
         sessionTmp: sessionTmpOf(paths.tmp, sessionId),
@@ -115,7 +106,6 @@ async function run(caps: Caps): Promise<void> {
         lists,
         paths,
       });
-    };
   }
 
   const service: ReachService = {

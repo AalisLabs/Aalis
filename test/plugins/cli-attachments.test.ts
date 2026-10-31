@@ -116,23 +116,23 @@ describe('plugin-cli 附件', () => {
       expect(other.delivery).toBeUndefined();
     }));
 
-  it('纯文本（如作品通知）写出即算送达：同样认领回执、发出 outbound:delivered（不是她回复的文字据此记进历史）', () =>
+  it('纯文本（如系统通知）写出即算送达：同样认领回执、发出 outbound:delivered（不是她回复的文字据此记进历史）', () =>
     headlessCli(async ({ host, entries, delivered }) => {
       for (const source of ['system', 'agent'] as const) {
         const message: OutgoingMessage = {
           sessionId: 'cli-default',
           platform: 'cli',
-          content: `[作品通知] 《猫》已上线 (${source})`,
+          content: `[系统通知] 备份已完成 (${source})`,
           source,
         };
         await host.events.use.emit('outbound:message', message);
         expect(message.delivery, `CLI 认领了 ${source} 文本`).toBeDefined();
         expect(await message.delivery).toEqual({ ok: true });
-        expect(entries.map(e => e.message)).toContain(`[cli] [作品通知] 《猫》已上线 (${source})`);
+        expect(entries.map(e => e.message)).toContain(`[cli] [系统通知] 备份已完成 (${source})`);
       }
       expect(delivered.map(msg => [msg.source, msg.content])).toEqual([
-        ['system', '[作品通知] 《猫》已上线 (system)'],
-        ['agent', '[作品通知] 《猫》已上线 (agent)'],
+        ['system', '[系统通知] 备份已完成 (system)'],
+        ['agent', '[系统通知] 备份已完成 (agent)'],
       ]);
     }));
 

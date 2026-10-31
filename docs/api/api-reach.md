@@ -37,7 +37,7 @@ type BoundaryPolicy = 'ask' | 'deny';
 |---|---|---|---|---|---|
 | 只读 `readonly` | 全机减拒读清单 | 本会话临时区 | 沙箱内 | 问 | 其余写入、宿主执行、联网、写落点 |
 | 修改确认 `confirm` | 同上 | 无 | 宿主上，每次问 | 不问 | 每一次写与执行、写落点 |
-| 工作区 `workspace` | 同上 | 场所的主目录与白纸、附加可写目录、本会话树建的 worktree、仓库的 git 目录、本会话临时区、技能目录 | 沙箱内 | 不问 | 范围外的写、宿主执行、写落点 |
+| 工作区 `workspace` | 同上 | 主目录、附加可写目录、本会话树建的 worktree、仓库的 git 目录、本会话临时区、技能目录 | 沙箱内 | 不问 | 范围外的写、宿主执行、写落点 |
 | 全权 `full` | 同上 | 全机减宿主控制面 | 宿主上 | 不问 | 不问；写落点照写，另记审计 |
 
 - 宿主控制面任何档位都拒写，不可申请；拒读清单在任何档位都约束工具边界，沙箱里同样读不到；在宿主上执行的命令（全权、修改确认，以及批准过的宿主执行）约束不到。
@@ -52,7 +52,7 @@ interface ReachInput {
   principal: ReachPrincipal;
   tier: AccessTier;                     // 生效的档位与越界策略，子会话取根会话的
   onBoundary: BoundaryPolicy;
-  place: { home: string; paper: string }; // 场所的主目录与白纸
+  place: { home: string };              // 主目录
   binding?: { extraRoots: string[]; worktrees: string[] };
   gitDirs: readonly string[];           // 绑定所在仓库的 git 目录（common dir）
   sessionTmp: string;                   // 本会话临时区
@@ -120,7 +120,7 @@ function matchesRule(rule: PathRule, path: string, platform: NodeJS.Platform): b
 
 **宿主控制面**（`control`，一律拒写，不可申请）：
 
-- 家目录下除白纸（`stage/paper`）、临时区（`tmp`）、技能目录（`self/skills`）以外的全部：插件状态、主配置、`secrets.yaml`、日志、`run`、`cache`、人设卡、编排定义（只经定义工具写入）、公开区（只经发布插件写入）；
+- 家目录下除默认工作区（`workspace`）、临时区（`tmp`）、技能目录（`self/skills`）以外的全部：插件状态、主配置、`secrets.yaml`、日志、`run`、`cache`、人设卡、编排定义（只经定义工具写入）；
 - 守护进程加载的代码：安装集的 `node_modules`、`dist`，源码形态下各包的 `dist` 与 `node_modules`，以及 `codeDirs`。源码本身不在内；
 - npm 形态下另有守护进程的入口文件（`entry`）与安装集的 `package.json`（插件发现读它的依赖）。源码形态下它们是在改的源码，不在内。
 
@@ -129,20 +129,20 @@ function matchesRule(rule: PathRule, path: string, platform: NodeJS.Platform): b
 - git：`.git` 本身（目录形式的，与子模块工作树里文件形式的），它里面的 `hooks/**`、`config`、`config.worktree`、`commondir`（git 把它指向的目录当共用目录，配置与钩子都从那里取）、整棵 `modules/**`（子模块的名字可以带斜杠、可以嵌套，按目录名列不全），`worktrees` 与 `worktrees/<名>` 这两级目录本身及其下的 `config.worktree`、`commondir`。代价是沙箱里的 `git worktree add`、`git worktree prune` 与子模块的拉取、检出写不了这些地方，要宿主执行。伪装裸仓库的 `HEAD` 与不叫 `.git` 的 git 目录由触及按它的 git 目录补上（见上文「这份触及的落点」）；
 - shell 与登录：各 shell 的 rc 与 profile 文件、`~/.config/fish`、`~/.ssh`、`~/.gitconfig`、`~/.config/git`；macOS 的 `~/Library/LaunchAgents`，Linux 的 `~/.config/systemd/user` 与 `~/.config/autostart`；
 - 项目里会被工具自动执行的配置：`.envrc`、`.vscode/tasks.json`、`.vscode/settings.json`、`*.code-workspace`、`.husky/**`、`.pre-commit-config.yaml`，以及其他代理与编辑器的可执行配置（`.claude/settings.json`、`.claude/settings.local.json`、`.mcp.json`、`.cursor/` 下的 `hooks.json` 等五个、`.codex/` 下的 `config.toml`、`rules/` 与 hooks）；
-- 项目指令 `AALIS.md`、`AGENTS.md` 与项目级 `.aalis/`（实例家目录自己叫 `.aalis` 时不算，但它里面再出现的，如白纸里项目的 `.aalis/`，照样算）；
+- 项目指令 `AALIS.md`、`AGENTS.md` 与项目级 `.aalis/`（实例家目录自己叫 `.aalis` 时不算，但它里面再出现的，如默认工作区里项目的 `.aalis/`，照样算）；
 - 装着上面这些的目录本身：`.vscode`、`.claude`、`.cursor`、`.codex`，用户家目录下的 `~/.config`（Linux 另有 `~/.config/systemd`，macOS 另有 `~/Library`）。改名只核源与目标两条路径，不核被搬动目录里的子孙；先在别处摆好整棵子树再改名到位，目标就是这些目录之一，照样拦下。
 
 **拒读清单**（`denyRead`）：
 
-- 家目录下除舞台（`stage/`）与 `self/` 两个目录整个、日志与主配置以外的全部，包括别的会话的临时区；本会话临时区由触及按会话放回；
+- 家目录下除默认工作区（`workspace/`）与 `self/` 两个目录整个、日志与主配置以外的全部，包括别的会话的临时区；本会话临时区由触及按会话放回；
 - 同一用户下其他实例的家目录（`~/.aalis` 与 `~/.aalis-*` 中本实例以外的；用 `--home` 放在别处的实例覆盖不到）；
 - 凭据文件：`~/.ssh`、`~/.aws`、`~/.config/gh`、`~/.gnupg`、`~/.npmrc`、`~/.netrc`、`~/.git-credentials`、`~/.docker/config.json`、`~/.kube/config`，macOS 的 `~/Library/Keychains`；
-- 任何目录下的 `.env*`（名为 `.env*` 的目录整棵都算），豁免 `.env.example`、`.env.sample`、`.env.template`；舞台等放行的地方里的 `.env*` 照样拒读；
+- 任何目录下的 `.env*`（名为 `.env*` 的目录整棵都算），豁免 `.env.example`、`.env.sample`、`.env.template`；默认工作区等放行的地方里的 `.env*` 照样拒读；
 - macOS 与 Linux 常见浏览器的配置与数据目录（macOS 上 Edge 的 Beta、Dev、Canary 各有独立目录，Linux 含 Snap 与 Flatpak 装的）。
 
 用户家目录是根目录（容器里没有 passwd 条目的用户，HOME 常是 `/`）时照样生成 `/.ssh` 这类路径。
 
-拒读不限制写：工作区档照样能写项目里的 `.env`。别人场所的白纸不在拒读清单里，工具边界与沙箱里都读得到。
+拒读不限制写：工作区档照样能写项目里的 `.env`。
 
 ## 沙箱策略
 
@@ -191,8 +191,7 @@ const REACH_CREDENTIAL: unique symbol; // Symbol.for('@aalis/api-reach/credentia
 interface ReachCredential {
   readonly [REACH_CREDENTIAL]: true;          // 不可枚举
   readonly exec: 'none' | 'sandbox' | 'host';
-  readonly home?: string;    // 场所的主目录：当前目录没有值时取它
-  readonly paper?: string;   // 场所的白纸：不写输出位置的工具产物写进这里
+  readonly home?: string;    // 主目录：当前目录没有值时取它，不写输出位置的工具产物写进这里
   require(request: ReachRequest): Promise<ReachVerdict>;      // 要问时经审批服务问
   allows(effect: 'read' | 'write', realPath: string): boolean; // 存储兜底，含这次调用批准过的一次性目标
   sandboxPolicy(): SandboxPolicy;                             // 带上这次调用批准过的提权
@@ -205,7 +204,7 @@ function isReachCredential(value: unknown): value is ReachCredential;
 
 凭据按一次工具调用签发，只由触及插件构造；工具从调用上下文取得后转交给存储与沙箱，不自己拼。存储服务与沙箱用 `isReachCredential` 认凭据，不带品牌符号的对象一律当作没有凭据处理。品牌符号登记在全局符号表里，进程里装了两份本包时也认得；它只在本包与触及插件里出现（守卫 `test/architecture/reach-credential.test.ts`），凭据上的品牌不可枚举，展开或 `Object.assign` 复制出来的对象不带它。品牌防的是漏传、误传：第一方包由守卫禁止拼凭据，插件是可信代码，进程内蓄意伪造挡不住。
 
-- `exec`、`home`、`paper` 按签发时的触及；`require`、`allows` 与 `sandboxPolicy` 每次按会话当时的设置重算，签发之后降档立即生效。
+- `exec`、`home` 按签发时的触及；`require`、`allows` 与 `sandboxPolicy` 每次按会话当时的设置重算，签发之后降档立即生效。
 - `require` 判不行时，`message` 写明要做什么、为什么不行、能不能申请；宿主控制面与拒读清单写明不可申请。
 - `processEnv`：子进程环境只从凭据来。`host` 是 owner 的 login shell 环境；`sandbox` 是同一份环境，只去掉 `AALIS_*` 与 `SSH_AUTH_SOCK`，再注入沙箱要的几项（见 [plugin-reach](../plugins/plugin-reach.md#子进程环境)）。没有本地效果的凭据抛错。
 - `sandboxPolicy` 只在 `exec` 为 `sandbox` 时可取，其余抛错。

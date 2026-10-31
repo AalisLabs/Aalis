@@ -57,7 +57,7 @@ WebUI 的历史分页与 CLI 的启动恢复都依赖这一点。
 
 ## 家目录
 
-家目录装着一个实例的全部状态：配置、密钥、数据库、日志、人设卡、技能、舞台。runtime 在启动时解析一次，之后不变；进程的 cwd 不带任何语义，`startAalis` 也不切换 cwd。覆盖顺序：
+家目录装着一个实例的全部状态：配置、密钥、数据库、日志、人设卡、技能、默认工作区。runtime 在启动时解析一次，之后不变；进程的 cwd 不带任何语义，`startAalis` 也不切换 cwd。覆盖顺序：
 
 1. 命令行 `--home <目录>`；
 2. 环境变量 `AALIS_HOME`；
@@ -69,7 +69,7 @@ WebUI 的历史分页与 CLI 的启动恢复都依赖这一点。
 
 profile 由家目录的路径决定：家目录是 `~/.aalis-<名>` 时就是 profile `<名>`，经 `--home` 或 `AALIS_HOME` 选中它也一样。先按路径的写法认，认不出时再按真实路径认：大小写写错、经指向 `~/.aalis-<名>` 的符号链接选中、用户主目录本身是符号链接，都带上 profile。`~/.aalis-<名>` 自己是指向别处的符号链接时，经那个别处的路径选中认不出 profile，插件按 profile 派生的名字随之不同（如 MongoDB 记忆库的库名变成 `aalis`）；这种布局要固定库名，在插件配置里写明（如 memory-mongodb 的 `database`）。家目录初始化之后，交给插件的路径取真实路径：符号链接、大小写与末尾分隔符不同的写法指向同一个目录时，插件拿到的是同一个字符串。
 
-家目录没有初始化（里面没有 `aalis.config.yaml`）就拒绝启动，只提示怎样初始化，不会静默起一个空的家。在启动命令里加上 `--init` 运行一次即可初始化：建目录（0700）、写默认的 `aalis.config.yaml` 与空的 `secrets.yaml`（0600）、建布局里的子目录，然后退出。默认配置给两个只有 owner 进得来的平台（CLI 的 `cli`、WebUI 的 `webui`）写上平台档 `enabledToolGroups: ["*"]`，与 `npm create aalis` 生成的一致；这两项无条件写，平台没装时不起作用，多人平台不代开。插件段为空，不写语言列表：`--init` 不看系统语言，装了 `@aalis/plugin-i18n` 时按它的默认英文显示，要改在设置里改。目标目录已存在时，里面只能有 `--init` 自己会建的条目（上次初始化中途失败留下的：`state`、`logs`、`cache`、`run`、`tmp`、`self`、`stage`、`secrets.yaml`）与 macOS 的 `.DS_Store`，有其它内容（包括已初始化的家目录里的 `aalis.config.yaml`，以及运行时由插件建出的 `workspace`）就拒绝，不覆盖任何文件；已有的 `secrets.yaml` 保留，权限收紧为 0600。
+家目录没有初始化（里面没有 `aalis.config.yaml`）就拒绝启动，只提示怎样初始化，不会静默起一个空的家。在启动命令里加上 `--init` 运行一次即可初始化：建目录（0700）、建布局里的子目录（含默认工作区 `workspace`）、写空的 `secrets.yaml` 与默认的 `aalis.config.yaml`（0600），然后退出；主配置最后写，它是初始化的判据。默认配置给两个只有 owner 进得来的平台（CLI 的 `cli`、WebUI 的 `webui`）写上平台档 `enabledToolGroups: ["*"]`，与 `npm create aalis` 生成的一致；这两项无条件写，平台没装时不起作用，多人平台不代开。插件段为空，不写语言列表：`--init` 不看系统语言，装了 `@aalis/plugin-i18n` 时按它的默认英文显示，要改在设置里改。目标目录已存在时，里面只能有 `--init` 自己会建的条目（上次初始化中途失败留下的：`state`、`logs`、`cache`、`run`、`tmp`、`self`、`workspace`、`secrets.yaml`）与 macOS 的 `.DS_Store`，有其它内容（包括已初始化的家目录里的 `aalis.config.yaml`）就拒绝，不覆盖任何文件；已有的 `secrets.yaml` 保留，权限收紧为 0600。
 
 宿主参数（`--home`、`--profile`、`--init`、`--service`）只认命令行开头的那一段，要写在子命令之前，如 `node index.mjs --home <目录> status`；写在子命令之后的归子命令，宿主不处理。开头那一段里的 `--` 跳过（`pnpm dev -- --init` 会把它原样传进来）。经 `npm start` 启动时，额外参数要放在 `--` 之后才会传给入口：`npm start -- --home <目录>`、`npm start -- --init`。
 
@@ -88,14 +88,12 @@ profile 由家目录的路径决定：家目录是 `~/.aalis-<名>` 时就是 pr
   run/                         实例锁（以后还放 socket）
   tmp/                         临时文件
   self/personas  self/skills  self/workflows   人设卡、技能、编排定义（编排定义目前仍在 workspace/workflows，见下）
-  stage/paper  stage/public    白纸成品、发布的作品
-  stage/drafts                 草稿，目前未使用
-  workspace/                   文件工具的工作根（用户根，激活时建出）
+  workspace/                   默认工作区：owner 本机默认工作区的真实文件夹；storage-local 缺省的 workspace 根与触及的默认主目录都指向它
 ```
 
 `self/workflows` 暂未使用：plugin-workflow 的 `defsDir` 仍是 `workspace:/workflows`，迁到 `workflows:/` 随工作会话的第二切片一起做。
 
-插件经 `@aalis/plugin-storage-local` 的内部根访问这些目录：`state/` 是 `data:/`，`state/plugins/` 是 `pluginData:/`，`tmp/`、`cache/`、`logs/` 分别是 `tmp:/`、`cache:/`、`logs:/`（`logs:/` 只读），`self/` 下三个目录是 `personas:/`、`skills:/`、`workflows:/`，`stage/paper` 与 `stage/public` 是 `paper:/` 与 `public:/`。内部根的位置不能配置；`stage/drafts` 还没有对应的根，`run/` 归 runtime 自用；`workspace/` 是 `roots` 配置里缺省的那个用户根。见 [plugin-storage-local](../plugins/plugin-storage-local.md)。
+插件经 `@aalis/plugin-storage-local` 的内部根访问这些目录：`state/` 是 `data:/`，`state/plugins/` 是 `pluginData:/`，`tmp/`、`cache/`、`logs/` 分别是 `tmp:/`、`cache:/`、`logs:/`（`logs:/` 只读），`self/` 下三个目录是 `personas:/`、`skills:/`、`workflows:/`。内部根的位置不能配置；`run/` 归 runtime 自用；`workspace/` 是没写 `path` 的用户根（`roots` 缺省时的 `workspace` 根）的位置。见 [plugin-storage-local](../plugins/plugin-storage-local.md)。
 
 `secrets.yaml` 是「键 → 值」的映射，存 schema 里 `secret: true` 的字段的值，`aalis.config.yaml` 里只写引用 `{ $secret: '<键>' }`。runtime 启动时读它并监听改动，把配置交给插件之前解析引用；直接写进 `aalis.config.yaml` 的明文在同步插件配置时被移进来；保存时先写它、再写主配置。引用的键不在里面时记一条错误，用 `parseConfig` 读配置的插件激活失败，诊断检查 `config.secrets` 也会报出。键名、写入与清理规则见 [运行态与配置文档](../core/config.md#密钥配置)。这两个文件由 runtime 负责读写：经 storage 读写 `secrets.yaml`、改写 `aalis.config.yaml` 都会被拒绝（见 [plugin-storage-local 的「宿主控制文件」](../plugins/plugin-storage-local.md#宿主控制文件)）。
 

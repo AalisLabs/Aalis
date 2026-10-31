@@ -284,7 +284,7 @@ describe('本机文件判法（localFileInScope）', () => {
       false,
     ],
     [
-      'owner 会话里的白纸通知（selfInitiatedActor）',
+      'owner 会话里的宿主通知（selfInitiatedActor）',
       { sessionId: WEBUI, participants: [selfInitiatedActor('webui')] },
       false,
     ],

@@ -182,25 +182,25 @@ describe('其余带 source 的注入：不过指令解析，当普通消息交�
       },
     ],
     [
-      '白纸的完成通知',
+      '插件注入的宿主通知（无主体 actor）',
       {
         content: '/probe',
         sessionId: 'onebot:10000:group:20001',
         platform: 'onebot',
-        source: 'paper:p1:t1',
+        source: 'zz-reporter:r1',
         actor: selfInitiatedActor('onebot'),
-        hostNotice: { kind: 'paper-task', id: 'n1' },
+        hostNotice: { kind: 'zz-report', id: 'r1' },
       },
     ],
     [
-      '作品通知',
+      '只要她转述的宿主通知（reportOnly）',
       {
         content: '/probe',
         sessionId: 'onebot:10000:group:20001',
         platform: 'onebot',
-        source: 'publish:w1',
+        source: 'zz-reporter:r2',
         actor: selfInitiatedActor('onebot'),
-        hostNotice: { kind: 'publish-review', id: 'w1', reportOnly: true },
+        hostNotice: { kind: 'zz-report', id: 'r2', reportOnly: true },
       },
     ],
     [

@@ -7,7 +7,7 @@ import {
   type ReachInput,
   type ReachRequest,
 } from '../../packages/api-reach/src/index.js';
-import { codeOf, DEFAULT_PLACE, PAPERS, PATHS, PROJECT, reachOf, SESSION_TMP } from '../fixtures/reach.js';
+import { codeOf, DEFAULT_PLACE, PATHS, PROJECT, reachOf, SESSION_TMP } from '../fixtures/reach.js';
 
 // ════════════════════════════════════════════════════════════
 // 触及：先按主体定上限，再按档位收窄。
@@ -72,22 +72,22 @@ describe('上限：只按主体', () => {
     }
   });
 
-  it('命令在哪执行：只读与工作区在沙箱里，修改确认与全权在宿主上；带出场所的主目录与白纸', () => {
+  it('命令在哪执行：只读与工作区在沙箱里，修改确认与全权在宿主上；带出场所的主目录', () => {
     const exec = ACCESS_TIERS.map(tier => reachOf({ tier, ...PROJECT }).exec);
     expect(exec).toEqual(['sandbox', 'host', 'sandbox', 'host']);
-    expect(reachOf(PROJECT)).toMatchObject({ home: '/u/code/proj', paper: `${PAPERS}/p-proj` });
-    expect(reachOf()).toMatchObject({ home: DEFAULT_PLACE.home, paper: DEFAULT_PLACE.paper });
+    expect(reachOf(PROJECT)).toMatchObject({ home: '/u/code/proj' });
+    expect(reachOf()).toMatchObject({ home: PATHS.workspace });
+    expect(Object.keys(reachOf(PROJECT)).sort()).toEqual(
+      ['exec', 'tier', 'onBoundary', 'home', 'sessionTmp', 'workRoots', 'writable', 'localPorts', 'lists'].sort(),
+    );
   });
 });
 
 describe('读：全机减拒读清单，与档位无关', () => {
   const allowed = [
     '/u/code/proj/src/a.ts',
-    `${PAPERS}/p-proj/out.md`,
     '/u/elsewhere/x',
-    `${PAPERS}/p-other/x`, // owner 别的工作区的白纸
-    `${PAPERS}/p-window/x`, // 别人场所的白纸：文件工具读得到
-    `${PATHS.stage.public}/x`,
+    `${PATHS.workspace}/x`, // 默认工作区：项目会话也读得到
     `${PATHS.self.skills}/s/SKILL.md`,
     `${PATHS.self.workflows}/daily.yaml`,
     `${SESSION_TMP}/x`,
@@ -108,7 +108,7 @@ describe('读：全机减拒读清单，与档位无关', () => {
     '/u/.config/google-chrome/Default/Cookies',
     '/u/code/proj/.env',
     '/u/code/proj/.env.local',
-    `${DEFAULT_PLACE.home}/.env`, // 舞台在家目录的拒读里重新放行，.env 照样拒
+    `${DEFAULT_PLACE.home}/.env`, // 默认工作区在家目录的拒读里重新放行，.env 照样拒
   ];
 
   it.each(ACCESS_TIERS)('%s', tier => {
@@ -123,7 +123,6 @@ describe('写：按档位', () => {
     expectRows(
       [
         ['绑定目录（场所的主目录）', write('/u/code/proj/src/a.ts'), W, T, A, A],
-        ['项目工作区的白纸', write(`${PAPERS}/p-proj/out.md`), W, T, A, A],
         ['附加可写目录', write('/u/extra/x'), W, T, A, A],
         ['本会话树建的 worktree', write('/u/code/proj-wt-a/x'), W, T, A, A],
         ['仓库的 git 目录', write('/u/code/proj/.git/objects/ab/cd'), W, T, A, A],
@@ -132,8 +131,7 @@ describe('写：按档位', () => {
         ['拒读不限制写', write('/u/code/proj/.env'), W, T, A, A],
         ['仓库的其他 worktree', write('/u/code/proj-wt-b/x'), W, T, W, A],
         ['范围外', write('/u/elsewhere/x'), W, T, W, A],
-        ['owner 别的工作区的白纸', write(`${PAPERS}/p-other/x`), W, T, W, A],
-        ['别人场所的白纸', write(`${PAPERS}/p-window/x`), W, T, W, A],
+        ['默认工作区', write(`${PATHS.workspace}/x`), W, T, W, A],
         ['别的会话的临时区', write(`${PATHS.tmp}/sessions/b3Q/x`), W, T, W, A],
         ['其他实例的家目录', write('/u/.aalis-dev/state/x'), W, T, W, A],
         ['落点：git 钩子', write('/u/code/proj/.git/hooks/pre-commit'), L, L, L, AL],
@@ -145,7 +143,7 @@ describe('写：按档位', () => {
         ['宿主控制面：secrets.yaml', write(PATHS.secrets), C, C, C, C],
         ['宿主控制面：日志', write(`${PATHS.logs}/latest.log`), C, C, C, C],
         ['宿主控制面：编排定义', write(`${PATHS.self.workflows}/daily.yaml`), C, C, C, C],
-        ['宿主控制面：公开区', write(`${PATHS.stage.public}/x`), C, C, C, C],
+        ['宿主控制面：家目录里布局以外的', write(`${PATHS.home}/zz-other/x`), C, C, C, C],
         ['宿主控制面：安装集的依赖', write('/opt/aalis/node_modules/x/index.js'), C, C, C, C],
         ['宿主控制面：安装集的构建产物', write('/opt/aalis/packages/core/dist/index.js'), C, C, C, C],
         ['宿主控制面：安装集外的插件目录', write('/opt/plugins/zz-ext/index.js'), C, C, C, C],
@@ -180,7 +178,7 @@ describe('写：按档位', () => {
         ['对象', write('/u/code/proj.git/objects/ab/cd'), W, T, A, A],
         ['git 目录以外的 HEAD', write('/u/code/elsewhere/HEAD'), L, L, L, AL],
       ],
-      { place: { home: '/u/code/proj-wt', paper: `${PAPERS}/p-proj` }, gitDirs: ['/u/code/proj.git'] },
+      { place: { home: '/u/code/proj-wt' }, gitDirs: ['/u/code/proj.git'] },
     );
   });
 
@@ -195,10 +193,10 @@ describe('写：按档位', () => {
     );
   });
 
-  it('默认工作区：主目录就是白纸，项目目录在范围外', () => {
+  it('默认工作区：主目录是默认工作区目录，项目目录在范围外', () => {
     expectRows(
       [
-        ['默认工作区的白纸', write(`${DEFAULT_PLACE.home}/a.md`), W, T, A, A],
+        ['默认工作区目录', write(`${DEFAULT_PLACE.home}/a.md`), W, T, A, A],
         ['项目目录', write('/u/code/proj/src/a.ts'), W, T, W, A],
         ['本会话临时区', write(`${SESSION_TMP}/x`), A, T, A, A],
         ['技能目录', write(`${PATHS.self.skills}/s/SKILL.md`), W, T, A, A],

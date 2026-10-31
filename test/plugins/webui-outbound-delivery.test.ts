@@ -109,7 +109,7 @@ describe('WebUI outbound delivery confirmation', () => {
   it('saves the message into the history before confirming, once each, and emits no outbound:delivered', async () => {
     const { send, saved, delivered } = await startWebui();
     const sessionId = 'webui-offline';
-    expect(await send({ sessionId, platform: 'webui', content: '[作品通知] 《猫》已上线', source: 'system' })).toEqual({
+    expect(await send({ sessionId, platform: 'webui', content: '[系统通知] 备份已完成', source: 'system' })).toEqual({
       ok: true,
     });
     expect(
@@ -120,7 +120,7 @@ describe('WebUI outbound delivery confirmation', () => {
         source: 'agent',
         attachments: [
           { kind: 'image', data: 'data:/images/new.png' },
-          { kind: 'file', data: 'paper:/n-a/tasks/t-1/out/a-1.html', name: '主页.html' },
+          { kind: 'file', data: 'workspace:/out/a-1.html', name: '主页.html' },
         ],
       }),
     ).toEqual({ ok: true });
@@ -163,7 +163,7 @@ describe('WebUI outbound delivery confirmation', () => {
       await send({
         sessionId: 'webui-offline',
         platform: 'webui',
-        content: '[作品通知] 《猫》已上线',
+        content: '[系统通知] 备份已完成',
         source: 'system',
       }),
     ).toEqual({ ok: false, error: diskFull });

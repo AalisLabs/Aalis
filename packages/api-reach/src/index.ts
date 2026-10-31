@@ -154,9 +154,9 @@ export function protectedLists(input: ProtectedListsInput): ProtectedLists {
   return {
     platform,
     control: [
-      // 家目录下只有白纸、临时区与技能目录可写：公开区只经发布插件写入，编排定义只经定义工具写入。主配置与 secrets.yaml
-      // 常链接到别处（dotfiles 仓库），另以它们为根各列一条，才能按真实路径补上（withRealRoots）
-      { path: paths.home, except: [{ path: paths.stage.paper }, { path: paths.tmp }, { path: paths.self.skills }] },
+      // 家目录下只有默认工作区、临时区与技能目录可写：编排定义只经定义工具写入。主配置与 secrets.yaml 常链接到别处
+      // （dotfiles 仓库），另以它们为根各列一条，才能按真实路径补上（withRealRoots）
+      { path: paths.home, except: [{ path: paths.workspace }, { path: paths.tmp }, { path: paths.self.skills }] },
       { path: paths.config },
       { path: paths.secrets },
       // 守护进程加载的代码：安装集的依赖与构建产物（源码形态下另有各包的），以及安装集以外加载的插件
@@ -212,19 +212,17 @@ export function protectedLists(input: ProtectedListsInput): ProtectedLists {
       named('\\.cursor/(hooks|mcp|permissions|sandbox|cli)\\.json$'),
       named('\\.codex/(config\\.toml|hooks\\.json)$'),
       named('\\.codex/(rules|hooks)(/|$)'),
-      // 项目指令与项目级设置；实例家目录自己也可能叫 .aalis，不算，但它里面（如白纸里的项目）再出现的照样算
+      // 项目指令与项目级设置；实例家目录自己也可能叫 .aalis，不算，但它里面（如默认工作区里的项目）再出现的照样算
       named('(AALIS|AGENTS)\\.md$'),
       { pattern: '/\\.aalis(/|$)', except: [{ path: paths.home }] },
       { pattern: `^${literal(paths.home, platform)}/.+/\\.aalis(/|$)` },
     ],
     denyRead: [
-      // 家目录下只放行舞台、self 两个目录整个、本实例的日志与主配置；本会话临时区由触及按会话放回。secrets.yaml 另列一条，
-      // 理由同宿主控制面
+      // 家目录下只放行默认工作区、self 两个目录整个、本实例的日志与主配置；本会话临时区由触及按会话放回。secrets.yaml
+      // 另列一条，理由同宿主控制面
       {
         path: paths.home,
-        except: [parentOf(paths.stage.paper), parentOf(paths.self.skills), paths.logs, paths.config].map(path => ({
-          path,
-        })),
+        except: [paths.workspace, parentOf(paths.self.skills), paths.logs, paths.config].map(path => ({ path })),
       },
       { path: paths.secrets },
       // 同一用户下其他实例的家目录
@@ -283,8 +281,8 @@ export interface ReachInput {
   /** 生效的档位与越界策略（子会话取根会话的） */
   readonly tier: AccessTier;
   readonly onBoundary: BoundaryPolicy;
-  /** 场所的主目录与白纸：默认工作区两者是同一处，项目工作区的主目录是绑定目录 */
-  readonly place: { readonly home: string; readonly paper: string };
+  /** 场所的主目录：项目工作区是绑定目录，其余是默认工作区目录 */
+  readonly place: { readonly home: string };
   /** 项目会话的附加可写目录与本会话树建的 worktree */
   readonly binding?: Pick<WorkBinding, 'extraRoots' | 'worktrees'>;
   /** 绑定所在仓库的 git 目录（common dir）：工作区档可写，落点除外 */
@@ -305,11 +303,10 @@ export interface LocalReach {
   readonly exec: 'sandbox' | 'host';
   readonly tier: AccessTier;
   readonly onBoundary: BoundaryPolicy;
-  /** 场所的主目录与白纸 */
+  /** 场所的主目录 */
   readonly home: string;
-  readonly paper: string;
   readonly sessionTmp: string;
-  /** 工作区档的可写范围：场所的主目录与白纸、附加可写目录、本会话树建的 worktree；其余档位为空 */
+  /** 工作区档的可写范围：场所的主目录、附加可写目录、本会话树建的 worktree；其余档位为空 */
   readonly workRoots: readonly string[];
   /**
    * 沙箱两档不问就能写的根：只读档只有本会话临时区；工作区档是 workRoots、仓库的 git 目录、本会话临时区与技能目录。
@@ -333,10 +330,10 @@ const NO_LOCAL: Reach = Object.freeze({ exec: 'none' });
 export function resolveReach(input: ReachInput): Reach {
   if (input.principal === 'other') return NO_LOCAL;
   const { tier } = input;
-  const { home, paper } = input.place;
+  const { home } = input.place;
   const workRoots =
     tier === 'workspace'
-      ? [...new Set([home, paper, ...(input.binding?.extraRoots ?? []), ...(input.binding?.worktrees ?? [])])]
+      ? [...new Set([home, ...(input.binding?.extraRoots ?? []), ...(input.binding?.worktrees ?? [])])]
       : [];
   const writable =
     tier === 'workspace'
@@ -354,7 +351,6 @@ export function resolveReach(input: ReachInput): Reach {
     tier,
     onBoundary: input.onBoundary,
     home,
-    paper,
     sessionTmp: input.sessionTmp,
     workRoots,
     writable,
@@ -505,16 +501,15 @@ export const REACH_CREDENTIAL: unique symbol = Symbol.for('@aalis/api-reach/cred
 export type ReachVerdict = { readonly allowed: true } | { readonly allowed: false; readonly message: string };
 
 /**
- * 触及凭据：按一次工具调用签发，只由触及插件构造；工具从调用上下文取得后转交给存储与沙箱。exec、home、paper 按签发时的
- * 触及；require、allows 与 sandboxPolicy 每次按会话当时的设置重算，降档立即生效
+ * 触及凭据：按一次工具调用签发，只由触及插件构造；工具从调用上下文取得后转交给存储与沙箱。exec、home 按签发时的触及；
+ * require、allows 与 sandboxPolicy 每次按会话当时的设置重算，降档立即生效
  */
 export interface ReachCredential {
   readonly [REACH_CREDENTIAL]: true;
   /** 命令在哪执行；none 即这次调用没有本地效果 */
   readonly exec: 'none' | 'sandbox' | 'host';
-  /** 场所的主目录与白纸：当前目录没有值时取 home，不写输出位置的工具写进 paper；没有本地效果时不带 */
+  /** 场所的主目录：当前目录没有值时取它，不写输出位置的工具写进它；没有本地效果时不带 */
   readonly home?: string;
-  readonly paper?: string;
   /** 判一个模型给的目标，要问时经审批服务问；批准过的记作这次调用的一次性目标 */
   require(request: ReachRequest): Promise<ReachVerdict>;
   /** 存储兜底：同步判一个真实路径能不能读写，含这次调用批准过的一次性目标 */

@@ -46,7 +46,7 @@ import { inputFromLastUser } from '../fixtures/turn-input.js';
 // ════════════════════════════════════════════════════════════
 
 const ROOM = 'onebot:10000:group:20001';
-const HOST_BODY = 'HOST-NOTICE-BODY 白纸任务 T-1 已完成';
+const HOST_BODY = 'HOST-NOTICE-BODY 报告任务 R-1 已完成';
 const SENTINEL = 'UNTRUSTED-SENTINEL-7f3a';
 const BASE_TS = Date.UTC(2026, 0, 1, 12, 0, 0);
 
@@ -55,9 +55,9 @@ function hostNoticeIncoming(extra: Partial<IncomingMessage> = {}): IncomingMessa
     content: HOST_BODY,
     sessionId: ROOM,
     platform: 'onebot',
-    source: 'paper',
+    source: 'zz-reporter',
     actor: selfInitiatedActor('onebot'),
-    hostNotice: { kind: 'paper-task', id: 'n-1', untrusted: `<remote>${SENTINEL}</remote>` },
+    hostNotice: { kind: 'zz-report', id: 'n-1', untrusted: `<external>${SENTINEL}</external>` },
     ...extra,
   };
 }
@@ -69,7 +69,7 @@ function archivedNotice(timestamp?: number): Message {
     kind: WellKnownKinds.HostNotice,
     content: HOST_BODY,
     timestamp,
-    metadata: { platform: 'onebot', source: 'paper', hostNoticeKind: 'paper-task' },
+    metadata: { platform: 'onebot', source: 'zz-reporter', hostNoticeKind: 'zz-report' },
   };
 }
 
@@ -123,7 +123,7 @@ describe('message-archive：宿主通知归档', () => {
     const { message } = archived;
     expect(message).toMatchObject({ role: 'notice', kind: 'host-notice', content: HOST_BODY });
     expect(message.name).toBeUndefined();
-    expect(message.metadata).toMatchObject({ hostNoticeKind: 'paper-task', source: 'paper' });
+    expect(message.metadata).toMatchObject({ hostNoticeKind: 'zz-report', source: 'zz-reporter' });
     expect(message.metadata?.userId).toBeUndefined();
     expect(message.metadata?.nickname).toBeUndefined();
     expect(JSON.stringify(message)).not.toContain(SENTINEL);
@@ -215,9 +215,9 @@ describe('message-archive：宿主通知归档', () => {
     expect(noticeText?.params?.user).toBe('长'.repeat(200));
     const long = textLines(Array.from({ length: 20 }, () => 'x'.repeat(200)));
     const notice = await host.messageArchive.use.archiveIncoming(
-      hostNoticeIncoming({ hostNotice: { kind: 'paper-task', id: 'n-2', text: long } }),
+      hostNoticeIncoming({ hostNotice: { kind: 'zz-report', id: 'n-2', text: long } }),
     );
-    expect(notice?.message.metadata?.[WellKnownMetadataKeys.HostNoticeKind]).toBe('paper-task');
+    expect(notice?.message.metadata?.[WellKnownMetadataKeys.HostNoticeKind]).toBe('zz-report');
     expect(notice?.message.metadata?.[WellKnownMetadataKeys.Text]).toBeUndefined();
   });
 

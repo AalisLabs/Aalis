@@ -53,7 +53,7 @@ const t = defineTexts({
   source: {
     switched: '已切换到 {name}',
     stopped: '已停止 {name}',
-    done: '白纸 {id} 完成了',
+    done: '报告 {id} 完成了',
     poked: '{who} 戳了戳你',
     requested: '用户 {user} 发来了好友申请',
   } as const,
@@ -61,7 +61,7 @@ const t = defineTexts({
     en: {
       switched: 'Switched to {name}',
       stopped: 'Stopped {name}',
-      done: 'Paper {id} is done',
+      done: 'Report {id} is done',
       poked: '{who} poked you',
       requested: 'User {user} sent a friend request',
     },
@@ -311,12 +311,12 @@ describe('时间线与历史按全局默认层的语言渲染', () => {
     await host.compression.use.compress(id, { reason: 'manual' });
     const done = t('done', { id: 'n-1' });
     await archive.archiveIncoming({
-      content: '[白纸] 任务 n-1 结束，向用户转述结果',
+      content: '[报告] 任务 n-1 结束，向用户转述结果',
       sessionId: id,
       platform: 'webui',
-      source: 'paper:n-1',
+      source: 'zz-reporter:n-1',
       actor: selfInitiatedActor('webui'),
-      hostNotice: { kind: 'paper-task', id: 'n-1', text: done },
+      hostNotice: { kind: 'zz-report', id: 'n-1', text: done },
     });
     const poked = t('poked', { who: 'zz-user' });
     await archive.archiveNotice?.({ sessionId: id, noticeType: 'poke', content: toSource(poked), text: poked });
@@ -332,13 +332,13 @@ describe('时间线与历史按全局默认层的语言渲染', () => {
       .notifications('item/started')
       .flatMap(({ item }) => (item.kind === 'notice' ? [item.text] : []));
     expect(started).toEqual(['Compacting the conversation']);
-    expect(shown(live.timeline(id, base))).toEqual(['Conversation compacted', 'Paper n-1 is done']);
+    expect(shown(live.timeline(id, base))).toEqual(['Conversation compacted', 'Report n-1 is done']);
     const reopened = await connect();
     const { snapshot } = await reopened.subscribe(id);
     expect(shown(snapshot.items)).toEqual([
       '在',
       'Conversation compacted',
-      'Paper n-1 is done',
+      'Report n-1 is done',
       'zz-user poked you',
       '旧的分隔线',
       '坏的文字对象',

@@ -201,8 +201,8 @@ describe('房间表', () => {
         effective: '<群人设>',
         source: 'platformType',
       }),
-      settingRow('paperEnabled', {
-        field: { type: 'boolean', label: '开启白纸' },
+      settingRow('drawEnabled', {
+        field: { type: 'boolean', label: '开启绘图' },
         value: true,
         effective: true,
         source: 'place',
@@ -232,14 +232,14 @@ describe('房间表', () => {
     expect(persona.getByText('<群人设>')).toBeTruthy();
     expect(persona.getByText('来自：平台类型档「onebot · 群」'), '平台类型写声明的显示名').toBeTruthy();
     expect(persona.queryByRole('button', { name: '恢复继承' })).toBeNull();
-    const paper = within(dialog.getByRole('group', { name: '开启白纸' }));
-    expect(paper.queryByText(/^来自：/), '这一层自己设的不写来源').toBeNull();
-    expect(paper.getByRole('button', { name: '恢复继承' })).toBeTruthy();
+    const draw = within(dialog.getByRole('group', { name: '开启绘图' }));
+    expect(draw.queryByText(/^来自：/), '这一层自己设的不写来源').toBeNull();
+    expect(draw.getByRole('button', { name: '恢复继承' })).toBeTruthy();
 
-    fireEvent.click(paper.getByRole('switch', { name: '开启白纸' }));
+    fireEvent.click(draw.getByRole('switch', { name: '开启绘图' }));
     await vi.waitFor(() =>
       expect(requests('session/config/layer/update')).toEqual([
-        { layer: place satisfies SettingLayer, plugin: '@aalis/demo', key: 'paperEnabled', value: false },
+        { layer: place satisfies SettingLayer, plugin: '@aalis/demo', key: 'drawEnabled', value: false },
       ]),
     );
     fireEvent.click(dialog.getByRole('button', { name: '关闭' }));

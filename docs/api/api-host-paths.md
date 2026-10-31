@@ -6,7 +6,7 @@
 
 ## 概述
 
-家目录装着一个实例的全部状态：配置、密钥、数据库、日志、人设卡、技能、舞台。安装集是放 `package.json` 与 `node_modules` 的目录（源码形态另有 `packages/`）。两者都由宿主在启动时解析一次，之后不变；进程的 cwd 不带任何语义。
+家目录装着一个实例的全部状态：配置、密钥、数据库、日志、人设卡、技能、默认工作区。安装集是放 `package.json` 与 `node_modules` 的目录（源码形态另有 `packages/`）。两者都由宿主在启动时解析一次，之后不变；进程的 cwd 不带任何语义。
 
 本包定义 `hostPaths` 描述符（服务名 `host-paths`）与路径类型 `HostPaths`，不含实现。Node 宿主 `@aalis/runtime` 在根上独占提供它，解析规则见 [runtime 的「家目录」](../architecture/runtime.md#家目录)；其他宿主要让插件定位这些目录，需自行 provide 本描述符。插件要用时在 `uses` 里声明，不读 `process.cwd()`（architecture 守卫 `test/architecture/process-cwd.test.ts` 会拦下）。
 
@@ -25,13 +25,13 @@ interface HostPaths {
   readonly run: string;       // 实例锁（runtime 自用）；以后还放 socket
   readonly tmp: string;       // 临时区
   readonly self: { personas: string; skills: string; workflows: string };  // 人设卡、技能、编排定义
-  readonly stage: { drafts: string; public: string; paper: string };       // 草稿（未使用）、发布的作品、白纸
+  readonly workspace: string; // 默认工作区：owner 本机默认工作区的真实文件夹
 }
 ```
 
 全部是绝对路径。宿主在登记任何插件之前提供，运行中不会替换，所以插件可以在激活时取一次留用。
 
-第一方插件不直接拼这些路径，而是经 `@aalis/plugin-storage-local` 按它们派生的内部根访问：`state` 是 `data:/`（`state/plugins` 是 `pluginData:/`），`tmp`、`cache`、`logs` 是同名的根，`self.*` 是 `personas:/`、`skills:/`、`workflows:/`，`stage.paper` 与 `stage.public` 是 `paper:/` 与 `public:/`。`stage.drafts` 目前没有对应的根，还没有插件使用。`secrets.yaml` 存配置里密钥字段的值（见 [运行态与配置文档](../core/config.md#密钥配置)），只由宿主读写；经 storage 读写 `secrets.yaml`、改写 `config` 都会被拒绝。
+第一方插件不直接拼这些路径，而是经 `@aalis/plugin-storage-local` 按它们派生的内部根访问：`state` 是 `data:/`（`state/plugins` 是 `pluginData:/`），`tmp`、`cache`、`logs` 是同名的根，`self.*` 是 `personas:/`、`skills:/`、`workflows:/`；`workspace` 是默认工作区：storage-local 里没写 `path` 的用户根（缺省的 `workspace:/`）指向它，它也是触及（plugin-reach）的默认主目录。`secrets.yaml` 存配置里密钥字段的值（见 [运行态与配置文档](../core/config.md#密钥配置)），只由宿主读写；经 storage 读写 `secrets.yaml`、改写 `config` 都会被拒绝。
 
 ## 使用
 
@@ -54,6 +54,6 @@ export default definePlugin({
 
 | 插件 | 用途 | 宿主不提供时 |
 |---|---|---|
-| `plugin-storage-local` | 用户根的相对路径按家目录解析；内部根按 `state`、`tmp`、`cache`、`logs`、`self.*`、`stage.paper`、`stage.public` 派生；拦住经存储访问 `secrets` 与改写 `config` | 停在 pending（required） |
+| `plugin-storage-local` | 用户根的相对路径按家目录解析；没写 `path` 的用户根（缺省的 `workspace` 根）取 `workspace`；内部根按 `state`、`tmp`、`cache`、`logs`、`self.*` 派生；拦住经存储访问 `secrets` 与改写 `config` | 停在 pending（required） |
 | `plugin-package-manager` | 往安装集里装卸插件（与插件加载器读同一份 `package.json`） | 停在 pending（required） |
 | `plugin-webui-server` | 市场、系统组件与前端发现读安装集（可选依赖） | 市场与系统组件接口回 503，发现不到前端，只剩 HTTP 接口 |

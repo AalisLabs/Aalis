@@ -314,8 +314,8 @@ describe('表格', () => {
         },
         {
           type: 'table',
-          id: 'works',
-          label: '作品',
+          id: 'albums',
+          label: '相册',
           rowKey: 'id',
           columns: [
             { key: 'cover', label: '封面', kind: 'image', primary: true },
@@ -331,7 +331,7 @@ describe('表格', () => {
       jobsRest({
         '/api/pages': { pages: [PLAIN] },
         [dataPath(PLAIN, 'list')]: data([{ name: '周报', at: 0 }]),
-        [dataPath(PLAIN, 'works')]: data([{ id: 'w1', title: '水彩小镇' }]),
+        [dataPath(PLAIN, 'albums')]: data([{ id: 'w1', title: '水彩小镇' }]),
       }),
     );
     const primaries = (name: string) =>
@@ -344,7 +344,7 @@ describe('表格', () => {
       ['时间', null],
     ]);
     await page().findByRole('link', { name: '水彩小镇' });
-    expect(primaries('作品')).toEqual([
+    expect(primaries('相册')).toEqual([
       ['封面', 'true'],
       ['标题', 'true'],
     ]);
@@ -431,7 +431,9 @@ describe('详情', () => {
       {},
       jobsRest({
         '/api/pages': { pages: [GALLERY] },
-        [dataPath(GALLERY, 'list')]: data([{ id: 'w1', cover: '/api/media?uri=works%3A%2Fa.png', title: '水彩小镇' }]),
+        [dataPath(GALLERY, 'list')]: data([
+          { id: 'w1', cover: '/api/media?uri=workspace%3A%2Fa.png', title: '水彩小镇' },
+        ]),
         [dataPath(GALLERY, 'log', { rowKey: 'w1' })]: data('说明'),
       }),
     );
@@ -783,7 +785,7 @@ describe('单元格', () => {
         url: 'https://example.invalid/a',
         code: 'make weekly',
         text: '很长的一段原文',
-        cover: '/api/media?uri=works%3A%2Fa.png',
+        cover: '/api/media?uri=workspace%3A%2Fa.png',
         file: { name: 'a.zip', handle: 'h.1' },
       },
       {
@@ -813,7 +815,7 @@ describe('单元格', () => {
     expect(expand.getAttribute('aria-expanded')).toBe('true');
     const image = a.getByRole('img') as HTMLImageElement;
     expect([image.getAttribute('src'), image.getAttribute('loading')]).toEqual([
-      '/api/media?uri=works%3A%2Fa.png',
+      '/api/media?uri=workspace%3A%2Fa.png',
       'lazy',
     ]);
     const download = a.getByRole('link', { name: /a\.zip/ });

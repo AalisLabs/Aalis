@@ -179,7 +179,6 @@ interface SessionFieldReader<S> {
 | [plugin-memory-vector](../plugins/plugin-memory-vector.md)、[plugin-user-relation](../plugins/user-relation.md) | 各自的范围：`crossSessionMode`、`recallScope` | 全部 | owner | 各插件的作者默认 |
 | [plugin-subtask](../plugins/plugin-subtask.md) | `model`（子任务模型） | owner 会话与房间 | 1 级 | 不另指定（与本会话相同） |
 | [plugin-i18n](../plugins/plugin-i18n.md) | `language` | 房间 | 1 级 | `['en']` |
-| [plugin-paper](../plugins/plugin-paper.md) | 白纸与远端代理的六项 | 房间，只能设到场所 | owner | 关；每个窗口各一块；不允许；不另加限制 |
 | [plugin-trigger-policy](../plugins/plugin-trigger-policy.md)、plugin-trigger-laya、[plugin-flow-control](../plugins/plugin-flow-control.md) | 生效范围（`audience`）与各自的参数 | 房间 | owner | 生效范围默认多方房间 |
 
 ## 第三方要知道的

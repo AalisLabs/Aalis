@@ -143,7 +143,7 @@ function oneToOneWith(
 
 ## 场所与工作区
 
-每个会话恰好一个场所，子会话取根会话的。场所只管归属与插件按场所存的数据（白纸、会话设置的场所层），不管权限（触及的上限按这一轮的主体）。
+每个会话恰好一个场所，子会话取根会话的。场所只管归属与插件按场所存的数据（如会话设置的场所层），不管权限（触及的上限按这一轮的主体）。
 
 ```ts
 interface SessionPlace {
@@ -161,10 +161,6 @@ interface WorkspaceInfo {
 }
 /** 场所的显示名：没有名字时为「默认工作区」（文字对象） */
 function placeLabel(place: Pick<PlaceInfo, 'name'>): string | TextRef;
-/** 场所的白纸 id：`p:` 加场所键的 UTF-8 十六进制（只有小写，大小写不敏感的文件系统上不同的键不会落进同一个目录） */
-function placePaperId(key: string): string;
-/** 白纸在白纸根（stage/paper）里的目录名：白纸 id 的 `:` 换成 `-`；白纸插件与触及都按它取 */
-function paperDirName(paperId: string): string;
 ```
 
 `placeOf(sessionId)` 按根会话取第一条：

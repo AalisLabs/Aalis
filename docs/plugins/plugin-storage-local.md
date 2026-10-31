@@ -33,9 +33,9 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `roots` | array | `[{"name":"workspace","path":"workspace","label":"Workspace","kind":"workspace","browsable":true,"readable":true,"writable":true,"deletable":true}]` | 存储根目录：文件工具与 agent 寻址用的根（缺省只有 workspace）；插件自己的数据在内置根里（data、pluginData、tmp、cache、logs、personas、skills、workflows、paper、public），这里同名的项会被跳过。直接编辑这个数组：删除不要的、修改 path、加自定义根、加 host:/ 直通根。browsable 是给文件浏览器类界面的 hint（WebUI 没有文件浏览页，不读它）。 |
+| `roots` | array | `[{"name":"workspace","label":"Workspace","kind":"workspace","browsable":true,"readable":true,"writable":true,"deletable":true}]` | 存储根目录：文件工具与 agent 寻址用的根（缺省只有 workspace）；插件自己的数据在内置根里（data、pluginData、tmp、cache、logs、personas、skills、workflows），这里同名的项会被跳过。直接编辑这个数组：删除不要的、修改 path、加自定义根、加 host:/ 直通根。browsable 是给文件浏览器类界面的 hint（WebUI 没有文件浏览页，不读它）。 |
 
-`path` 可写绝对路径，也可写相对路径；相对路径按家目录（`host-paths` 的 `home`）解析，与进程的 cwd 无关。插件以 required 声明 `host-paths`，宿主不提供时停在 pending。
+`path` 可写绝对路径，也可写相对路径；相对路径按家目录（`host-paths` 的 `home`）解析，与进程的 cwd 无关；留空时指向默认工作区目录（`host-paths` 的 `workspace`）。插件以 required 声明 `host-paths`，宿主不提供时停在 pending。
 
 ## 内部根
 
@@ -51,17 +51,14 @@ export default definePlugin({
 | `personas` | `<家目录>/self/personas` | `self` | 可读、可写、可删 | 人设卡，[plugin-persona](./plugin-persona.md) 的 `personasDir` 默认 `personas:/` |
 | `skills` | `<家目录>/self/skills` | `self` | 可读、可写、可删 | 技能，[plugin-skills](./plugin-skills.md) 的 `skillsUri` 默认 `skills:/` |
 | `workflows` | `<家目录>/self/workflows` | `self` | 可读、可写、可删 | 编排定义；[plugin-workflow](./plugin-workflow.md) 的 `defsDir` 目前仍默认 `workspace:/workflows` |
-| `paper` | `<家目录>/stage/paper` | `paper` | 可读、可写、可删 | 白纸枢纽（[plugin-paper](./plugin-paper.md)）存放远端任务的成品与工程包 |
-| `public` | `<家目录>/stage/public` | `public` | 可读、可写、可删 | [作品审核](./plugin-publish-review.md)存放审核通过的公开文件，作品站据此部署 |
 
 - 内部根排在用户根之后（`listRoots()` 按这个次序列出）；激活时建好目录，建目录失败只告警并跳过，不影响其它根。
-- `roots` 里与内部根同名的项被跳过并记 warn，内部根优先；被跳过的项不会建目录。旧版配置文件里落盘的 `data`、`tmp`、`pluginData`、`logs` 条目（旧默认值）同样按同名跳过并告警，可以直接删掉；原来自建了与内部根同名的根（如 `paper`、`public`、`skills`）的，要改名。
+- `roots` 里与内部根同名的项被跳过并记 warn，内部根优先；被跳过的项不会建目录。旧版配置文件里落盘的 `data`、`tmp`、`pluginData`、`logs` 条目（旧默认值）同样按同名跳过并告警，可以直接删掉；原来自建了与内部根同名的根（如 `skills`）的，要改名。
 - 用户根可以一个都没有（例如 `roots` 里的条目全被跳过）：此时只记一条 warn，内部根照常注册，只是文件工具没有工作根。
 - `pluginData` 在 `data` 的目录之下，`data:/plugins/…` 与 `pluginData:/…` 指向同一批文件。
-- kind 为 `data`、`pluginData`、`tmp`、`cache`、`logs`、`paper`、`public`、`self` 的根不被 checkpoint 记录（见 [plugin-checkpoint](./plugin-checkpoint.md)）。白纸根不记录，是因为枢纽在任意会话的回合进行中写入成品，记进那一轮的话，回滚会删掉无关的成品；公开根不记录，是因为审核、部署与撤下不属于正在运行的聊天回合，回滚会话不能把公开作品恢复或删除。
-- `public:` 是内部存储根，不意味着文件自动通过 HTTP 公开；只有审核服务认可的文件才会交给作品站。
+- kind 为 `data`、`pluginData`、`tmp`、`cache`、`logs`、`self` 的根不被 checkpoint 记录（见 [plugin-checkpoint](./plugin-checkpoint.md)）。
 
-`roots` 缺省或显式为 `[]` 时注册默认的 `workspace` 根（路径 `workspace`，相对家目录）。显式数组中的根必须有 `name` 和 `path`；路径、权限位或数组元素形态无效时整组配置拒绝激活，不会把坏条目删光后误用默认根。
+默认的 `workspace` 根不写 `path`，指向默认工作区目录（`host-paths` 的 `workspace`，`<家目录>/workspace`），不另写一份位置；`roots` 显式为 `[]` 时同样注册它。写了 `path` 的以用户的为准：把 `workspace` 根的 `path` 改到别处，文件工具的 `workspace:/` 就跟着走；触及（[plugin-reach](./plugin-reach.md)）的默认主目录照旧是 `host-paths` 的 `workspace`，不跟这里的配置走。显式数组中的根必须有 `name`；`path`、权限位或数组元素形态无效时整组配置拒绝激活，不会把坏条目删光后误用默认根。
 
 ## 宿主控制文件
 
