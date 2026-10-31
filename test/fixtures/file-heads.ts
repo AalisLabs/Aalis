@@ -3,7 +3,6 @@
 // ════════════════════════════════════════════════════════════
 
 export const ascii = (s: string) => [...s].map(c => c.charCodeAt(0));
-export const le16 = (n: number) => [n & 0xff, (n >> 8) & 0xff];
 export const le32 = (n: number) => [n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff];
 export const be32 = (n: number) => [n >>> 24, (n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
 export const bytes = (...parts: Array<number[] | string>) =>

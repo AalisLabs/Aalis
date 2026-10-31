@@ -8,13 +8,12 @@ import { fixedRef } from './service-ref.js';
 // 页面插件的测试台：webui-server 的真实登记表（质量门槛、闸门、合并 invalidate）包成 WebUIService 交给插件，
 // 不起端口。页面没过门槛时登记表记 error，用例读 logs 断言；invalidate 另记下每一次原样的调用，不受合并窗口影响。
 // 数据源与动作经同一套闸门调用，调用者是 owner（webui:console），没有 i18n（语言链为空）。交来的文字对象原样留着，不经出口渲染。
+// 文件单元格的句柄一律签成 `signed:<地址>`。
 // ════════════════════════════════════════════════════════════
 
 export interface PageHostOptions {
   /** 会话面板要核的会话；缺省没有会话 */
   sessions?: (sessionId: string) => SessionInfo | undefined;
-  /** 文件单元格签发句柄；缺省一律签成 `signed:<地址>` */
-  signFile?: (uri: string, name: string) => string | undefined;
 }
 
 export interface InvalidateCall {
@@ -42,7 +41,7 @@ export function pageHost(opts: PageHostOptions = {}) {
     logger,
     send: quiet,
     sessions: fixedRef({ getSession: (id: string) => opts.sessions?.(id) }),
-    signFile: opts.signFile ?? (uri => `signed:${uri}`),
+    signFile: uri => `signed:${uri}`,
   });
   const service: WebUIService = {
     getPort: () => 0,
