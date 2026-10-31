@@ -109,8 +109,8 @@ function anchorInsertAt(anchor: PromptAnchor, messages: readonly Message[]): num
       // 三级定位，取首个命中：
       // 1. 易变块（persona-volatile）之前——普通轮与空闲开话题那一轮的历史/当前轮分界线。
       //    材料在此刻事实（时间/状态）之前、focus 与 turn-hint 之前：焦点
-      //    指引与平台提示（「本轮上下文中的群聊历史记录」）保持与改动前相同
-      //    的先行语邻接，不被整批材料隔断。
+      //    指引与平台提示（「本轮上下文中的群聊历史记录」）保持先行语邻接，
+      //    不被整批材料隔断。
       // 2. 指令块（proactive 任务块、宿主通知块）之前——这类回合没有易变块与
       //    当前 user 消息，历史里却有旧 user 消息；若按「最后一条 user」定位会把
       //    材料 splice 进历史**内部**，既割裂转录又在 append-only 区制造新的缓存断点。

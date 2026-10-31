@@ -15,7 +15,7 @@ import { roomCommands, seedRooms } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
 // /help 里 /maimai 子指令的说明与参数说明按房间的语言（房间没设时随全局默认层）；查询目标的说明按 defaultBindOnPrivateChat
-// 分两句，开着时多写私聊里按 QQ 号查。中文与改动前逐字相同。真的 maimai（只开指令）、网关、指令与 plugin-i18n。
+// 分两句，开着时多写私聊里按 QQ 号查。真的 maimai（只开指令）、网关、指令与 plugin-i18n。
 // ════════════════════════════════════════════════════════════
 
 const CHAT = 'zz-chat';

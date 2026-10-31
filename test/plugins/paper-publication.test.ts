@@ -441,7 +441,7 @@ describe('PaperPublication', () => {
     await vi.waitFor(() => expect(t.publication?.state).toBe('submitted'));
     h.setState('rejected');
     await vi.waitFor(() => expect(t.publication?.state).toBe('failed'));
-    // 处理状态照原值写：交给模型的原因（取原文）与改前逐字相同
+    // 处理状态照原值写，交给模型的原因取原文
     expect(toSource(t.publication?.reason)).toBe('发布结果：rejected');
     expect(renderIn(t.publication?.reason, 'en')).toBe('Publishing ended: rejected');
     await h.coordinator.close();

@@ -88,7 +88,7 @@ describe('作品审核核心', () => {
     ]);
   });
 
-  it('交给模型的小时数照配置原样写出（与改动前逐字相同），不按语言格式化', async () => {
+  it('交给模型的小时数照配置原样写出，不按语言格式化', async () => {
     const clock = { now: 1000 };
     const h = await setup(
       { run: async () => ({ verdict: { verdict: 'unsure', reasons: ['模型不可用'] }, files: input().files }) },

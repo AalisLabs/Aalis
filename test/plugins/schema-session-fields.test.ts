@@ -278,7 +278,7 @@ describe('readFieldValue', () => {
   });
 });
 
-// ── 回归钉（改动前就通过） ──
+// ── 回归钉 ──
 
 describe('回归钉', () => {
   it('defaultsFrom 照常产出带 session 字段的 default（作者默认写进配置文档）', () => {

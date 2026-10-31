@@ -138,7 +138,7 @@ describe('plugin-memory-summary: 摘要预算', () => {
     ['裁剪预算', { tokenBudget: Number.NaN }],
     ['窗口', { contextWindow: Number.NaN }],
   ])('用量里的%s不是有限数时按没有用量：预算不出 NaN', { timeout: 5000 }, async (_label, broken) => {
-    // 预算是 NaN 时切分不前进、一直请求：第二次请求就抛错，让改前的实现也停得下来
+    // 预算是 NaN 时切分不前进、一直请求：第二次请求就抛错，这样的实现也停得下来
     const llm = fakeSummaryLLM({
       contextLength: 64_000,
       maxOutputTokens: 3000,

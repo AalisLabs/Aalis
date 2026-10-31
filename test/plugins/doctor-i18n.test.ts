@@ -11,7 +11,7 @@ import { i18nSection, setHostLanguage } from '../fixtures/host-language.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
-// 诊断页、内置检查项与「需要处理」的提示按全局层的语言：en 拿英文，zh-CN 与改动前逐字相同。真的 plugin-doctor、
+// 诊断页、内置检查项与「需要处理」的提示按全局层的语言：en 拿英文，zh-CN 拿中文。真的 plugin-doctor、
 // webui-server 与 plugin-i18n，全局语言写在宿主配置文档里；测试另登记一个检查项，按 levels 交出几条结果，造出错误与警告。
 // ════════════════════════════════════════════════════════════
 
