@@ -20,7 +20,7 @@ export interface PaperState {
   binding?: string;
   halted?: {
     reason: 'unknown-run' | 'cost-missing' | 'cancel-failed' | 'storage-full' | 'provider';
-    /** 停开说明：新记录是文字对象（参数截 200 字），旧记录是字符串；经受理的拒绝理由交给模型时取原文 */
+    /** 停开说明：文字对象（参数截 200 字）按读者的语言渲染，字符串原样显示；经受理的拒绝理由交给模型时取原文 */
     detail: string | TextRef;
     at: number;
   };
@@ -108,7 +108,7 @@ export interface TaskRecord {
     summary: string;
     state: 'pending' | 'submitted' | 'failed' | 'live';
     workId?: string;
-    /** 没能上线的原因：新记录可以是文字对象，旧记录是字符串；交给模型取原文 */
+    /** 没能上线的原因：字符串原样显示，文字对象按读者的语言渲染；交给模型取原文 */
     reason?: string | TextRef;
     /** 首次提交前固定选中的成品，供同键重试重建相同字节。 */
     artifactIds?: string[];
@@ -126,7 +126,7 @@ export interface TaskRecord {
      */
     reviewRefused?: true;
   };
-  /** 失败原因：新记录可以是文字对象，旧记录是字符串；交给模型取原文 */
+  /** 失败原因：字符串原样显示，文字对象按读者的语言渲染；交给模型取原文 */
   error?: string | TextRef;
   cancelledVia?: 'tool' | 'webui' | 'timeout';
   /**
@@ -182,7 +182,7 @@ export interface AlertRecord {
   subject?: string;
   /** 远端代理插件实例 id */
   providerType?: string;
-  /** 新记录是文字对象（参数截 200 字），旧记录是字符串 */
+  /** 文字对象（参数截 200 字）按读者的语言渲染，字符串原样显示 */
   message: string | TextRef;
   acknowledged: boolean;
 }

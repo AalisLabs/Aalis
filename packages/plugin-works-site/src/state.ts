@@ -48,7 +48,7 @@ export interface SiteAlert {
     | 'auth'
     | 'integrity'
     | 'deploy-failed';
-  /** 给人看的说明；同一条告警按种类与文字对象的键、参数认（旧版写的是字符串，原样显示） */
+  /** 给人看的说明；同一条告警按种类与文字对象的键、参数认（字符串原样显示） */
   detail: string | TextRef;
   at: number;
   acknowledged?: boolean;
