@@ -27,7 +27,7 @@ export function isNoticeUndelivered(err: unknown): boolean {
   return (err as { name?: unknown } | null | undefined)?.name === 'NoticeUndelivered';
 }
 
-/** 一条作品通知：交给她转述的正文（写给模型的原文）与给人看的那句（旧的待发通知没有，显示正文） */
+/** 一条作品通知：交给她转述的正文（写给模型的原文）与给人看的那句（没有时显示正文） */
 export interface NoticeBody {
   content: string;
   text?: string | TextRef;

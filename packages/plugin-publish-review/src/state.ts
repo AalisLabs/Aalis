@@ -48,7 +48,7 @@ export interface QueueItem {
   /** 与审核输出一同持久化；旧记录缺少此标记时必须重新处理。 */
   outputPolicy?: 'off' | 'auto' | 'manual';
   thumbnailHash?: string;
-  /** reasons 是类别值与宿主写的原因：新记录的原因可以是文字对象，旧记录是字符串 */
+  /** reasons 是类别值与宿主写的原因：字符串原样显示，文字对象按读者的语言渲染 */
   review?: {
     flags: string[];
     reasons: Array<string | TextRef>;
@@ -90,8 +90,8 @@ interface ReviewState {
     { state: Extract<ItemState, 'rejected' | 'expired' | 'failed' | 'withdrawn'>; origin: PublishOrigin; title: string }
   >;
   /**
-   * detail 是裁决者与理由：新记录可以是文字对象，旧记录是字符串。撤下与完整性撤下的新记录另带 withdrawn（撤下的一方与理由，
-   * 页面不显示）；旧记录没有
+   * detail 是裁决者与理由：字符串原样显示，文字对象按读者的语言渲染。撤下与完整性撤下另带 withdrawn（撤下的一方与理由，
+   * 页面不显示）
    */
   history: Array<{ at: number; id: string; event: string; detail: string | TextRef; withdrawn?: Withdrawal }>;
   notices: Record<
@@ -101,7 +101,7 @@ interface ReviewState {
       origin: PublishOrigin;
       /** 交给她转述的正文（写给模型的原文） */
       content: string;
-      /** 给人看的那句（文字对象，参数截过长度时可能退成截短的原文）；旧记录没有，显示正文 */
+      /** 给人看的那句（文字对象，参数截过长度时可能退成截短的原文）；没有时显示正文 */
       text?: string | TextRef;
       title?: string;
       live: boolean;

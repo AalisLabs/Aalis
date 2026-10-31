@@ -46,7 +46,7 @@ export interface SessionPlace {
 /** 场所记录对外的样子：显示名与插件的扩展元数据。工作区的目录经 {@link WorkspaceInfo} 取 */
 export interface PlaceInfo extends SessionPlace {
   /**
-   * 显示名：窗口取群名或对方昵称，随消息更新；项目工作区默认取文件夹名，允许重名；默认工作区没有（旧记录里可能存着生成的名字）。
+   * 显示名：窗口取群名或对方昵称，随消息更新；项目工作区默认取文件夹名，允许重名；默认工作区没有。
    * 显示经 {@link placeLabel}
    */
   name?: string;
@@ -117,8 +117,8 @@ export interface SessionInfo {
   /** 会话唯一标识 */
   id: string;
   /**
-   * 会话显示名称：建会话时给的，IM 房间取群名或对方昵称（取不到时不取名，之后的入站补上）。没取名的没有（旧记录里可能存着
-   * 生成的名字），显示经 {@link sessionLabel}
+   * 会话显示名称：建会话时给的，IM 房间取群名或对方昵称（取不到时不取名，之后的入站补上）。没取名的没有，
+   * 显示经 {@link sessionLabel}
    */
   name?: string;
   /** 自动生成的会话标题（AI 总结，或父会话指定） */

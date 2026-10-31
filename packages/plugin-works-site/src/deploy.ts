@@ -28,7 +28,7 @@ const CLEANUP_INTERVAL = 24 * 60 * 60_000;
 /** 单个线上核对请求的上限，与 Pages API 请求一致。 */
 const REQUEST_TIMEOUT = 60_000;
 const nonce = () => crypto.randomUUID().replaceAll('-', '');
-/** 暂停是不是这一种说明的告警引起的（按字典的键认；旧版写的字符串原因不认） */
+/** 暂停是不是这一种说明的告警引起的（按字典的键认，字符串原因不认） */
 const pausedBy = (state: WorksState | undefined, key: keyof Source) => {
   const reason = state?.paused?.reason;
   return isTextRef(reason) && reason.i18n === t.ns && reason.key === key;
