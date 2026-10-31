@@ -339,6 +339,22 @@ const REMOVED: Array<[string, string]> = [
   ['replaceStreamingBlock', '终端聊天区按下标重建流式块：聊天区改成条目表'],
   ['expandForwardsInText', '合并转发的展开替换进入站正文：展开另放 forwards，见 expandForwards'],
   ['buildEnvelope', '合并转发的信封单独拼：信封与给界面的事实由 forwardedChat 一起交出'],
+  // 白纸、远端代理与作品发布改做仓外的扩展插件，主仓不留对它们的认识。六个包按目录名登记，文档页与它们的链接一起查
+  ['plugin-paper', '白纸枢纽插件，改做仓外的扩展插件'],
+  ['api-remote-agent', '远端代理契约，改做仓外的扩展插件'],
+  ['plugin-remote-agent-cursor', '远端代理的 Cursor 提供者，改做仓外的扩展插件'],
+  ['api-publish', '作品发布契约，改做仓外的扩展插件'],
+  ['plugin-publish-review', '作品审核插件，改做仓外的扩展插件'],
+  ['plugin-works-site', '作品站插件，改做仓外的扩展插件'],
+  ['白纸', '白纸，改做仓外的扩展插件'],
+  ['paperEnabled', '白纸插件的会话设置项'],
+  ['paperName', '白纸插件的会话设置项'],
+  ['remoteAgent', '远端代理的服务描述符与会话设置项（remoteAgentTypes 等）'],
+  ['placePaperId', '会话管理契约按场所键算白纸 id'],
+  ['paperDirName', '会话管理契约按白纸 id 取白纸目录名'],
+  ['stage.paper', '宿主路径的舞台 stage（白纸、公开作品与草稿三个目录），随白纸与作品发布移出主仓'],
+  ['stage.public', '宿主路径的舞台 stage（白纸、公开作品与草稿三个目录），随白纸与作品发布移出主仓'],
+  ['stage.drafts', '宿主路径的舞台 stage（白纸、公开作品与草稿三个目录），随白纸与作品发布移出主仓'],
 ];
 
 /**
@@ -417,12 +433,6 @@ const REMOVED_IN_PACKAGE: Array<[string, string, string]> = [
     'plugin-session-server',
   ].flatMap(pkg =>
     [
-      'paperEnabled',
-      'paperName',
-      'remoteAgentTypes',
-      'remoteAgentUserDailyCents',
-      'remoteAgentUserDailyTasks',
-      'remoteAgentRoomDailyCents',
       'systemPromptExtra',
       'maxToolIterations',
       'disableOutputFormat',
