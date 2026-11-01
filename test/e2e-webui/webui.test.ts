@@ -1465,6 +1465,17 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
       '认识',
     ]);
 
+    // 从圆点顶到名字底，节点中线上每一处都点得中：圆点与名字之间的缝不落到背景上
+    const missed = await page.$eval(aria('小明', 'button'), node => {
+      const circle = (node.querySelector('circle') as Element).getBoundingClientRect();
+      const bottom = (node.querySelector('text') as Element).getBoundingClientRect().bottom;
+      const x = circle.left + circle.width / 2;
+      const misses: number[] = [];
+      for (let y = circle.top; y < bottom; y += 0.5)
+        if (document.elementFromPoint(x, y)?.closest('.page-graph-node') !== node) misses.push(y);
+      return misses;
+    });
+    expect(missed).toEqual([]);
     await page.locator(aria('小明', 'button')).click();
     await page.waitForSelector(`${aria('小明', 'region')} ${text('编号')}`);
     // 触屏上点按不移焦点；桌面上点中的节点得到焦点，但不该画出焦点框

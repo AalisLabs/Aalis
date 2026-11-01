@@ -171,6 +171,8 @@ export function Graph({ data, nodeKinds, edgeKinds, spacing = DEFAULT_SPACING, s
                     }
                   : {})}
               >
+                {/* 圆点与名字之间的缝也算这个节点：从圆点中心到名字基线补一条透明的点按区域，不超出节点画出的这一列 */}
+                <rect x={-RADIUS} width={RADIUS * 2} height={RADIUS + LABEL_SIZE + 2} fill="transparent" />
                 <circle r={RADIUS} strokeWidth={2} />
                 <text y={RADIUS + LABEL_SIZE + 2} fontSize={LABEL_SIZE} textAnchor="middle">
                   {node.label}
