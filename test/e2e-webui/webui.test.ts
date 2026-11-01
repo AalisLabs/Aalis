@@ -20,7 +20,7 @@ import schedulerPlugin from '../../packages/plugin-scheduler/src/index.js';
 import subtaskPlugin from '../../packages/plugin-subtask/src/index.js';
 import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';
-import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
+import { createMockLLMPlugin, type MockLLMOptions } from '../fixtures/mock-llm.js';
 import { fieldsPlugin } from '../fixtures/session-settings.js';
 import {
   aria,
@@ -36,6 +36,7 @@ import {
   VIEWPORTS,
   webuiStack,
 } from '../fixtures/webui-e2e.js';
+import { deferred } from '../helpers/deferred.js';
 import { waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -537,18 +538,19 @@ async function relay(target: number) {
 
 /**
  * 起运行时（共用的 minimal 档组合，模型是按 script 回话的假模型），再加一个需要批准的探针工具；extra 是另加的插件，doc 是宿主
- * 配置文档。requests 是假模型收到的请求
+ * 配置文档，hold 是假模型每次流出第一段后的闸门。requests 是假模型收到的请求
  */
 async function startStack(
   replies: Record<string, string> = {},
   extra: PluginDefinition[] = [],
   rooms?: Record<string, string>,
   doc?: Partial<AalisConfig>,
+  hold?: MockLLMOptions['hold'],
 ) {
   const requests: ChatModelRequest[] = [];
   const { app, port } = await webuiStack({
     clientDir: e2e.clientDir,
-    model: createMockLLMPlugin({ responses: script(replies), latencyMs: CHUNK_MS, recorder: requests }),
+    model: createMockLLMPlugin({ responses: script(replies), latencyMs: CHUNK_MS, recorder: requests, hold }),
     extra,
     cleanups,
     rooms,
@@ -632,26 +634,27 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     );
 
   it('打开、发消息、流式回复；外站图片只显示成链接；HTML 带 CSP', async () => {
-    const stack = await startStack({
-      你好: `收到，这是一段慢慢流出来的回复，用来看流式显示。![外站图片](${EXTERNAL_IMAGE})`,
-    });
+    // 假模型流出第一段就停住，看过正在输出时的样子再放行：不靠流得多快赌时机
+    const streaming = deferred();
+    const stack = await startStack(
+      { 你好: `收到，这是一段慢慢流出来的回复，用来看流式显示。![外站图片](${EXTERNAL_IMAGE})` },
+      [],
+      undefined,
+      undefined,
+      () => streaming.promise,
+    );
     const { page, problems, response } = await openPage(stack, viewport);
     expect(response.headers()['content-security-policy']).toBe(CSP);
 
     await newSession(page);
-    // 发送前装好观察，每次变动都看一次：正在输出时正文至少长出过两个不同的前半段
-    await page.evaluate(() => {
-      const partials = new Set<string>();
-      (window as unknown as { partials: Set<string> }).partials = partials;
-      new MutationObserver(() => {
-        const shown = document.querySelector('[aria-label="对话"]')?.textContent ?? '';
-        if (document.querySelector('[aria-label="正在输出"]') && !shown.includes('流式显示')) partials.add(shown);
-      }).observe(document.body, { childList: true, subtree: true, characterData: true });
-    });
     await send(page, '你好');
     await sessionIdOf(page);
     const timeline = await page.waitForSelector(aria('对话', 'region'));
-    await page.waitForFunction(() => (window as unknown as { partials: Set<string> }).partials.size >= 2);
+    // 正在输出时正文已经显示出前半段
+    await page.waitForSelector(`${aria('对话', 'region')} ${text('收到，这')}`);
+    expect(await page.$$('::-p-aria(正在输出)')).toHaveLength(1);
+    expect(await timeline?.evaluate(element => element.textContent ?? '')).not.toContain('流式显示');
+    streaming.resolve();
     await page.waitForSelector('::-p-aria(正在输出)', { hidden: true });
     expect(await timeline?.evaluate(element => element.textContent ?? '')).toContain('用来看流式显示');
 
