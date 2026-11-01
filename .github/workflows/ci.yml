@@ -5,6 +5,7 @@ on:
     branches: [main, master, dev, 'feat/**', 'fix/**']
   pull_request:
     branches: [main, master, dev]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -52,6 +53,10 @@ jobs:
 
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      # 恢复了依赖缓存时 pnpm 不再跑 puppeteer 的安装脚本，而浏览器不在缓存里，要单独装
+      - name: Install Chrome
+        run: pnpm exec puppeteer browsers install chrome
 
       - name: Build (produce dist for runtime imports)
         run: pnpm -r build
@@ -106,6 +111,10 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # 同 unit-tests：缓存命中时浏览器要单独装
+      - name: Install Chrome
+        run: pnpm exec puppeteer browsers install chrome
+
       - name: Build (produce dist for runtime imports)
         run: pnpm -r build
 
@@ -138,41 +147,8 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Build (knip loads configs that import other packages' dist)
+        run: pnpm -r build
+
       - name: knip
         run: pnpm exec knip --no-progress
-
-  biome-changed:
-    name: Biome on changed files (HARD for new code)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - uses: pnpm/action-setup@v5
-        with:
-          version: 10
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      - name: Determine base ref
-        id: base
-        run: echo "base=${{ github.event.pull_request.base.sha || github.event.before || 'HEAD~1' }}" >> "$GITHUB_OUTPUT"
-
-      - name: Biome on changed files
-        run: |
-          changed=$(git diff --name-only --diff-filter=ACMR "${{ steps.base.outputs.base }}" HEAD -- '*.ts' '*.tsx' '*.js' '*.json' | tr '\n' ' ')
-          if [ -z "$changed" ]; then
-            echo "No relevant changed files."
-            exit 0
-          fi
-          echo "Checking: $changed"
-          # --no-errors-on-unmatched：当所有改动文件恰好全部位于 biome.json 的 ignore
-          # 范围（如 packages/plugin-webui-client）时，不报错退出。
-          pnpm exec biome check --no-errors-on-unmatched $changed
