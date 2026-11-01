@@ -152,7 +152,7 @@ export class ToolRegistry implements ToolService {
   /**
    * 分组过滤：无分组的通用工具恒可见；带分组的只在命中 `groups` 时可见，`'*'` 表示全部分组。
    * 未指定（或为空）即只给通用工具——多人平台上 public 工具的可达性靠这道闸
-   * （docs/concepts/security-model.md）；owner 专用平台由平台档显式给 `['*']`。
+   * （docs/concepts/security-model.md）；哪一层都没设时给什么见插件入口的 unsetGroups。
    * 可见的工具里有可转后台的，才连同四个后台任务工具
    */
   private filtered(filter?: { groups?: string[] }): Entry[] {

@@ -72,6 +72,26 @@ const TOOL_GROUPS = {
   ],
 };
 const settingRow = (label: string) => within(panel().getByRole('group', { name: label }));
+/** 工具分组的可选项：「*」代表其余全部（all），另有三组 */
+const ALL_GROUPS = {
+  details: [
+    { value: '*', label: '全部分组', description: '包括以后新装插件的分组', all: true },
+    { value: 'file', label: '文件' },
+    { value: 'web', label: '联网' },
+    { value: 'office', label: '办公' },
+  ],
+};
+/** 本会话层存着 value 的工具分组一行 */
+const groupsRow = (value: string[]) =>
+  row('groups', {
+    field: { type: 'multiselect', label: '工具分组', dynamicOptions: 'toolGroups', allowCustom: true },
+    value,
+    effective: value,
+    source: 'session',
+  });
+const groupBox = (name: string) => panel().getByRole('checkbox', { name }) as HTMLInputElement;
+/** 编辑中的工具分组里勾着的各项，按可选项的先后 */
+const checkedGroups = () => ['全部分组', '文件', '联网', '办公'].filter(name => groupBox(name).checked);
 
 const PLUGINS: FakeRest = {
   '/api/plugins': {
@@ -896,6 +916,143 @@ describe('右侧面板与会话头', () => {
     fireEvent.click(await settingRow('工具分组').findByRole('button', { name: /工具分组/ }));
     const web = panel().getByRole('checkbox', { name: '联网' });
     expect(document.getElementById(web.getAttribute('aria-describedby') ?? '')?.textContent).toBe('搜索与抓取网页');
+  });
+
+  it('多选里代表其余全部的一项（可选项标了 all）：勾它只存它、各项都显示勾上；勾着时取消某项存其余各项，取消它即全关；固定名单各项全勾也不勾回它', async () => {
+    let rows = [groupsRow(['*'])];
+    app = await renderApp(
+      '/s/s1/settings',
+      {
+        ...subscribe(),
+        'session/config/get': () => ({ items: rows }),
+        'session/config/update': ({ value }) => {
+          rows = [groupsRow(value as string[])];
+          return { items: rows };
+        },
+      },
+      { '/api/models/toolGroups': ALL_GROUPS },
+    );
+    fireEvent.click(await settingRow('工具分组').findByRole('button', { name: /工具分组/ }));
+    await vi.waitFor(() => expect(checkedGroups()).toEqual(['全部分组', '文件', '联网', '办公']));
+    const all = groupBox('全部分组');
+    expect(document.getElementById(all.getAttribute('aria-describedby') ?? '')?.textContent).toBe(
+      '包括以后新装插件的分组',
+    );
+
+    fireEvent.click(groupBox('联网'));
+    await vi.waitFor(() => expect(checkedGroups()).toEqual(['文件', '办公']));
+    fireEvent.click(groupBox('联网'));
+    await vi.waitFor(() => expect(checkedGroups()).toEqual(['文件', '联网', '办公']));
+    fireEvent.click(groupBox('全部分组'));
+    await vi.waitFor(() => expect(checkedGroups()).toEqual(['全部分组', '文件', '联网', '办公']));
+    fireEvent.click(groupBox('全部分组'));
+    await vi.waitFor(() => expect(checkedGroups()).toEqual([]));
+    expect(requests('session/config/update').map(params => (params as { value: unknown }).value)).toEqual([
+      ['file', 'office'],
+      ['file', 'office', 'web'],
+      ['*'],
+      [],
+    ]);
+  });
+
+  it('存着代表其余全部的一项又列了别的名字（旧值）：行上只写那一项，编辑时各项显示勾上、不列那些名字也没有添加框，取消某项存的是其余各项', async () => {
+    const rows = [groupsRow(['*', 'web', 'zz-gone'])];
+    app = await renderApp(
+      '/s/s1/settings',
+      {
+        ...subscribe(),
+        'session/config/get': () => ({ items: rows }),
+        'session/config/update': () => ({ items: rows }),
+      },
+      { '/api/models/toolGroups': ALL_GROUPS },
+    );
+    expect(await settingRow('工具分组').findByText('全部分组')).toBeTruthy();
+    fireEvent.click(settingRow('工具分组').getByRole('button', { name: /工具分组/ }));
+    await vi.waitFor(() => expect(checkedGroups()).toEqual(['全部分组', '文件', '联网', '办公']));
+    expect(panel().queryByRole('checkbox', { name: 'zz-gone' })).toBeNull();
+    expect(panel().queryByRole('textbox', { name: '添加工具分组' })).toBeNull();
+    fireEvent.click(groupBox('文件'));
+    await vi.waitFor(() =>
+      expect(requests('session/config/update')).toEqual([
+        { sessionId: 's1', plugin: '@aalis/demo', key: 'groups', value: ['web', 'office'] },
+      ]),
+    );
+  });
+
+  it('哪一层都没设时，勾选框从此刻实际在用的值开始；选择框（模型）仍停在「跟随默认」上', async () => {
+    const rows = [
+      row('groups', {
+        field: {
+          type: 'multiselect',
+          label: '工具分组',
+          dynamicOptions: 'toolGroups',
+          session: { unset: '<本机建的全开>' },
+        },
+        actual: { value: ['*'], label: '全部分组' },
+      }),
+      row('llm', {
+        field: { type: 'llm-ref', label: '模型', session: { unset: '跟随服务偏好' } },
+        actual: { value: { provider: 'zz-llm', model: 'zz-chat' }, label: 'zz-chat' },
+      }),
+    ];
+    app = await renderApp(
+      '/s/s1/settings',
+      {
+        ...subscribe(),
+        'session/config/get': () => ({ items: rows }),
+        'session/config/update': () => ({ items: rows }),
+      },
+      {
+        '/api/models/toolGroups': ALL_GROUPS,
+        '/api/models/llm': { providers: [{ contextId: 'zz-llm', model: 'zz-chat', provider: 'zz-llm' }] },
+      },
+    );
+    expect(await settingRow('工具分组').findByText('<本机建的全开>（此刻：全部分组）')).toBeTruthy();
+    fireEvent.click(settingRow('工具分组').getByRole('button', { name: /工具分组/ }));
+    await vi.waitFor(() => expect(checkedGroups()).toEqual(['全部分组', '文件', '联网', '办公']));
+    fireEvent.click(groupBox('办公'));
+    await vi.waitFor(() =>
+      expect(requests('session/config/update')).toEqual([
+        { sessionId: 's1', plugin: '@aalis/demo', key: 'groups', value: ['file', 'web'] },
+      ]),
+    );
+    fireEvent.click(panel().getByRole('button', { name: '完成' }));
+
+    fireEvent.click(settingRow('模型').getByRole('button', { name: /模型/ }));
+    expect(settingRow('模型').getByRole('combobox', { name: '模型' }).textContent).toBe('跟随默认');
+  });
+
+  it('哪一层都没设、此刻实际在用的是不开时，勾选框一项不勾，勾一项存这一项', async () => {
+    const rows = [
+      row('groups', {
+        field: {
+          type: 'multiselect',
+          label: '工具分组',
+          dynamicOptions: 'toolGroups',
+          session: { unset: '<别的会话不开>' },
+        },
+        actual: { value: [], label: '不开' },
+      }),
+    ];
+    app = await renderApp(
+      '/s/s1/settings',
+      {
+        ...subscribe(),
+        'session/config/get': () => ({ items: rows }),
+        'session/config/update': () => ({ items: rows }),
+      },
+      { '/api/models/toolGroups': ALL_GROUPS },
+    );
+    expect(await settingRow('工具分组').findByText('<别的会话不开>（此刻：不开）')).toBeTruthy();
+    fireEvent.click(settingRow('工具分组').getByRole('button', { name: /工具分组/ }));
+    await panel().findByRole('checkbox', { name: '联网' });
+    expect(checkedGroups()).toEqual([]);
+    fireEvent.click(groupBox('联网'));
+    await vi.waitFor(() =>
+      expect(requests('session/config/update')).toEqual([
+        { sessionId: 's1', plugin: '@aalis/demo', key: 'groups', value: ['web'] },
+      ]),
+    );
   });
 
   it('多选的可选项带成员时，下面有「包含 N 项」的展开（读屏名带这一项的名字），默认收起，点开列出成员、不改勾选；末尾一行写来源给的名字，不属于哪一项，在最后一个选项之后、自定义输入框之前，同样点开列出', async () => {

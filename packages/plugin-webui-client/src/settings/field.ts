@@ -20,7 +20,7 @@ export const isSessionEntry = (entry: unknown): entry is Field & { session: NonN
 /**
  * 一个可选项：key 用来比较，也是选择器里选项的值；value 是写回去的取值；isDefault 是可选项接口标的默认那一项；
  * description 是写在选项下面的一行说明；capabilities 是模型的能力（如 chat、vision），只有模型的可选项有；members 是选上
- * 这一项会带上的成员的名字（如工具分组里的工具），有成员才有
+ * 这一项会带上的成员的名字（如工具分组里的工具），有成员才有；all 是可选项接口标的代表其余全部的那一项（如工具分组的 *）
  */
 export interface Option {
   key: string;
@@ -30,6 +30,7 @@ export interface Option {
   description?: string;
   capabilities?: string[];
   members?: string[];
+  all?: boolean;
 }
 
 /** 可选项接口另给的、不属于任何可选项的成员与这一行的名字（如不属于任何分组的工具） */
@@ -125,7 +126,7 @@ export function parseNames(body: unknown): Option[] {
 
 /**
  * 可选项接口（/api/models/:service）的回应：模型服务给 providers（每个模型带提供它的插件实例 id，即 contextId，与它的能力），分组等给 details
- * （标了 default 的是没设时生效的那一项，带成员的另有 members），其余给 models 的名字列表
+ * （标了 default 的是没设时生效的那一项，标了 all 的代表其余全部，带成员的另有 members），其余给 models 的名字列表
  */
 export function parseOptions(models: boolean, body: unknown): Option[] {
   if (!isRecord(body)) throw new Error(tr('optionsMalformed'));
@@ -157,6 +158,7 @@ export function parseOptions(models: boolean, body: unknown): Option[] {
           label: typeof entry.label === 'string' ? entry.label : entry.value,
           value: entry.value,
           ...(entry.default === true ? { isDefault: true } : {}),
+          ...(entry.all === true ? { all: true } : {}),
           ...(typeof entry.description === 'string' ? { description: entry.description } : {}),
           ...(members.length > 0 ? { members } : {}),
         },
@@ -201,14 +203,17 @@ export function authorDefault(
 }
 
 /**
- * 取值写成一句：开关写开或关，选项写选项名，模型写模型名，列表与映射的各项按界面的语言连起来；空列表、空映射与不在选项里的
- * 空文字写「无」
+ * 取值写成一句：开关写开或关，选项写选项名，模型写模型名，列表与映射的各项按界面的语言连起来，列表里有代表其余全部的那一项时
+ * 只写它；空列表、空映射与不在选项里的空文字写「无」
  */
 export function formatValue(field: Field, value: unknown, options: readonly Option[] = staticOptions(field)): string {
   const labelOf = (item: unknown) => options.find(option => option.key === valueKey(field, item))?.label;
   const list = (items: string[]) => (items.length > 0 ? listText(items) : tr('emptyValue'));
   if (isModelField(field)) return modelOf(value)?.model ?? JSON.stringify(value);
-  if (Array.isArray(value)) return list(value.map(item => labelOf(item) ?? String(item)));
+  if (Array.isArray(value)) {
+    const whole = options.find(option => option.all && value.some(item => valueKey(field, item) === option.key));
+    return whole ? whole.label : list(value.map(item => labelOf(item) ?? String(item)));
+  }
   if (field.type === 'map' && isRecord(value)) {
     return list(Object.entries(value).map(([key, item]) => `${key}=${String(item)}`));
   }

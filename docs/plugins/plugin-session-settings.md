@@ -77,7 +77,7 @@ sessionConfig:
 
 ## 子会话
 
-两个建子会话的入口（会话服务的 `session/create` 带 `parentId`、[plugin-subtask](./plugin-subtask.md) 的 `create_subtask`）在建之前调 `childMetadata`：父会话此刻每一项适用于子会话的生效值（包括具体模型：没设的取 agent 此刻实际在用的那一个）写进子会话自己那一层，之后父会话与场所、平台档、全局再改都不影响它，追问也不重写。语言、回复策略这些不适用于子会话的项照旧跟根会话。父会话自己那一层里此刻没登记的实例（重载中、停用或卸载后留下的）的条目原样带过去。本插件不在时两个入口都不建。
+两个建子会话的入口（会话服务的 `session/create` 带 `parentId`、[plugin-subtask](./plugin-subtask.md) 的 `create_subtask`）在建之前调 `childMetadata`：父会话此刻每一项适用于子会话的生效值（没设的项取声明字段的插件给的此刻实际在用的值，如 agent 此刻在用的模型、工具分组此刻给的分组）写进子会话自己那一层，之后父会话与场所、平台档、全局再改都不影响它，追问也不重写。语言、回复策略这些不适用于子会话的项照旧跟根会话。父会话自己那一层里此刻没登记的实例（重载中、停用或卸载后留下的）的条目原样带过去。本插件不在时两个入口都不建。
 
 父会话改直接子会话的设置走 `setAs`，与在那个子会话里用 `/session.set` 是同一份实现（[plugin-subtask](./plugin-subtask.md) 的 `set_subtask_setting`）。
 

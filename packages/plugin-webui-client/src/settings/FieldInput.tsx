@@ -181,7 +181,9 @@ type Step = -1 | 1;
 /**
  * 多选：一列复选框。有序的（field.ordered）选中的按取值的先后排在前面，各带上移、下移，写回的取值就是这个顺序；没选的接在
  * 后面，勾上的排到最后。勾选、取消与移动之后焦点留在那一项上。带成员的项下面另起一行是「包含 N 项」的展开；来源另给了
- * 不属于任何可选项的成员时，末尾一行写它的名字、同样能展开
+ * 不属于任何可选项的成员时，末尾一行写它的名字、同样能展开。
+ * 可选项里有代表其余全部的一项（all）时：勾它只存它，取消它即全不选；选着它时各项都显示勾上，不分先后，取值里另写的名字
+ * 不列出、也不另加，取消某一项存其余各项。各项都勾上的固定名单不算选着它
  */
 function MultiInput({ field, value, onChange, common, options }: ChoiceProps) {
   const [custom, setCustom] = useState('');
@@ -192,9 +194,19 @@ function MultiInput({ field, value, onChange, common, options }: ChoiceProps) {
   const controls = useRef(new Map<string, HTMLInputElement | HTMLButtonElement>());
   const chosen = Array.isArray(value) ? value : [];
   const keys = new Set(chosen.map(item => valueKey(field, item)));
-  const all = withChosen(field, options.options, chosen);
-  const picked = [...keys].map(key => all.find(option => option.key === key) as Option);
-  const listed = field.ordered ? [...picked, ...all.filter(option => !keys.has(option.key))] : all;
+  const whole = options.options.find(option => option.all);
+  const everything = whole !== undefined && keys.has(whole.key);
+  const all = everything ? options.options : withChosen(field, options.options, chosen);
+  const ordered = field.ordered && !everything;
+  const picked = ordered ? [...keys].map(key => all.find(option => option.key === key) as Option) : [];
+  const listed = ordered ? [...picked, ...all.filter(option => !keys.has(option.key))] : all;
+  const checked = (option: Option) => everything || keys.has(option.key);
+  /** 勾或取消一项之后的取值 */
+  const toggled = (option: Option, on: boolean) => {
+    if (option === whole) return on ? [whole.value] : [];
+    if (everything) return all.filter(other => other !== whole && other !== option).map(other => other.value);
+    return on ? [...chosen, option.value] : chosen.filter(item => valueKey(field, item) !== option.key);
+  };
 
   // 移动的同一方向到头了用另一个按钮。存的时候整组不可用，等可用了再放；控件自己不可用（到了两头）或不在了（那一项不选了）
   // 就不再等。焦点去了组外（不在这一组里，也没落到 body 上）时不放，免得抢走用户正在用的控件
@@ -244,14 +256,10 @@ function MultiInput({ field, value, onChange, common, options }: ChoiceProps) {
               type="checkbox"
               aria-labelledby={described && `${described}-name`}
               aria-describedby={described}
-              checked={keys.has(option.key)}
+              checked={checked(option)}
               onChange={e => {
                 touched.current = { key: option.key };
-                onChange(
-                  e.target.checked
-                    ? [...chosen, option.value]
-                    : chosen.filter(item => valueKey(field, item) !== option.key),
-                );
+                onChange(toggled(option, e.target.checked));
               }}
             />
             {described ? (
@@ -269,7 +277,7 @@ function MultiInput({ field, value, onChange, common, options }: ChoiceProps) {
         // 每项包一层，勾选与取消时外层不变，复选框不重挂
         return (
           <div key={option.key} className="field-option">
-            {field.ordered ? (
+            {ordered ? (
               <div className="field-ordered">
                 {check}
                 {keys.has(option.key) && moveButton(option, index, -1)}
@@ -293,7 +301,7 @@ function MultiInput({ field, value, onChange, common, options }: ChoiceProps) {
           <Members text={options.others.label} members={options.others.members} />
         </div>
       )}
-      {field.allowCustom && (
+      {field.allowCustom && !everything && (
         <input
           aria-label={tr('addField', { label: field.label })}
           placeholder={tr('addOnePlaceholder')}

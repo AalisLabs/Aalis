@@ -69,7 +69,24 @@ export default definePlugin({
   apply(caps) {
     const { logger, events, lifecycle } = caps;
     const cfg = parseConfig(configSchema, caps.config.use, logger.use);
-    const fields = caps.sessionFields.use.fields(configSchema, caps);
+
+    /**
+     * 工具分组哪一层都没设时：根会话（子会话取根会话的）带创建来源，即在本机的 WebUI 或终端建的，开全部分组；聊天平台的
+     * 会话与内部会话不开。不按 owner 开：开了就看不出 owner 默认用什么工具
+     */
+    const unsetGroups = (sessionId: string): string[] => {
+      if (!caps.sessionManager.present) return [];
+      const sm = caps.sessionManager.use;
+      return rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id))?.createdFrom !== undefined ? ['*'] : [];
+    };
+    // 同一个值作为字段的 actual 交给会话设置：会话的行上写出来，编辑从它开始，建子会话时写下
+    const fields = caps.sessionFields.use.fields(configSchema, caps, {
+      enabledToolGroups: sessionId => {
+        if (sessionId === undefined) return undefined;
+        const value = unsetGroups(sessionId);
+        return { value, label: t(value.length > 0 ? 'groupsAll' : 'groupsNone') };
+      },
+    });
 
     const tasks = new BackgroundTasks({ logger: logger.use, events: events.use, limits: cfg.background });
     events.use.on('session:deleted', sessionId => tasks.deleteSession(sessionId));
@@ -85,15 +102,6 @@ export default definePlugin({
       void tasks.restore(store.own);
     });
 
-    /**
-     * 工具分组哪一层都没设时：根会话（子会话取根会话的）带创建来源，即在本机的 WebUI 或终端建的，开全部分组；聊天平台的
-     * 会话与内部会话不开。不按 owner 开：开了就看不出 owner 默认用什么工具
-     */
-    const unsetGroups = (sessionId: string): string[] => {
-      if (!caps.sessionManager.present) return [];
-      const sm = caps.sessionManager.use;
-      return rootSessionOf(sm.getSession(sessionId), id => sm.getSession(id))?.createdFrom !== undefined ? ['*'] : [];
-    };
     const sessionGroups = (sessionId: string, platform?: string) =>
       fields.get(sessionId, { platform }).enabledToolGroups ?? unsetGroups(sessionId);
     caps.provide.use(tools, new ToolRegistry(logger.use, tasks, sessionGroups));

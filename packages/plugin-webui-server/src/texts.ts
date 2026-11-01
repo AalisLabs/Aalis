@@ -83,6 +83,7 @@ const SOURCE = {
   refreshNoModels: '提供者 {provider} 当前没有已注册的模型，无法刷新',
   dependencyInvalid: 'dependency 要是条目 id <提供者实例 id>/<模型 id>',
   allGroups: '* （全部分组）',
+  allGroupsNote: '包括以后新装插件的分组',
   ungroupedTools: '不属于任何分组的工具',
   pluginMissing: '插件 {instance} 不存在',
   refused:

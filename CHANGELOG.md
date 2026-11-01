@@ -39,6 +39,13 @@
 - @aalis/runtime：`--init` 写的主配置只有 `name`、`logLevel` 与空的 `plugins`，不再给 `cli`、`webui` 写平台档。
 - create-aalis：生成的主配置不再写 `sessionConfig` 的平台档。
 
+### 多选里的「全部」与没设时的勾选框
+
+- @aalis/api-webui：可选项 `OptionDetail` 加 `all`：多选里代表其余全部的一项（含以后才出现的项）。
+- @aalis/plugin-webui-server：工具分组的可选项里 `*` 标 `all`，说明写「包括以后新装插件的分组」。
+- @aalis/plugin-webui-client：多选里有标了 `all` 的一项时，勾它只存它、取消它即全不选；选着它时各项都显示勾上，取消某一项存其余各项（以后新装插件的分组就不再自动给）；各项都勾上的固定名单不算选着它。存着它又列了别的名字的旧值，行上只写它，编辑时不列那些名字。设置项哪一层都没设时，编辑从此刻实际在用的值开始（勾选框、开关、输入框），选择框仍停在「不设」那一项上。
+- @aalis/plugin-tools：工具分组没设时给的值作为字段的 `actual` 交给会话设置：会话的设置里写「此刻：全部分组」或「此刻：不开」，建子会话时写进子会话那一层。
+
 ---
 
 ## 2026-10-31（core 0.21.0 minor；117 个包：110 minor / 7 新包 schema-i18n、api-i18n、plugin-i18n、api-session-settings、plugin-session-settings、plugin-chat-approval、util-file-signature）
