@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-reach",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -29,9 +29,9 @@
   },
   "dependencies": {
     "@aalis/api-authority": "workspace:>=0.12.0 <1.0.0",
-    "@aalis/api-host-paths": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-host-paths": "workspace:>=0.2.0 <1.0.0",
     "@aalis/api-process": "workspace:>=0.10.0 <1.0.0",
-    "@aalis/api-reach": "workspace:>=0.2.0 <1.0.0",
+    "@aalis/api-reach": "workspace:>=0.3.0 <1.0.0",
     "@aalis/api-session-manager": "workspace:>=0.12.0 <1.0.0",
     "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
   },

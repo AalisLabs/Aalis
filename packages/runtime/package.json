@@ -1,6 +1,6 @@
 {
   "name": "@aalis/runtime",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -39,7 +39,7 @@
     "@aalis/api-plugin-source": "workspace:>=0.2.0 <1.0.0",
     "@aalis/api-host-config": "workspace:>=0.3.0 <1.0.0",
     "@aalis/api-host-logs": "workspace:>=0.1.0 <1.0.0",
-    "@aalis/api-host-paths": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-host-paths": "workspace:>=0.2.0 <1.0.0",
     "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
   },
   "peerDependencies": {

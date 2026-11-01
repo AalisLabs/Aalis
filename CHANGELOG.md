@@ -8,9 +8,11 @@
 
 ---
 
-## 未发布
+## 2026-11-01（core 不变，仍 0.21.0；25 个包：14 minor / 11 patch；删 6 个包）
 
 ### 白纸、远端代理与作品发布移出主仓
+
+api-host-paths 0.2.0、runtime 0.18.0、api-session-manager 0.13.0、api-reach 0.3.0、plugin-reach 0.3.0、plugin-storage-local 0.15.0、plugin-checkpoint 0.17.0、create-aalis 0.9.0。
 
 白纸、远端代理与作品发布改做仓外的扩展插件，主仓不再含有它们，也不再认识白纸。
 
@@ -25,6 +27,8 @@
 
 ### 家目录的 self 合成一个目录，插件有内容目录
 
+api-storage 0.10.0、plugin-persona 0.15.0、plugin-skills 0.15.0；用到 `PluginDirStorage` 的 plugin-session-server 0.3.0、plugin-webui-server 0.17.0 一起升。
+
 - @aalis/api-host-paths（破坏性）：`HostPaths.self` 由 `{ personas, skills, workflows }` 改为一个字符串 `<家目录>/self`。
 - @aalis/runtime：`--init` 只建 `self/`，不再建 `self/personas`、`self/skills`、`self/workflows`。
 - @aalis/api-storage：`BoundStorage` 加 `content`：本插件内容目录 `self:/<目录名>/` 上的视图，目录名与 `own` 同一规则，依赖名叫 `self` 的根。类型 `OwnStorage` 改名 `PluginDirStorage`，`own` 与 `content` 共用。
@@ -35,11 +39,15 @@
 
 ### 工具分组没设时按会话从哪里建的给，不再写平台档
 
+plugin-tools 0.12.0。
+
 - @aalis/plugin-tools：`enabledToolGroups` 去掉作者默认 `[]`。哪一层都没设时，根会话（子会话取根会话的）带创建来源，即在本机的 WebUI 或终端建的会话，开全部分组；别的会话不开，包括聊天平台的群与私聊（对端是 owner 的私聊也不开）与内部会话；会话管理缺席时不开。显式写的 `[]`（任何一层）照旧是不开，配置里已经写着的值照旧生效。
 - @aalis/runtime：`--init` 写的主配置只有 `name`、`logLevel` 与空的 `plugins`，不再给 `cli`、`webui` 写平台档。
 - create-aalis：生成的主配置不再写 `sessionConfig` 的平台档。
 
 ### 多选里的「全部」与没设时的勾选框
+
+api-webui 0.13.1、plugin-webui-client 0.16.1。
 
 - @aalis/api-webui：可选项 `OptionDetail` 加 `all`：多选里代表其余全部的一项（含以后才出现的项）。
 - @aalis/plugin-webui-server：工具分组的可选项里 `*` 标 `all`，说明写「包括以后新装插件的分组」。
