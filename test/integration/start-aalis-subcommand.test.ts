@@ -485,23 +485,23 @@ describe('startAalis 家目录（真实子进程）', () => {
     expect(readdirSync(join(dir, 'run')).filter(n => n.endsWith('.lock'))).toEqual([]);
   });
 
-  it('交给插件的家目录是真实路径；~/.aalis-<p> 不论经 --profile、--home 还是指向它的链接选中都带 profile', async () => {
+  it('没指定家目录时落在部署目录下的 data/，--profile 落在 data-<名>/ 并带 profile；经 --home 选中的不带 profile；交给插件的是真实路径', async () => {
     const dir = tempDir();
-    const home = join(dir, '.aalis-e2e');
-    mkdirSync(home);
-    writeFileSync(join(home, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
-    symlinkSync(home, join(dir, 'link'));
+    for (const name of ['data', 'data-e2e']) {
+      mkdirSync(join(dir, name));
+      writeFileSync(join(dir, name, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+    }
+    symlinkSync(join(dir, 'data-e2e'), join(dir, 'link'));
     const seen = async (argv: string[]) => {
       rmSync(join(dir, 'gen.txt'), { force: true });
       const r = await run(dir, [...argv, 'probe', 'paths'], { AALIS_HOME: '' });
       expect(r.code, r.stderr).toBe(0);
       return JSON.parse(/paths (\{.*\})/.exec(r.stdout)?.[1] ?? 'null');
     };
-    const real = realpathSync.native(home);
-    expect(await seen(['--profile', 'e2e'])).toEqual({ home: real, profile: 'e2e' });
-    expect(await seen(['--home', '~/.aalis-e2e/'])).toEqual({ home: real, profile: 'e2e' });
-    // 写法认不出，按真实路径补认
-    expect(await seen(['--home', 'link'])).toEqual({ home: real, profile: 'e2e' });
+    const real = (name: string) => realpathSync.native(join(dir, name));
+    expect(await seen([])).toEqual({ home: real('data'), profile: null });
+    expect(await seen(['--profile', 'e2e'])).toEqual({ home: real('data-e2e'), profile: 'e2e' });
+    expect(await seen(['--home', 'link'])).toEqual({ home: real('data-e2e'), profile: null });
   });
 
   it('启动时配置文件或密钥文件写坏：一行报错（错误码与行列，不带原文）后 exit 1，不带调用栈', async () => {

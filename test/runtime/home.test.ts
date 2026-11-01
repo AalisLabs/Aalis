@@ -1,15 +1,4 @@
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  statSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -23,7 +12,6 @@ import {
   isFullyAbsolute,
   isHomeInitialized,
   parseHostArgs,
-  profileOfRealHome,
   resolveHome,
 } from '../../packages/runtime/src/home.js';
 import { createNodeModulesPluginLoader } from '../../packages/runtime/src/node-modules-loader.js';
@@ -32,12 +20,12 @@ import { createFsPluginLoader, createFsYamlConfigProvider } from '../../packages
 // ════════════════════════════════════════════════════════════
 // @aalis/runtime — 家目录的解析、派生与初始化
 //
-// 覆盖顺序：--home → AALIS_HOME → --profile / AALIS_PROFILE → 宿主的 defaultHome → ~/.aalis。
-// profile 名既拼进目录也拼进数据库名，格式要挡住跳出家目录的写法；profile 与更高优先级的来源同时给出时报错，
-// 不静默挑一个（以为进了测试实例、实际写进主实例）。
+// 覆盖顺序：--home → AALIS_HOME → 部署目录（安装集）下的 data/，给了 --profile / AALIS_PROFILE 时是 data-<名>/。
+// 不在用户主目录下放缺省的家目录。profile 名既拼进目录也拼进数据库名，格式要挡住跳出部署目录的写法；profile 与
+// --home、AALIS_HOME 同时给出时报错，不静默挑一个（以为进了测试实例、实际写进主实例）。
 // ════════════════════════════════════════════════════════════
 
-const base = { env: {}, cwd: '/work', userHome: '/u' };
+const base = { env: {}, cwd: '/work', userHome: '/u', appDir: '/app' };
 
 describe('parseHostArgs', () => {
   it('取走开头的宿主参数，余下的原样留给子命令', () => {
@@ -66,28 +54,25 @@ describe('parseHostArgs', () => {
 });
 
 describe('resolveHome', () => {
-  it('覆盖顺序：--home 压过 AALIS_HOME，AALIS_HOME 压过 defaultHome，最后是 ~/.aalis', () => {
+  it('覆盖顺序：--home 压过 AALIS_HOME，AALIS_HOME 压过部署目录下的 data/', () => {
     const env = { AALIS_HOME: '/env-home' };
-    expect(resolveHome({ ...base, env, args: { home: '/arg-home' }, defaultHome: '/d' })).toEqual({
-      home: '/arg-home',
-    });
-    expect(resolveHome({ ...base, env, args: {}, defaultHome: '/d' })).toEqual({ home: '/env-home' });
-    expect(resolveHome({ ...base, args: {}, defaultHome: '/d' })).toEqual({ home: '/d' });
-    expect(resolveHome({ ...base, args: {} })).toEqual({ home: '/u/.aalis' });
+    expect(resolveHome({ ...base, env, args: { home: '/arg-home' } })).toEqual({ home: '/arg-home' });
+    expect(resolveHome({ ...base, env, args: {} })).toEqual({ home: '/env-home' });
+    expect(resolveHome({ ...base, args: {} })).toEqual({ home: '/app/data' });
   });
 
   it('命令行与环境变量里的相对路径按启动时的 cwd 解析', () => {
-    expect(resolveHome({ ...base, args: { home: '.aalis-dev' } })).toEqual({ home: '/work/.aalis-dev' });
+    expect(resolveHome({ ...base, args: { home: 'h' } })).toEqual({ home: '/work/h' });
     expect(resolveHome({ ...base, env: { AALIS_HOME: 'h' }, args: {} })).toEqual({ home: '/work/h' });
   });
 
-  it('profile 得到并列的 ~/.aalis-<名>，压过 defaultHome', () => {
-    expect(resolveHome({ ...base, args: { profile: 'test-1' }, defaultHome: '/d' })).toEqual({
-      home: '/u/.aalis-test-1',
+  it('profile 得到部署目录下的 data-<名>/', () => {
+    expect(resolveHome({ ...base, args: { profile: 'test-1' } })).toEqual({
+      home: '/app/data-test-1',
       profile: 'test-1',
     });
     expect(resolveHome({ ...base, env: { AALIS_PROFILE: 'p' }, args: {} })).toEqual({
-      home: '/u/.aalis-p',
+      home: '/app/data-p',
       profile: 'p',
     });
   });
@@ -101,7 +86,7 @@ describe('resolveHome', () => {
     [{ profile: 'p' }, { AALIS_HOME: '/h' }, 'AALIS_HOME and --profile'],
     [{ home: '/h' }, { AALIS_PROFILE: 'p' }, '--home and AALIS_PROFILE'],
     [{}, { AALIS_HOME: '/h', AALIS_PROFILE: 'p' }, 'AALIS_HOME and AALIS_PROFILE'],
-  ])('profile 与更高优先级的来源同时给出时报错：%j %j', (args, env, named) => {
+  ])('profile 与 --home、AALIS_HOME 同时给出时报错：%j %j', (args, env, named) => {
     expect(() => resolveHome({ ...base, args, env })).toThrow(`Both ${named} are set`);
   });
 
@@ -110,42 +95,32 @@ describe('resolveHome', () => {
   });
 
   it.each(['a', '0', 'test-1', 'a'.repeat(32)])('接受合法的 profile 名：%j', profile => {
-    expect(resolveHome({ ...base, args: { profile } }).home).toBe(`/u/.aalis-${profile}`);
+    expect(resolveHome({ ...base, args: { profile } }).home).toBe(`/app/data-${profile}`);
   });
 
-  it('宿主代码给的 defaultHome 必须是绝对路径：不按 cwd 猜，别的来源胜出时也照样报', () => {
-    expect(() => resolveHome({ ...base, args: {}, defaultHome: 'rel' })).toThrow(HomeArgsError);
-    expect(() => resolveHome({ ...base, env: { AALIS_HOME: '/h' }, args: {}, defaultHome: 'rel' })).toThrow(
-      'defaultHome must be an absolute path',
+  it('部署目录必须是绝对路径：不按 cwd 猜，别的来源胜出时也照样报', () => {
+    expect(() => resolveHome({ ...base, appDir: 'rel', args: {} })).toThrow(HomeArgsError);
+    expect(() => resolveHome({ ...base, appDir: 'rel', env: { AALIS_HOME: '/h' }, args: {} })).toThrow(
+      'appDir must be an absolute path',
     );
   });
 
   it('环境变量设成空串视同没设', () => {
     expect(resolveHome({ ...base, env: { AALIS_HOME: '', AALIS_PROFILE: '' }, args: {} })).toEqual({
-      home: '/u/.aalis',
+      home: '/app/data',
     });
     expect(resolveHome({ ...base, env: { AALIS_HOME: '/h', AALIS_PROFILE: '' }, args: {} })).toEqual({ home: '/h' });
     expect(resolveHome({ ...base, env: { AALIS_HOME: '', AALIS_PROFILE: 'p' }, args: {} })).toEqual({
-      home: '/u/.aalis-p',
+      home: '/app/data-p',
       profile: 'p',
     });
   });
 
-  it('家目录是 ~/.aalis-<p> 时不论经哪个来源选中都带 profile；别处的同名目录、不合法的名字不带', () => {
-    const test = { home: '/u/.aalis-test', profile: 'test' };
-    expect(resolveHome({ ...base, args: { home: '~/.aalis-test' } })).toEqual(test);
-    expect(resolveHome({ ...base, env: { AALIS_HOME: '/u/.aalis-test/' }, args: {} })).toEqual({
-      ...test,
-      home: '/u/.aalis-test/',
+  it('经 --home 或 AALIS_HOME 选中的家目录不带 profile：目录名像 data-<名> 或旧的 ~/.aalis-<名> 也一样', () => {
+    expect(resolveHome({ ...base, args: { home: '/app/data-test' } })).toEqual({ home: '/app/data-test' });
+    expect(resolveHome({ ...base, env: { AALIS_HOME: '~/.aalis-test' }, args: {} })).toEqual({
+      home: '/u/.aalis-test',
     });
-    expect(resolveHome({ ...base, args: {}, defaultHome: '/u/.aalis-test' })).toEqual(test);
-    expect(resolveHome({ ...base, cwd: '/u', args: { home: '.aalis-test' } })).toEqual(test);
-    expect(resolveHome({ ...base, args: { home: '.aalis-test' } })).toEqual({ home: '/work/.aalis-test' });
-    expect(resolveHome({ ...base, args: { home: '/elsewhere/.aalis-test' } })).toEqual({
-      home: '/elsewhere/.aalis-test',
-    });
-    expect(resolveHome({ ...base, args: { home: '~/.aalis-Test' } })).toEqual({ home: '/u/.aalis-Test' });
-    expect(resolveHome({ ...base, args: { home: '~/.aalis' } })).toEqual({ home: '/u/.aalis' });
   });
 
   it('开头的 ~ 展开成用户主目录；「~用户名」写法报错', () => {
@@ -155,45 +130,10 @@ describe('resolveHome', () => {
   });
 
   it('启动目录已不存在（cwd 取不到）时，绝对路径照常可用，相对路径报错', () => {
-    const noCwd = { env: {}, userHome: '/u' };
+    const noCwd = { env: {}, userHome: '/u', appDir: '/app' };
     expect(resolveHome({ ...noCwd, args: { home: '/abs/h' } })).toEqual({ home: '/abs/h' });
-    expect(resolveHome({ ...noCwd, args: {} })).toEqual({ home: '/u/.aalis' });
+    expect(resolveHome({ ...noCwd, args: {} })).toEqual({ home: '/app/data' });
     expect(() => resolveHome({ ...noCwd, args: { home: 'rel' } })).toThrow('The current directory no longer exists');
-  });
-});
-
-// 符号链接在 Windows 上要管理员或开发者模式
-describe.skipIf(process.platform === 'win32')('profileOfRealHome', () => {
-  const dirs: string[] = [];
-  afterEach(() => {
-    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
-  });
-  /** 临时目录的真实路径（macOS 的临时目录本身经 /var → /private/var 的链接） */
-  const root = () => {
-    const d = realpathSync.native(mkdtempSync(join(tmpdir(), 'aalis-profile-')));
-    dirs.push(d);
-    return d;
-  };
-
-  it('家目录的真实路径就是 ~/.aalis-<p> 的真实路径时为 p：用户主目录经链接给出也认得出', () => {
-    const r = root();
-    const user = join(r, 'user');
-    mkdirSync(join(user, '.aalis-t'), { recursive: true });
-    symlinkSync(user, join(r, 'user-link'));
-    expect(profileOfRealHome(join(user, '.aalis-t'), user)).toBe('t');
-    expect(profileOfRealHome(join(user, '.aalis-t'), join(r, 'user-link'))).toBe('t');
-  });
-
-  it('别处的同名目录、~/.aalis-<p> 指向的别处、用户主目录不存在：都没有 profile', () => {
-    const r = root();
-    const user = join(r, 'user');
-    mkdirSync(user);
-    mkdirSync(join(r, 'other', '.aalis-t'), { recursive: true });
-    expect(profileOfRealHome(join(r, 'other', '.aalis-t'), user)).toBeUndefined();
-    // ~/.aalis-t 自己是指向别处的链接：经别处的真实路径选中认不出
-    symlinkSync(join(r, 'other', '.aalis-t'), join(user, '.aalis-t'));
-    expect(profileOfRealHome(join(r, 'other', '.aalis-t'), user)).toBeUndefined();
-    expect(profileOfRealHome(join(user, '.aalis-t'), join(r, 'missing'))).toBeUndefined();
   });
 });
 

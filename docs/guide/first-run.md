@@ -21,7 +21,7 @@
 
 ### key 填在哪
 
-选了要 key 的对话模型或 OpenAI Embedding 时，脚手架请你当场粘贴 key（输入不显示，回车跳过），粘贴的写进 `home/aalis.config.yaml` 里该插件的段。跳过的，脚手架结尾的「下一步」逐个点名哪个插件的哪个键还没填；启动后在 WebUI 插件区打开该插件填写，或填进配置文件：
+选了要 key 的对话模型或 OpenAI Embedding 时，脚手架请你当场粘贴 key（输入不显示，回车跳过），粘贴的写进 `data/aalis.config.yaml` 里该插件的段。跳过的，脚手架结尾的「下一步」逐个点名哪个插件的哪个键还没填；启动后在 WebUI 插件区打开该插件填写，或填进配置文件：
 
 ```yaml
 plugins:
@@ -29,7 +29,7 @@ plugins:
     apiKey: "sk-..."
 ```
 
-启动时宿主会把这类密钥字段上的值移进同目录的 `home/secrets.yaml`（0600），配置文件里换成引用 `{ $secret: "..." }`；在 WebUI 里填效果相同。移走之前的明文可能还留在编辑器的备份文件里，需要时自行删除。`home/` 在生成的 `.gitignore` 里，不入库。详见 [运行态与配置文档](../core/config.md#密钥配置)。
+启动时宿主会把这类密钥字段上的值移进同目录的 `data/secrets.yaml`（0600），配置文件里换成引用 `{ $secret: "..." }`；在 WebUI 里填效果相同。移走之前的明文可能还留在编辑器的备份文件里，需要时自行删除。`data/` 在生成的 `.gitignore` 里，不入库。详见 [运行态与配置文档](../core/config.md#密钥配置)。
 
 没填 key 的插件激活失败，**不会中断启动**：进程照常起来，日志里留下 `插件 "..." 激活失败: ConfigError: 缺少配置项 apiKey，在 WebUI 或配置文件中填入后生效` 的 ERROR，WebUI 首页写「待配置：apiKey」并给出去配置的按钮（见下文[开始使用与需要处理](#开始使用与需要处理)）。只在某些情况下才必填的（如 OpenAI 的 apiKey，只有连官方地址时才要）显示为「失败」加原因，按钮「去处理」进它的详情，在那里填。没有可用的对话模型时发消息，会收到一条「未找到任何具备 chat 能力的 LLM」的回复，点名激活失败的模型插件。
 
@@ -93,7 +93,7 @@ npm start
 
 ### 浏览器：WebUI 需要 token
 
-WebUI 默认监听 `http://127.0.0.1:3000`，并且**需要 token 登录**。完整的一键登录链接写在文件 `home/state/webui/access.txt` 里；默认的 `tokenMode: persist` 另把 token 本身存在 `home/state/webui/token`。
+WebUI 默认监听 `http://127.0.0.1:3000`，并且**需要 token 登录**。完整的一键登录链接写在文件 `data/state/webui/access.txt` 里；默认的 `tokenMode: persist` 另把 token 本身存在 `data/state/webui/token`。
 
 启动日志出于安全**不打印 token 本身**——它只给出 `access.txt` 的绝对路径（「访问凭据已写入: …」那行，CLI 里按 `Ctrl+L` 看）。
 
@@ -141,8 +141,8 @@ WebUI 默认监听 `http://127.0.0.1:3000`，并且**需要 token 登录**。完
 ## 停止、数据与日志
 
 - **停止**：CLI 里 `Ctrl+C`；或在聊天里 `/shutdown`。
-- **数据**：都在家目录 `home/` 里：`home/state/`（SQLite 库、向量库、会话、附件、checkpoint、WebUI 凭据等）、`home/self/`（人设与技能）、`home/tmp/`（临时文件），`home/workspace/` 是文件工具的默认工作根。`home/` 整个在生成的 `.gitignore` 里。
-- **完整日志**：`home/logs/latest.log`，即使 CLI 接管了终端也照常写。每次启动时上一轮的日志改名为 `home/logs/latest.1.log`，更早的依次后移，保留最近 5 轮（`latest.1.log` 到 `latest.5.log`），再早的删除；`/restart` 与市场更新引起的重启也各算一次启动。要跨重启持续跟随日志，用 `tail -F`：`tail -f` 跟的是文件本身，改名后停在 `latest.1.log` 上。
+- **数据**：都在家目录 `data/` 里：`data/state/`（SQLite 库、向量库、会话、附件、checkpoint、WebUI 凭据等）、`data/self/`（人设与技能）、`data/tmp/`（临时文件），`data/workspace/` 是文件工具的默认工作根。`data/` 整个在生成的 `.gitignore` 里。
+- **完整日志**：`data/logs/latest.log`，即使 CLI 接管了终端也照常写。每次启动时上一轮的日志改名为 `data/logs/latest.1.log`，更早的依次后移，保留最近 5 轮（`latest.1.log` 到 `latest.5.log`），再早的删除；`/restart` 与市场更新引起的重启也各算一次启动。要跨重启持续跟随日志，用 `tail -F`：`tail -f` 跟的是文件本身，改名后停在 `latest.1.log` 上。
 
 ## 下一步
 

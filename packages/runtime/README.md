@@ -10,14 +10,14 @@ pnpm add @aalis/runtime
 
 ## 提供 / 依赖
 
-宿主组装件，不是插件，无 `provides` / `uses`；`startAalis` 在根上独占登记 `host-paths`（`@aalis/api-host-paths`）、`host-logs`（`@aalis/api-host-logs`）、`host-config`（`@aalis/api-host-config`）与 `plugin-source`（`@aalis/api-plugin-source`）四个服务。主要导出：`startAalis`、家目录的 `parseHostArgs` / `resolveHome` / `profileOfRealHome` / `derivePaths` / `isHomeInitialized` / `initHome`、`createNodeModulesPluginLoader`、`createFsPluginLoader`、`createPluginDiscovery`、`createConfigStore`、`installHostConfig`、`createHostLogs`、`withPluginConfigSync`、`createFsYamlConfigProvider`、`createFsSecretsProvider`、`createProcessRespawnStrategy`。peer：`@aalis/core`（`>=0.20.0 <1.0.0`）。
+宿主组装件，不是插件，无 `provides` / `uses`；`startAalis` 在根上独占登记 `host-paths`（`@aalis/api-host-paths`）、`host-logs`（`@aalis/api-host-logs`）、`host-config`（`@aalis/api-host-config`）与 `plugin-source`（`@aalis/api-plugin-source`）四个服务。主要导出：`startAalis`、家目录的 `parseHostArgs` / `resolveHome` / `derivePaths` / `isHomeInitialized` / `initHome`、`createNodeModulesPluginLoader`、`createFsPluginLoader`、`createPluginDiscovery`、`createConfigStore`、`installHostConfig`、`createHostLogs`、`withPluginConfigSync`、`createFsYamlConfigProvider`、`createFsSecretsProvider`、`createProcessRespawnStrategy`。peer：`@aalis/core`（`>=0.20.0 <1.0.0`）。
 
 ```ts
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startAalis } from '@aalis/runtime';
 
-// 安装集是入口文件所在目录；家目录按 --home、AALIS_HOME、--profile 的顺序取，缺省 ~/.aalis
+// 安装集是入口文件所在目录；家目录按 --home、AALIS_HOME 的顺序取，缺省是这个目录下的 data/（--profile <名> 时是 data-<名>/）
 startAalis({ appDir: dirname(fileURLToPath(import.meta.url)) });
 ```
 

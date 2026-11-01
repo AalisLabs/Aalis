@@ -102,7 +102,7 @@ describe('读：全机减拒读清单，与档位无关', () => {
     `${PATHS.run}/aalis.sock`,
     `${PATHS.cache}/x`,
     `${PATHS.tmp}/sessions/b3Q/x`, // 别的会话的临时区
-    '/u/.aalis-dev/aalis.config.yaml', // 其他实例的家目录
+    '/opt/aalis/data-dev/aalis.config.yaml', // 同一部署下其他实例的家目录
     '/u/.ssh/id_ed25519',
     '/u/.aws/credentials',
     '/u/.config/google-chrome/Default/Cookies',
@@ -133,7 +133,7 @@ describe('写：按档位', () => {
         ['范围外', write('/u/elsewhere/x'), W, T, W, A],
         ['默认工作区', write(`${PATHS.workspace}/x`), W, T, W, A],
         ['别的会话的临时区', write(`${PATHS.tmp}/sessions/b3Q/x`), W, T, W, A],
-        ['其他实例的家目录', write('/u/.aalis-dev/state/x'), W, T, W, A],
+        ['同一部署下其他实例的家目录', write('/opt/aalis/data-dev/state/x'), W, T, W, A],
         ['落点：git 钩子', write('/u/code/proj/.git/hooks/pre-commit'), L, L, L, AL],
         ['落点：git 配置', write('/u/code/proj/.git/config'), L, L, L, AL],
         ['落点：~/.gitconfig', write('/u/.gitconfig'), L, L, L, AL],

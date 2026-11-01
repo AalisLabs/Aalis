@@ -71,7 +71,7 @@ const SOURCE = {
   nonTtyYes:
     '  npm create aalis@latest <名> -- --yes             # 全取默认：探到本机 Ollama 时对话模型与语义记忆都用它，否则 DeepSeek、不装语义记忆；平台是 CLI 与 WebUI',
   nonTtyTier: '  npm create aalis@latest <名> -- --tier minimal    # 按某一档的默认装：bare、minimal、standard、full',
-  nonTtyKeys: '要密钥的插件，生成后在 home/aalis.config.yaml 里填，或启动后在 WebUI 插件区填。',
+  nonTtyKeys: '要密钥的插件，生成后在 data/aalis.config.yaml 里填，或启动后在 WebUI 插件区填。',
   cancelled: '已取消，没有生成任何文件。',
   catalogOffline: '（无法连接 npm，full 档回退离线静态表）',
   catalogEmpty:
@@ -82,8 +82,8 @@ const SOURCE = {
   indented: '  {line}',
   unfilledKeys: '还没填的密钥（填好之前对应的插件起不来）：',
   unfilledKey: '  {plugin} 的 {key}',
-  keyWhereWebui: '  填法：启动后在 WebUI 插件区打开该插件填写，或填进 home/aalis.config.yaml 里 plugins 下该插件的段',
-  keyWhere: '  填法：填进 home/aalis.config.yaml 里 plugins 下该插件的段',
+  keyWhereWebui: '  填法：启动后在 WebUI 插件区打开该插件填写，或填进 data/aalis.config.yaml 里 plugins 下该插件的段',
+  keyWhere: '  填法：填进 data/aalis.config.yaml 里 plugins 下该插件的段',
   fullOthers: '其余要填凭据、地址或路径的插件：启动后在 WebUI 的「需要处理」里标待配置或失败，照着去配置。',
   firstRun: '第一次运行：{url}',
   morePluginsWebui:

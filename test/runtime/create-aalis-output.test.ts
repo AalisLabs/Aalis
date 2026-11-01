@@ -111,7 +111,7 @@ describe('结尾的「下一步」', () => {
     expect(text).not.toContain(`${DEEPSEEK} 的 apiKey`);
     expect(text).not.toContain('sk-x');
     expect(text).toContain('WebUI');
-    expect(text).toContain('home/aalis.config.yaml');
+    expect(text).toContain('data/aalis.config.yaml');
     expect(text).toContain('cd my-bot');
     expect(text).toContain('npm start');
   });

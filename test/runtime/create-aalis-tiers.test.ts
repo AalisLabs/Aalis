@@ -126,16 +126,18 @@ describe('create-aalis 生成的项目', () => {
       );
       const pkg = JSON.parse(await readFile(join(dir, 'my-bot', 'package.json'), 'utf-8'));
       expect(pkg.engines, '生成的项目与脚手架要求同一个最低 Node 版本').toEqual({ node: '>=24.15.0' });
-      const home = join(dir, 'my-bot', 'home');
+      const home = join(dir, 'my-bot', 'data');
       const config = parse(await readFile(join(home, 'aalis.config.yaml'), 'utf-8'));
       // 家目录生成时就是初始化过的：配置与空的密钥文件都在，权限收紧
       expect((await stat(home)).mode & 0o777).toBe(0o700);
       expect((await stat(join(home, 'secrets.yaml'))).mode & 0o777).toBe(0o600);
       expect((await stat(join(home, 'aalis.config.yaml'))).mode & 0o777).toBe(0o600);
       const entry = await readFile(join(dir, 'my-bot', 'index.mjs'), 'utf-8');
-      expect(entry).toContain("startAalis({ appDir: here, defaultHome: join(here, 'home') })");
+      expect(entry).toContain('startAalis({ appDir: here })');
       const ignored = (await readFile(join(dir, 'my-bot', '.gitignore'), 'utf-8')).split('\n');
-      expect(ignored, '配置、密钥与数据都在家目录里，必须忽略').toContain('home/');
+      expect(ignored, '配置、密钥与数据都在家目录里，必须忽略；只忽略根上的 data 与 data-<名>').toEqual(
+        expect.arrayContaining(['/data/', '/data-*/']),
+      );
       for (const name of [
         '@aalis/plugin-agent',
         '@aalis/plugin-memory-sqlite',

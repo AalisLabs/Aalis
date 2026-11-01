@@ -15,7 +15,7 @@
  */
 
 import type { OriginTurn } from '@aalis/api-authority';
-import type { HostPaths } from '@aalis/api-host-paths';
+import { HOME_DIR, type HostPaths } from '@aalis/api-host-paths';
 import type { WorkBinding } from '@aalis/api-session-manager';
 import { defineService } from '@aalis/core';
 
@@ -71,7 +71,7 @@ export interface ProtectedListsInput {
   /** 操作系统用户的家目录 */
   readonly userHome: string;
   readonly platform: NodeJS.Platform;
-  /** 安装集的形态：源码形态下有 packages/；npm 形态是 create-aalis 生成的项目，家目录在安装集里 */
+  /** 安装集的形态：源码形态下有 packages/；npm 形态是 create-aalis 生成的项目 */
   readonly form: 'source' | 'npm';
   /** 安装集以外、守护进程加载了代码的目录，如经链接装进来的插件 */
   readonly codeDirs: readonly string[];
@@ -222,8 +222,8 @@ export function protectedLists(input: ProtectedListsInput): ProtectedLists {
       // 另列一条，理由同宿主控制面
       { path: paths.home, except: [paths.workspace, paths.self, paths.logs, paths.config].map(path => ({ path })) },
       { path: paths.secrets },
-      // 同一用户下其他实例的家目录
-      { pattern: `^${literal(userHome, platform)}/\\.aalis(-[^/]*)?(/|$)`, except: [{ path: paths.home }] },
+      // 同一部署下其他实例的家目录：部署目录下缺省的 data/ 与别的 profile 的 data-<名>/
+      { pattern: `^${literal(paths.app, platform)}/${HOME_DIR}(-[^/]*)?(/|$)`, except: [{ path: paths.home }] },
       // 凭据
       ...inUserHome(
         '.ssh',

@@ -37,7 +37,6 @@ export {
   initHome,
   isHomeInitialized,
   parseHostArgs,
-  profileOfRealHome,
   type ResolveHomeInput,
   resolveHome,
 } from './home.js';
