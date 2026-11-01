@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-webui-server",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
@@ -41,7 +41,7 @@
     "@aalis/api-session-protocol": "workspace:>=0.2.0 <1.0.0",
     "@aalis/api-storage": "workspace:>=0.10.0 <1.0.0",
     "@aalis/api-tools": "workspace:>=0.12.0 <1.0.0",
-    "@aalis/api-webui": "workspace:>=0.13.1 <1.0.0",
+    "@aalis/api-webui": "workspace:>=0.14.0 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.16.0 <1.0.0",
     "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.11.0 <1.0.0",
@@ -53,7 +53,7 @@
     "@aalis/api-plugin-source": "workspace:>=0.2.0 <1.0.0",
     "@aalis/api-host-config": "workspace:>=0.3.0 <1.0.0",
     "@aalis/api-host-logs": "workspace:>=0.1.0 <1.0.0",
-    "@aalis/api-host-paths": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-host-paths": "workspace:>=0.3.0 <1.0.0",
     "@aalis/api-package-manager": "workspace:>=0.3.0 <1.0.0",
     "@aalis/api-contributions": "workspace:>=0.2.0 <1.0.0"
   },

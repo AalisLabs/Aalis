@@ -10,7 +10,7 @@ const CORE_PEER = '>=0.21.0 <1.0.0';
  * 其中六个之后移出主仓、改做仓外的扩展插件，仓里剩 101 个
  */
 const CORE_PEER_COUNT = 101;
-/** 留在原下限的包：用不到 core 0.21 的新东西（api-host-paths 在 2026-11-01 一节发了 0.2.0，同样用不到） */
+/** 留在原下限的包：用不到 core 0.21 的新东西（api-host-paths、api-host-logs 在 2026-11-01 两节里发了新版，同样用不到） */
 const UNRELEASED = [
   'api-asr = >=0.20.0 <1.0.0',
   'api-code-sandbox = >=0.20.0 <1.0.0',
