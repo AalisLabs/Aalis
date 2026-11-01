@@ -5,7 +5,7 @@ export default defineLocale<Source>()({
   displayName: 'Permission management',
   loadFailedTitle: 'The user level table users.json cannot be read; the bans and levels in it were not loaded',
   loadFailedDetail:
-    'Fix state/users.json in the home directory, then restart: it must be readable and intact version 5 JSON; old versions are not migrated, so if you do not need its records, move it away and restart. Until it is fixed, level changes only last for this run. Reason: {reason}',
+    'Fix state/users.json in the data directory, then restart: it must be readable and intact version 5 JSON; old versions are not migrated, so if you do not need its records, move it away and restart. Until it is fixed, level changes only last for this run. Reason: {reason}',
   loadUnknown: 'reading failed, so the state of the file is unknown',
   badVersion: 'not a valid v5 structure (version: {version})',
   unknown: 'unknown',
@@ -20,7 +20,7 @@ export default defineLocale<Source>()({
   levelNotInteger: 'The level must be an integer',
   levelSet: 'Set {target} to level {level}',
   persistBlocked:
-    'this only lasts for this run and was not written to users.json, which cannot be read; fix state/users.json in the home directory and restart',
+    'this only lasts for this run and was not written to users.json, which cannot be read; fix state/users.json in the data directory and restart',
   awaitingFirstLoad: 'not written to users.json yet (the level table has not loaded); it is written once loaded',
   saveFailedRetry: 'not written to users.json (writing failed, see the logs); retried at the next save',
   badIdentity: 'An identity must be written as “platform:user ID”; got {key}',

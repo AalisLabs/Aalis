@@ -146,8 +146,8 @@ export interface HostConfigResponse {
   schema: ConfigSchema;
   /** 要重启才生效的键 */
   restartKeys: string[];
-  /** 家目录，宿主不提供路径时没有 */
-  home?: string;
+  /** 数据目录，宿主不提供路径时没有 */
+  dataDir?: string;
 }
 
 /** 核心键 → 新值，null 回到默认；只收核心键 */

@@ -7,7 +7,7 @@ const SOURCE = {
   displayName: '权限管理',
   loadFailedTitle: '用户等级表 users.json 读不出来，文件里的封禁与等级没有载入',
   loadFailedDetail:
-    '修好家目录里的 state/users.json 后重启：要能读取，是 version 5 的完好 JSON；旧版本不迁移，不要里面的记录就把它移走再重启。修好之前改的等级只在本次运行生效。原因：{reason}',
+    '修好数据目录里的 state/users.json 后重启：要能读取，是 version 5 的完好 JSON；旧版本不迁移，不要里面的记录就把它移走再重启。修好之前改的等级只在本次运行生效。原因：{reason}',
   loadUnknown: '读取时出错，文件状态不明',
   badVersion: '不是有效的 v5 结构（version: {version}）',
   unknown: '未知',
@@ -20,7 +20,7 @@ const SOURCE = {
   levelDescription: '设置用户的权限等级。整数，越大越高；0 为默认，负数为封禁',
   levelNotInteger: '等级必须是整数',
   levelSet: '已把 {target} 的等级设为 {level}',
-  persistBlocked: '仅本次运行生效，未写入 users.json：它读不出来，修好家目录里的 state/users.json 后重启',
+  persistBlocked: '仅本次运行生效，未写入 users.json：它读不出来，修好数据目录里的 state/users.json 后重启',
   awaitingFirstLoad: '未写入 users.json（等级表尚未载入），载入后写入',
   saveFailedRetry: '未写入 users.json（写入失败，见日志），下次保存时重试',
   badIdentity: '身份要写成「平台:用户 ID」，收到的是 {key}',

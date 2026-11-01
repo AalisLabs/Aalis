@@ -119,7 +119,7 @@ export interface SchemaField {
   format?: 'absolute-path' | 'executable';
   /**
    * 值是凭据（API key、token、带账号密码的连接串）。宿主不把它放在配置文档里：值存进宿主的密钥存储
-   * （Node 宿主是家目录的 `secrets.yaml`），文档里只写引用 {@link SecretRef}，交给插件之前解析回原值；
+   * （Node 宿主是数据目录的 `secrets.yaml`），文档里只写引用 {@link SecretRef}，交给插件之前解析回原值；
    * 展示与回传都不给原值。标在 map、list 上时整个值算一个密钥。插件照常经 parseConfig 读到原值；
    * 引用没被宿主解析（键不在密钥存储里）时 parseConfig 拒绝激活，不回落默认值。
    * `false` 与不写在运行时相同；仓内第一方的声明守卫要名字像凭据的字段写 `false` 表明判断过

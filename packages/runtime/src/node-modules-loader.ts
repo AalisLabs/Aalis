@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { pluginDefinitionOf } from '@aalis/api-plugin-source';
 import type { Logger, PluginDefinition } from '@aalis/core';
 import { DefaultLogger } from '@aalis/core';
-import { assertAbsolute } from './home.js';
+import { assertAbsolute } from './data-dir.js';
 import type { PluginDescriptor, PluginLoader } from './plugin-discovery.js';
 
 // ============================================================

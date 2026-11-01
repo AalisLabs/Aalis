@@ -136,7 +136,7 @@ export default definePlugin({
 
 ## 6. 能力 / 风险 → 影响
 
-**角色卡只在存储的内容目录里找。** 参考实现只在 `self:/persona/`（`caps.storage.use.content`，即家目录的 `self/persona`）这一个目录下找卡，目录不能配置。读卡时经 `caps.storage.use`，按 URI 路由。需要注意 storage 不是沙箱：路径授权由 storage 的 root 权限位决定，persona 能读到哪些卡取决于你授予的 root。详见 `docs/concepts/storage-uri-grammar.md` 与 `docs/services/storage.md`。
+**角色卡只在存储的内容目录里找。** 参考实现只在 `self:/persona/`（`caps.storage.use.content`，即数据目录的 `self/persona`）这一个目录下找卡，目录不能配置。读卡时经 `caps.storage.use`，按 URI 路由。需要注意 storage 不是沙箱：路径授权由 storage 的 root 权限位决定，persona 能读到哪些卡取决于你授予的 root。详见 `docs/concepts/storage-uri-grammar.md` 与 `docs/services/storage.md`。
 
 **跨会话身份隔离（防止会话间串档）。** 参考实现把当前消息的会话身份（platform、sessionId、群号、自身与发送者的角色头衔）放进 `AsyncLocalStorage`，并在一轮开始的 `agent:turn:before` 用 `runWithIdentity()` 包住后续的异步链。这样身份能穿透 `await` 而不串，并发会话各自隔离，从而杜绝把 A 会话的发送者信息泄漏进 B 会话的 LLM 提示。会话管理在场时，平台取它记下的出生平台（子任务取根会话的）；记下的聊天窗口是多方会话时，群号取窗口的目标；类型名在消息上没有时（定时、编排、空闲这类合成回合不经适配器）取聊天窗口的类型。这些只用于提示词，不写回消息。会话事实取自开轮的输入；说话人事实（发送者 ID、昵称、群身份与头衔）只在这一轮各条输入的说话人相同时写，几个人的话一起开的一轮没有单一的当前发送者，不写。
 

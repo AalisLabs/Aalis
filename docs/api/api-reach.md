@@ -114,34 +114,34 @@ function withRealRoots(lists: ProtectedLists, realOf: (path: string) => string |
 function matchesRule(rule: PathRule, path: string, platform: NodeJS.Platform): boolean;
 ```
 
-`form` 是安装集的形态：源码形态下有 `packages/`，npm 形态是 create-aalis 生成的项目（家目录在安装集里）。`codeDirs` 是安装集以外、守护进程加载了代码的目录（如经链接装进来的插件）。`entry` 是守护进程的入口文件（启动脚本的真实路径），取不到时不给。正则只用锚点、字符类、分组与选择、量词，沙箱的生成器要能翻译。
+`form` 是安装集的形态：源码形态下有 `packages/`，npm 形态是 create-aalis 生成的项目（数据目录在安装集里）。`codeDirs` 是安装集以外、守护进程加载了代码的目录（如经链接装进来的插件）。`entry` 是守护进程的入口文件（启动脚本的真实路径），取不到时不给。正则只用锚点、字符类、分组与选择、量词，沙箱的生成器要能翻译。
 
 `withRealRoots` 按真实路径补上链接出去的根：以具体路径为根的规则（`{ path }`），根的路径上有符号链接、`realOf` 给出的真实路径与写法不同时，按真实路径再加一份同样的规则，根下的例外随根挪过去；按正则写的规则不动。真实路径要碰文件系统，由调用方在激活时取好（触及插件），之后链接改指向不跟踪。主配置与 `secrets.yaml` 在宿主控制面（`secrets.yaml` 另在拒读清单）里各单列一条，为的是它们链接到别处时能以它们为根补上。
 
 **宿主控制面**（`control`，一律拒写，不可申请）：
 
-- 家目录下除默认工作区（`workspace`）、临时区（`tmp`）与 `self/`（归落点）以外的全部：插件状态、主配置、`secrets.yaml`、日志、`run`、`cache`；
+- 数据目录下除默认工作区（`workspace`）、临时区（`tmp`）与 `self/`（归落点）以外的全部：插件状态、主配置、`secrets.yaml`、日志、`run`、`cache`；
 - 守护进程加载的代码：安装集的 `node_modules`、`dist`，源码形态下各包的 `dist` 与 `node_modules`，以及 `codeDirs`。源码本身不在内；
 - npm 形态下另有守护进程的入口文件（`entry`）与安装集的 `package.json`（插件发现读它的依赖）。源码形态下它们是在改的源码，不在内。
 
 **持久化与自动执行落点**（`landing`）：
 
-- 家目录的 `self/` 整个（目录本身也算）：人设、技能等存下来就会自己生效的内容。写它按落点判：只读、修改确认与工作区档要问，全权照写并记审计；
+- 数据目录的 `self/` 整个（目录本身也算）：人设、技能等存下来就会自己生效的内容。写它按落点判：只读、修改确认与工作区档要问，全权照写并记审计；
 - git：`.git` 本身（目录形式的，与子模块工作树里文件形式的），它里面的 `hooks/**`、`config`、`config.worktree`、`commondir`（git 把它指向的目录当共用目录，配置与钩子都从那里取）、整棵 `modules/**`（子模块的名字可以带斜杠、可以嵌套，按目录名列不全），`worktrees` 与 `worktrees/<名>` 这两级目录本身及其下的 `config.worktree`、`commondir`。代价是沙箱里的 `git worktree add`、`git worktree prune` 与子模块的拉取、检出写不了这些地方，要宿主执行。伪装裸仓库的 `HEAD` 与不叫 `.git` 的 git 目录由触及按它的 git 目录补上（见上文「这份触及的落点」）；
 - shell 与登录：各 shell 的 rc 与 profile 文件、`~/.config/fish`、`~/.ssh`、`~/.gitconfig`、`~/.config/git`；macOS 的 `~/Library/LaunchAgents`，Linux 的 `~/.config/systemd/user` 与 `~/.config/autostart`；
 - 项目里会被工具自动执行的配置：`.envrc`、`.vscode/tasks.json`、`.vscode/settings.json`、`*.code-workspace`、`.husky/**`、`.pre-commit-config.yaml`，以及其他代理与编辑器的可执行配置（`.claude/settings.json`、`.claude/settings.local.json`、`.mcp.json`、`.cursor/` 下的 `hooks.json` 等五个、`.codex/` 下的 `config.toml`、`rules/` 与 hooks）；
-- 项目指令 `AALIS.md`、`AGENTS.md` 与项目级 `.aalis/`（实例家目录自己叫 `.aalis` 时不算，但它里面再出现的，如默认工作区里项目的 `.aalis/`，照样算）；
-- 装着上面这些的目录本身：`.vscode`、`.claude`、`.cursor`、`.codex`，用户家目录下的 `~/.config`（Linux 另有 `~/.config/systemd`，macOS 另有 `~/Library`）。改名只核源与目标两条路径，不核被搬动目录里的子孙；先在别处摆好整棵子树再改名到位，目标就是这些目录之一，照样拦下。
+- 项目指令 `AALIS.md`、`AGENTS.md` 与项目级 `.aalis/`（实例数据目录自己叫 `.aalis` 时不算，但它里面再出现的，如默认工作区里项目的 `.aalis/`，照样算）；
+- 装着上面这些的目录本身：`.vscode`、`.claude`、`.cursor`、`.codex`，用户主目录下的 `~/.config`（Linux 另有 `~/.config/systemd`，macOS 另有 `~/Library`）。改名只核源与目标两条路径，不核被搬动目录里的子孙；先在别处摆好整棵子树再改名到位，目标就是这些目录之一，照样拦下。
 
 **拒读清单**（`denyRead`）：
 
-- 家目录下除默认工作区（`workspace/`）与 `self/` 两个目录整个、日志与主配置以外的全部，包括别的会话的临时区；本会话临时区由触及按会话放回；
-- 同一部署下其他实例的家目录（部署目录下的 `data/` 与 `data-*/` 中本实例以外的；用 `--home` 放在别处的实例与别的部署目录里的实例覆盖不到）；
+- 数据目录下除默认工作区（`workspace/`）与 `self/` 两个目录整个、日志与主配置以外的全部，包括别的会话的临时区；本会话临时区由触及按会话放回；
+- 同一部署下其他实例的数据目录（部署目录下的 `data/` 与 `data-*/` 中本实例以外的；用 `--data` 放在别处的实例与别的部署目录里的实例覆盖不到）；
 - 凭据文件：`~/.ssh`、`~/.aws`、`~/.config/gh`、`~/.gnupg`、`~/.npmrc`、`~/.netrc`、`~/.git-credentials`、`~/.docker/config.json`、`~/.kube/config`，macOS 的 `~/Library/Keychains`；
 - 任何目录下的 `.env*`（名为 `.env*` 的目录整棵都算），豁免 `.env.example`、`.env.sample`、`.env.template`；默认工作区等放行的地方里的 `.env*` 照样拒读；
 - macOS 与 Linux 常见浏览器的配置与数据目录（macOS 上 Edge 的 Beta、Dev、Canary 各有独立目录，Linux 含 Snap 与 Flatpak 装的）。
 
-用户家目录是根目录（容器里没有 passwd 条目的用户，HOME 常是 `/`）时照样生成 `/.ssh` 这类路径。
+用户主目录是根目录（容器里没有 passwd 条目的用户，HOME 常是 `/`）时照样生成 `/.ssh` 这类路径。
 
 拒读不限制写：工作区档照样能写项目里的 `.env`。
 

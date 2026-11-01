@@ -93,7 +93,7 @@ describe('persona 角色卡载入（真 storage-local）', () => {
   ): Promise<PersonaService> {
     const personaEntry = {
       definition: personaPlugin,
-      // 人设卡在存储的内容目录 self:/persona/，即家目录的 self/persona
+      // 人设卡在存储的内容目录 self:/persona/，即数据目录的 self/persona
       config: { timeInjection: false, ...config },
     };
     const storageEntry = {

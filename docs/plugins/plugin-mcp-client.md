@@ -53,7 +53,7 @@ plugins:
 
 条目里的 `args` 是字符串数组（schema 类型 `list`，每项一个参数，可含空格或为空串），`env` 是 `KEY: VALUE` 映射（schema 类型 `map`），两者中不加引号的有限数字按字符串处理。
 
-`env` 声明了 `secret: true`，每个 server 的整份 `env` 算一个密钥：Node 宿主把它移进家目录的 `secrets.yaml`，配置文件里只留引用（第一个键是 `@aalis/plugin-mcp-client.servers.env`，其后的依次加 `-2`、`-3`；空的 `env` 不算密钥，原样留着），WebUI 不回显变量名与值，要改就整份重填。token 等凭据放进 `env`，不要写进 `args`：连接成功时的日志会写出 `command` 与全部 `args`。存放规则见 [运行态与配置文档](../core/config.md#密钥配置)。
+`env` 声明了 `secret: true`，每个 server 的整份 `env` 算一个密钥：Node 宿主把它移进数据目录的 `secrets.yaml`，配置文件里只留引用（第一个键是 `@aalis/plugin-mcp-client.servers.env`，其后的依次加 `-2`、`-3`；空的 `env` 不算密钥，原样留着），WebUI 不回显变量名与值，要改就整份重填。token 等凭据放进 `env`，不要写进 `args`：连接成功时的日志会写出 `command` 与全部 `args`。存放规则见 [运行态与配置文档](../core/config.md#密钥配置)。
 
 条目按 schema 逐项解析，问题都记录警告：
 

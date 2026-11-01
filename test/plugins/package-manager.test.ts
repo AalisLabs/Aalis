@@ -1055,7 +1055,7 @@ describe('uninstall', () => {
     expect(h.deps.cleanupConfig).toHaveBeenCalledWith(['@scope/foo'], false);
     expect(toSource(r.message)).toBe(
       '插件 @scope/foo 已卸载（已从根依赖与 node_modules 移除）。它的配置留在配置文件里，重装后照原配置启动；' +
-        '写在家目录 state/ 等处的数据不会删除，需要时请手动清理。',
+        '写在数据目录 state/ 等处的数据不会删除，需要时请手动清理。',
     );
   });
 
@@ -1066,7 +1066,7 @@ describe('uninstall', () => {
     expect(h.deps.cleanupConfig).toHaveBeenCalledWith(['@scope/foo'], true);
     expect(toSource(r.message)).toBe(
       '插件 @scope/foo 已卸载（已从根依赖与 node_modules 移除）。它的配置已从配置文件删除，只有它用的密钥一并删除；' +
-        '写在家目录 state/ 等处的数据不会删除，需要时请手动清理。',
+        '写在数据目录 state/ 等处的数据不会删除，需要时请手动清理。',
     );
   });
 

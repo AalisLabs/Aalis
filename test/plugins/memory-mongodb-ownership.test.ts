@@ -4,7 +4,7 @@ import { openAndProvide } from '../../packages/plugin-memory-mongodb/src/index.j
 import { fixedRef } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
-// 记忆库按家目录区分：库名加 profile 一段，库里记着它归哪个家目录与实例。两个家目录（两个部署目录各自的 data/，
+// 记忆库按数据目录区分：库名加 profile 一段，库里记着它归哪个数据目录与实例。两个数据目录（两个部署目录各自的 data/，
 // 或复制出来的测试实例）连同一个 MongoDB、派生出同一个库名时，后来的那个以一行配置错误失败，
 // 不会共写；库里已有数据却没有记录时不默认认走；claimFrom 用来在搬迁后认领。
 // 客户端与集合都是替身，不连任何真实的 mongod。
@@ -14,7 +14,7 @@ type Client = Parameters<typeof openAndProvide>[0];
 type Doc = Record<string, unknown>;
 
 const NAME = '@aalis/plugin-memory-mongodb';
-const OWNER = { namespace: 'aalis.home', key: 'owner' };
+const OWNER = { namespace: 'aalis.data', key: 'owner' };
 
 /** 筛选只认字段相等；缺字段与 null 等同（与 MongoDB 的 `{ f: null }` 一样） */
 function matches(doc: Doc, filter: Doc): boolean {
@@ -23,7 +23,7 @@ function matches(doc: Doc, filter: Doc): boolean {
 
 /**
  * 一个库：集合名 → 文档。同一个 server 可以给多个客户端共用。
- * beforeWrite 在下一次写入之前执行一次，模拟另一个家目录在本次读与写之间抢先写入。
+ * beforeWrite 在下一次写入之前执行一次，模拟另一个数据目录在本次读与写之间抢先写入。
  */
 function fakeServer(seed: Record<string, Doc[]> = {}) {
   const store = new Map(Object.entries(seed).map(([name, docs]) => [name, [...docs]]));
@@ -115,13 +115,13 @@ const failure = (p: Promise<unknown>) =>
   );
 
 describe('plugin-memory-mongodb 库名的派生', () => {
-  it('主家目录 aalis，profile 家目录 aalis_<p>，后缀实例再加后缀；宿主不给家目录时按旧规则', async () => {
+  it('主数据目录 aalis，profile 数据目录 aalis_<p>，后缀实例再加后缀；宿主不给数据目录时按旧规则', async () => {
     const opened: string[] = [];
     for (const [id, owner] of [
-      [NAME, { home: '/h' }],
-      [NAME, { home: '/u/.aalis-test', profile: 'test' }],
-      [`${NAME}:b`, { home: '/u/.aalis-test', profile: 'test' }],
-      [NAME, { home: '/u/.aalis-test-b', profile: 'test-b' }],
+      [NAME, { data: '/h' }],
+      [NAME, { data: '/u/.aalis-test', profile: 'test' }],
+      [`${NAME}:b`, { data: '/u/.aalis-test', profile: 'test' }],
+      [NAME, { data: '/u/.aalis-test-b', profile: 'test-b' }],
       [`${NAME}:b`, undefined],
     ] as const) {
       const server = fakeServer();
@@ -135,7 +135,7 @@ describe('plugin-memory-mongodb 库名的派生', () => {
   it('库名超过 63 字节时以配置错误失败，不发起连接', async () => {
     const server = fakeServer();
     const err = await failure(
-      openAndProvide(server.client, config(), caps(`${NAME}:${'x'.repeat(58)}`), { home: '/h' }),
+      openAndProvide(server.client, config(), caps(`${NAME}:${'x'.repeat(58)}`), { data: '/h' }),
     );
     expect(err?.name).toBe('ConfigError');
     expect(err?.message).toContain('63 字节');
@@ -144,49 +144,49 @@ describe('plugin-memory-mongodb 库名的派生', () => {
 });
 
 describe('plugin-memory-mongodb 库的归属', () => {
-  it('新库：记下本家目录与实例；再次以同一家目录启动照常使用、不再写', async () => {
+  it('新库：记下本数据目录与实例；再次以同一数据目录启动照常使用、不再写', async () => {
     const server = fakeServer();
-    await openAndProvide(server.client, config(), caps(NAME), { home: '/h' });
-    expect(server.owner()).toEqual({ home: '/h', instance: NAME });
+    await openAndProvide(server.client, config(), caps(NAME), { data: '/h' });
+    expect(server.owner()).toEqual({ dir: '/h', instance: NAME });
     const writes = server.calls.writes;
-    await openAndProvide(server.client, config(), caps(NAME), { home: '/h' });
+    await openAndProvide(server.client, config(), caps(NAME), { data: '/h' });
     expect(server.calls.writes).toBe(writes);
   });
 
-  it('库已归别的家目录：以配置错误失败、关闭客户端，点名并提示先停掉原实例；claimFrom 写的正是那个家目录时改记到本家目录', async () => {
-    const server = fakeServer({ metadata: [ownerDoc({ home: '/old/.aalis', instance: NAME })] });
-    const err = await failure(openAndProvide(server.client, config(), caps(NAME), { home: '/new/.aalis' }));
+  it('库已归别的数据目录：以配置错误失败、关闭客户端，点名并提示先停掉原实例；claimFrom 写的正是那个数据目录时改记到本数据目录', async () => {
+    const server = fakeServer({ metadata: [ownerDoc({ dir: '/old/.aalis', instance: NAME })] });
+    const err = await failure(openAndProvide(server.client, config(), caps(NAME), { data: '/new/.aalis' }));
     expect(err?.name).toBe('ConfigError');
-    expect(err?.message).toContain('已归家目录 /old/.aalis');
-    expect(err?.message).toContain('先停掉那个家目录的实例');
+    expect(err?.message).toContain('已归数据目录 /old/.aalis');
+    expect(err?.message).toContain('先停掉那个数据目录的实例');
     expect(err?.message).toContain('claimFrom: /old/.aalis');
     expect(server.calls.closes).toBe(1);
-    expect(server.owner()).toEqual({ home: '/old/.aalis', instance: NAME });
+    expect(server.owner()).toEqual({ dir: '/old/.aalis', instance: NAME });
 
     const wrong = await failure(
-      openAndProvide(server.client, config('/elsewhere'), caps(NAME), { home: '/new/.aalis' }),
+      openAndProvide(server.client, config('/elsewhere'), caps(NAME), { data: '/new/.aalis' }),
     );
-    expect(wrong?.message).toContain('已归家目录 /old/.aalis');
+    expect(wrong?.message).toContain('已归数据目录 /old/.aalis');
 
     const claim = caps(NAME);
-    await openAndProvide(server.client, config('/old/.aalis'), claim, { home: '/new/.aalis' });
-    expect(server.owner()).toEqual({ home: '/new/.aalis', instance: NAME });
+    await openAndProvide(server.client, config('/old/.aalis'), claim, { data: '/new/.aalis' });
+    expect(server.owner()).toEqual({ dir: '/new/.aalis', instance: NAME });
     expect(claim.lines.join('\n')).toContain('请从配置里删掉 claimFrom');
   });
 
-  it('同一家目录、别的实例（显式写了同一个库）：点名那个实例，不当成搬迁', async () => {
-    const server = fakeServer({ metadata: [ownerDoc({ home: '/h', instance: NAME })] });
-    const err = await failure(openAndProvide(server.client, config('', 'aalis'), caps(`${NAME}:c`), { home: '/h' }));
+  it('同一数据目录、别的实例（显式写了同一个库）：点名那个实例，不当成搬迁', async () => {
+    const server = fakeServer({ metadata: [ownerDoc({ dir: '/h', instance: NAME })] });
+    const err = await failure(openAndProvide(server.client, config('', 'aalis'), caps(`${NAME}:c`), { data: '/h' }));
     expect(err?.message).toBe(
-      `MongoDB 库 aalis 归本家目录的实例 ${NAME}，两个实例不能共用一个库：请给 ${NAME}:c 另配 database。` +
+      `MongoDB 库 aalis 归本数据目录的实例 ${NAME}，两个实例不能共用一个库：请给 ${NAME}:c 另配 database。` +
         `若是实例改了名、要把库转给 ${NAME}:c，先停掉 ${NAME}，再写 claimFrom: /h 后重启认领`,
     );
   });
 
-  it('claimFrom 用完还留着：库已归本家目录时告警，提示删掉', async () => {
-    const server = fakeServer({ metadata: [ownerDoc({ home: '/h', instance: NAME })] });
+  it('claimFrom 用完还留着：库已归本数据目录时告警，提示删掉', async () => {
+    const server = fakeServer({ metadata: [ownerDoc({ dir: '/h', instance: NAME })] });
     const c = caps(NAME);
-    await openAndProvide(server.client, config('unowned'), c, { home: '/h' });
+    await openAndProvide(server.client, config('unowned'), c, { data: '/h' });
     expect(c.lines.filter(l => l.startsWith('warn'))).toEqual([expect.stringContaining('claimFrom 用不上了')]);
   });
 
@@ -196,58 +196,58 @@ describe('plugin-memory-mongodb 库的归属', () => {
     ['数据在另一个名字的消息集合里', { history: [{ sessionId: 's' }] }],
   ])('库里已有数据却没有归属记录（%s）：不默认认走；claimFrom: unowned 时认领', async (_label, seed) => {
     const server = fakeServer(seed);
-    const err = await failure(openAndProvide(server.client, config(), caps(NAME), { home: '/dev/data' }));
+    const err = await failure(openAndProvide(server.client, config(), caps(NAME), { data: '/dev/data' }));
     expect(err?.name).toBe('ConfigError');
-    expect(err?.message).toContain('没有记录它归哪个家目录');
+    expect(err?.message).toContain('没有记录它归哪个数据目录');
     expect(server.calls.closes).toBe(1);
     expect(server.owner()).toBeUndefined();
 
-    await openAndProvide(server.client, config('unowned'), caps(NAME), { home: '/h' });
-    expect(server.owner()).toEqual({ home: '/h', instance: NAME });
+    await openAndProvide(server.client, config('unowned'), caps(NAME), { data: '/h' });
+    expect(server.owner()).toEqual({ dir: '/h', instance: NAME });
   });
 
   it('只建了索引的空集合（上次激活中途失败留下的）不算有数据', async () => {
     const server = fakeServer({ messages: [], 'system.views': [{ x: 1 }] });
-    await openAndProvide(server.client, config(), caps(NAME), { home: '/h' });
-    expect(server.owner()).toEqual({ home: '/h', instance: NAME });
+    await openAndProvide(server.client, config(), caps(NAME), { data: '/h' });
+    expect(server.owner()).toEqual({ dir: '/h', instance: NAME });
   });
 
   it.each([
     ['data 为 null', null],
     ['缺 data', undefined],
-    ['缺实例', { home: '/h' }],
+    ['缺实例', { dir: '/h' }],
   ])('归属记录坏了（%s）：报错、不死循环；claimFrom: unowned 时改写', async (_label, data) => {
     const doc = data === undefined ? { ...OWNER } : ownerDoc(data);
     const server = fakeServer({ metadata: [doc] });
-    const err = await failure(openAndProvide(server.client, config(), caps(NAME), { home: '/h' }));
+    const err = await failure(openAndProvide(server.client, config(), caps(NAME), { data: '/h' }));
     expect(err?.name).toBe('ConfigError');
     expect(err?.message).toContain('归属记录坏了');
 
-    await openAndProvide(server.client, config('unowned'), caps(NAME), { home: '/h' });
-    expect(server.owner()).toEqual({ home: '/h', instance: NAME });
+    await openAndProvide(server.client, config('unowned'), caps(NAME), { data: '/h' });
+    expect(server.owner()).toEqual({ dir: '/h', instance: NAME });
   });
 
-  it('两个家目录同时认领一个新库：唯一索引挡住后到的写入，它按对方的记录报错', async () => {
+  it('两个数据目录同时认领一个新库：唯一索引挡住后到的写入，它按对方的记录报错', async () => {
     const server = fakeServer();
-    server.hooks.beforeWrite = () => void server.docs('metadata').push(ownerDoc({ home: '/other', instance: NAME }));
-    const err = await failure(openAndProvide(server.client, config(), caps(NAME), { home: '/h' }));
-    expect(err?.message).toContain('已归家目录 /other');
-    expect(server.owner()).toEqual({ home: '/other', instance: NAME });
+    server.hooks.beforeWrite = () => void server.docs('metadata').push(ownerDoc({ dir: '/other', instance: NAME }));
+    const err = await failure(openAndProvide(server.client, config(), caps(NAME), { data: '/h' }));
+    expect(err?.message).toContain('已归数据目录 /other');
+    expect(server.owner()).toEqual({ dir: '/other', instance: NAME });
   });
 
-  it('两个家目录同时用 claimFrom 认领：比对后写入，后到的不覆盖，按新的记录报错', async () => {
-    const server = fakeServer({ metadata: [ownerDoc({ home: '/old', instance: NAME })] });
+  it('两个数据目录同时用 claimFrom 认领：比对后写入，后到的不覆盖，按新的记录报错', async () => {
+    const server = fakeServer({ metadata: [ownerDoc({ dir: '/old', instance: NAME })] });
     server.hooks.beforeWrite = () => {
       const owner = server.owner() as Doc;
-      owner.home = '/first';
+      owner.dir = '/first';
     };
-    const err = await failure(openAndProvide(server.client, config('/old'), caps(NAME), { home: '/second' }));
-    expect(err?.message).toContain('已归家目录 /first');
-    expect(server.owner()).toEqual({ home: '/first', instance: NAME });
+    const err = await failure(openAndProvide(server.client, config('/old'), caps(NAME), { data: '/second' }));
+    expect(err?.message).toContain('已归数据目录 /first');
+    expect(server.owner()).toEqual({ dir: '/first', instance: NAME });
   });
 
-  it('宿主不提供家目录（嵌入式宿主、测试夹具）时不做归属检查', async () => {
-    const server = fakeServer({ metadata: [ownerDoc({ home: '/someone', instance: 'x' })] });
+  it('宿主不提供数据目录（嵌入式宿主、测试夹具）时不做归属检查', async () => {
+    const server = fakeServer({ metadata: [ownerDoc({ dir: '/someone', instance: 'x' })] });
     await openAndProvide(server.client, config(), caps(NAME));
     expect(server.calls.metaReads).toBe(0);
   });

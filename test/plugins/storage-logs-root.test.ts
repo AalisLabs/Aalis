@@ -41,7 +41,7 @@ describe('storage-local 日志根 logs', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  it('老配置里的 logs 项被跳过，logs:/ 读的是家目录 logs/ 下 runtime 正在写的那份', async () => {
+  it('老配置里的 logs 项被跳过，logs:/ 读的是数据目录 logs/ 下 runtime 正在写的那份', async () => {
     mkdirSync(join(home, 'data'));
     writeFileSync(join(home, 'data', 'latest.log'), 'stale\n');
     mkdirSync(join(home, 'logs'));

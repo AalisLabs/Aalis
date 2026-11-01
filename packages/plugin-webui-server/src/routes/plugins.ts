@@ -167,8 +167,8 @@ interface PluginRoutesCaps {
   services: Pick<Services, 'names' | 'preferred' | 'inspect'>;
   /** 提供这个界面的插件实例：经这些路由停用不了它，列表给它标 self */
   self: string;
-  /** 家目录（宿主路径的 home）：宿主配置一并给出；宿主不提供路径时没有 */
-  home?: string;
+  /** 数据目录（宿主路径的 data）：宿主配置一并给出；宿主不提供路径时没有 */
+  dataDir?: string;
   /** 本地已装包的版本，每取一次列表现查一遍（装卸与更新会改它） */
   versions(): (name: string) => string | undefined;
   /** 裁剪 schema 外字段时点名 warn，保存全局配置后重启失败时记 error；测试可不传 */
@@ -313,7 +313,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     res.json({ plugins, secretRefCounts: doc ? countSecretRefs(doc.getAll().plugins) : {} });
   });
 
-  // 宿主配置：文档里写了的核心键、它们的 schema、要重启才生效的键与家目录
+  // 宿主配置：文档里写了的核心键、它们的 schema、要重启才生效的键与数据目录
   route(expressApp, 'GET /api/config', gate(), (_req, res) => {
     const doc = docOr503(res);
     if (!doc) return;
@@ -324,7 +324,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
         .map(key => [key, all[key]]),
     );
     renderWith(res, { skip: skipSchemaDefaults([CORE_CONFIG_SCHEMA]) });
-    res.json({ config, schema: CORE_CONFIG_SCHEMA, restartKeys: [...CORE_RESTART_KEYS], home: caps.home });
+    res.json({ config, schema: CORE_CONFIG_SCHEMA, restartKeys: [...CORE_RESTART_KEYS], dataDir: caps.dataDir });
   });
 
   // 改宿主配置的核心键：只保存，要重启才生效的键改了时回执写明，由界面出「重启以生效」，重启走 POST /api/restart

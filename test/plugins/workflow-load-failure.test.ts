@@ -146,7 +146,7 @@ describe('workflow：once 记账读不出时不安排 once', () => {
   /** webui-server 的真实登记表：经闸门调工作流页的动作，看回执 */
   let pages: PageHost;
 
-  // data 是 storage-local 的内置根，映射到家目录的 state/
+  // data 是 storage-local 的内置根，映射到数据目录的 state/
   const runsPath = () => join(base, 'state', 'workflow-runs.json');
 
   const boot = async (enableTools = false): Promise<WorkflowService> => {

@@ -51,7 +51,7 @@ describe('workflow：optional 依赖晚于本插件上线', () => {
     if (!svc) throw new Error('workflow 服务未注册');
     return svc;
   };
-  // data:/ 是内置根，按家目录布局在 state/ 下
+  // data:/ 是内置根，按数据目录布局在 state/ 下
   const runsFile = () => join(base, 'state', RUNS);
 
   /** 跑一次只含一个 tool 节点的手动工作流，等它跑完 */

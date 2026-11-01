@@ -95,7 +95,7 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-imgsend-sig-'));
-    // data 是 storage-local 的内置根，映射到家目录的 state/
+    // data 是 storage-local 的内置根，映射到数据目录的 state/
     const dataDir = join(base, 'state');
     mkdirSync(join(dataDir, 'images', 's'), { recursive: true });
     mkdirSync(join(dataDir, 'secret'), { recursive: true });

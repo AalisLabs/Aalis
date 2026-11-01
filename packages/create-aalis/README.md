@@ -1,6 +1,6 @@
 # create-aalis
 
-Aalis 快速初始化脚手架：交互式选插件，生成独立项目与它的家目录 `data/`。
+Aalis 快速初始化脚手架：交互式选插件，生成独立项目与它的数据目录 `data/`。
 
 ## 用法
 
@@ -15,7 +15,7 @@ npm create aalis@latest my-bot -- --yes --lang zh-CN,en        # 指定 Aalis �
 
 ## 提供 / 依赖
 
-生成可运行的独立项目：家目录 `data/`（主配置 `aalis.config.yaml`，当场粘贴的密钥写在这里，启动时移进同目录的 `secrets.yaml`，原处换成引用）与 `startAalis` 入口，写入 `@aalis/core`、`@aalis/runtime` 及所选插件，随后 `npm install`，失败时写明是哪一类原因、怎么修。本机有 Ollama（认 `OLLAMA_HOST`）时对话模型默认用它。本包本身不是插件，无 `provides` / `uses`；运行时依赖 `@aalis/schema-i18n`（终端文字的字典）。
+生成可运行的独立项目：数据目录 `data/`（主配置 `aalis.config.yaml`，当场粘贴的密钥写在这里，启动时移进同目录的 `secrets.yaml`，原处换成引用）与 `startAalis` 入口，写入 `@aalis/core`、`@aalis/runtime` 及所选插件，随后 `npm install`，失败时写明是哪一类原因、怎么修。本机有 Ollama（认 `OLLAMA_HOST`）时对话模型默认用它。本包本身不是插件，无 `provides` / `uses`；运行时依赖 `@aalis/schema-i18n`（终端文字的字典）。
 
 ## 文档
 

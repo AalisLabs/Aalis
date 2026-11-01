@@ -13,7 +13,7 @@ const SOURCE = {
   promptLabel: '提示符',
   promptDescription: '命令行输入提示符前缀',
   maxLogEntriesLabel: '日志内存缓冲上限（条）',
-  maxLogEntriesDescription: '日志页内存驻留的最大条数，超出后从最旧成块丢弃；完整日志始终在家目录的 logs/latest.log',
+  maxLogEntriesDescription: '日志页内存驻留的最大条数，超出后从最旧成块丢弃；完整日志始终在数据目录的 logs/latest.log',
   startupViewLabel: '启动视图',
   startupViewDescription: 'CLI 接管终端后的默认视图。last 表示恢复上次视图',
   viewLast: '恢复上次',
@@ -96,7 +96,7 @@ const SOURCE = {
   helpChoose: '选批准 / 拒绝，Enter 确定',
   helpTips: '提示',
   tipLogFile:
-    '• 完整日志写入家目录的 logs/latest.log，每次启动时上一轮改名为 latest.1.log，保留 5 份；跨重启持续跟随用 tail -F。',
+    '• 完整日志写入数据目录的 logs/latest.log，每次启动时上一轮改名为 latest.1.log，保留 5 份；跨重启持续跟随用 tail -F。',
   tipRestore: '• 退出时自动恢复原终端内容（alternate screen）。',
   tipCommands: '• 输入以 / 开头会按命令解析，否则发给 agent。',
   tipKeys: '• ↑/↓、PgUp/PgDn、Home/End 滚动 Logs / Status / Help；选择 / 复制文本直接用终端原生操作。',

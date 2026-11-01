@@ -16,7 +16,7 @@ import { toolRequest } from '../fixtures/tool-call.js';
 // 文件损坏），曾经一律当成空表，之后第一次增删改把整表写回，原有动态任务全丢。
 // 契约：只有文件不存在算全新；其它失败本次运行拒写，原文件一字不动。
 // 拒写期间 scheduler_create_job 的回执注明新任务仅本次运行生效，别让用户以为已经存下。
-// 真 storage-local 多根（用户根 workspace 在前、内置根 data 在后，映射到家目录的 state/），任务文件落在 data 根。
+// 真 storage-local 多根（用户根 workspace 在前、内置根 data 在后，映射到数据目录的 state/），任务文件落在 data 根。
 // ════════════════════════════════════════════════════════════
 
 const JOBS = 'scheduler-jobs.json';

@@ -632,7 +632,7 @@ describe('users.json 读不出来时的提示', () => {
     level: 'error',
     title: '用户等级表 users.json 读不出来，文件里的封禁与等级没有载入',
     detail:
-      '修好家目录里的 state/users.json 后重启：要能读取，是 version 5 的完好 JSON；旧版本不迁移，不要里面的记录就把它移走再重启。' +
+      '修好数据目录里的 state/users.json 后重启：要能读取，是 version 5 的完好 JSON；旧版本不迁移，不要里面的记录就把它移走再重启。' +
       '修好之前改的等级只在本次运行生效。原因：不是有效的 v5 结构（version: 4）',
   };
 
@@ -642,7 +642,7 @@ describe('users.json 读不出来时的提示', () => {
 
     expect(toSource(pages.notices())).toEqual([NOTICE]);
     expect(await runCommand('level', 'onebot:777', -1)).toBe(
-      '已把 onebot:777 的等级设为 -1；仅本次运行生效，未写入 users.json：它读不出来，修好家目录里的 state/users.json 后重启',
+      '已把 onebot:777 的等级设为 -1；仅本次运行生效，未写入 users.json：它读不出来，修好数据目录里的 state/users.json 后重启',
     );
 
     // 排在前面的 storage 提供者上线：follow 换人即重读

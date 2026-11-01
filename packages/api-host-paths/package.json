@@ -34,5 +34,5 @@
     "aalis",
     "aalis-api"
   ],
-  "description": "宿主路径契约：host-paths 服务描述符（家目录、安装集与家目录布局的绝对路径）"
+  "description": "宿主路径契约：host-paths 服务描述符（数据目录、安装集与数据目录布局的绝对路径）"
 }

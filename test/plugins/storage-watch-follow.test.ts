@@ -18,8 +18,8 @@ import { HUB_PLUGINS } from '../fixtures/hubs.js';
 // storage-local 关闭时也会关掉自己建的监听器；skills / persona 自己卸载时由 follow 的清理关掉监听。
 // 重启那条用例守住两处必须同批：
 // 只修提供者一侧、消费者不重挂，它会变红。
-// 真 storage-local + 真 skills / persona。技能与人设在存储的内容目录里（家目录的 self/skills、self/persona），
-// 目录按家目录布局派生、不能配置。
+// 真 storage-local + 真 skills / persona。技能与人设在存储的内容目录里（数据目录的 self/skills、self/persona），
+// 目录按数据目录布局派生、不能配置。
 // ════════════════════════════════════════════════════════════
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));

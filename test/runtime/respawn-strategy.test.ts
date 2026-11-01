@@ -93,7 +93,7 @@ describe('createProcessRespawnStrategy', () => {
       code: 0,
     });
     expect(spawned.calls).toBe(1);
-    // 新进程在启动时的 cwd 里起：命令行里相对的 --home 才解析到同一个家目录，不随重启时的 cwd 漂移
+    // 新进程在启动时的 cwd 里起：命令行里相对的 --data 才解析到同一个数据目录，不随重启时的 cwd 漂移
     expect(spawned.cwds).toEqual(['/launch-dir']);
     // 实例锁的交接令牌交给新进程：它凭这个接手旧实例的锁
     expect(spawned.handoffs).toEqual(['token']);

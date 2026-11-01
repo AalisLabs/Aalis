@@ -498,8 +498,8 @@ describe('未认证拦截', () => {
     const page = await run(makeAuth(), makeReq({ path: '/' }));
     const hint = page.res.htmlBody?.match(/<h1>Aalis WebUI<\/h1>\s*<p>([^<]*)<\/p>/)?.[1];
     expect(hint).toBe(
-      '访问 token 在家目录的 state/webui/access.txt 里，启动日志「访问凭据已写入」那行给出它的完整路径；' +
-        'tokenMode 为 fixed 时它是配置项 fixedToken，启动后值存在家目录的 secrets.yaml 里（配置文件里是引用）。',
+      '访问 token 在数据目录的 state/webui/access.txt 里，启动日志「访问凭据已写入」那行给出它的完整路径；' +
+        'tokenMode 为 fixed 时它是配置项 fixedToken，启动后值存在数据目录的 secrets.yaml 里（配置文件里是引用）。',
     );
   });
 

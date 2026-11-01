@@ -11,14 +11,14 @@ import { SettingRow } from './SettingRow';
 import { useServices } from './services';
 
 // 设置的「系统」：宿主配置的核心键（来源是配置文件或默认，要重启的键写明，改了之后出「重启以生效」与重启按钮）、
-// 服务偏好（全局偏好：有几个提供者的服务选用哪一个，界面前端与模型服务也在其中）与家目录
+// 服务偏好（全局偏好：有几个提供者的服务选用哪一个，界面前端与模型服务也在其中）与数据目录
 
 interface HostConfigView {
   /** 配置文件里写了的核心键 */
   config: Record<string, unknown>;
   schema: Record<string, Field>;
   restartKeys: string[];
-  home?: string;
+  dataDir?: string;
 }
 
 function parseHostConfig(body: unknown): HostConfigView {
@@ -34,7 +34,7 @@ function parseHostConfig(body: unknown): HostConfigView {
       ),
     ),
     restartKeys: body.restartKeys.filter(key => typeof key === 'string'),
-    home: typeof body.home === 'string' ? body.home : undefined,
+    dataDir: typeof body.dataDir === 'string' ? body.dataDir : undefined,
   };
 }
 
@@ -55,10 +55,10 @@ export function SystemSection() {
       )}
       {value && <HostConfig view={value} saved={refetch} />}
       <ServicePreferences />
-      {value?.home && (
-        <Block title={tr('homeDirectory')}>
-          <p className="settings-path">{value.home}</p>
-          <p className="settings-note">{tr('homeDirectoryNote')}</p>
+      {value?.dataDir && (
+        <Block title={tr('dataDirectory')}>
+          <p className="settings-path">{value.dataDir}</p>
+          <p className="settings-note">{tr('dataDirectoryNote')}</p>
         </Block>
       )}
     </div>

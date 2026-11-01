@@ -10,14 +10,17 @@
 
 ## 未发布
 
-### 家目录放在部署目录下
+### 数据目录：放在部署目录下，「家目录」整套改叫「数据目录」
 
-- @aalis/runtime（破坏性）：家目录的覆盖顺序改为 `--home` → `AALIS_HOME` → 部署目录（`appDir`）下的 `data/`；给了 `--profile <名>` 或 `AALIS_PROFILE` 时是部署目录下的 `data-<名>/`。`~/.aalis` 与 `~/.aalis-<名>` 不再是缺省位置。删 `StartAalisOptions.defaultHome` 与导出的 `profileOfRealHome`；`resolveHome` 的入参去掉 `defaultHome`，加必填的 `appDir`。profile 只认 `--profile` 与 `AALIS_PROFILE`，经 `--home` 或 `AALIS_HOME` 选中的家目录没有 profile。
-- @aalis/api-host-paths：导出缺省家目录的目录名 `HOME_DIR`（`'data'`）；`HostPaths.profile` 只在经 `--profile` 或 `AALIS_PROFILE` 选中时有。
-- @aalis/api-reach：拒读清单里的其他实例的家目录，由用户主目录下的 `.aalis*` 改为同一部署目录下的 `data/` 与 `data-*/`（本实例的除外）。
-- create-aalis：生成的项目的家目录由 `home/` 改为 `data/`，入口只传 `appDir`，`.gitignore` 忽略 `/data/` 与 `/data-*/`。已有项目里的 `home/` 不再被认出：不改名时提示家目录没初始化、拒绝启动，不会起一个空的家目录。
+- @aalis/runtime（破坏性）：实例的配置、密钥、数据与日志所在的目录改叫数据目录。覆盖顺序改为 `--data` → `AALIS_DATA` → 部署目录（`appDir`）下的 `data/`；给了 `--profile <名>` 或 `AALIS_PROFILE` 时是部署目录下的 `data-<名>/`。`~/.aalis` 与 `~/.aalis-<名>` 不再是缺省位置。命令行参数 `--home` 改为 `--data`，环境变量 `AALIS_HOME` 改为 `AALIS_DATA`，旧写法不再认。命令开头那一段里不认识的 `--` 参数（包括 `--home`）报错退出（退出码 2），不再当成子命令。删 `StartAalisOptions.defaultHome` 与导出的 `profileOfRealHome`；`resolveHome`、`initHome`、`isHomeInitialized`、`HomeArgsError`、`ResolveHomeInput` 改名为 `resolveDataDir`、`initDataDir`、`isDataDirInitialized`、`HostArgsError`、`ResolveDataDirInput`，`HostArgs.home` 改为 `data`；`resolveDataDir` 入参去掉 `defaultHome`、加必填的 `appDir`，返回 `{ dir, profile? }`。profile 只认 `--profile` 与 `AALIS_PROFILE`，经 `--data` 或 `AALIS_DATA` 选中的数据目录没有 profile。启动提示与报错里的 home directory 改为 data directory。
+- @aalis/api-host-paths（破坏性）：`HostPaths.home` 改为 `HostPaths.data`；导出缺省数据目录的目录名 `DATA_DIR_NAME`（`'data'`）；`HostPaths.profile` 只在经 `--profile` 或 `AALIS_PROFILE` 选中时有。
+- @aalis/api-reach：拒读清单里的其他实例的数据目录，由用户主目录下的 `.aalis*` 改为同一部署目录下的 `data/` 与 `data-*/`（本实例的除外）。
+- @aalis/plugin-memory-mongodb（破坏性）：库的归属记录改为命名空间 `aalis.data`、记录里的目录字段 `dir`。已有的库读不到新名字下的记录，有数据时按「有数据却没有归属记录」激活失败，在配置里写 `claimFrom: unowned` 认领一次。「数据库」与归属相关的说明改用「数据目录」。
+- @aalis/api-webui（破坏性）：`GET /api/config` 的回包字段 `home` 改为 `dataDir`；@aalis/plugin-webui-server 照此回，@aalis/plugin-webui-client 的设置「系统」里那一块叫「数据目录」。
+- @aalis/plugin-storage-local：用户根的相对路径按数据目录（`HostPaths.data`）解析。
+- create-aalis：生成的项目的数据目录由 `home/` 改为 `data/`，入口只传 `appDir`，`.gitignore` 忽略 `/data/` 与 `/data-*/`，README 写另开实例的用法。已有项目里的 `home/` 不再被认出：不改名时提示数据目录没初始化、拒绝启动，不会起一个空的数据目录。
+- 各插件界面与日志里的「家目录」改为「数据目录」，英文 home directory 改为 data directory。
 - 本仓库：`pnpm dev` 不再带 `--home .aalis-dev`，与 `pnpm start` 一样落在仓库里的 `data/`；`.gitignore` 只忽略根上的 `/data/` 与 `/data-*/`。
-- @aalis/plugin-memory-mongodb：「数据库」一项的说明里，profile 家目录改写为部署目录下的 `data-<profile>`，派生规则不变。
 
 ---
 

@@ -53,9 +53,9 @@ const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: ()
 const apps: App[] = [];
 const sockets: WebSocket[] = [];
 const rawSockets: Socket[] = [];
-/** 每个 App 一个临时家目录：会话服务的审批审计写在它下面 */
+/** 每个 App 一个临时数据目录：会话服务的审批审计写在它下面 */
 const homes: string[] = [];
-/** 像 runtime 一样在根上提供 host-paths，家目录是新建的临时目录 */
+/** 像 runtime 一样在根上提供 host-paths，数据目录是新建的临时目录 */
 function provideHome(app: App): HostPaths {
   const home = mkdtempSync(join(tmpdir(), 'aalis-session-server-'));
   homes.push(home);

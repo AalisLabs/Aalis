@@ -24,7 +24,7 @@ import { nodeProcessProbe } from '../../packages/runtime/src/instance-lock.js';
 //
 // startAalis 的编排（文件日志装载时机、重启策略注入、子命令命中/未命中后的退出）在进程内
 // 无法单测：它挂全局 fatal handler、最终 process.exit。这里用 tsx 跑 test/fixtures/subcommand-entry.ts
-// （只走 runtime 源码），每个用例一个临时目录，既是 cwd 也经 AALIS_HOME 当家目录，断言全部基于「进程退出后」的退出码 / 输出 / 文件内容，
+// （只走 runtime 源码），每个用例一个临时目录，既是 cwd 也经 AALIS_DATA 当数据目录，断言全部基于「进程退出后」的退出码 / 输出 / 文件内容，
 // 计时相关的用例（慢激活）都留足余量。
 //
 // 三条被守的不变量（对应曾实测出的故障）：
@@ -54,11 +54,11 @@ function run(cwd: string, argv: string[], env: Record<string, string> = {}, time
     // detached：让 tsx 包装脚本自成进程组。`.bin/tsx` 会再起一个真正跑夹具的 node 子进程，超时时
     // 只杀包装层会留下孤儿守护进程（变异验证时实测），必须按进程组整体 SIGKILL。
     // 与进程内测试同一源码映射，避免 runtime 源码搭配陈旧的 core dist。
-    // 家目录取这个临时目录，用户主目录也指到这里：解析一旦回退到 ~/.aalis，也落在临时目录里，不碰开发者自己的实例。
-    // 外面环境里的 AALIS_PROFILE 会与 AALIS_HOME 冲突，先去掉，用例显式传的照样生效。
+    // 数据目录取这个临时目录，用户主目录也指到这里：解析一旦回退到 ~/.aalis，也落在临时目录里，不碰开发者自己的实例。
+    // 外面环境里的 AALIS_PROFILE 会与 AALIS_DATA 冲突，先去掉，用例显式传的照样生效。
     const inherited: Record<string, string | undefined> = { ...process.env };
     delete inherited.AALIS_PROFILE;
-    const childEnv = { ...inherited, HOME: cwd, USERPROFILE: cwd, AALIS_HOME: cwd, ...env };
+    const childEnv = { ...inherited, HOME: cwd, USERPROFILE: cwd, AALIS_DATA: cwd, ...env };
     const child = spawn(tsxBin, ['--tsconfig', join(repoRoot, 'tsconfig.test.json'), fixture, ...argv], {
       cwd,
       env: childEnv,
@@ -252,10 +252,10 @@ describe('startAalis 子命令模式（真实子进程）', () => {
   });
 });
 
-describe('startAalis 家目录（真实子进程）', () => {
+describe('startAalis 数据目录（真实子进程）', () => {
   const dirs: string[] = [];
   const tempDir = () => {
-    const dir = mkdtempSync(join(tmpdir(), 'aalis-home-e2e-'));
+    const dir = mkdtempSync(join(tmpdir(), 'aalis-data-e2e-'));
     dirs.push(dir);
     return dir;
   };
@@ -264,44 +264,44 @@ describe('startAalis 家目录（真实子进程）', () => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  it('家目录没初始化：一行说明怎样初始化后 exit 1，不起空的家、不写任何文件', async () => {
+  it('数据目录没初始化：一行说明怎样初始化后 exit 1，不起空的家、不写任何文件', async () => {
     const dir = tempDir();
     const r = await run(dir, ['probe']);
     expect(r.code).toBe(1);
-    expect(r.stderr).toContain(`The home directory is not initialized: ${dir}`);
+    expect(r.stderr).toContain(`The data directory is not initialized: ${dir}`);
     expect(r.stderr).toContain('--init');
     expect(existsSync(join(dir, 'aalis.config.yaml'))).toBe(false);
     expect(existsSync(join(dir, 'logs'))).toBe(false);
     expect(existsSync(join(dir, 'first-config.json'))).toBe(false);
   });
 
-  it('--init：建家目录（0700）、主配置与空的 secrets.yaml（0600）后退出，不加载插件；随后能正常启动', async () => {
+  it('--init：建数据目录（0700）、主配置与空的 secrets.yaml（0600）后退出，不加载插件；随后能正常启动', async () => {
     const dir = tempDir();
-    const home = join(dir, 'home');
-    const r = await run(dir, ['--init'], { AALIS_HOME: home });
+    const dataDir = join(dir, 'data');
+    const r = await run(dir, ['--init'], { AALIS_DATA: dataDir });
     expect(r.code).toBe(0);
-    expect(r.stdout).toContain(`Initialized the home directory: ${home}`);
-    expect(statSync(home).mode & 0o777).toBe(0o700);
-    expect(statSync(join(home, 'secrets.yaml')).mode & 0o777).toBe(0o600);
-    expect(readFileSync(join(home, 'secrets.yaml'), 'utf-8')).toBe('');
-    expect(parse(readFileSync(join(home, 'aalis.config.yaml'), 'utf-8'))).toEqual({
+    expect(r.stdout).toContain(`Initialized the data directory: ${dataDir}`);
+    expect(statSync(dataDir).mode & 0o777).toBe(0o700);
+    expect(statSync(join(dataDir, 'secrets.yaml')).mode & 0o777).toBe(0o600);
+    expect(readFileSync(join(dataDir, 'secrets.yaml'), 'utf-8')).toBe('');
+    expect(parse(readFileSync(join(dataDir, 'aalis.config.yaml'), 'utf-8'))).toEqual({
       name: 'Aalis',
       logLevel: 'info',
       plugins: {},
     });
     for (const sub of ['state', 'logs', 'run', 'tmp', 'self', 'workspace']) {
-      expect(existsSync(join(home, sub)), sub).toBe(true);
+      expect(existsSync(join(dataDir, sub)), sub).toBe(true);
     }
     expect(existsSync(join(dir, 'first-config.json'))).toBe(false);
     rmSync(join(dir, 'gen.txt'));
-    const started = await run(dir, ['probe'], { AALIS_HOME: home });
+    const started = await run(dir, ['probe'], { AALIS_DATA: dataDir });
     expect(started.code).toBe(0);
     expect(started.stdout).toContain('probe ok');
   }, 30_000);
 
   it('--init 不识别系统语言：安装集里有 plugin-i18n 时插件段照样为空，语言按它的默认', async () => {
     const dir = tempDir();
-    const home = join(dir, 'home');
+    const dataDir = join(dir, 'data');
     const app = join(dir, 'install');
     const i18n = join(app, 'node_modules', '@aalis', 'plugin-i18n');
     mkdirSync(i18n, { recursive: true });
@@ -314,14 +314,14 @@ describe('startAalis 家目录（真实子进程）', () => {
     const r = await run(dir, ['--init'], {
       AALIS_E2E_MODE: 'default-loader',
       AALIS_E2E_APP_DIR: app,
-      AALIS_HOME: home,
+      AALIS_DATA: dataDir,
       LC_ALL: 'zh_CN.UTF-8',
     });
     expect(r.code).toBe(0);
-    expect(parse(readFileSync(join(home, 'aalis.config.yaml'), 'utf-8')).plugins).toEqual({});
+    expect(parse(readFileSync(join(dataDir, 'aalis.config.yaml'), 'utf-8')).plugins).toEqual({});
   }, 30_000);
 
-  it('--init 遇到已初始化的家目录：拒绝并 exit 1，不覆盖', async () => {
+  it('--init 遇到已初始化的数据目录：拒绝并 exit 1，不覆盖', async () => {
     const dir = tempDir();
     writeFileSync(join(dir, 'aalis.config.yaml'), 'name: mine\nlogLevel: info\nplugins: {}\n');
     const r = await run(dir, ['--init']);
@@ -330,20 +330,20 @@ describe('startAalis 家目录（真实子进程）', () => {
     expect(readFileSync(join(dir, 'aalis.config.yaml'), 'utf-8')).toBe('name: mine\nlogLevel: info\nplugins: {}\n');
   });
 
-  it('--home 写在子命令之前：压过 AALIS_HOME，相对路径按启动时的 cwd 解析', async () => {
+  it('--data 写在子命令之前：压过 AALIS_DATA，相对路径按启动时的 cwd 解析', async () => {
     const dir = tempDir();
     mkdirSync(join(dir, 'other'));
     writeFileSync(
       join(dir, 'other', 'aalis.config.yaml'),
       'name: e2e\nlogLevel: info\nplugins:\n  e2e-probe:\n    known: 5\n',
     );
-    const r = await run(dir, ['--home', 'other', 'probe', 'x'], { AALIS_HOME: join(dir, 'missing') });
+    const r = await run(dir, ['--data', 'other', 'probe', 'x'], { AALIS_DATA: join(dir, 'missing') });
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('probe ok x');
     expect(JSON.parse(readFileSync(join(dir, 'first-config.json'), 'utf8')).known).toBe(5);
   });
 
-  it('没传 appDir：解析家目录之前报错，exit 2，不写文件、不取实例锁', async () => {
+  it('没传 appDir：解析数据目录之前报错，exit 2，不写文件、不取实例锁', async () => {
     const dir = makeProject();
     dirs.push(dir);
     const r = await run(dir, ['probe'], { AALIS_E2E_MODE: 'no-app-dir' });
@@ -485,7 +485,7 @@ describe('startAalis 家目录（真实子进程）', () => {
     expect(readdirSync(join(dir, 'run')).filter(n => n.endsWith('.lock'))).toEqual([]);
   });
 
-  it('没指定家目录时落在部署目录下的 data/，--profile 落在 data-<名>/ 并带 profile；经 --home 选中的不带 profile；交给插件的是真实路径', async () => {
+  it('没指定数据目录时落在部署目录下的 data/，--profile 落在 data-<名>/ 并带 profile；经 --data 选中的不带 profile；交给插件的是真实路径', async () => {
     const dir = tempDir();
     for (const name of ['data', 'data-e2e']) {
       mkdirSync(join(dir, name));
@@ -494,14 +494,14 @@ describe('startAalis 家目录（真实子进程）', () => {
     symlinkSync(join(dir, 'data-e2e'), join(dir, 'link'));
     const seen = async (argv: string[]) => {
       rmSync(join(dir, 'gen.txt'), { force: true });
-      const r = await run(dir, [...argv, 'probe', 'paths'], { AALIS_HOME: '' });
+      const r = await run(dir, [...argv, 'probe', 'paths'], { AALIS_DATA: '' });
       expect(r.code, r.stderr).toBe(0);
       return JSON.parse(/paths (\{.*\})/.exec(r.stdout)?.[1] ?? 'null');
     };
     const real = (name: string) => realpathSync.native(join(dir, name));
-    expect(await seen([])).toEqual({ home: real('data'), profile: null });
-    expect(await seen(['--profile', 'e2e'])).toEqual({ home: real('data-e2e'), profile: 'e2e' });
-    expect(await seen(['--home', 'link'])).toEqual({ home: real('data-e2e'), profile: null });
+    expect(await seen([])).toEqual({ data: real('data'), profile: null });
+    expect(await seen(['--profile', 'e2e'])).toEqual({ data: real('data-e2e'), profile: 'e2e' });
+    expect(await seen(['--data', 'link'])).toEqual({ data: real('data-e2e'), profile: null });
   });
 
   it('启动时配置文件或密钥文件写坏：一行报错（错误码与行列，不带原文）后 exit 1，不带调用栈', async () => {
@@ -539,12 +539,12 @@ describe('startAalis 家目录（真实子进程）', () => {
     expect(statSync(join(dir, 'secrets.yaml')).mode & 0o777).toBe(0o600);
   });
 
-  it('同时给了 profile 与 AALIS_HOME：报冲突、exit 2，不静默挑一个', async () => {
+  it('同时给了 profile 与 AALIS_DATA：报冲突、exit 2，不静默挑一个', async () => {
     const dir = tempDir();
     writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
     const r = await run(dir, ['--profile', 'test', 'probe']);
     expect(r.code).toBe(2);
-    expect(r.stderr).toContain('Both AALIS_HOME and --profile are set');
+    expect(r.stderr).toContain('Both AALIS_DATA and --profile are set');
     expect(existsSync(join(dir, 'first-config.json'))).toBe(false);
   });
 });

@@ -49,7 +49,7 @@ await plugins.use.bounce(lifecycle.use.id);
 
 - `app`、`plugins`：core 在根激活上提供的宿主管理面。
 - `hostConfig`（配置文档，`@aalis/api-host-config`）：由宿主提供。Node 宿主 `@aalis/runtime` 会提供，别的宿主不一定；缺席时要降级的插件写 `optional(hostConfig)`。
-- `hostPaths`（家目录与安装集的绝对路径，`@aalis/api-host-paths`）：由宿主提供，Node 宿主同样会提供。插件要定位这些目录时声明它，不读 `process.cwd()`。
+- `hostPaths`（数据目录与安装集的绝对路径，`@aalis/api-host-paths`）：由宿主提供，Node 宿主同样会提供。插件要定位这些目录时声明它，不读 `process.cwd()`。
 - `hostLogs`（读日志流，`@aalis/api-host-logs`）：由宿主提供，Node 宿主同样会提供。写日志用 `logger`；要读整个日志流（日志页一类）时声明它，不直接订阅 core 的日志中枢 `LogHub`（有 architecture 守卫）。
 - `hooks` / `contributions`（`@aalis/api-hooks` / `@aalis/api-contributions`）：由插件提供，默认提供者是 `@aalis/plugin-hooks` / `@aalis/plugin-contributions`。部署里缺了它们，依赖它们的插件停在 pending。
 
@@ -184,11 +184,11 @@ lifecycle.use.onDispose(() => {
 
 `configSchema` 写在 `definePlugin` 上，同时描述表单、配置类型与解析规则。使用 `@aalis/schema-config` 的 `defineConfig` 保留类型信息，在 apply 开头调用 `parseConfig(configSchema, config.use, logger.use)`，后续只使用解析结果。Core 不解释 schema。
 
-- `secret: true` 表示值是凭据（API key、token、带账号密码的连接串）：宿主把值存进密钥存储（Node 宿主是家目录的 `secrets.yaml`），配置文件里只放引用，WebUI 只显示「已设置」、不回显原值。插件经 `parseConfig` 读到的仍是原值；引用的键不在密钥存储里时 `parseConfig` 拒绝激活，不回落默认值（不走 `parseConfig` 的插件会拿到引用对象，由诊断检查 `config.secrets` 报出）。存放与写入规则见 [运行态与配置文档](./core/config.md#密钥配置)
+- `secret: true` 表示值是凭据（API key、token、带账号密码的连接串）：宿主把值存进密钥存储（Node 宿主是数据目录的 `secrets.yaml`），配置文件里只放引用，WebUI 只显示「已设置」、不回显原值。插件经 `parseConfig` 读到的仍是原值；引用的键不在密钥存储里时 `parseConfig` 拒绝激活，不回落默认值（不走 `parseConfig` 的插件会拿到引用对象，由诊断检查 `config.secrets` 报出）。存放与写入规则见 [运行态与配置文档](./core/config.md#密钥配置)
 - `required: true` 且没有默认值的字段未填时，`parseConfig` 抛出配置错误；数组元素中此类错误只丢弃该元素并告警。跨字段、条件必填等语义仍由插件核对
 - `default` 是唯一默认值来源；宿主用 `defaultsFrom` 回填文档（密钥字段的默认值不写进文档），插件用 `parseConfig` 取得默认值，不依赖宿主是否做过回填
 - 普通字段无效时回落默认值并告警；`onInvalid: 'error'` 的字段拒绝无效值，即使有默认值也不回落。地址、启动参数、访问边界等字段应显式声明这一策略；缺省规则不变
-- 写宿主文件路径的 `string` / `textarea` 字段声明 `format`：`'absolute-path'` 只收绝对路径，`'executable'` 另收按 PATH 查找的命令名（不含路径分隔符，`C:foo` 这类带盘符的相对写法不算）；判定忽略首尾空白，交给插件的值也去掉首尾空白，空串与只有空白都表示未填（`required` 字段算缺失）；只看写法、与宿主平台无关，Windows 形状的绝对路径在 POSIX 宿主上同样通过。配置里的相对路径没有可靠的基准：宿主进程的 cwd 不带语义（家目录与安装集经 `host-paths` 取得，见 [api-host-paths](./api/api-host-paths.md)）
+- 写宿主文件路径的 `string` / `textarea` 字段声明 `format`：`'absolute-path'` 只收绝对路径，`'executable'` 另收按 PATH 查找的命令名（不含路径分隔符，`C:foo` 这类带盘符的相对写法不算）；判定忽略首尾空白，交给插件的值也去掉首尾空白，空串与只有空白都表示未填（`required` 字段算缺失）；只看写法、与宿主平台无关，Windows 形状的绝对路径在 POSIX 宿主上同样通过。配置里的相对路径没有可靠的基准：宿主进程的 cwd 不带语义（数据目录与安装集经 `host-paths` 取得，见 [api-host-paths](./api/api-host-paths.md)）
 - 用 `ConfigOf<typeof configSchema>` 推导配置类型；解析后的派生列表等另行计算，不重复维护默认值对象或取值断言
 - 嵌套对象用 `SchemaGroup`，数组用 `SchemaArray`，不要用裸 JSON 字符串字段
 

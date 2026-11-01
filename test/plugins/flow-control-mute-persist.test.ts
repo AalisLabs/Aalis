@@ -17,7 +17,7 @@ import { memoryStorage } from '../fixtures/memory-storage.js';
 // 禁言表持久化跟随 storage 上线：storage 是 optional，不参与激活拓扑，按字母序整批登记时
 // flow-control 先于 storage-local 激活。曾经只在 apply 里读一次：那一刻没有 storage，
 // 读失败被当成空表，之后第一次 setMuted 整表写回，磁盘上只剩这一次写入的会话。
-// 真 storage-local 多根（用户根 workspace 在前、内置根 data 在后，映射到家目录的 state/），禁言表落在 data 根。
+// 真 storage-local 多根（用户根 workspace 在前、内置根 data 在后，映射到数据目录的 state/），禁言表落在 data 根。
 // ════════════════════════════════════════════════════════════
 
 const MUTES = 'flow-control-mutes.json';

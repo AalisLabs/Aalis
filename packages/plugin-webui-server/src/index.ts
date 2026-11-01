@@ -297,7 +297,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   let listeningUrl: string | undefined;
 
   // 本激活自己发起、没有请求在等的写盘（token 与 access.txt）：收尾时等它们落定。停机、停用或重载返回之后本实例不再往
-  // 家目录里写，接手的实例写下的 access.txt 也不会被旧实例晚到的一次盖掉
+  // 数据目录里写，接手的实例写下的 access.txt 也不会被旧实例晚到的一次盖掉
   const pendingWrites = new Set<Promise<void>>();
   function trackWrite(work: () => Promise<void>): Promise<void> {
     const running = work().finally(() => pendingWrites.delete(running));
@@ -540,7 +540,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       commands: caps.commands,
       services: services.use,
       self: lifecycle.use.id,
-      home: caps.paths.present ? caps.paths.use.home : undefined,
+      dataDir: caps.paths.present ? caps.paths.use.data : undefined,
       versions: () => {
         if (!appDir) return () => undefined;
         const lookup = localPackageLookup(appDir, collectLocalPackageDeps(scanDirs, fsScanEnv));
@@ -1171,7 +1171,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         if (!(await writeAccessFile(url, authToken))) {
           // 写失败上面已 warn 过；再打一条「已写入」只会让人去找一个不存在的文件
           logger.use.warn(
-            `访问凭据未能写入 ${accessFileUri}：修好家目录 state/webui/ 的写权限后重启；` +
+            `访问凭据未能写入 ${accessFileUri}：修好数据目录 state/webui/ 的写权限后重启；` +
               `或把 tokenMode 设为 fixed、在 fixedToken 里填一个至少 ${FIXED_TOKEN_MIN_LENGTH} 个字符的 token，用它在登录页登录`,
           );
           return;

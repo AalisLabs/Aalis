@@ -19,7 +19,7 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 
 // ════════════════════════════════════════════════════════════
 // storage-local 的宿主控制文件兜底：密钥文件读写都拒、主配置拒写，不管经哪个根进来。
-// 用户根配错（覆盖了家目录）、硬链接或符号链接把它们带进别的根时都挡得住；
+// 用户根配错（覆盖了数据目录）、硬链接或符号链接把它们带进别的根时都挡得住；
 // 删除、移动一个含控制文件的目录，或把这类目录的本地路径交给别的工具，同样拒绝。
 // ════════════════════════════════════════════════════════════
 
@@ -42,7 +42,7 @@ describe('storage-local 宿主控制文件兜底', () => {
     provideHostPaths(app, home);
     await app.plugin(storageLocal, {
       roots: [
-        // 配错的用户根：直接盖住了家目录
+        // 配错的用户根：直接盖住了数据目录
         { name: 'everything', path: home, ...rw },
         { name: 'up', path: base, ...rw },
         { name: 'other', path: join(base, 'other'), ...rw },
@@ -101,13 +101,13 @@ describe('storage-local 宿主控制文件兜底', () => {
     await expect(storage.resolveLocalPath?.('up:/', 'delete')).rejects.toThrow('目录里有宿主的密钥文件或主配置');
   });
 
-  it('以读的方式交出目录不查子树：家目录的上级目录照样能当命令的工作目录（挡命令读文件是沙箱的事）', async () => {
+  it('以读的方式交出目录不查子树：数据目录的上级目录照样能当命令的工作目录（挡命令读文件是沙箱的事）', async () => {
     expect(await storage.resolveLocalPath?.('up:/')).toBe(base);
     expect(await storage.resolveLocalPath?.('up:/home')).toBe(home);
   });
 
   it.skipIf(process.platform !== 'darwin' || !existsSync('/System/Volumes/Data/private'))(
-    '经 macOS 的 firmlink（同一个目录的另一条路径）删家目录也拒绝：子树按目录身份比',
+    '经 macOS 的 firmlink（同一个目录的另一条路径）删数据目录也拒绝：子树按目录身份比',
     async () => {
       const other = new App({ name: 'T2', logLevel: 'error' });
       provideHostPaths(other, home);

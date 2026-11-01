@@ -175,8 +175,8 @@ describe('场所、绑定与档位', () => {
       write(join(paths.workspace, 'a.md')),
       write(join(dirs.user, 'code', 'x.ts')),
       read(join(dirs.user, '.ssh', 'id_ed25519')),
-      write(join(dirs.home, 'state', 'x')),
-      write(join(dirs.home, 'self', 'skills', 's', 'SKILL.md')),
+      write(join(dirs.data, 'state', 'x')),
+      write(join(dirs.data, 'self', 'skills', 's', 'SKILL.md')),
       write(join(dirs.user, '.gitconfig')),
       { effect: 'exec', host: false },
       { effect: 'exec', host: true },
@@ -302,7 +302,7 @@ describe('子任务随派它的那一轮', () => {
 
     const issued = await svc.forCall(turn);
     expect(issued).toMatchObject({ exec: 'sandbox', home: paths.workspace });
-    expect(issued.allows('write', join(sessionTmpIn(dirs.home, child), 'x'))).toBe(true);
+    expect(issued.allows('write', join(sessionTmpIn(dirs.data, child), 'x'))).toBe(true);
     const note = join(paths.workspace, 'a.md');
     expect(issued.allows('write', note)).toBe(true);
 
@@ -417,8 +417,8 @@ describe('清单按真实路径', () => {
       return real;
     };
 
-    it('拒读：家目录里的 secrets.yaml、链接出去的 ~/.ssh，读真实路径照样拒', async () => {
-      const secrets = linkFromDotfiles('secrets.yaml', join(dirs.home, 'secrets.yaml'));
+    it('拒读：数据目录里的 secrets.yaml、链接出去的 ~/.ssh，读真实路径照样拒', async () => {
+      const secrets = linkFromDotfiles('secrets.yaml', join(dirs.data, 'secrets.yaml'));
       const ssh = linkFromDotfiles('ssh', join(dirs.user, '.ssh'), true);
       const { svc, webui } = await start();
       const cred = await svc.forCall(ownerTurn(webui));
@@ -428,8 +428,8 @@ describe('清单按真实路径', () => {
     });
 
     it('宿主控制面：写 secrets.yaml 与主配置的真实路径照样拒', async () => {
-      const secrets = linkFromDotfiles('secrets.yaml', join(dirs.home, 'secrets.yaml'));
-      const config = linkFromDotfiles('aalis.config.yaml', join(dirs.home, 'aalis.config.yaml'));
+      const secrets = linkFromDotfiles('secrets.yaml', join(dirs.data, 'secrets.yaml'));
+      const config = linkFromDotfiles('aalis.config.yaml', join(dirs.data, 'aalis.config.yaml'));
       const cred = await ownerCredential(await start());
       for (const path of [secrets, config]) {
         expect(await verdict(cred, write(path)), path).toContain('宿主控制面');
@@ -464,12 +464,12 @@ describe('清单按真实路径', () => {
   });
 
   describe('守护进程的入口与安装集的 package.json', () => {
-    it('npm 形态（create-aalis 生成的项目，家目录在安装集里）：两个都是宿主控制面', async () => {
+    it('npm 形态（create-aalis 生成的项目，数据目录在安装集里）：两个都是宿主控制面', async () => {
       const entry = join(dirs.app, 'index.mjs');
       writeFileSync(entry, '');
       writeFileSync(join(dirs.app, 'package.json'), '{}');
-      dirs.home = join(dirs.app, 'home');
-      mkdirSync(dirs.home);
+      dirs.data = join(dirs.app, 'data');
+      mkdirSync(dirs.data);
       const cred = await ownerCredential(await startWithEntry(entry));
       for (const path of [entry, join(dirs.app, 'package.json')]) {
         expect(await verdict(cred, write(path)), path).toContain('宿主控制面');
@@ -491,10 +491,10 @@ describe('清单按真实路径', () => {
 });
 
 describe('本会话临时区', () => {
-  const tmpOf = (id: string) => sessionTmpIn(dirs.home, id);
+  const tmpOf = (id: string) => sessionTmpIn(dirs.data, id);
 
   it('目录名是会话 id 的十六进制：大小写不敏感的文件系统上，两个会话的临时区不会落到同一个目录', () => {
-    const tmp = join(dirs.home, 'tmp');
+    const tmp = join(dirs.data, 'tmp');
     // 这两个 id 的 base64url 只差大小写
     expect(sessionTmpOf(tmp, 'tg:private:aaa').toLowerCase()).not.toBe(
       sessionTmpOf(tmp, 'tg:private:Gaa').toLowerCase(),
@@ -559,8 +559,8 @@ describe('本会话临时区', () => {
     // 不是会话 id 的编码（大写的十六进制解得出来，往回编码却对不上）：再旧也不动
     const strays = ['not hex!', Buffer.from('session-other').toString('hex').toUpperCase()];
     for (const name of strays) {
-      mkdirSync(join(dirs.home, 'tmp', 'sessions', name), { recursive: true });
-      utimesSync(join(dirs.home, 'tmp', 'sessions', name), old, old);
+      mkdirSync(join(dirs.data, 'tmp', 'sessions', name), { recursive: true });
+      utimesSync(join(dirs.data, 'tmp', 'sessions', name), old, old);
     }
 
     // 清扫在后台跑，收尾时等它跑完
@@ -572,7 +572,7 @@ describe('本会话临时区', () => {
     expect(existsSync(tmpOf('session-fresh')), '最近改过').toBe(true);
     expect(existsSync(tmpOf('session-deep')), '深层文件最近改过').toBe(true);
     for (const name of strays) {
-      expect(existsSync(join(dirs.home, 'tmp', 'sessions', name)), `不是会话临时区的目录不动：${name}`).toBe(true);
+      expect(existsSync(join(dirs.data, 'tmp', 'sessions', name)), `不是会话临时区的目录不动：${name}`).toBe(true);
     }
   });
 
@@ -587,7 +587,7 @@ describe('本会话临时区', () => {
     const warns: string[] = [];
     const logger = { warn: (...args: unknown[]) => void warns.push(args.map(String).join(' ')) };
     const sweep = (sessionOf: (id: string) => SessionInfo | undefined) =>
-      sweepSessionTmp(join(dirs.home, 'tmp'), sessionOf, Date.now(), logger);
+      sweepSessionTmp(join(dirs.data, 'tmp'), sessionOf, Date.now(), logger);
     beforeEach(() => {
       warns.length = 0;
     });
@@ -633,7 +633,7 @@ describe('沙箱策略', () => {
   it('只读与工作区档有：可写根含场所的主目录与本会话临时区', async () => {
     const { paths, svc, webui } = await start();
     const policy = (await svc.forCall(ownerTurn(webui))).sandboxPolicy();
-    expect(policy.write).toEqual(expect.arrayContaining([paths.workspace, sessionTmpIn(dirs.home, webui)]));
+    expect(policy.write).toEqual(expect.arrayContaining([paths.workspace, sessionTmpIn(dirs.data, webui)]));
     expect(policy.network).toBe('on');
   });
 });

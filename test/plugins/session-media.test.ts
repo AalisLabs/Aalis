@@ -34,7 +34,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 // ════════════════════════════════════════════════════════════
 // 会话媒体的目录约定（api-media 的 session-media）：写入方各用自己的子目录 `data:/<种类目录>/<会话目录>/<写入方>/`，
 // 交出完整的存储地址；谁写的谁清，/clear 与删会话经 memory:clear 各清自己的子目录，每种一行、标 type，会话目录删空了
-// 一并删掉，别的写入方（第三方）的子目录不动。存储是临时家目录上的 storage-local，OneBot 实现端是本地起的假服务。
+// 一并删掉，别的写入方（第三方）的子目录不动。存储是临时数据目录上的 storage-local，OneBot 实现端是本地起的假服务。
 // ════════════════════════════════════════════════════════════
 
 type WsSocket = { on(event: 'message', cb: (raw: Buffer) => void): void; send(data: string): void; terminate(): void };
@@ -70,7 +70,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-/** 临时家目录：data 根在它的 state/ 下 */
+/** 临时数据目录：data 根在它的 state/ 下 */
 function home(): { base: string; state: (...parts: string[]) => string } {
   const base = mkdtempSync(join(tmpdir(), 'aalis-session-media-'));
   cleanups.push(() => rmSync(base, { recursive: true, force: true }));

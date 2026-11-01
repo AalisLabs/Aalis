@@ -29,7 +29,7 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 
 | 宿主件 | 接到 core 的方式 | 默认实现（在 `@aalis/runtime`） | 职责 |
 |---|---|---|---|
-| 宿主路径 | `host-paths` 服务（`@aalis/api-host-paths`） | `startAalis` 解析家目录与安装集（`parseHostArgs` / `resolveHome` / `derivePaths`） | 家目录、安装集与家目录布局的绝对路径 |
+| 宿主路径 | `host-paths` 服务（`@aalis/api-host-paths`） | `startAalis` 解析数据目录与安装集（`parseHostArgs` / `resolveDataDir` / `derivePaths`） | 数据目录、安装集与数据目录布局的绝对路径 |
 | 读日志 | `host-logs` 服务（`@aalis/api-host-logs`） | `createHostLogs()`：历史读 `logs/latest.log`，实时接日志中枢 | 读日志流：最近的历史与此后的实时日志（core 只给写日志的 logger） |
 | 配置文档 | `host-config` 服务（`@aalis/api-host-config`） | `createFsYamlConfigProvider()` + `createFsSecretsProvider()` + `createConfigStore()` / `installHostConfig()` | 配置与密钥文件读 / 写 / `fs.watch` 热重载 |
 | 插件发现 | `app.pluginAll`；热扫描为 `plugin-source` 服务（`@aalis/api-plugin-source`） | `createFsPluginLoader()` / `createNodeModulesPluginLoader()` + `createPluginDiscovery()` | 扫描 `packages/` 或项目依赖 + dynamic import，整批登记 |

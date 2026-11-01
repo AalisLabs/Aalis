@@ -13,7 +13,7 @@ export default defineLocale<Source>()({
   promptDescription: 'Prefix of the command-line input prompt',
   maxLogEntriesLabel: 'In-memory log buffer limit (entries)',
   maxLogEntriesDescription:
-    'Maximum number of entries the log page keeps in memory; beyond it the oldest are dropped in chunks. The full log is always in logs/latest.log in the home directory',
+    'Maximum number of entries the log page keeps in memory; beyond it the oldest are dropped in chunks. The full log is always in logs/latest.log in the data directory',
   startupViewLabel: 'Startup view',
   startupViewDescription: 'Default view after the CLI takes over the terminal. last restores the last view',
   viewLast: 'Restore last',
@@ -98,7 +98,7 @@ export default defineLocale<Source>()({
   helpChoose: 'Choose approve / deny, Enter to confirm',
   helpTips: 'Tips',
   tipLogFile:
-    '• The full log is written to logs/latest.log in the home directory; at each startup the previous one is renamed latest.1.log, and 5 are kept. Use tail -F to keep following across restarts.',
+    '• The full log is written to logs/latest.log in the data directory; at each startup the previous one is renamed latest.1.log, and 5 are kept. Use tail -F to keep following across restarts.',
   tipRestore: '• The original terminal content is restored on exit (alternate screen).',
   tipCommands: '• Input starting with / is parsed as a command; anything else goes to the agent.',
   tipKeys:

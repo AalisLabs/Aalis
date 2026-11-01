@@ -94,7 +94,7 @@ export interface BoundStorage extends StorageMethods {
 
 ### 提供者（参考实现）
 
-`@aalis/plugin-storage-local`——把 `config.roots` 里声明的用户根（缺省只有 `workspace`），以及按家目录布局派生的内部根（`data`、`pluginData`、`tmp`、`cache`、`logs`、`self`）注册为命名根。全部根就绪之后整体登记**一个**提供者，根在它内部按 URI 根名路由；根名不认识时抛「未知存储根：x（已注册根：…）」。
+`@aalis/plugin-storage-local`——把 `config.roots` 里声明的用户根（缺省只有 `workspace`），以及按数据目录布局派生的内部根（`data`、`pluginData`、`tmp`、`cache`、`logs`、`self`）注册为命名根。全部根就绪之后整体登记**一个**提供者，根在它内部按 URI 根名路由；根名不认识时抛「未知存储根：x（已注册根：…）」。
 
 ### 典型消费点
 
@@ -249,11 +249,11 @@ root 的 `readable/writable/deletable` 就是该根的访问策略。这与 auth
 
 ### data 根：可删 + 持久化原子写
 
-内部根 `data`（家目录的 `state/`）可删——`/clear` 的附件清理依赖它。`deletable` 是后端能力位而非权限闸：agent 侧的删除面由各工具自身的权限档把关。参考实现对写操作做「临时文件 + rename」原子覆盖；覆写沿用原文件的权限位，凭据（`secret`）一律 0600。
+内部根 `data`（数据目录的 `state/`）可删——`/clear` 的附件清理依赖它。`deletable` 是后端能力位而非权限闸：agent 侧的删除面由各工具自身的权限档把关。参考实现对写操作做「临时文件 + rename」原子覆盖；覆写沿用原文件的权限位，凭据（`secret`）一律 0600。
 
 ### 宿主控制文件
 
-参考实现在执行点兜底：不管经哪个根，家目录的 `secrets.yaml` 读写都拒绝，`aalis.config.yaml` 拒绝写入（可以读）；按 (dev, ino) 比对，硬链接与符号链接都挡得住。删除、移动、改名目录，或经 `resolveLocalPath` 以写、删的方式交出目录的本地路径时，子树里含受保护的文件也拒绝（以读的方式交出目录不查子树）。细节见 [plugin-storage-local](../plugins/plugin-storage-local.md#宿主控制文件)。
+参考实现在执行点兜底：不管经哪个根，数据目录的 `secrets.yaml` 读写都拒绝，`aalis.config.yaml` 拒绝写入（可以读）；按 (dev, ino) 比对，硬链接与符号链接都挡得住。删除、移动、改名目录，或经 `resolveLocalPath` 以写、删的方式交出目录的本地路径时，子树里含受保护的文件也拒绝（以读的方式交出目录不查子树）。细节见 [plugin-storage-local](../plugins/plugin-storage-local.md#宿主控制文件)。
 
 ---
 

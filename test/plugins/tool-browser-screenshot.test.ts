@@ -98,7 +98,7 @@ beforeAll(async () => {
 
   app = new App({ name: 'T', logLevel: 'error' });
   provideHostPaths(app, base);
-  // tmp 是 storage-local 的内置根，映射到家目录的 tmp/
+  // tmp 是 storage-local 的内置根，映射到数据目录的 tmp/
   await app.plugins.register(storageLocal, {});
   host = app.bind(hostUses);
   handlers = {};

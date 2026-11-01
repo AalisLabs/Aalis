@@ -9,7 +9,7 @@
 //   npm create aalis@latest my-bot -- --yes --lang zh-CN,en → 指定 Aalis 的语言列表（安装界面也按它显示）
 //
 // 产出一个独立项目目录：package.json（依赖 @aalis/core + @aalis/runtime + 所选插件）、
-// index.mjs（一行 startAalis 启动）、家目录 data/（aalis.config.yaml 与 secrets.yaml）、README、.gitignore，
+// index.mjs（一行 startAalis 启动）、数据目录 data/（aalis.config.yaml 与 secrets.yaml）、README、.gitignore，
 // 随后自动 npm install，失败时按 npm 的报错写明是哪一类、怎么修。启动：cd my-bot && npm start。
 //
 // 默认装 standard 档的常用一套；本机有 Ollama（认 OLLAMA_HOST）时对话模型默认用它，零 key 可用。
@@ -738,8 +738,8 @@ interface Copy {
 const COPY: Record<UiLanguage, Copy> = {
   'zh-CN': {
     description: projectName => `${projectName} —— 基于 Aalis 的 AI 助手`,
-    entry: `// 从本目录的 node_modules 加载已装的 @aalis 插件。家目录（配置、密钥、数据、日志）缺省是本目录下的 data/，
-// 用 npm start -- --profile <名> 另开的实例在 data-<名>/；设 AALIS_HOME 或用 npm start -- --home <目录> 可换到别处
+    entry: `// 从本目录的 node_modules 加载已装的 @aalis 插件。数据目录（配置、密钥、数据、日志）缺省是本目录下的 data/，
+// 用 npm start -- --profile <名> 另开的实例在 data-<名>/；设 AALIS_DATA 或用 npm start -- --data <目录> 可换到别处
 // （npm 要在 -- 之后才把参数传给脚本）。默认开启控制台彩色日志 + data/logs/latest.log 文件日志（无 TTY 时自动关闭染色）。`,
     config:
       '# 启用的插件用默认配置启动；需要密钥/地址的在下方 plugins 段填写（密钥在启动时移进同目录的 secrets.yaml，本处换成引用；data/ 已在 .gitignore 里，不入库）。',
@@ -759,10 +759,10 @@ npm start
 
 ## 配置
 
-- 家目录是 \`data/\`：配置、密钥、数据与日志都在里面（已在 \`.gitignore\` 里，不会入库）。设 \`AALIS_HOME\` 或用 \`npm start -- --home <目录>\` 可换到别处。
-- 在同一个项目里另开一个实例：\`npm start -- --profile <名>\`（第一次加 \`--init\`），它的家目录是 \`data-<名>/\`。
+- 数据目录是 \`data/\`：配置、密钥、数据与日志都在里面（已在 \`.gitignore\` 里，不会入库）。设 \`AALIS_DATA\` 或用 \`npm start -- --data <目录>\` 可换到别处。
+- 在同一个项目里另开一个实例：\`npm start -- --profile <名>\`（第一次加 \`--init\`），它的数据目录是 \`data-<名>/\`。
 - 编辑 \`data/aalis.config.yaml\` 调整插件与参数。
-- 密钥/令牌：填进 \`data/aalis.config.yaml\` 里该插件的段${hasWebui ? '，或启动后在 WebUI 插件区打开该插件填写' : ''}。启动时它们会被移进 \`data/secrets.yaml\`（0600），配置文件里换成引用；备份家目录时连同 \`secrets.yaml\` 一起备份。
+- 密钥/令牌：填进 \`data/aalis.config.yaml\` 里该插件的段${hasWebui ? '，或启动后在 WebUI 插件区打开该插件填写' : ''}。启动时它们会被移进 \`data/secrets.yaml\`（0600），配置文件里换成引用；备份数据目录时连同 \`secrets.yaml\` 一起备份。
 ${hasWebui ? `- WebUI 管理界面默认 ${WEBUI_URL} 。\n` : ''}
 ## 装更多插件
 
@@ -777,9 +777,9 @@ npm install @aalis/plugin-<name>
   },
   en: {
     description: projectName => `${projectName} — an AI assistant based on Aalis`,
-    entry: `// Loads the installed @aalis plugins from this directory's node_modules. The home directory (config, secrets, data, logs)
-// defaults to data/ here, and an instance started with npm start -- --profile <name> uses data-<name>/; set AALIS_HOME or
-// use npm start -- --home <directory> to move it (npm passes arguments to the script only after --).
+    entry: `// Loads the installed @aalis plugins from this directory's node_modules. The data directory (config, secrets, data, logs)
+// defaults to data/ here, and an instance started with npm start -- --profile <name> uses data-<name>/; set AALIS_DATA or
+// use npm start -- --data <directory> to move it (npm passes arguments to the script only after --).
 // Colored console logs and the data/logs/latest.log file log are on by default (coloring turns off without a TTY).`,
     config:
       '# Enabled plugins start with their default configuration; fill in keys and addresses in the plugins section below (on start, keys move into secrets.yaml in this directory and are replaced by references here; data/ is in .gitignore and not committed).',
@@ -799,10 +799,10 @@ npm start
 
 ## Configuration
 
-- The home directory is \`data/\`: configuration, secrets, data and logs all live there (it is in \`.gitignore\` and not committed). Set \`AALIS_HOME\` or use \`npm start -- --home <directory>\` to move it elsewhere.
-- To run another instance in the same project: \`npm start -- --profile <name>\` (add \`--init\` the first time); its home directory is \`data-<name>/\`.
+- The data directory is \`data/\`: configuration, secrets, data and logs all live there (it is in \`.gitignore\` and not committed). Set \`AALIS_DATA\` or use \`npm start -- --data <directory>\` to move it elsewhere.
+- To run another instance in the same project: \`npm start -- --profile <name>\` (add \`--init\` the first time); its data directory is \`data-<name>/\`.
 - Edit \`data/aalis.config.yaml\` to adjust plugins and settings.
-- Keys and tokens: fill them into the plugin's section in \`data/aalis.config.yaml\`${hasWebui ? ', or open the plugin in the WebUI plugin area after starting' : ''}. On start they are moved into \`data/secrets.yaml\` (0600) and replaced by references in the config file; back up \`secrets.yaml\` together with the home directory.
+- Keys and tokens: fill them into the plugin's section in \`data/aalis.config.yaml\`${hasWebui ? ', or open the plugin in the WebUI plugin area after starting' : ''}. On start they are moved into \`data/secrets.yaml\` (0600) and replaced by references in the config file; back up \`secrets.yaml\` together with the data directory.
 ${hasWebui ? `- The WebUI admin console is at ${WEBUI_URL} by default.\n` : ''}
 ## More plugins
 
@@ -911,7 +911,7 @@ export function renderConfig(
 }
 
 function renderGitignore(): string {
-  // 家目录 data/ 与另开实例的 data-<名>/ 必须在列：配置、密钥与数据都在里面，入库即泄露。只认项目根上的
+  // 数据目录 data/ 与另开实例的 data-<名>/ 必须在列：配置、密钥与数据都在里面，入库即泄露。只认项目根上的
   return `${['node_modules/', '/data/', '/data-*/', '*.log', 'dist/'].join('\n')}\n`;
 }
 
@@ -1227,7 +1227,7 @@ async function orderLanguages(p: Prompter, defaults: readonly string[]): Promise
 }
 
 /**
- * 写出项目：package.json、入口、家目录（配置与空的密钥文件）、.gitignore 与 README。生成物的语言只取 answers.ui（第一问选的
+ * 写出项目：package.json、入口、数据目录（配置与空的密钥文件）、.gitignore 与 README。生成物的语言只取 answers.ui（第一问选的
  * 安装界面语言），不看识别到的系统语言
  */
 export async function writeProject(
@@ -1240,7 +1240,7 @@ export async function writeProject(
   const versions = await resolveDepRanges(o.registry, ['@aalis/core', '@aalis/runtime', ...enabled]);
   writeFileSync(resolve(o.dir, 'package.json'), renderPackageJson(projectName, enabled, versions, ui), 'utf-8');
   writeFileSync(resolve(o.dir, 'index.mjs'), renderEntry(ui), 'utf-8');
-  // 家目录：配置文件存在即算初始化过（runtime 的判据），目录与两个文件都收紧权限
+  // 数据目录：配置文件存在即算初始化过（runtime 的判据），目录与两个文件都收紧权限
   const homeDir = resolve(o.dir, 'data');
   mkdirSync(homeDir, { recursive: true, mode: 0o700 });
   writeFileSync(resolve(homeDir, 'secrets.yaml'), '', { encoding: 'utf-8', mode: 0o600 });

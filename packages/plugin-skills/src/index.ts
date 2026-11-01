@@ -16,7 +16,7 @@ import { t } from './texts.js';
 // ════════════════════════════════════════════════════════════
 // plugin-skills — Agent Skills（兼容 Anthropic Agent Skills 标准）
 //
-// 每个 skill 是技能目录下的 <name>/SKILL.md 文件夹（缺省为存储的内容目录 self:/skills/，即家目录的 self/skills），包含：
+// 每个 skill 是技能目录下的 <name>/SKILL.md 文件夹（缺省为存储的内容目录 self:/skills/，即数据目录的 self/skills），包含：
 //   - SKILL.md（必需）：YAML frontmatter（name, description, triggers?, license?）
 //     + Markdown 正文
 //   - scripts/（可选）：可执行脚本

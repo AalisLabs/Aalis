@@ -685,7 +685,7 @@ interface HostConfigResponse {
   config: Record<string, unknown>; // 配置文档里写了的核心键
   schema: ConfigSchema; // 核心键的 schema
   restartKeys: string[]; // 要重启才生效的键
-  home?: string; // 家目录
+  dataDir?: string; // 数据目录
 }
 interface ServiceListResponse {
   // 服务名 → 提供者（第一个就是正在用的）与偏好的提供者

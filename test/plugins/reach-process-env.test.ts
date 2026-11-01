@@ -30,7 +30,7 @@ import {
 
 /** rc 文件导出、沙箱里不带的变量：本实例自己的与 ssh-agent 的 socket（占位值） */
 const RC_DROPPED = {
-  AALIS_HOME: '/zz/aalis-home',
+  AALIS_DATA: '/zz/aalis-home',
   SSH_AUTH_SOCK: '/zz/agent.sock',
 };
 /** rc 文件导出的其余变量，沙箱里照样带上：名字或值像凭据的也一样（占位值） */
@@ -127,7 +127,7 @@ async function start() {
 const shellCalls = () => readFileSync(log, 'utf8').trim().split('\n');
 
 describe('取 login shell 的环境', () => {
-  it('在场所的主目录下取（主目录不在时在用户家目录下取），同一个主目录只取一次；宿主执行用完整的环境', async () => {
+  it('在场所的主目录下取（主目录不在时在用户主目录下取），同一个主目录只取一次；宿主执行用完整的环境', async () => {
     process.env.SHELL = fakeShell();
     const { paths, sm, svc, webui } = await start();
     // 默认工作区目录由 runtime 初始化时建；不在（如被删掉）时与新开一个终端相同
@@ -182,7 +182,7 @@ describe('沙箱内的环境', () => {
     const { svc, webui } = await start();
     const cred = await svc.forCall(ownerTurn(webui));
     const env = await cred.processEnv('sandbox');
-    const tmp = sessionTmpIn(dirs.home, webui);
+    const tmp = sessionTmpIn(dirs.data, webui);
     expect(env.npm_config_userconfig).toBe(join(tmp, 'npmrc'));
     expect(readFileSync(join(tmp, 'npmrc'), 'utf8').trim().split('\n')).toEqual([
       'registry=https://registry.npmmirror.com/',
@@ -251,7 +251,7 @@ describe('沙箱环境的 npm 配置副本', () => {
     const cred = await svc.forCall(ownerTurn(webui));
     const victim = join(dirs.base, 'victim.yaml');
     writeFileSync(victim, 'zz: keep\n');
-    const npmrc = join(sessionTmpIn(dirs.home, webui), 'npmrc');
+    const npmrc = join(sessionTmpIn(dirs.data, webui), 'npmrc');
     symlinkSync(victim, npmrc);
     await cred.processEnv('sandbox');
     expect(readFileSync(victim, 'utf8')).toBe('zz: keep\n');
@@ -263,7 +263,7 @@ describe('沙箱环境的 npm 配置副本', () => {
     process.env.SHELL = fakeShell();
     const { svc, webui } = await start();
     const cred = await svc.forCall(ownerTurn(webui));
-    const tmp = sessionTmpIn(dirs.home, webui);
+    const tmp = sessionTmpIn(dirs.data, webui);
     const elsewhere = join(dirs.base, 'elsewhere');
     mkdirSync(elsewhere);
     rmSync(tmp, { recursive: true });

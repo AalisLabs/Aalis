@@ -27,13 +27,13 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 
 | 导出 | 作用 |
 |---|---|
-| `startAalis(opts?)` | **一行启动**：解析家目录 → 读家目录里的 `aalis.config.yaml` 与 `secrets.yaml` → 组装 `App` 并接上宿主路径与配置文档 → 从安装集的 `node_modules` 发现并登记已装插件 → 启动 + 挂 SIGINT/SIGTERM 优雅退出 + 进程级重生。返回 `App`。家目录见「家目录」一节，装配顺序见「startAalis 的装配顺序」。 |
+| `startAalis(opts?)` | **一行启动**：解析数据目录 → 读数据目录里的 `aalis.config.yaml` 与 `secrets.yaml` → 组装 `App` 并接上宿主路径与配置文档 → 从安装集的 `node_modules` 发现并登记已装插件 → 启动 + 挂 SIGINT/SIGTERM 优雅退出 + 进程级重生。返回 `App`。数据目录见「数据目录」一节，装配顺序见「startAalis 的装配顺序」。 |
 | `createNodeModulesPluginLoader(appDir)` | **独立部署**插件加载器：读安装集（绝对路径）`package.json` 的 `dependencies`+`optionalDependencies`，按 `isLoadablePlugin`（**唯一标准：`keywords` 含 `aalis-plugin`**；契约 `aalis-api`/前端 `aalis-interface`/核心 `aalis-core`/工具链 `aalis-runtime`/工具库 `aalis-util` 因不带该词自然排除，无名前缀/service/subsystem 回退、无 marker 排除）发现并动态 import。包目录按 `node_modules` 逐级上溯定位，入口按 `import()` 的规则解析（`exports` 取 `"."` 的 import 条件目标，没有 `exports` 时按 `main`）。 |
 | `createFsPluginLoader(packagesDir)` | **monorepo 自托管**加载器：扫给定的 packages 目录（绝对路径，本仓库入口传 `<仓库>/packages`），复用同一 `aalis-plugin` 纯关键词正向门。 |
 | `createPluginDiscovery(app, loader, store)` | 发现驱动：`loadAll()` 发现并导入全部插件，按配置存储取各实例的配置（解析密钥引用后）与禁用标记（含 `name:suffix` 实例），整批交给 `app.pluginAll`，返回时已静置；`rescan()` 登记新出现的插件与配置里尚未注册的 `name:suffix` 实例，返回本次新登记的主实例名（定义名），即 `plugin-source` 服务的实现；`registerConfiguredInstances()` 只登记配置里尚未注册的 `name:suffix` 实例（模块取注册表里该模块在册实例的定义，主实例优先；主实例已卸载时取同模块其它在册实例的），供配置热重载调用。加载器契约 `PluginLoader`（`discover` / `load` / 可选 `reload`）由本包导出。 |
 | `createFsYamlConfigProvider(configPath)` | 文件系统 + YAML 配置 provider（`configPath` 为绝对路径；返回 `{config, provider}`，交给 `createConfigStore`）。 |
-| `createFsSecretsProvider(secretsPath)` | 文件系统 + YAML 密钥存储（`secretsPath` 为绝对路径，`startAalis` 传家目录里的 `secrets.yaml`；返回 `{values, provider}`，作为 `createConfigStore` 的第三个参数）。读写、拒写与监听同配置文件；文件不存在时按空映射处理、第一次保存时建出；临时文件一律以 0600 创建。类型 `SecretProvider`、`SecretStoreInit` 由本包导出。 |
-| `parseHostArgs` / `resolveHome` / `derivePaths` / `isHomeInitialized` / `initHome` | 家目录的解析、路径派生与初始化，`startAalis` 用的就是这一套；参数有误时抛 `HomeArgsError`（见「家目录」）。 |
+| `createFsSecretsProvider(secretsPath)` | 文件系统 + YAML 密钥存储（`secretsPath` 为绝对路径，`startAalis` 传数据目录里的 `secrets.yaml`；返回 `{values, provider}`，作为 `createConfigStore` 的第三个参数）。读写、拒写与监听同配置文件；文件不存在时按空映射处理、第一次保存时建出；临时文件一律以 0600 创建。类型 `SecretProvider`、`SecretStoreInit` 由本包导出。 |
+| `parseHostArgs` / `resolveDataDir` / `derivePaths` / `isDataDirInitialized` / `initDataDir` | 数据目录的解析、路径派生与初始化，`startAalis` 用的就是这一套；参数有误时抛 `HostArgsError`（见「数据目录」）。 |
 | `createConfigStore(initial, provider?, secrets?)` | 配置文档：内存态加危险键闸，读写方法与 `HostConfig` 相同；落盘委托给 `provider.save`（不提供表示宿主不持久化，保存立即兑现、不写盘），外部变更经 `provider.watch` 接入。`secrets`（`{ values, provider? }`）是密钥存储：给了才把密钥字段拆进它、文档里只留引用，`resolvePluginConfig(id, schema)` 把文档形态解析成交给 core 的配置；落盘时先写密钥再写文档。密钥文件拒写之后，下一次密钥文件变更按文件对账。不给时密钥照旧以明文留在文档里。本身不碰文件。 |
 | `installHostConfig(app, store, opts?)` | 把文档作为 `host-config` 服务独占登记在根激活上，并应用文档里的服务偏好。`opts` 传交给配置同步的同一份，`host-config` 的 `trimUnknownFields` 据此声明宿主的裁剪政策（缺省为裁剪）。插件拿到的 `save()` 兑现即已落盘（宿主不持久化时立即兑现、不写盘），失败以拒绝传出并已记一笔日志（拒写记告警，其它记 error）；`applyPluginConfig` 在这里实现，插件拿到的 `setPluginConfig` 拒收密钥字段上的明文。须在登记任何插件之前调用。 |
 | `withPluginConfigSync(loader, app, store, opts?)` | 加载政策：包装加载器，导入定义后、登记前把 `configSchema` 派生的默认值深合并进文档，默认裁剪 schema 外字段，并把密钥字段上的明文移进密钥存储。返回 `{ loader, finishInitialLoad }`，首次加载批次在 `finishInitialLoad()` 时合并为一次落盘。 |
@@ -41,9 +41,9 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 | `createProcessRespawnStrategy({ appDir })` | 进程级重启策略（`app.restart()` → 子进程重生；开发模式在安装集里找本地 tsx）。 |
 | `createServiceRestartStrategy()` / `SERVICE_RESTART_EXIT_CODE` | 服务形态的重启策略：停掉 App 后以 75 退出，由服务管理器拉起（见「实例锁」的服务形态重启）。 |
 
-`startAalis` 的 `opts`：`appDir`（安装集，即部署目录，绝对路径，必填；不传时在解析家目录之前报错并以 2 退出；家目录缺省在它下面）、`pluginLoader`、`consoleSink` / `fileLog` / `terminalRestore`（默认开）、`argv`（默认 `process.argv.slice(2)`）、`devMode`、`configSync`。
+`startAalis` 的 `opts`：`appDir`（安装集，即部署目录，绝对路径，必填；不传时在解析数据目录之前报错并以 2 退出；数据目录缺省在它下面）、`pluginLoader`、`consoleSink` / `fileLog` / `terminalRestore`（默认开）、`argv`（默认 `process.argv.slice(2)`）、`devMode`、`configSync`。
 
-文件日志写家目录的 `logs/latest.log`，`fileLog: false` 关掉。启动时先轮转旧日志：上一轮的改名为
+文件日志写数据目录的 `logs/latest.log`，`fileLog: false` 关掉。启动时先轮转旧日志：上一轮的改名为
 `latest.1.log`（编号插在扩展名前），已有的依次后移，保留 5 份，更早的删除。每次守护进程启动都算一轮，
 `/restart`、市场更新引起的重启与更新失败后的回滚重启也各算一轮。轮转失败不影响启动：照旧覆盖写
 `latest.log`，并记一条告警写明原因。不接在原内容后面写，是因为一个文件只装一轮、seq 随文件位置单调递增，
@@ -55,37 +55,37 @@ WebUI 的历史分页与 CLI 的启动恢复都依赖这一点。
 重扫描也在激活前同步并保存。配置热重载（`aalis.config.yaml` 或 `secrets.yaml` 被外部修改）复用相同规则，通过 `updateConfig` 重建有变更的插件（禁用插件只换配置、保持禁用，启用时按新配置激活），卸载文件里已没有配置段的后缀实例，并登记新出现的后缀实例。
 直接组装 `App` 的宿主仍自行决定配置政策；Core 不解释 schema，也不替运行中的实例改配置。
 
-## 家目录
+## 数据目录
 
-家目录装着一个实例的全部状态：配置、密钥、数据库、日志、人设卡、技能、默认工作区。它放在部署目录（安装集 `appDir`）里，不放在用户主目录下：一个部署的配置、数据与日志都在它自己的目录里。runtime 在启动时解析一次，之后不变；进程的 cwd 不带任何语义，`startAalis` 也不切换 cwd。覆盖顺序：
+数据目录装着一个实例的全部状态：配置、密钥、数据库、日志、人设卡、技能、默认工作区。它放在部署目录（安装集 `appDir`）里，不放在用户主目录下：一个部署的配置、数据与日志都在它自己的目录里。runtime 在启动时解析一次，之后不变；进程的 cwd 不带任何语义，`startAalis` 也不切换 cwd。覆盖顺序：
 
-1. 命令行 `--home <目录>`；
-2. 环境变量 `AALIS_HOME`；
+1. 命令行 `--data <目录>`；
+2. 环境变量 `AALIS_DATA`；
 3. 部署目录下的 `data/`；给了 `--profile <名>` 或 `AALIS_PROFILE` 时是部署目录下的 `data-<名>/`（名字只能用小写字母、数字与连字符，以字母或数字开头，最长 32 个字符）。
 
-| 怎么启动 | 家目录 |
+| 怎么启动 | 数据目录 |
 |---|---|
 | 脚手架生成的项目：`npm start` | `<项目目录>/data/` |
 | 本仓库：`pnpm dev`、`pnpm start` | `<仓库>/data/` |
 | 再加 `--profile <名>`（`npm start -- --profile <名>`、`pnpm dev --profile <名>`） | 部署目录下的 `data-<名>/` |
-| 加 `--home <目录>` 或设 `AALIS_HOME` | 那个目录 |
+| 加 `--data <目录>` 或设 `AALIS_DATA` | 那个目录 |
 
-部署目录下的 `data/` 与 `data-*/` 要写进 `.gitignore`，只认根上的（脚手架生成的与本仓库的都已写上）。它们在 git 工作树里，`git clean -x`（`-fdx`、`-fdX`）会连同家目录一起删掉，部署目录里不要这样清理。
+部署目录下的 `data/` 与 `data-*/` 要写进 `.gitignore`，只认根上的（脚手架生成的与本仓库的都已写上）。它们在 git 工作树里，`git clean -x`（`-fdx`、`-fdX`）会连同数据目录一起删掉，部署目录里不要这样清理。
 
-`AALIS_HOME`、`AALIS_PROFILE` 设为空串时视同未设。profile 与 `--home` / `AALIS_HOME` 同时给出时报错退出，不静默挑一个。`--home` 与 `AALIS_HOME` 开头的 `~` 展开为用户主目录；命令行与环境变量里写的相对路径按启动时的 cwd 解析一次，之后全程用绝对路径。
+`AALIS_DATA`、`AALIS_PROFILE` 设为空串时视同未设。profile 与 `--data` / `AALIS_DATA` 同时给出时报错退出，不静默挑一个。`--data` 与 `AALIS_DATA` 开头的 `~` 展开为用户主目录；命令行与环境变量里写的相对路径按启动时的 cwd 解析一次，之后全程用绝对路径。
 
-profile 只由 `--profile` 与 `AALIS_PROFILE` 给出：经 `--home` 或 `AALIS_HOME` 选中的家目录没有 profile，不论它叫什么，插件按 profile 派生的名字（如 MongoDB 记忆库的库名）也按没有 profile 算，要固定就在插件配置里写明（如 memory-mongodb 的 `database`）。家目录初始化之后，交给插件的路径取真实路径：符号链接、大小写与末尾分隔符不同的写法指向同一个目录时，插件拿到的是同一个字符串。
+profile 只由 `--profile` 与 `AALIS_PROFILE` 给出：经 `--data` 或 `AALIS_DATA` 选中的数据目录没有 profile，不论它叫什么，插件按 profile 派生的名字（如 MongoDB 记忆库的库名）也按没有 profile 算，要固定就在插件配置里写明（如 memory-mongodb 的 `database`）。数据目录初始化之后，交给插件的路径取真实路径：符号链接、大小写与末尾分隔符不同的写法指向同一个目录时，插件拿到的是同一个字符串。
 
-家目录没有初始化（里面没有 `aalis.config.yaml`）就拒绝启动，只提示怎样初始化，不会静默起一个空的家。在启动命令里加上 `--init` 运行一次即可初始化：建目录（0700）、建布局里的子目录（含默认工作区 `workspace`）、写空的 `secrets.yaml` 与默认的 `aalis.config.yaml`（0600），然后退出；主配置最后写，它是初始化的判据。默认配置只有名字、日志级别与空的插件段，不写平台档，与 `npm create aalis` 生成的一致：工具分组哪一层都没设时，在本机（WebUI、终端）建的会话开全部分组，别的会话不开（plugin-tools 按根会话的创建来源判，见 [plugin-tools](../plugins/plugin-tools.md)）。插件段为空，不写语言列表：`--init` 不看系统语言，装了 `@aalis/plugin-i18n` 时按它的默认英文显示，要改在设置里改。目标目录已存在时，里面只能有 `--init` 自己会建的条目（上次初始化中途失败留下的：`state`、`logs`、`cache`、`run`、`tmp`、`self`、`workspace`、`secrets.yaml`）与 macOS 的 `.DS_Store`，有其它内容（包括已初始化的家目录里的 `aalis.config.yaml`）就拒绝，不覆盖任何文件；已有的 `secrets.yaml` 保留，权限收紧为 0600。
+数据目录没有初始化（里面没有 `aalis.config.yaml`）就拒绝启动，只提示怎样初始化，不会静默起一个空的家。在启动命令里加上 `--init` 运行一次即可初始化：建目录（0700）、建布局里的子目录（含默认工作区 `workspace`）、写空的 `secrets.yaml` 与默认的 `aalis.config.yaml`（0600），然后退出；主配置最后写，它是初始化的判据。默认配置只有名字、日志级别与空的插件段，不写平台档，与 `npm create aalis` 生成的一致：工具分组哪一层都没设时，在本机（WebUI、终端）建的会话开全部分组，别的会话不开（plugin-tools 按根会话的创建来源判，见 [plugin-tools](../plugins/plugin-tools.md)）。插件段为空，不写语言列表：`--init` 不看系统语言，装了 `@aalis/plugin-i18n` 时按它的默认英文显示，要改在设置里改。目标目录已存在时，里面只能有 `--init` 自己会建的条目（上次初始化中途失败留下的：`state`、`logs`、`cache`、`run`、`tmp`、`self`、`workspace`、`secrets.yaml`）与 macOS 的 `.DS_Store`，有其它内容（包括已初始化的数据目录里的 `aalis.config.yaml`）就拒绝，不覆盖任何文件；已有的 `secrets.yaml` 保留，权限收紧为 0600。
 
-宿主参数（`--home`、`--profile`、`--init`、`--service`）只认命令行开头的那一段，要写在子命令之前，如 `node index.mjs --home <目录> status`；写在子命令之后的归子命令，宿主不处理。开头那一段里的 `--` 跳过（`pnpm dev -- --init` 会把它原样传进来）。经 `npm start` 启动时，额外参数要放在 `--` 之后才会传给入口：`npm start -- --home <目录>`、`npm start -- --init`。
+宿主参数（`--data`、`--profile`、`--init`、`--service`）只认命令行开头的那一段，要写在子命令之前，如 `node index.mjs --data <目录> status`；写在子命令之后的归子命令，宿主不处理。开头那一段里的 `--` 跳过（`pnpm dev -- --init` 会把它原样传进来）；开头那一段里不认识的 `--` 参数报错退出（退出码 2），不当成子命令：当成子命令会在缺省的数据目录上读写，打错参数时就进了不该进的实例。经 `npm start` 启动时，额外参数要放在 `--` 之后才会传给入口：`npm start -- --data <目录>`、`npm start -- --init`。
 
 安装集（`appDir`）是放 `package.json` 与 `node_modules` 的目录，也就是部署目录，由入口显式传：脚手架生成的 `index.mjs` 传它所在的项目目录，本仓库的 `src/index.ts` 传仓库根。没有传自定义 `pluginLoader`、而 `<安装集>/package.json` 不存在时，`startAalis` 拒绝启动（exit 1），提示把入口文件所在的目录作为 `appDir` 传入。
 
-解析结果作为 `host-paths` 服务（`@aalis/api-host-paths`）独占登记在根上，插件要定位安装集或家目录布局时在 `uses` 里声明它，不读 `process.cwd()`（有 architecture 守卫）。布局：
+解析结果作为 `host-paths` 服务（`@aalis/api-host-paths`）独占登记在根上，插件要定位安装集或数据目录布局时在 `uses` 里声明它，不读 `process.cwd()`（有 architecture 守卫）。布局：
 
 ```
-<家目录>/
+<数据目录>/
   aalis.config.yaml            主配置，密钥字段只放引用
   secrets.yaml                 密钥的值（0600）
   state/                       实例状态：数据库、向量库、会话、附件、checkpoint、WebUI 凭据等
@@ -106,17 +106,17 @@ profile 只由 `--profile` 与 `AALIS_PROFILE` 给出：经 `--home` 或 `AALIS_
 
 ## 实例锁
 
-同一家目录只许一个守护进程：没有锁时，手动在终端再起一份会与服务并存，每条消息回两遍。锁放在家目录的 `run/` 里，文件名 `instance.<n>.lock`，代号 n 最大的那份是现行锁。
+同一数据目录只许一个守护进程：没有锁时，手动在终端再起一份会与服务并存，每条消息回两遍。锁放在数据目录的 `run/` 里，文件名 `instance.<n>.lock`，代号 n 最大的那份是现行锁。
 
-- **取锁**：先把完整内容写进临时文件，再 link 成下一个代号。link 在目标已存在时原子失败，同一代号只有一个进程拿得到，读到的锁内容也总是完整的；所以家目录所在的文件系统要支持硬链接（exFAT、部分 SMB 挂载不行，启动时一行报错退出）。link 成功后再看一遍更低的代号：还有活着的持有者就让出刚建的这一代并报占用，代号最低的活持有者胜出。确认之后删掉更低代号的旧文件。
+- **取锁**：先把完整内容写进临时文件，再 link 成下一个代号。link 在目标已存在时原子失败，同一代号只有一个进程拿得到，读到的锁内容也总是完整的；所以数据目录所在的文件系统要支持硬链接（exFAT、部分 SMB 挂载不行，启动时一行报错退出）。link 成功后再看一遍更低的代号：还有活着的持有者就让出刚建的这一代并报占用，代号最低的活持有者胜出。确认之后删掉更低代号的旧文件。
 - **释放**：进程退出时删掉自己这一代，只在锁文件的内容仍是自己那份时才删，同名的锁可能已是别的实例的。
-- **判活**：锁里记 pid、本次开机的标识（Linux 的 boot_id、macOS 的 kern.bootsessionuuid）、pid 命名空间（Linux）、进程启动标识（Linux 是 `/proc/<pid>/stat` 的启动滴答数，其它 POSIX 是 UTC 下的 `ps -o lstart=`）与交接令牌的哈希。这些都与墙上时钟无关，NTP 步进时钟、夏令时回拨都不影响判断。开机标识不同判残留；同一次开机里 pid 命名空间不同（另一个容器共用这个家目录）判不了，按占用处理；pid 不在、或启动标识不同（pid 被复用）判残留。SIGKILL 或服务管理器超时强杀留下的锁，下次启动时按残留接手。容器部署有一处例外：同一次开机里容器被强杀（SIGKILL、OOM）后重启，新进程在另一个 pid 命名空间里，仍按占用处理，要手动删掉报错里点名的锁文件。实例锁只在同一台主机内有效：两台主机经网络盘共用一个家目录时开机标识不同，互相按残留接手，挡不住，不要这样部署。
+- **判活**：锁里记 pid、本次开机的标识（Linux 的 boot_id、macOS 的 kern.bootsessionuuid）、pid 命名空间（Linux）、进程启动标识（Linux 是 `/proc/<pid>/stat` 的启动滴答数，其它 POSIX 是 UTC 下的 `ps -o lstart=`）与交接令牌的哈希。这些都与墙上时钟无关，NTP 步进时钟、夏令时回拨都不影响判断。开机标识不同判残留；同一次开机里 pid 命名空间不同（另一个容器共用这个数据目录）判不了，按占用处理；pid 不在、或启动标识不同（pid 被复用）判残留。SIGKILL 或服务管理器超时强杀留下的锁，下次启动时按残留接手。容器部署有一处例外：同一次开机里容器被强杀（SIGKILL、OOM）后重启，新进程在另一个 pid 命名空间里，仍按占用处理，要手动删掉报错里点名的锁文件。实例锁只在同一台主机内有效：两台主机经网络盘共用一个数据目录时开机标识不同，互相按残留接手，挡不住，不要这样部署。
 - **查不了启动标识的平台**：Windows 与没有 `ps` 的精简 Linux 镜像只看 pid。强杀留下的锁、pid 又恰好被别的进程占用时，启动会一直报占用；确认没有实例在运行时删掉报错里点名的锁文件即可。
 - **被占用**：打印占用者的 pid 与锁文件后以 1 退出，不碰正在用的日志。以 `--service` 启动（服务单元带上）时以 0 退出：配合 launchd 的 `KeepAlive={SuccessfulExit=false}`，不会每隔几秒被拉起、抢锁失败地循环。锁文件读不了（权限）时不猜它是残留，报错退出。
 - **前台重启的交接**：取锁时生成一个随机令牌，锁里只记它的哈希。`/restart` 与市场更新引起的前台重启，把令牌经环境变量 `AALIS_LOCK_HANDOFF` 交给新进程；新进程看到锁里的哈希对得上就接手，并立即把它从环境里删掉，不让插件起的子进程与侧车继承。
 - **服务形态的重启**：以 `--service` 运行时，`/restart` 与市场更新停掉 App 后以 75 退出，由服务管理器（launchd 的 KeepAlive、systemd 的 `Restart=on-failure`）拉起新进程；不自己起新进程，否则它会脱离服务管理器的监管。服务形态下没有「新版起不来就回滚」，市场更新照常退出并记一条说明。
 - **子命令不取锁**：子命令是一次性实例，与守护进程并存是预期的。
-- **只有 `startAalis` 取锁**：自己组装 App 的宿主不经过这一步，需要时自行保证同一家目录只起一份。
+- **只有 `startAalis` 取锁**：自己组装 App 的宿主不经过这一步，需要时自行保证同一数据目录只起一份。
 
 ## 子命令
 
@@ -138,9 +138,9 @@ profile 只由 `--profile` 与 `AALIS_PROFILE` 给出：经 `--home` 或 `AALIS_
 
 ## startAalis 的装配顺序
 
-0. **家目录与安装集**：解析家目录（见「家目录」），处理 `--init`，没初始化就退出；没传插件加载器而安装集里没有 `package.json` 时也退出。
+0. **数据目录与安装集**：解析数据目录（见「数据目录」），处理 `--init`，没初始化就退出；没传插件加载器而安装集里没有 `package.json` 时也退出。
 1. **实例锁**：守护模式取实例锁（见「实例锁」），被占用就退出。之后才装日志 sink、写日志：第二个实例不会把正在用的 `latest.log` 轮转走。
-2. **文档与密钥**：`createFsYamlConfigProvider(<家目录>/aalis.config.yaml)` 读 YAML，`createFsSecretsProvider(<家目录>/secrets.yaml)` 读密钥，`createConfigStore(config, provider, secrets)` 建配置文档。任一文件写坏或读不了时一行报错退出（exit 1），报错不含文件内容。
+2. **文档与密钥**：`createFsYamlConfigProvider(<数据目录>/aalis.config.yaml)` 读 YAML，`createFsSecretsProvider(<数据目录>/secrets.yaml)` 读密钥，`createConfigStore(config, provider, secrets)` 建配置文档。任一文件写坏或读不了时一行报错退出（exit 1），报错不含文件内容。
 3. **App**：`new App({ name, logLevel, restartStrategy, devMode, now, version })`，`name` 与 `logLevel` 取自文档。子命令模式不注入重启策略。
 4. **host-paths、host-logs 与 host-config**：在根上独占提供 `host-paths` 与 `host-logs`（`createHostLogs`：历史读本轮的 `logs/latest.log`，实时接默认日志中枢；子命令模式不写文件日志，没有历史），再 `installHostConfig(app, store, opts.configSync)`。文档里的服务偏好在全部提供者上线之前生效。
 5. **加载政策**：`withPluginConfigSync(loader, app, store, opts.configSync)` 包装加载器（缺省 `createNodeModulesPluginLoader(<安装集>)`）。
@@ -150,10 +150,10 @@ profile 只由 `--profile` 与 `AALIS_PROFILE` 给出：经 `--home` 或 `AALIS_
 ## 两种部署模型（同一套契约，两个加载器）
 
 - **独立（纯 npm/pnpm）**：`npm create aalis@latest <dir>` 生成项目——`package.json` 含所选 @aalis 插件、
-  `index.mjs`（`startAalis({ appDir: <项目目录> })`）与家目录 `data/`。
+  `index.mjs`（`startAalis({ appDir: <项目目录> })`）与数据目录 `data/`。
   运行时 `createNodeModulesPluginLoader` 从项目的 `node_modules` 发现插件。
 - **monorepo 自托管**：本仓库自身，入口 `src/index.ts` 以仓库根为安装集，从 `@aalis/runtime` 引入
-  `createFsPluginLoader` 扫 `packages/`。`pnpm dev` 与从源码运行的实例都用仓库里的 `data/` 作家目录（第一次先
+  `createFsPluginLoader` 扫 `packages/`。`pnpm dev` 与从源码运行的实例都用仓库里的 `data/` 作数据目录（第一次先
   `pnpm dev --init`）。FS 系列（`createFsPluginLoader` /
   `createFsYamlConfigProvider` / `createProcessRespawnStrategy`）只在 `@aalis/runtime` 定义一处，
   monorepo 与独立部署共用，无重复实现。
@@ -180,7 +180,7 @@ core 的 `App` 构造只接收环境无关的选项（`name` / `logLevel` / `res
 
 四项宿主服务都经根绑定 `app.bind({ provide })` 登记：
 
-- `hostPaths`（`@aalis/api-host-paths`）：家目录与安装集的绝对路径。`@aalis/plugin-storage-local` 与
+- `hostPaths`（`@aalis/api-host-paths`）：数据目录与安装集的绝对路径。`@aalis/plugin-storage-local` 与
   `@aalis/plugin-package-manager` 以 required 声明它，不提供时两者停在 pending；WebUI 以 `optional` 声明，
   缺席时市场与系统组件接口返回 503，也发现不到前端。
 - `hostLogs`（`@aalis/api-host-logs`）：要让插件读日志流时提供（CLI 与 WebUI 的日志页以 `optional` 声明，缺席时日志页为空、WebUI 的日志历史接口返回 503）。

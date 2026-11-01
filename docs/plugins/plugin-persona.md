@@ -47,7 +47,7 @@ export default definePlugin({
 
 ## 角色卡格式
 
-人设以 YAML 文件定义，放在存储的内容目录 `self:/persona/`（`caps.storage.use.content`，即家目录的 `self/persona`）下，目录不能配置；文件名（不含 `.yaml` / `.yml` 后缀）即会话设置 `persona` 的取值。主卡是 `default`（`default.yaml`），会话没设人设、或设的卡找不到时用它；目录里没有 `default.yaml`（或它解析失败）时，主卡是内置的默认角色。插件监听该目录（需存储支持 watch），文件变化后自动重新加载；存储提供者重启、改配置或晚于启动上线时自动重挂监听并重新扫描。
+人设以 YAML 文件定义，放在存储的内容目录 `self:/persona/`（`caps.storage.use.content`，即数据目录的 `self/persona`）下，目录不能配置；文件名（不含 `.yaml` / `.yml` 后缀）即会话设置 `persona` 的取值。主卡是 `default`（`default.yaml`），会话没设人设、或设的卡找不到时用它；目录里没有 `default.yaml`（或它解析失败）时，主卡是内置的默认角色。插件监听该目录（需存储支持 watch），文件变化后自动重新加载；存储提供者重启、改配置或晚于启动上线时自动重挂监听并重新扫描。
 
 ```yaml
 name: Alice

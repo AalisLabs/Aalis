@@ -51,7 +51,7 @@ afterEach(async () => {
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
 
-/** 家目录与工作根都在临时目录里；outside 是工作根以外的目录 */
+/** 数据目录与工作根都在临时目录里；outside 是工作根以外的目录 */
 function home() {
   const dir = mkdtempSync(join(tmpdir(), 'aalis-checkpoint-i18n-'));
   homes.push(dir);

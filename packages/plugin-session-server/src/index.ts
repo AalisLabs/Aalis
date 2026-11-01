@@ -46,7 +46,7 @@ const uses = {
   sessionManager,
   /** 已读时间落在本插件的插件数据里；签发文件句柄时按存储根的种类挡掉插件状态 */
   storage,
-  /** 审批的审计写在家目录的 state/audit 下 */
+  /** 审批的审计写在数据目录的 state/audit 下 */
   paths: hostPaths,
   /** 历史从存档归并 */
   memory,

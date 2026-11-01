@@ -16,7 +16,7 @@ import { waitListening } from '../helpers/net.js';
 
 /** 登录页的说明（plugin-webui-server） */
 const LOGIN_HINT =
-  'The access token is in state/webui/access.txt under the home directory; the startup log line “Access credentials written” gives its full path. With tokenMode set to fixed it is the config item fixedToken, whose value is stored in secrets.yaml under the home directory after startup (the config file holds a reference).';
+  'The access token is in state/webui/access.txt under the data directory; the startup log line “Access credentials written” gives its full path. With tokenMode set to fixed it is the config item fixedToken, whose value is stored in secrets.yaml under the data directory after startup (the config file holds a reference).';
 /** /help clear 回复卡片的标题（plugin-commands） */
 const CLEAR_TITLE =
   '/clear — Clear the memory of this session; use --type to pick what to clear, such as messages, summaries, vectors and images';

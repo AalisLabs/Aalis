@@ -17,7 +17,7 @@ import {
 import { sandboxEnv } from './process-env.js';
 
 interface CredentialDeps {
-  /** 操作系统用户的家目录：沙箱里 npm 的用户配置从这里的 .npmrc 去掉 npm 的认证键 */
+  /** 操作系统用户的主目录：沙箱里 npm 的用户配置从这里的 .npmrc 去掉 npm 的认证键 */
   userHome: string;
   /** 在场所的主目录下取的 login shell 环境 */
   loginEnv(home: string): Promise<Record<string, string>>;

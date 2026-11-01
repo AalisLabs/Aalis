@@ -6,7 +6,7 @@ import type { StorageService } from '../../packages/api-storage/src/index.js';
 import { LocalProcessService } from '../../packages/plugin-process-local/src/index.js';
 
 // ════════════════════════════════════════════════════════════
-// readExternalFile 只收绝对路径或 file://：相对路径会按进程的 cwd 解析，而 cwd 不带语义（家目录由宿主解析），
+// readExternalFile 只收绝对路径或 file://：相对路径会按进程的 cwd 解析，而 cwd 不带语义（数据目录由宿主解析），
 // 同一个相对路径在不同目录启动时读到不同的文件。
 // ════════════════════════════════════════════════════════════
 

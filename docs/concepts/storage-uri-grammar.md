@@ -66,7 +66,7 @@ const RESERVED_URI_SCHEMES = new Set(['http', 'https', 'file']);
 
 ### 3. `data:/` 与标准 data-URI（易混淆的一处）
 
-存储根名 `data`（`plugin-storage-local` 的内部根之一，对应家目录的 `state/`，见 `index.ts`）和
+存储根名 `data`（`plugin-storage-local` 的内部根之一，对应数据目录的 `state/`，见 `index.ts`）和
 浏览器/WebUI 上传常见的 base64 **data-URI** 前缀冲突。文法靠 `:/` 天然区分二者：
 
 | 字符串 | 形态 | 是 storage URI？ |
@@ -128,7 +128,7 @@ memory / vectorstore / persona 等后端消费者复用它。四条规则：
 
 | 输入 | 输出 | 说明 |
 |---|---|---|
-| 本机路径：宿主机绝对路径（`/abs`、`C:\path`、`C:/path`，判据是 `isHostAbsolutePath`）与家目录简写 `~/…` | 抛配置错误 | 写明要填 storage URI，并按 fallbackRoot 与路径末段举例（`/private/tmp/aalis.db` → 如 `data:/aalis.db`）；不带堆栈 |
+| 本机路径：宿主机绝对路径（`/abs`、`C:\path`、`C:/path`，判据是 `isHostAbsolutePath`）与数据目录简写 `~/…` | 抛配置错误 | 写明要填 storage URI，并按 fallbackRoot 与路径末段举例（`/private/tmp/aalis.db` → 如 `data:/aalis.db`）；不带堆栈 |
 | 已含 `:/`（如 `data:/x`） | 原样返回 | 已是 URI |
 | `foo/bar`（含 `/`） | `foo:/bar` | 首段当根名 |
 | `name`（单段裸名，无 `/`） | `data:/name` | **裸名归到 fallbackRoot 的相对路径，不当成根名** |
@@ -195,7 +195,7 @@ URI → 根的路由在提供者内部完成。后端只要：
 这是审计反复强调、也最容易被插件作者误解的一点，接口注释中已明确写出（`index.ts`、
 `plugin-storage-local/src/index.ts`）：
 
-- 存储层做三件事：**命名根**、**路径解析**（根内 `..` 穿越保护 + symlink realpath 校验）、**审计点**（读写删过 logger）。参考实现另有一道宿主控制文件兜底：不能经存储读写家目录的 `secrets.yaml`、改写 `aalis.config.yaml`（见 [plugin-storage-local](../plugins/plugin-storage-local.md#宿主控制文件)）。
+- 存储层做三件事：**命名根**、**路径解析**（根内 `..` 穿越保护 + symlink realpath 校验）、**审计点**（读写删过 logger）。参考实现另有一道宿主控制文件兜底：不能经存储读写数据目录的 `secrets.yaml`、改写 `aalis.config.yaml`（见 [plugin-storage-local](../plugins/plugin-storage-local.md#宿主控制文件)）。
 - 路径校验只防**上层代码意外越界的 bug**（如 `workspace:/../../etc/passwd` 会被 `isInside` 拒掉，
   `plugin-storage-local/src/index.ts`），**不是用来对抗恶意子进程**。
 

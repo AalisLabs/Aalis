@@ -70,7 +70,7 @@ async function start() {
 describe('本会话临时区的删除在后台跑', () => {
   it('启动时的清扫不拖住激活：清扫删到一半时插件已经可用，收尾时等它删完', async () => {
     const old = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
-    const stale = sessionTmpIn(dirs.home, 'session-gone');
+    const stale = sessionTmpIn(dirs.data, 'session-gone');
     mkdirSync(stale, { recursive: true });
     utimesSync(stale, old, old);
     const gate = block(stale);
@@ -89,7 +89,7 @@ describe('本会话临时区的删除在后台跑', () => {
     const { sm, svc } = await start();
     const id = (await sm.createSession({ name: 'w' }, { createdFrom: 'webui' })).id;
     await svc.forCall(ownerTurn(id));
-    const tmp = sessionTmpIn(dirs.home, id);
+    const tmp = sessionTmpIn(dirs.data, id);
     const gate = block(tmp);
 
     await sm.deleteSession(id);
@@ -108,7 +108,7 @@ describe('本会话临时区的删除在后台跑', () => {
     const id = 'cli-default';
     await sm.ensureSession(id, {}, { createdFrom: 'cli' });
     await svc.forCall(ownerTurn(id));
-    const tmp = sessionTmpIn(dirs.home, id);
+    const tmp = sessionTmpIn(dirs.data, id);
     const gate = block(tmp);
 
     await sm.deleteSession(id);

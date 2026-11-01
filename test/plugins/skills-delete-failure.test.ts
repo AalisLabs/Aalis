@@ -12,7 +12,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 // 技能删除失败要报出来：以前删不掉（根不可删、EACCES、文件锁）只记 warn，
 // deleteSkill 照常移除缓存并返回 true，技能从列表消失，重扫或重启后又回来；
 // removeSkillFile 返回 false，工具回「skill 不存在或文件不存在」，把权限失败说成不存在。
-// 真 fs storage，技能在内容目录 self:/skills/ 里（家目录的 self/skills）；技能目录与它的子目录改成只读，删除必然失败
+// 真 fs storage，技能在内容目录 self:/skills/ 里（数据目录的 self/skills）；技能目录与它的子目录改成只读，删除必然失败
 // （EACCES）。root 不受目录权限约束，按 root 跑时跳过。
 // ════════════════════════════════════════════════════════════
 

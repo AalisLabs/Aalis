@@ -11,12 +11,12 @@
 // 子会话里的审批对象带来源链（根会话以下的各级子会话）。等满 300 秒、覆盖它的在场客户端都离开且 30 秒内没有回来、回合结束或
 // 中止、服务停止时结算。
 // 应答先答先得：已结算的一律回已结算；还在等的，id 由本服务签发、归这个接入覆盖（否则不认识），应答人能批这一张，内容哈希一致。
-// 请求与决定成对追加到家目录的 state/audit/approvals.jsonl，不进模型上下文；每个结算另记一行 info 日志（会话、工具、结局、原因）。
+// 请求与决定成对追加到数据目录的 state/audit/approvals.jsonl，不进模型上下文；每个结算另记一行 info 日志（会话、工具、结局、原因）。
 // ════════════════════════════════════════════════════════════
 
 // biome-ignore lint/style/noRestrictedImports: 请求在发起的同一拍里定下去留与排队次序，内容哈希要同步算；异步的摘要会让并行的请求按完成先后乱序
 import { createHash } from 'node:crypto';
-// biome-ignore lint/style/noRestrictedImports: 审计是只追加的记录，存储服务没有追加写；位置取自 host-paths 给的家目录
+// biome-ignore lint/style/noRestrictedImports: 审计是只追加的记录，存储服务没有追加写；位置取自 host-paths 给的数据目录
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type {
