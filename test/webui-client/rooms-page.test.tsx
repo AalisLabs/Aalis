@@ -154,7 +154,8 @@ describe('房间表', () => {
     expect(names()).toEqual(['小林']);
     choose(screen.getByRole('combobox', { name: '类型' }), 'group');
     fireEvent.click(within(screen.getByRole('columnheader', { name: /名称/ })).getByRole('button'));
-    expect(names()).toEqual(['技术交流', '读书会', '摄影分享'].sort((a, b) => a.localeCompare(b)));
+    // 按页面语言排：中文页面是拼音序，跟跑测试的机器是什么语言无关
+    expect(names()).toEqual(['读书会', '技术交流', '摄影分享']);
   });
 
   it('手机上改了筛选（替换当前地址）再「返回」：退回列表，前进回到筛选过的房间表', async () => {
