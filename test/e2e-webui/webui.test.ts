@@ -996,7 +996,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(offered).toContain(DEPLOY);
     expect(offered.filter(name => BACKGROUND_TOOLS.includes(name))).toEqual([]);
     const other = await openPage(stack, viewport);
-    expect(await sessionRow(other.page, sessionId)).not.toMatch(/后台/);
+    await expect.poll(() => sessionRow(other.page, sessionId)).not.toMatch(/后台/);
     const rowButtons = await other.page.$$eval('nav[aria-label="会话"] .list-item-row button', buttons =>
       buttons.map(button => button.getAttribute('aria-label')),
     );
@@ -1688,6 +1688,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(await tabNames()).toEqual(opened);
 
     await page.locator(aria('设置', 'tab')).click();
+    await page.waitForSelector(`${aria('设置', 'tab')}[aria-selected="true"]`);
     await page.keyboard.press('Delete');
     await reenter();
     await page.waitForSelector(aria('设置', 'tab'), { hidden: true });
@@ -1893,7 +1894,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
 
     // 左栏（手机上是第一层）写「后台 1」；运行状况的「正在运行」列出这个会话与它在跑的命令
     const other = await openPage(stack, viewport);
-    expect(await sessionRow(other.page, sessionId)).toContain('后台 1');
+    await expect.poll(() => sessionRow(other.page, sessionId)).toContain('后台 1');
     await other.page.goto(`${stack.origin}/health`);
     const running = `main ${aria('正在运行', 'list')}`;
     await other.page.waitForSelector(`${running} ${aria('build', 'button')}`);
@@ -2087,9 +2088,10 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     } else {
       await page.locator(aria('用量', 'tab')).click();
     }
-    expect(await page.$eval('.usage-total', element => element.textContent)).toBe(
-      '累计输入 1.2k，输出 340（含子会话）',
-    );
+    await page.waitForSelector('.usage-total');
+    await expect
+      .poll(() => page.$eval('.usage-total', element => element.textContent))
+      .toBe('累计输入 1.2k，输出 340（含子会话）');
 
     // 子会话页的路径：各级父会话写在标题前，点哪一级回到哪一级；手机上的返回回到父会话
     const [outline] = sessions.getChildren(parentId).filter(child => child.name === '目录');
@@ -2098,10 +2100,10 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
       page.$eval('main .session-trail', element => [...element.children].map(child => child.textContent));
     await page.goto(`${stack.origin}/s/${encodeURIComponent(appendix.id)}`);
     await page.waitForSelector('main .session-trail');
-    expect(await trail()).toEqual(['测试会话', '', '目录', '', '附录']);
+    await expect.poll(trail).toEqual(['测试会话', '', '目录', '', '附录']);
     await page.locator(`main .session-trail ${aria('目录', 'link')}`).click();
     await page.waitForFunction(id => location.pathname === `/s/${encodeURIComponent(id)}`, {}, outline.id);
-    expect(await trail()).toEqual(['测试会话', '', '目录']);
+    await expect.poll(trail).toEqual(['测试会话', '', '目录']);
     await page.locator(phone ? aria('返回', 'button') : `main .session-trail ${aria('测试会话', 'link')}`).click();
     await page.waitForFunction(id => location.pathname === `/s/${encodeURIComponent(id)}`, {}, parentId);
     await page.waitForSelector(text(SUBTASKS_DONE));
