@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 // ════════════════════════════════════════════════════════════
 // 进程的 cwd 不带语义
 //
-// 家目录与安装集由宿主在启动时解析一次，经 host-paths 交给插件（见 @aalis/api-host-paths）。
+// 数据目录与安装集由宿主在启动时解析一次，经 host-paths 交给插件（见 @aalis/api-host-paths）。
 // 除了 runtime（命令行与环境变量里的相对路径按启动时的 cwd 解析一次）和两个脚手架（在用户当前目录生成项目），
 // 任何包都不读 cwd：`process.cwd()`、从 node:process 导入的 cwd、命名空间导入后的 `.cwd()` 都算。
 //

@@ -102,13 +102,13 @@ describe('读：全机减拒读清单，与档位无关', () => {
     `${PATHS.run}/aalis.sock`,
     `${PATHS.cache}/x`,
     `${PATHS.tmp}/sessions/b3Q/x`, // 别的会话的临时区
-    '/opt/aalis/data-dev/aalis.config.yaml', // 同一部署下其他实例的家目录
+    '/opt/aalis/data-dev/aalis.config.yaml', // 同一部署下其他实例的数据目录
     '/u/.ssh/id_ed25519',
     '/u/.aws/credentials',
     '/u/.config/google-chrome/Default/Cookies',
     '/u/code/proj/.env',
     '/u/code/proj/.env.local',
-    `${DEFAULT_PLACE.home}/.env`, // 默认工作区在家目录的拒读里重新放行，.env 照样拒
+    `${DEFAULT_PLACE.home}/.env`, // 默认工作区在数据目录的拒读里重新放行，.env 照样拒
   ];
 
   it.each(ACCESS_TIERS)('%s', tier => {
@@ -133,7 +133,7 @@ describe('写：按档位', () => {
         ['范围外', write('/u/elsewhere/x'), W, T, W, A],
         ['默认工作区', write(`${PATHS.workspace}/x`), W, T, W, A],
         ['别的会话的临时区', write(`${PATHS.tmp}/sessions/b3Q/x`), W, T, W, A],
-        ['同一部署下其他实例的家目录', write('/opt/aalis/data-dev/state/x'), W, T, W, A],
+        ['同一部署下其他实例的数据目录', write('/opt/aalis/data-dev/state/x'), W, T, W, A],
         ['落点：git 钩子', write('/u/code/proj/.git/hooks/pre-commit'), L, L, L, AL],
         ['落点：git 配置', write('/u/code/proj/.git/config'), L, L, L, AL],
         ['落点：~/.gitconfig', write('/u/.gitconfig'), L, L, L, AL],
@@ -143,7 +143,7 @@ describe('写：按档位', () => {
         ['宿主控制面：secrets.yaml', write(PATHS.secrets), C, C, C, C],
         ['宿主控制面：日志', write(`${PATHS.logs}/latest.log`), C, C, C, C],
         ['self 下的编排定义：落点', write(`${PATHS.self}/workflow/daily.yaml`), L, L, L, AL],
-        ['宿主控制面：家目录里布局以外的', write(`${PATHS.home}/zz-other/x`), C, C, C, C],
+        ['宿主控制面：数据目录里布局以外的', write(`${PATHS.data}/zz-other/x`), C, C, C, C],
         ['宿主控制面：安装集的依赖', write('/opt/aalis/node_modules/x/index.js'), C, C, C, C],
         ['宿主控制面：安装集的构建产物', write('/opt/aalis/packages/core/dist/index.js'), C, C, C, C],
         ['宿主控制面：安装集外的插件目录', write('/opt/plugins/zz-ext/index.js'), C, C, C, C],

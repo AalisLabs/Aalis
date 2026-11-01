@@ -56,7 +56,7 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
     await registerHubs(app);
     provideHostPaths(app, base);
     await app.plugin(storageLocalPlugin, {
-      // data:/ 是内置根（家目录的 state/），用户 roots 里只声明工作根
+      // data:/ 是内置根（数据目录的 state/），用户 roots 里只声明工作根
       roots: [
         {
           name: 'workspace',

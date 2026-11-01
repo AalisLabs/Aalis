@@ -235,7 +235,7 @@ interface SettingLayerInfo {
 - **形状**：只含字母、数字、`-`、`_` 与一个 `.` 的字符串。客户端不解析它，原样拿去下载。
 - **取法**：经传输层给的下载入口取，WebUI 是 `GET /api/session-file?sessionId=<会话 id>&handle=<句柄>`（见 [plugin-webui-server](../plugins/plugin-webui-server.md#rest-api)），一律以附件、`application/octet-stream` 下发。
 - **有效范围**：句柄绑定签发它的会话与文件，换个会话 id 用不了；只在签发它的那次启动（同一个 `epoch`）内有效，会话服务重启之后 `epoch` 变了，客户端重新订阅，快照里是新的句柄。
-- **不签发的**：插件状态与插件私有数据的存储根（`data` 映射到家目录的 `state/`，里面有访问 token 与审计）里的文件、不是存储地址的来源。这些附件只有名字。
+- **不签发的**：插件状态与插件私有数据的存储根（`data` 映射到数据目录的 `state/`，里面有访问 token 与审计）里的文件、不是存储地址的来源。这些附件只有名字。
 
 **工具卡的展示**（`display`，按 `kind` 区分）：种类是宿主维护的封闭集合，以后按加法加。各项从参数里逐字取出，命令的退出码从结果里取：
 

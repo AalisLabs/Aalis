@@ -49,7 +49,7 @@ describe('workflow once 触发器只触发一次（真 fs 持久化）', () => {
     apps.push(app);
     await registerHubs(app);
     provideHostPaths(app, base);
-    // runsFile 落在内置的 data 根（家目录的 state/），定义目录在用户根 workspace
+    // runsFile 落在内置的 data 根（数据目录的 state/），定义目录在用户根 workspace
     await app.plugin(storageLocalPlugin, {
       roots: [
         {

@@ -197,9 +197,9 @@ export function parseUriRoot(uri: string): string {
 }
 
 /**
- * 能不能给这个存储地址签发界面下载用的句柄：是存储地址、根认识，且不是插件私有数据的根。data 根映射到家目录的 state/
+ * 能不能给这个存储地址签发界面下载用的句柄：是存储地址、根认识，且不是插件私有数据的根。data 根映射到数据目录的 state/
  * （里面有 WebUI 的 token 与审计），pluginData 是各插件的私有目录，这两类根里的文件不签发。按根的种类判、不按路径：
- * owner 自己加的指到家目录的根里，state/ 下的文件照常签发。会话条目与页面单元格的文件句柄共用这一条
+ * owner 自己加的指到数据目录的根里，state/ 下的文件照常签发。会话条目与页面单元格的文件句柄共用这一条
  */
 export function canIssueFileHandle(roots: readonly StorageRootInfo[], uri: string): boolean {
   if (!isStorageUri(uri)) return false;
@@ -218,9 +218,9 @@ export function isHostAbsolutePath(input: string): boolean {
 /**
  * 把配置里的路径/裸名归一为 storage URI —— 契约级文法，全体后端消费者（memory/vectorstore/
  * checkpoint/scheduler/persona…）复用，勿各自重抄。
- * - 本机路径（宿主机绝对路径与家目录简写 `~/…`）→ 抛配置错误（不带堆栈），写明要填 storage URI 并举例：
+ * - 本机路径（宿主机绝对路径与数据目录简写 `~/…`）→ 抛配置错误（不带堆栈），写明要填 storage URI 并举例：
  *   首段当根名只会撞上「未知存储根」，而首段恰好与某个根同名时（如 `/data/x`）会悄悄落到那个根里。
- *   家目录简写不进 {@link isHostAbsolutePath}：那是工具路径也用的判据，工具侧的 `~` 按普通目录名相对 cwd 求值
+ *   数据目录简写不进 {@link isHostAbsolutePath}：那是工具路径也用的判据，工具侧的 `~` 按普通目录名相对 cwd 求值
  * - 已是 storage URI（含 `:/`）→ 原样返回。
  * - `foo/bar`（含 `/`，可带前导 `./`）→ `foo:/bar`（首段当根名）。
  * - `name`（单段裸名）→ `<fallbackRoot>:/name`（默认归 data 根相对路径，而非把裸名当根名——

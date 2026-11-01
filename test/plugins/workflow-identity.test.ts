@@ -60,7 +60,7 @@ let actors: Array<UserIdentity | undefined>;
 let confirmed: number;
 
 const defFile = () => join(base, 'workspace', 'workflows', `${ID}.yaml`);
-// data:/ 是内置根，按家目录布局在 state/ 下
+// data:/ 是内置根，按数据目录布局在 state/ 下
 const runsFile = () => join(base, 'state', 'workflow-runs.json');
 
 /** 审批替身：把每个审批请求记进 requests，一律由 OWNER 批准 */

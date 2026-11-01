@@ -8,7 +8,7 @@
 // 去掉认证键的副本。
 // ============================================================
 
-// biome-ignore lint/style/noRestrictedImports: 读用户家目录的 .npmrc、在本会话临时区写去掉认证键的副本（不跟随链接）、按 PATH 找本机 Node 的头文件，这些路径不在存储根里
+// biome-ignore lint/style/noRestrictedImports: 读用户主目录的 .npmrc、在本会话临时区写去掉认证键的副本（不跟随链接）、按 PATH 找本机 Node 的头文件，这些路径不在存储根里
 import { access, lstat, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
 // biome-ignore lint/style/noRestrictedImports: 没有 SHELL 时取操作系统账户登记的 login shell
 import { userInfo } from 'node:os';
@@ -24,7 +24,7 @@ const CAPTURE_TIMEOUT_MS = 10_000;
 /** 取不到时这么久之后再取 */
 const RETRY_AFTER_MS = 60_000;
 
-/** AALIS_ 开头的是实例自己的命名空间（家目录这类本实例的配置），不交给沙箱里的命令 */
+/** AALIS_ 开头的是实例自己的命名空间（数据目录这类本实例的配置），不交给沙箱里的命令 */
 const INSTANCE_VARS = /^AALIS_/;
 /** ssh-agent 的 socket：ssh-agent 不对沙箱开放，经 SSH 的推送要宿主执行 */
 const SSH_AGENT_SOCK = 'SSH_AUTH_SOCK';
@@ -47,7 +47,7 @@ export function loginEnvs(deps: { process: ServiceSelection<ProcessService>; use
       const proc = deps.process.use;
       const shell = process.env.SHELL || userInfo().shell;
       if (!shell) throw new Error('不知道 owner 的 login shell（没有 SHELL，账户也没登记）');
-      // 默认工作区目录由 runtime 初始化时建；主目录不在（如被删掉）时在用户家目录下取，与新开一个终端相同
+      // 默认工作区目录由 runtime 初始化时建；主目录不在（如被删掉）时在用户主目录下取，与新开一个终端相同
       const cwd = await stat(home).then(
         s => (s.isDirectory() ? home : deps.userHome),
         () => deps.userHome,

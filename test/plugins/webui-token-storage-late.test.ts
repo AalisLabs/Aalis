@@ -14,7 +14,7 @@ import { freePort } from '../helpers/net.js';
 // webui-server 可以先于 storage-local 激活。曾经只在 apply 里读一次：那一刻没有 storage，
 // 内存里是新随机 token，持久化的那份被晾在一边——旧 cookie 与 `?token=<持久化>` 一律 401，
 // access.txt 写成新 token；没有 token 文件时也永远建不起来，persist 退化成 ephemeral。
-// 真 storage-local 多根（用户根 workspace 在前、内置根 data 在后，映射到家目录的 state/），token 落在 data 根。
+// 真 storage-local 多根（用户根 workspace 在前、内置根 data 在后，映射到数据目录的 state/），token 落在 data 根。
 // token 与 access.txt 是凭据：只给本机用户读（0600），已有的 token 文件读回后一并收紧。
 // ════════════════════════════════════════════════════════════
 

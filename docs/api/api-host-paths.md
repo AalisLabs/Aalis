@@ -6,19 +6,19 @@
 
 ## 概述
 
-家目录装着一个实例的全部状态：配置、密钥、数据库、日志、人设卡、技能、默认工作区。安装集是放 `package.json` 与 `node_modules` 的目录（源码形态另有 `packages/`），也就是部署目录；没有另行指定时家目录就在它下面：没有 profile 时是 `data/`，profile `<名>` 是 `data-<名>/`。两者都由宿主在启动时解析一次，之后不变；进程的 cwd 不带任何语义。
+数据目录装着一个实例的全部状态：配置、密钥、数据库、日志、人设卡、技能、默认工作区。安装集是放 `package.json` 与 `node_modules` 的目录（源码形态另有 `packages/`），也就是部署目录；没有另行指定时数据目录就在它下面：没有 profile 时是 `data/`，profile `<名>` 是 `data-<名>/`。两者都由宿主在启动时解析一次，之后不变；进程的 cwd 不带任何语义。
 
-本包定义 `hostPaths` 描述符（服务名 `host-paths`）、路径类型 `HostPaths` 与缺省家目录的目录名 `HOME_DIR`（`'data'`，宿主按它解析家目录，触及按它认出同一部署下的其他实例），不含实现。Node 宿主 `@aalis/runtime` 在根上独占提供它，解析规则见 [runtime 的「家目录」](../architecture/runtime.md#家目录)；其他宿主要让插件定位这些目录，需自行 provide 本描述符。插件要用时在 `uses` 里声明，不读 `process.cwd()`（architecture 守卫 `test/architecture/process-cwd.test.ts` 会拦下）。
+本包定义 `hostPaths` 描述符（服务名 `host-paths`）、路径类型 `HostPaths` 与缺省数据目录的目录名 `DATA_DIR_NAME`（`'data'`，宿主按它解析数据目录，触及按它认出同一部署下的其他实例），不含实现。Node 宿主 `@aalis/runtime` 在根上独占提供它，解析规则见 [runtime 的「数据目录」](../architecture/runtime.md#数据目录)；其他宿主要让插件定位这些目录，需自行 provide 本描述符。插件要用时在 `uses` 里声明，不读 `process.cwd()`（architecture 守卫 `test/architecture/process-cwd.test.ts` 会拦下）。
 
 ## 服务接口
 
 ```ts
 interface HostPaths {
-  readonly home: string;      // 家目录（Node 宿主给真实路径，符号链接已解开）
-  readonly profile?: string;  // 经 --profile 或 AALIS_PROFILE 选中家目录时才有（家目录是部署目录下的 data-<profile>）
+  readonly data: string;      // 数据目录（Node 宿主给真实路径，符号链接已解开）
+  readonly profile?: string;  // 经 --profile 或 AALIS_PROFILE 选中数据目录时才有（数据目录是部署目录下的 data-<profile>）
   readonly app: string;       // 安装集
-  readonly config: string;    // <家目录>/aalis.config.yaml
-  readonly secrets: string;   // <家目录>/secrets.yaml（密钥的值，由宿主读写）
+  readonly config: string;    // <数据目录>/aalis.config.yaml
+  readonly secrets: string;   // <数据目录>/secrets.yaml（密钥的值，由宿主读写）
   readonly state: string;     // 插件状态：数据库、向量库、checkpoint、各插件的数据目录
   readonly logs: string;      // 文件日志 latest.log 所在目录
   readonly cache: string;     // 缓存
@@ -54,6 +54,6 @@ export default definePlugin({
 
 | 插件 | 用途 | 宿主不提供时 |
 |---|---|---|
-| `plugin-storage-local` | 用户根的相对路径按家目录解析；没写 `path` 的用户根（缺省的 `workspace` 根）取 `workspace`；内部根按 `state`、`tmp`、`cache`、`logs`、`self` 派生；拦住经存储访问 `secrets` 与改写 `config` | 停在 pending（required） |
+| `plugin-storage-local` | 用户根的相对路径按数据目录解析；没写 `path` 的用户根（缺省的 `workspace` 根）取 `workspace`；内部根按 `state`、`tmp`、`cache`、`logs`、`self` 派生；拦住经存储访问 `secrets` 与改写 `config` | 停在 pending（required） |
 | `plugin-package-manager` | 往安装集里装卸插件（与插件加载器读同一份 `package.json`） | 停在 pending（required） |
 | `plugin-webui-server` | 市场、系统组件与前端发现读安装集（可选依赖） | 市场与系统组件接口回 503，发现不到前端，只剩 HTTP 接口 |

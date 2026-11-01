@@ -39,7 +39,7 @@ describe('send_attachment 的 storage_uri', () => {
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-imgsend-'));
-    // data 是 storage-local 的内置根，映射到家目录的 state/
+    // data 是 storage-local 的内置根，映射到数据目录的 state/
     mkdirSync(join(base, 'state', 'images', 'onebot_x_group_1', 'onebot'), { recursive: true });
     // 落一张真图（内容随意，只验证路径解析）
     writeFileSync(

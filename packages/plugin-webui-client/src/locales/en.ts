@@ -146,7 +146,7 @@ export default defineLocale<Source>()({
   uninstallServiceDependents: 'Depend on services it provides (uninstalling will be refused)',
   uninstallDependents: 'Reference it (may fail to start once it is uninstalled)',
   uninstallCodeNote:
-    'Its code will be deleted; data it wrote in the home directory (state/ and elsewhere) stays, to be cleaned up by hand if needed.',
+    'Its code will be deleted; data it wrote in the data directory (state/ and elsewhere) stays, to be cleaned up by hand if needed.',
   uninstallConfigNote:
     'Its configuration stays in the config file by default, so after a reinstall it starts with the same configuration.',
   removeConfigWithSecrets:
@@ -688,8 +688,8 @@ export default defineLocale<Source>()({
     'Which provider to use when a service has several; changes take effect immediately. The web frontend (webui-client) is among them, and switching it reloads the page; if the new frontend doesn’t work, open /__clients to switch back.',
   hostConfigMalformed: 'The host config response is not in the expected shape',
   hostConfiguration: 'Host config',
-  homeDirectory: 'Home directory',
-  homeDirectoryNote: 'The config file, secrets, plugin data and logs are all here.',
+  dataDirectory: 'Data directory',
+  dataDirectoryNote: 'The config file, secrets, plugin data and logs are all here.',
   restartToApply: 'Restart to apply the changes',
   restartApp: 'Restart',
   configFile: 'Config file',

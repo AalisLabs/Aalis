@@ -36,7 +36,7 @@ export default defineLocale<Source>()({
   pageLanguage: 'en',
   loginTitle: 'Aalis WebUI sign-in',
   loginHint:
-    'The access token is in state/webui/access.txt under the home directory; the startup log line “Access credentials written” gives its full path. With tokenMode set to fixed it is the config item fixedToken, whose value is stored in secrets.yaml under the home directory after startup (the config file holds a reference).',
+    'The access token is in state/webui/access.txt under the data directory; the startup log line “Access credentials written” gives its full path. With tokenMode set to fixed it is the config item fixedToken, whose value is stored in secrets.yaml under the data directory after startup (the config file holds a reference).',
   tokenPlaceholder: 'Access token',
   loginButton: 'Sign in',
   tokenWrong: 'Incorrect token',

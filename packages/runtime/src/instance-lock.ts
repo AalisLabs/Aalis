@@ -14,12 +14,12 @@ import {
 import { join } from 'node:path';
 
 // ============================================================
-// 实例锁：同一家目录只许一个实例
+// 实例锁：同一数据目录只许一个实例
 // ============================================================
 //
 // 没有锁时，手动在终端再起一份会与服务并存，每条消息回两遍。锁是 `run/instance.<n>.lock`，代号 n 最大的那份是现行锁：
 // - 取锁时先把完整内容写进临时文件，再 link 成下一个代号。link 在目标已存在时原子失败，同一代号只有一个进程拿得到；
-//   内容在建出时就是完整的，读不到半截。所以家目录所在的文件系统要支持硬链接。
+//   内容在建出时就是完整的，读不到半截。所以数据目录所在的文件系统要支持硬链接。
 // - 不删、不改名活着的锁。link 成功后再看一遍更低的代号：还有活着的持有者（读到的「残留」其实已经被人接手，
 //   或者代号在 run/ 清空后从 1 重新编号），就让出刚建的这一代、报占用。代号最低的活持有者胜出。
 //   确认没有之后，删掉更低代号的旧文件。
@@ -244,7 +244,7 @@ export function acquireInstanceLock(
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'EEXIST') continue;
         throw new Error(
-          `Cannot create lock file ${file} (the file system of the home directory must support hard links): ${(err as Error).message}`,
+          `Cannot create lock file ${file} (the file system of the data directory must support hard links): ${(err as Error).message}`,
         );
       }
       // 更低的代号里还有活着的持有者：让出刚建的这一代（读锁出错时同样先让出再抛）

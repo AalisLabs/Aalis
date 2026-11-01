@@ -1,6 +1,6 @@
-// biome-ignore lint/style/noRestrictedImports: 安装集与用户家目录取真实路径；本会话临时区按 0700 建、随会话删
+// biome-ignore lint/style/noRestrictedImports: 安装集与用户主目录取真实路径；本会话临时区按 0700 建、随会话删
 import { mkdir, realpath, rm } from 'node:fs/promises';
-// biome-ignore lint/style/noRestrictedImports: 拒读清单与落点按操作系统用户的家目录生成
+// biome-ignore lint/style/noRestrictedImports: 拒读清单与落点按操作系统用户的主目录生成
 import { homedir } from 'node:os';
 import { authority } from '@aalis/api-authority';
 import { type HostPaths, hostPaths } from '@aalis/api-host-paths';
@@ -29,7 +29,7 @@ import { t } from './texts.js';
 //
 // 按一次工具调用签发凭据：主体取权限服务的 principalOf（类别为人亲手、这次调用的参与者都是 owner 的为 owner；续做与子任务的
 // 类别随起它的那一轮，批过的调用参与者是批的人），不看会话的受众；绑定取会话管理里的记录，主目录是绑定目录、没有绑定的是默认
-// 工作区目录，档位与越界策略固定（工作区档、越界要问），仓库的 git 目录按磁盘找，三张清单在激活时按家目录布局与真实路径算好；
+// 工作区目录，档位与越界策略固定（工作区档、越界要问），仓库的 git 目录按磁盘找，三张清单在激活时按数据目录布局与真实路径算好；
 // 交给 api-reach 的 resolveReach 定上限。绑定与 git 目录在签发时取好。另管本会话临时区与子进程环境。
 // ════════════════════════════════════════════════════════════
 
@@ -42,7 +42,7 @@ const uses = {
   events,
   lifecycle,
   logger,
-  /** 家目录布局：三张清单、默认工作区与本会话临时区都按它 */
+  /** 数据目录布局：三张清单、默认工作区与本会话临时区都按它 */
   paths: hostPaths,
   /** 会话记录与绑定 */
   sessionManager,
@@ -67,7 +67,7 @@ async function run(caps: Caps): Promise<void> {
   const sm = caps.sessionManager.use;
   const lookup = (id: string) => sm.getSession(id);
 
-  // 清单与路径比较一律用真实路径：安装集可能经符号链接给出，用户家目录同理；清单里链接出去的根按真实路径补一份
+  // 清单与路径比较一律用真实路径：安装集可能经符号链接给出，用户主目录同理；清单里链接出去的根按真实路径补一份
   const given = caps.paths.use;
   const app = await realpath(given.app);
   const userHome = await realpath(homedir());

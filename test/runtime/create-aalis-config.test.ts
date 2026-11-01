@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { MINIMAL_BASE, pluginSettings, renderConfig } from '../../packages/create-aalis/src/cli.js';
-import { derivePaths, initHome } from '../../packages/runtime/src/home.js';
+import { derivePaths, initDataDir } from '../../packages/runtime/src/data-dir.js';
 import { isLoadablePlugin } from '../../packages/runtime/src/node-modules-loader.js';
 
 // 脚手架生成的 aalis.config.yaml：插件段，不写平台档。工具分组没设时由 plugin-tools 按会话从哪里建的给
@@ -68,7 +68,7 @@ describe('create-aalis renderConfig', () => {
   });
 });
 
-// `--init` 建的家目录与脚手架生成的家目录都不写平台档：两份实现（脚手架引用不了 runtime），在这里一起核
+// `--init` 建的数据目录与脚手架生成的数据目录都不写平台档：两份实现（脚手架引用不了 runtime），在这里一起核
 describe('平台档：create-aalis 与 --init 都不写', () => {
   const dirs: string[] = [];
   afterEach(() => {
@@ -79,7 +79,7 @@ describe('平台档：create-aalis 与 --init 都不写', () => {
     const dir = mkdtempSync(join(tmpdir(), 'aalis-init-parity-'));
     dirs.push(dir);
     const paths = derivePaths(join(dir, 'home'), join(dir, 'app'));
-    initHome(paths);
+    initDataDir(paths);
     expect(parse(readFileSync(paths.config, 'utf-8'))).not.toHaveProperty('sessionConfig');
     expect(configOf(new Set())).not.toHaveProperty('sessionConfig');
   });

@@ -8,7 +8,7 @@ import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 
 // ════════════════════════════════════════════════════════════
-// storage-local 的内部路由根按家目录布局派生（host-paths），不受用户 roots 影响：
+// storage-local 的内部路由根按数据目录布局派生（host-paths），不受用户 roots 影响：
 // 附件句柄里的 data 根映射到 state/，self 根映射到 self/（人设、技能这类存下来就生效的内容）。
 // 用户 roots 里同名的旧条目（升级前持久化的 data、tmp、pluginData、logs）被跳过并告警。
 // ════════════════════════════════════════════════════════════
@@ -44,7 +44,7 @@ describe('storage-local 内部路由根', () => {
     storage = app.bind({ storage: storageService }).storage.use;
   }
 
-  it('各内部根映射到家目录布局里的对应目录', async () => {
+  it('各内部根映射到数据目录布局里的对应目录', async () => {
     await start([]);
     const expected: Record<string, string> = {
       data: 'state',
@@ -79,7 +79,7 @@ describe('storage-local 内部路由根', () => {
     });
   });
 
-  it('用户 roots 里与内部根同名的旧条目被跳过并告警，内部根照常指向家目录布局', async () => {
+  it('用户 roots 里与内部根同名的旧条目被跳过并告警，内部根照常指向数据目录布局', async () => {
     await start([
       { name: 'workspace', path: 'workspace', readable: true, writable: true },
       { name: 'data', path: 'data', readable: true, writable: true },

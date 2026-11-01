@@ -51,7 +51,7 @@ const PLUGIN_NAME = '@aalis/plugin-storage-local';
 /**
  * 这个插件不是沙箱。它做四件事：
  *
- * 1. 给若干本机目录起稳定的名字：插件自己的数据在按家目录布局派生的内置根里，文件工具用的根在 roots 数组里声明
+ * 1. 给若干本机目录起稳定的名字：插件自己的数据在按数据目录布局派生的内置根里，文件工具用的根在 roots 数组里声明
  *    （缺省只有 workspace），让上层用 URI 表示文件，避免到处写宿主机绝对路径。
  * 2. 在每条 API 内对 `..` 穿越做规范化与校验，防止"workspace:/../../etc/passwd"
  *    这类逻辑越界 bug。
@@ -92,7 +92,7 @@ const DEFAULT_ROOTS: RootEntryConfig[] = [
 const PRIVATE = { browsable: false, readable: true, writable: true, deletable: true } as const;
 
 /**
- * 插件内置的内部路由根：按家目录布局（host-paths）派生，不受用户 roots 影响，不在文件页出现。在用户根之后注册；
+ * 插件内置的内部路由根：按数据目录布局（host-paths）派生，不受用户 roots 影响，不在文件页出现。在用户根之后注册；
  * 用户 roots 里与内部根同名的项被跳过并告警（内部根优先）。见计划书「插件数据约定」。
  * - data：插件状态（数据库、向量库、checkpoint、会话与附件……）。附件句柄里的根名 data 保留，映射到 state/，
  *   不改写历史。可删：/clear 的附件清理依赖它；删除面由各工具自身档位把关。
@@ -575,7 +575,7 @@ class ScopedStorageService implements StorageService {
     this.requirePermission(permission);
     const abs = access === 'write' ? await this.resolveForWrite(relPath) : await this.resolveExisting(relPath);
     // 以写、删的方式交出目录时连子树一起查。以读的方式交出目录（命令的工作目录等）不查子树：拿到目录的工具
-    // 本来就能按绝对路径读任何文件，挡它们靠沙箱的拒读清单，在这里拒只会让家目录的上级目录用不了
+    // 本来就能按绝对路径读任何文件，挡它们靠沙箱的拒读清单，在这里拒只会让数据目录的上级目录用不了
     await this.guard.check(abs, access === 'read' ? 'read' : 'write', access !== 'read');
     this.logger.debug(`storage.resolveLocalPath ${toUri(this.root.name, relPath)} access=${access}`);
     return abs;
@@ -820,15 +820,15 @@ class LocalStorage implements StorageService {
 }
 
 async function createRoot(
-  home: string,
+  dataDir: string,
   name: string,
   label: string,
   kind: string,
   rootPath: string,
   options: Omit<StorageRootInfo, 'name' | 'label' | 'kind'>,
 ): Promise<RootDefinition> {
-  // 相对路径按家目录解析：进程的 cwd 不带语义
-  const abs = resolve(home, rootPath);
+  // 相对路径按数据目录解析：进程的 cwd 不带语义
+  const abs = resolve(dataDir, rootPath);
   // path 已是文件系统根（'/'）等存在的目录时不需要创建；其它情况 mkdir -p
   if (rootPath !== '/') {
     await mkdir(abs, { recursive: true });
@@ -846,13 +846,13 @@ const ROOT_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 
 /** 按一条根配置建目录、解析真实路径并打注册日志；失败时告警并返回 undefined */
 async function openRoot(
-  home: string,
+  dataDir: string,
   item: RootEntryConfig & { path: string },
   logger: Logger,
 ): Promise<RootDefinition | undefined> {
   const { name } = item;
   try {
-    const root = await createRoot(home, name, item.label || name, item.kind || 'custom', item.path, {
+    const root = await createRoot(dataDir, name, item.label || name, item.kind || 'custom', item.path, {
       browsable: item.browsable === true,
       readable: item.readable !== false,
       writable: item.writable === true,
@@ -919,7 +919,7 @@ async function buildRoots(
       continue;
     }
     seen.add(name);
-    const root = await openRoot(paths.home, { ...item, name, path }, logger);
+    const root = await openRoot(paths.data, { ...item, name, path }, logger);
     if (root) out.push(root);
   }
   return out;
@@ -938,14 +938,13 @@ export default definePlugin({
     const logger = caps.logger.use.child('storage');
     const cfg = parseConfig(configSchema, caps.config.use, logger);
     const paths = caps.paths.use;
-    const home = paths.home;
     const guard = new HostFileGuard({ secrets: paths.secrets, config: paths.config });
     const internal = internalRoots(paths);
     const roots = await buildRoots(paths, cfg.roots, new Map(internal.map(r => [r.name, r.path])), logger);
     // 插件自己的数据都在内部根里；用户根一个都没有时只是缺了文件工具的工作根，照常提供存储
     if (roots.length === 0) logger.warn('没有可用的用户根（文件工具的工作根），请检查 roots 配置');
     for (const item of internal) {
-      const root = await openRoot(home, item, logger);
+      const root = await openRoot(paths.data, item, logger);
       if (root) roots.push(root);
     }
 

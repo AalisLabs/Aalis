@@ -233,7 +233,7 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
 
     expect(failLine, '写失败要明确说没写成，并给出替代办法').toBeDefined();
     // 每次启动随机的 token 不落在别处：登录页手工粘贴无从粘起，得给能做到的修法
-    expect(failLine).toContain('修好家目录 state/webui/ 的写权限后重启');
+    expect(failLine).toContain('修好数据目录 state/webui/ 的写权限后重启');
     expect(failLine).toContain('把 tokenMode 设为 fixed、在 fixedToken 里填一个至少 32 个字符的 token');
     expect(
       lines.some(l => l.includes('访问凭据已写入')),
@@ -242,7 +242,7 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
   });
 });
 
-// 停机、停用或重载返回之后，本实例自己发起的写盘（没有请求在等它）不能还在途：不然它落在已清理的家目录里（测试清理临时目录时
+// 停机、停用或重载返回之后，本实例自己发起的写盘（没有请求在等它）不能还在途：不然它落在已清理的数据目录里（测试清理临时目录时
 // 报 ENOTEMPTY），或在接手的实例写下 access.txt 之后才落地、把它盖成旧实例的 token
 describe('停机等本实例自己发起的写盘落定', () => {
   /** 在途的写入停在这里，open() 之后再过 100ms 才落定：stop 不等它的话早已返回 */

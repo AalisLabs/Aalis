@@ -111,16 +111,16 @@ plugins:
     port: 3001
 ```
 
-保存后宿主热重载配置，WebUI 按新端口监听。另一个 Aalis 实例（用另一个家目录）同样会占端口，两个实例要各用各的端口。
+保存后宿主热重载配置，WebUI 按新端口监听。另一个 Aalis 实例（用另一个数据目录）同样会占端口，两个实例要各用各的端口。
 
 ## 登录要的 token 在哪
 
-WebUI 要 token 登录。一键登录的链接写在家目录的 `state/webui/access.txt`（脚手架生成的项目里是 `data/state/webui/access.txt`），启动日志里「访问凭据已写入」那一行给出它的完整路径；日志本身不打印 token。把文件里「一键登录」那一行的链接粘进浏览器，或在登录页粘贴「Token」那一行的值。
+WebUI 要 token 登录。一键登录的链接写在数据目录的 `state/webui/access.txt`（脚手架生成的项目里是 `data/state/webui/access.txt`），启动日志里「访问凭据已写入」那一行给出它的完整路径；日志本身不打印 token。把文件里「一键登录」那一行的链接粘进浏览器，或在登录页粘贴「Token」那一行的值。
 
 - 默认的 `tokenMode: persist` 把 token 存在 `state/webui/token`，重启沿用；要换一个新的，删掉这个文件后重启。
 - `ephemeral` 每次启动换一个新的，只写在 `access.txt` 里。
-- `fixed` 用配置项 `fixedToken`（至少 32 个字符）；它是密钥字段，启动后值存在家目录的 `secrets.yaml` 里（配置文件里是引用），`access.txt` 里同样写着。
-- `access.txt` 写不进去时，日志写「访问凭据未能写入」：修好家目录 `state/webui/` 的写权限后重启；或改用 `fixed`，在 `fixedToken` 里填一个 token，用它登录。
+- `fixed` 用配置项 `fixedToken`（至少 32 个字符）；它是密钥字段，启动后值存在数据目录的 `secrets.yaml` 里（配置文件里是引用），`access.txt` 里同样写着。
+- `access.txt` 写不进去时，日志写「访问凭据未能写入」：修好数据目录 `state/webui/` 的写权限后重启；或改用 `fixed`，在 `fixedToken` 里填一个 token，用它登录。
 
 持有 token 的人等同 owner。对外暴露之前先读 [plugin-webui-server 的「登录身份与权限」](../plugins/plugin-webui-server.md)。
 

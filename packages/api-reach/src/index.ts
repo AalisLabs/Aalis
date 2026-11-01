@@ -15,7 +15,7 @@
  */
 
 import type { OriginTurn } from '@aalis/api-authority';
-import { HOME_DIR, type HostPaths } from '@aalis/api-host-paths';
+import { DATA_DIR_NAME, type HostPaths } from '@aalis/api-host-paths';
 import type { WorkBinding } from '@aalis/api-session-manager';
 import { defineService } from '@aalis/core';
 
@@ -66,9 +66,9 @@ const literal = (path: string, platform: NodeJS.Platform) =>
   slash(path, platform).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 export interface ProtectedListsInput {
-  /** 家目录布局 */
+  /** 数据目录布局 */
   readonly paths: HostPaths;
-  /** 操作系统用户的家目录 */
+  /** 操作系统用户的主目录 */
   readonly userHome: string;
   readonly platform: NodeJS.Platform;
   /** 安装集的形态：源码形态下有 packages/；npm 形态是 create-aalis 生成的项目 */
@@ -139,12 +139,12 @@ const LINUX_BROWSERS = [
  */
 const GIT_DIR_LANDING = '(hooks(/|$)|config$|(.+/)?(config\\.worktree|commondir)$|modules(/|$)|worktrees(/[^/]+)?$)';
 
-/** 按家目录布局、用户家目录与平台生成三张清单 */
+/** 按数据目录布局、用户主目录与平台生成三张清单 */
 export function protectedLists(input: ProtectedListsInput): ProtectedLists {
   const { paths, platform } = input;
   const mac = platform === 'darwin';
   const linux = platform === 'linux';
-  // 用户家目录是根目录（容器里常见）时拼出的是 /.ssh，不是 //.ssh
+  // 用户主目录是根目录（容器里常见）时拼出的是 /.ssh，不是 //.ssh
   const userHome = input.userHome.replace(/\/+$/, '');
   const inUserHome = (...rels: string[]): PathRule[] => rels.map(rel => ({ path: `${userHome}/${rel}` }));
   /** 任何目录下的同名条目 */
@@ -152,9 +152,9 @@ export function protectedLists(input: ProtectedListsInput): ProtectedLists {
   return {
     platform,
     control: [
-      // 家目录下除默认工作区、临时区与 self（归落点）以外的全部。主配置与 secrets.yaml 常链接到别处（dotfiles 仓库），
+      // 数据目录下除默认工作区、临时区与 self（归落点）以外的全部。主配置与 secrets.yaml 常链接到别处（dotfiles 仓库），
       // 另以它们为根各列一条，才能按真实路径补上（withRealRoots）
-      { path: paths.home, except: [{ path: paths.workspace }, { path: paths.tmp }, { path: paths.self }] },
+      { path: paths.data, except: [{ path: paths.workspace }, { path: paths.tmp }, { path: paths.self }] },
       { path: paths.config },
       { path: paths.secrets },
       // 守护进程加载的代码：安装集的依赖与构建产物（源码形态下另有各包的），以及安装集以外加载的插件
@@ -212,18 +212,18 @@ export function protectedLists(input: ProtectedListsInput): ProtectedLists {
       named('\\.cursor/(hooks|mcp|permissions|sandbox|cli)\\.json$'),
       named('\\.codex/(config\\.toml|hooks\\.json)$'),
       named('\\.codex/(rules|hooks)(/|$)'),
-      // 项目指令与项目级设置；实例家目录自己也可能叫 .aalis，不算，但它里面（如默认工作区里的项目）再出现的照样算
+      // 项目指令与项目级设置；实例数据目录自己也可能叫 .aalis，不算，但它里面（如默认工作区里的项目）再出现的照样算
       named('(AALIS|AGENTS)\\.md$'),
-      { pattern: '/\\.aalis(/|$)', except: [{ path: paths.home }] },
-      { pattern: `^${literal(paths.home, platform)}/.+/\\.aalis(/|$)` },
+      { pattern: '/\\.aalis(/|$)', except: [{ path: paths.data }] },
+      { pattern: `^${literal(paths.data, platform)}/.+/\\.aalis(/|$)` },
     ],
     denyRead: [
-      // 家目录下只放行默认工作区、self 两个目录整个、本实例的日志与主配置；本会话临时区由触及按会话放回。secrets.yaml
+      // 数据目录下只放行默认工作区、self 两个目录整个、本实例的日志与主配置；本会话临时区由触及按会话放回。secrets.yaml
       // 另列一条，理由同宿主控制面
-      { path: paths.home, except: [paths.workspace, paths.self, paths.logs, paths.config].map(path => ({ path })) },
+      { path: paths.data, except: [paths.workspace, paths.self, paths.logs, paths.config].map(path => ({ path })) },
       { path: paths.secrets },
-      // 同一部署下其他实例的家目录：部署目录下缺省的 data/ 与别的 profile 的 data-<名>/
-      { pattern: `^${literal(paths.app, platform)}/${HOME_DIR}(-[^/]*)?(/|$)`, except: [{ path: paths.home }] },
+      // 同一部署下其他实例的数据目录：部署目录下缺省的 data/ 与别的 profile 的 data-<名>/
+      { pattern: `^${literal(paths.app, platform)}/${DATA_DIR_NAME}(-[^/]*)?(/|$)`, except: [{ path: paths.data }] },
       // 凭据
       ...inUserHome(
         '.ssh',

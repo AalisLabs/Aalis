@@ -3,7 +3,7 @@ import { dirname, extname } from 'node:path';
 import { DefaultLogger, LogHub } from '@aalis/core';
 import { formatLogLine } from '@aalis/schema-log';
 import { getBootstrapBuffer } from './bootstrap-buffer.js';
-import { assertAbsolute } from './home.js';
+import { assertAbsolute } from './data-dir.js';
 
 const RUNTIME_SCOPE = 'aalis:runtime';
 

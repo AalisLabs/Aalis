@@ -46,7 +46,7 @@ describe('checkpoint × storage (真 fs)', () => {
     await app.plugins.register(storageLocalPlugin, {
       roots: [
         { name: 'ws', path: ws, kind: 'workspace', browsable: true, readable: true, writable: true, deletable: true },
-        // data:/ 与 tmp:/ 是内置根（家目录的 state/ 与 tmp/），不在用户 roots 里声明
+        // data:/ 与 tmp:/ 是内置根（数据目录的 state/ 与 tmp/），不在用户 roots 里声明
       ],
     });
     await app.plugins.register(checkpointPlugin, {

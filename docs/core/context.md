@@ -99,7 +99,7 @@ export default definePlugin({
 
 | 描述符 | 服务名 | 契约包 | 说明 |
 |---|---|---|---|
-| `hostPaths` | `host-paths` | `@aalis/api-host-paths` | 家目录、安装集与家目录布局的绝对路径，见 [api-host-paths](../api/api-host-paths.md) |
+| `hostPaths` | `host-paths` | `@aalis/api-host-paths` | 数据目录、安装集与数据目录布局的绝对路径，见 [api-host-paths](../api/api-host-paths.md) |
 | `hostLogs` | `host-logs` | `@aalis/api-host-logs` | 读日志：最近的历史与此后的实时日志，订阅随激活撤回，见 [api-host-logs](../api/api-host-logs.md) |
 | `hostConfig` | `host-config` | `@aalis/api-host-config` | 配置文档的读写与 `save()`，见 [运行态与配置文档](config.md) |
 | `pluginSource` | `plugin-source` | `@aalis/api-plugin-source` | 热扫描：`rescan()` 重新发现并登记新插件 |

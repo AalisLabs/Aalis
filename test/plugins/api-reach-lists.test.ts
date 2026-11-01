@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { protectedLists, withRealRoots } from '../../packages/api-reach/src/index.js';
-import { derivePaths } from '../../packages/runtime/src/home.js';
+import { derivePaths } from '../../packages/runtime/src/data-dir.js';
 import { CODE_DIR, inList, LISTS, PATHS, USER } from '../fixtures/reach.js';
 
 // ════════════════════════════════════════════════════════════
-// 三张清单：宿主控制面（一律拒写）、持久化与自动执行落点、拒读清单。由家目录布局、用户家目录与平台生成，
+// 三张清单：宿主控制面（一律拒写）、持久化与自动执行落点、拒读清单。由数据目录布局、用户主目录与平台生成，
 // 工具边界与沙箱用同一份。路径是真实路径；macOS 与 Windows 上比较不分大小写，Windows 的分隔符两种都认。
 // ════════════════════════════════════════════════════════════
 
@@ -14,14 +14,14 @@ function expectHits(list: 'control' | 'landing' | 'denyRead', cases: Array<[stri
 }
 
 describe('宿主控制面', () => {
-  it('家目录下除默认工作区、临时区与 self 以外的全部；安装集的依赖与构建产物；安装集外加载的插件目录', () => {
+  it('数据目录下除默认工作区、临时区与 self 以外的全部；安装集的依赖与构建产物；安装集外加载的插件目录', () => {
     expectHits('control', [
       [`${PATHS.state}/db`, true],
       [PATHS.config, true],
       [PATHS.secrets, true],
       [`${PATHS.logs}/latest.log`, true],
       [`${PATHS.run}/aalis.sock`, true],
-      [`${PATHS.home}/zz-other/x`, true],
+      [`${PATHS.data}/zz-other/x`, true],
       [`${PATHS.workspace}/a.md`, false],
       [`${PATHS.tmp}/sessions/7331/x`, false],
       // self 不在控制面里，归落点（见下文「self」）
@@ -38,10 +38,10 @@ describe('宿主控制面', () => {
     ]);
   });
 
-  it('npm 形态（create-aalis 生成的项目，家目录在安装集里）：另有守护进程的入口与安装集的 package.json', () => {
+  it('npm 形态（create-aalis 生成的项目，数据目录在安装集里）：另有守护进程的入口与安装集的 package.json', () => {
     const npm = (entry?: string) =>
       protectedLists({
-        paths: derivePaths('/u/proj/home', '/u/proj'),
+        paths: derivePaths('/u/proj/data', '/u/proj'),
         userHome: USER,
         platform: 'linux',
         form: 'npm',
@@ -71,7 +71,7 @@ describe('宿主控制面', () => {
 describe('按真实路径补上链接出去的根', () => {
   it('根的真实路径与写法不同时另加一份，根下的例外随根挪过去；按正则写的规则、取不到或相同的不加', () => {
     const real: Record<string, string> = {
-      [PATHS.home]: '/data/aalis',
+      [PATHS.data]: '/data/aalis',
       [PATHS.secrets]: '/u/dotfiles/secrets.yaml',
       '/u/.zshrc': '/u/dotfiles/zshrc',
       '/u/.ssh': '/u/.ssh',
@@ -99,7 +99,7 @@ describe('按真实路径补上链接出去的根', () => {
     );
     expectHits('landing', [['/u/dotfiles/zshrc', true]], lists);
     expect(lists.landing.length - LISTS.landing.length, '只加 ~/.zshrc 一条').toBe(1);
-    expect(lists.denyRead.length - LISTS.denyRead.length, '家目录与 secrets.yaml 各一条').toBe(2);
+    expect(lists.denyRead.length - LISTS.denyRead.length, '数据目录与 secrets.yaml 各一条').toBe(2);
   });
 
   it('macOS 上真实路径只差大小写的不加', () => {
@@ -178,7 +178,7 @@ describe('持久化与自动执行落点', () => {
       [`${PATHS.self}/skills/s/SKILL.md`, true],
       [`${PATHS.self}/persona/default.yaml`, true],
       [`${PATHS.self}/zz-new/x`, true],
-      [`${PATHS.home}/selfie/x`, false],
+      [`${PATHS.data}/selfie/x`, false],
     ]);
   });
 
@@ -228,28 +228,28 @@ describe('持久化与自动执行落点', () => {
       ['/u/code/proj/docs/AGENTS.md', true],
       ['/u/code/proj/README.md', false],
       ['/u/code/proj/.aalis/settings.json', true],
-      [`${PATHS.workspace}/a.md`, false], // 实例家目录本身叫 .aalis，不算项目的 .aalis/
+      [`${PATHS.workspace}/a.md`, false], // 实例数据目录本身叫 .aalis，不算项目的 .aalis/
       [`${PATHS.workspace}/repo/.aalis/settings.json`, true], // 默认工作区里项目自己的 .aalis/ 照样算
     ]);
   });
 });
 
 describe('拒读清单', () => {
-  it('家目录里只放行默认工作区、self、本实例的日志与主配置；其他实例的家目录整个拒读', () => {
+  it('数据目录里只放行默认工作区、self、本实例的日志与主配置；其他实例的数据目录整个拒读', () => {
     expectHits('denyRead', [
       [PATHS.secrets, true],
       [`${PATHS.state}/db`, true],
       [`${PATHS.run}/aalis.sock`, true],
       [`${PATHS.cache}/x`, true],
       [`${PATHS.tmp}/sessions/7331/x`, true], // 本会话临时区由触及按会话放行，清单里不放
-      [`${PATHS.home}/zz-other/x`, true],
+      [`${PATHS.data}/zz-other/x`, true],
       [`${PATHS.workspace}/a.md`, false],
       [`${PATHS.self}/skills/s/SKILL.md`, false],
       // 默认工作区与 self 整个放行：两个目录本身与以后新加的条目都读得到
       [PATHS.workspace, false],
-      [`${PATHS.home}/self`, false],
+      [`${PATHS.data}/self`, false],
       [`${PATHS.workspace}/zz-new/x`, false],
-      [`${PATHS.home}/self/zz-new`, false],
+      [`${PATHS.data}/self/zz-new`, false],
       [`${PATHS.logs}/latest.log`, false],
       [PATHS.config, false],
       // 同一部署目录下的其他实例：缺省的 data/ 与别的 profile 的 data-<名>/；用户主目录下的旧位置不再特殊
@@ -326,8 +326,8 @@ describe('拒读清单', () => {
   });
 });
 
-describe('用户家目录是根目录', () => {
-  it('容器里没有 passwd 条目的用户 HOME 常是 /：凭据、shell 落点与其他实例的家目录照样命中', () => {
+describe('用户主目录是根目录', () => {
+  it('容器里没有 passwd 条目的用户 HOME 常是 /：凭据、shell 落点与其他实例的数据目录照样命中', () => {
     const rooted = protectedLists({
       paths: derivePaths('/.aalis', '/opt/aalis'),
       userHome: '/',

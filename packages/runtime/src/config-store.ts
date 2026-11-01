@@ -67,7 +67,7 @@ export interface ConfigProvider {
   watch?(onChange: (next: AalisConfig) => void): () => void;
 }
 
-/** 密钥存储的持久化层（Node 宿主是家目录的 secrets.yaml）。约定同 {@link ConfigProvider} */
+/** 密钥存储的持久化层（Node 宿主是数据目录的 secrets.yaml）。约定同 {@link ConfigProvider} */
 export interface SecretProvider {
   save?(values: Record<string, unknown>): void | Promise<void>;
   watch?(onChange: (next: Record<string, unknown>) => void): () => void;

@@ -10,20 +10,20 @@ pnpm add @aalis/runtime
 
 ## 提供 / 依赖
 
-宿主组装件，不是插件，无 `provides` / `uses`；`startAalis` 在根上独占登记 `host-paths`（`@aalis/api-host-paths`）、`host-logs`（`@aalis/api-host-logs`）、`host-config`（`@aalis/api-host-config`）与 `plugin-source`（`@aalis/api-plugin-source`）四个服务。主要导出：`startAalis`、家目录的 `parseHostArgs` / `resolveHome` / `derivePaths` / `isHomeInitialized` / `initHome`、`createNodeModulesPluginLoader`、`createFsPluginLoader`、`createPluginDiscovery`、`createConfigStore`、`installHostConfig`、`createHostLogs`、`withPluginConfigSync`、`createFsYamlConfigProvider`、`createFsSecretsProvider`、`createProcessRespawnStrategy`。peer：`@aalis/core`（`>=0.20.0 <1.0.0`）。
+宿主组装件，不是插件，无 `provides` / `uses`；`startAalis` 在根上独占登记 `host-paths`（`@aalis/api-host-paths`）、`host-logs`（`@aalis/api-host-logs`）、`host-config`（`@aalis/api-host-config`）与 `plugin-source`（`@aalis/api-plugin-source`）四个服务。主要导出：`startAalis`、数据目录的 `parseHostArgs` / `resolveDataDir` / `derivePaths` / `isDataDirInitialized` / `initDataDir`、`createNodeModulesPluginLoader`、`createFsPluginLoader`、`createPluginDiscovery`、`createConfigStore`、`installHostConfig`、`createHostLogs`、`withPluginConfigSync`、`createFsYamlConfigProvider`、`createFsSecretsProvider`、`createProcessRespawnStrategy`。peer：`@aalis/core`（`>=0.20.0 <1.0.0`）。
 
 ```ts
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startAalis } from '@aalis/runtime';
 
-// 安装集是入口文件所在目录；家目录按 --home、AALIS_HOME 的顺序取，缺省是这个目录下的 data/（--profile <名> 时是 data-<名>/）
+// 安装集是入口文件所在目录；数据目录按 --data、AALIS_DATA 的顺序取，缺省是这个目录下的 data/（--profile <名> 时是 data-<名>/）
 startAalis({ appDir: dirname(fileURLToPath(import.meta.url)) });
 ```
 
-第一次运行前在启动命令里加上 `--init` 初始化家目录。
+第一次运行前在启动命令里加上 `--init` 初始化数据目录。
 
-配置里标了 `secret: true` 的字段，值存在家目录的 `secrets.yaml`（0600），`aalis.config.yaml` 只放引用 `{ $secret: '<键>' }`；写进主配置的明文在启动或热重载时自动移过去。备份家目录时连同 `secrets.yaml` 一起备份。
+配置里标了 `secret: true` 的字段，值存在数据目录的 `secrets.yaml`（0600），`aalis.config.yaml` 只放引用 `{ $secret: '<键>' }`；写进主配置的明文在启动或热重载时自动移过去。备份数据目录时连同 `secrets.yaml` 一起备份。
 
 ## 文档
 

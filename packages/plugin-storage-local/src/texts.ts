@@ -12,7 +12,7 @@ const SOURCE = {
   nameDescription: '只允许字母/数字/下划线/连字符，且需以字母开头；如 workspace、share',
   pathLabel: '本机路径',
   pathDescription:
-    '可绝对，亦可相对家目录；留空即默认工作区目录；不存在时自动创建。指向 / 即注册宿主机直通根（高危）。',
+    '可绝对，亦可相对数据目录；留空即默认工作区目录；不存在时自动创建。指向 / 即注册宿主机直通根（高危）。',
   labelLabel: '展示名称',
   kindLabel: '类型标签',
   kindDescription: '语义提示：workspace / data / tmp / pluginData / logs / custom / external / shared / host',

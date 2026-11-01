@@ -34,7 +34,7 @@ const STORED = 'data:/images/onebot_t_group_1/onebot/0123456789abcdef.png';
 const HTTP_URL = 'https://example.invalid/pic.jpg';
 
 /**
- * `storageRoots` 给出目录时改用真实 storage-local，以它为家目录：用户根只配 workspace（排第一），data 是内置根（映射到 state/）；
+ * `storageRoots` 给出目录时改用真实 storage-local，以它为数据目录：用户根只配 workspace（排第一），data 是内置根（映射到 state/）；
  * 否则按 `storage` 决定是否提供单根假 storage。主模型缺省登记视觉能力，`vision: false` 时不登记
  */
 async function loadStack(

@@ -54,7 +54,7 @@ cd my-bot && npm start
 本机在跑 Ollama 时脚手架默认用它，不要任何 key。要准备什么、启动后在哪看没起来的插件、CLI 与 WebUI 两个入口，见 [第一次运行](docs/guide/first-run.md)；
 建项目的完整步骤见 [脚手架上手](docs/guide/scaffolding.md)，装不上或起不来见 [安装与启动排障](docs/guide/troubleshooting.md)。
 
-在本仓库里开发：`pnpm install && pnpm build`，第一次先 `pnpm dev --init` 初始化家目录（仓库里的 `data/`），之后 `pnpm dev` 启动，`pnpm run ci:local` 跑门禁（build + test + biome）。
+在本仓库里开发：`pnpm install && pnpm build`，第一次先 `pnpm dev --init` 初始化数据目录（仓库里的 `data/`），之后 `pnpm dev` 启动，`pnpm run ci:local` 跑门禁（build + test + biome）。
 
 从仓库源码运行时，仓库内的私有插件 `@aalis/plugin-trigger-laya`（经本机侧车由模型判定群消息要不要回复，侧车不随仓库分发）与其它插件一样默认启用，但默认不生效，群聊判定仍由 trigger-policy 负责。想用它，在配置文件的 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，或在 WebUI 设置「系统」的服务偏好里切换 `trigger`；它生效而本机没有侧车时群里只回点名（@、叫名字、戳一戳）。说明见 [该包 README](packages/plugin-trigger-laya/README.md)。
 

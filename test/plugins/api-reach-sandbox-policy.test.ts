@@ -174,7 +174,7 @@ describe('与工具边界同源', () => {
     PATHS.config,
     PATHS.secrets,
     `${PATHS.logs}/latest.log`,
-    `${PATHS.home}/zz-other/x`,
+    `${PATHS.data}/zz-other/x`,
     '/u/.ssh/id_ed25519',
     '/u/code/proj/.env',
     '/opt/aalis/node_modules/x/index.js',

@@ -199,7 +199,7 @@ owner 仅管理权限（无自授）：
 
 ## 相关
 
-- 权限数据（level / note / groups）存于 `data:/users.json`（家目录的 `state/users.json`）
+- 权限数据（level / note / groups）存于 `data:/users.json`（数据目录的 `state/users.json`）
 - 工具的确认经 [api-approval](./api-approval.md) 的 `approvals` 服务（由 `plugin-session-server` 提供）；指令的意图确认由 `plugin-commands` 在同一会话里问发出者
 - 用户身份模型 `UserIdentity` 在本 api 包中定义，是全 surface 统一的调用者身份类型
   （WebUI action 的 caller 第三参、scheduler actor 快照等均为该类型）

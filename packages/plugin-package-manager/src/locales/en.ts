@@ -80,9 +80,9 @@ export default defineLocale<Source>()({
   uninstalledFlagUnsaved:
     'Plugin {name} was uninstalled (removed from the root dependencies and node_modules), but the config file could not be written ({error}): if needed, delete its disabled flag from the config file by hand.',
   uninstalledConfigRemoved:
-    'Plugin {name} was uninstalled (removed from the root dependencies and node_modules). Its config was deleted from the config file, along with the secrets only it used; data written under state/ in the home directory and elsewhere is not deleted, so clean it up by hand if needed.',
+    'Plugin {name} was uninstalled (removed from the root dependencies and node_modules). Its config was deleted from the config file, along with the secrets only it used; data written under state/ in the data directory and elsewhere is not deleted, so clean it up by hand if needed.',
   uninstalledConfigKept:
-    'Plugin {name} was uninstalled (removed from the root dependencies and node_modules). Its config stays in the config file, so it starts with the same config if reinstalled; data written under state/ in the home directory and elsewhere is not deleted, so clean it up by hand if needed.',
+    'Plugin {name} was uninstalled (removed from the root dependencies and node_modules). Its config stays in the config file, so it starts with the same config if reinstalled; data written under state/ in the data directory and elsewhere is not deleted, so clean it up by hand if needed.',
   kindCore: 'core',
   kindRuntime: 'host',
   kindApi: 'service contract',

@@ -504,7 +504,7 @@ symlink realpath 校验。但这层校验的目的是**防止上层代码出 bug
 **它就能访问当前 OS 用户能访问的任何文件**——storage 那层校验对子进程毫无约束力。
 真正的隔离要靠 §4 的 OS 沙箱或 OS 用户权限。
 
-宿主的两个控制文件另有一道执行点兜底：不管经哪个根，storage-local 都拒绝读写家目录的 `secrets.yaml`、
+宿主的两个控制文件另有一道执行点兜底：不管经哪个根，storage-local 都拒绝读写数据目录的 `secrets.yaml`、
 拒绝改写 `aalis.config.yaml`（读取允许），按 (dev, ino) 比对，硬链接与符号链接都挡得住；要删除、移动、改名的目录
 或 `resolveLocalPath` 以写、删的方式要交出的目录，子树里含受保护的文件时同样拒绝（见 [plugin-storage-local](../plugins/plugin-storage-local.md#宿主控制文件)）。
 它同样只管经 storage 的访问：子进程不受它约束，仍能按 OS 用户权限访问这两个文件。

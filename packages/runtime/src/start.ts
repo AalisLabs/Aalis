@@ -10,8 +10,15 @@ import { installBootstrapBuffer } from './bootstrap-buffer.js';
 import { createConfigStore, installHostConfig } from './config-store.js';
 import { type ConfigSyncOptions, installConfigHotReload, withPluginConfigSync } from './config-sync.js';
 import { type ConsoleSinkHandle, installConsoleSink } from './console-sink.js';
+import {
+  derivePaths,
+  HostArgsError,
+  initDataDir,
+  isDataDirInitialized,
+  parseHostArgs,
+  resolveDataDir,
+} from './data-dir.js';
 import { appendCrashLog, type FileLoggerHandle, setupFileLogger } from './file-logger.js';
-import { derivePaths, HomeArgsError, initHome, isHomeInitialized, parseHostArgs, resolveHome } from './home.js';
 import { createHostLogs } from './host-logs.js';
 import { acquireInstanceLock, type InstanceLock } from './instance-lock.js';
 import { createNodeModulesPluginLoader } from './node-modules-loader.js';
@@ -32,16 +39,16 @@ import { installTerminalStateRestorer } from './terminal.js';
 //
 // 独立部署（scaffold 生成的 index.mjs）：
 //   import { startAalis } from '@aalis/runtime';
-//   startAalis({ appDir: here });   // 从 node_modules 加载插件 + 默认开控制台/文件日志，家目录缺省是 here/data
+//   startAalis({ appDir: here });   // 从 node_modules 加载插件 + 默认开控制台/文件日志，数据目录缺省是 here/data
 //
 // monorepo 自托管（src/index.ts）传仓库根与 monorepo 风味的加载器：
 //   startAalis({ appDir, pluginLoader: createFsPluginLoader(join(appDir, 'packages')) });
 //
-// 命令行开头的宿主参数（`--home`、`--profile`、`--init`、`--service`）先取走，用来定家目录与运行形态；余下的 argv 非空即子命令
+// 命令行开头的宿主参数（`--data`、`--profile`、`--init`、`--service`）先取走，用来定数据目录与运行形态；余下的 argv 非空即子命令
 // 模式——`node index.mjs <name> [args]` ≡ 聊天里的 `/<name> args`，命中即执行并退出，未命中报错退出
 // （exit 2），**两种情况都不进守护进程**。宿主自己解析命令行时传 `argv: []` 或显式数组。
 //
-// 家目录没初始化就拒绝启动，只提示怎样初始化：绝不在找不到家目录时静默起一个空的家。
+// 数据目录没初始化就拒绝启动，只提示怎样初始化：绝不在找不到数据目录时静默起一个空的家。
 //
 // 子命令进程是与守护进程零通信的一次性实例，因此不装文件日志（会把守护进程正在写的 latest.log 轮转走）、
 // 不注入重启策略（`restart` 会 spawn 出 argv 仍带 restart 的 detached 子进程，无限连环——实测）。
@@ -53,7 +60,7 @@ const APP_DIR_EXAMPLE = 'startAalis({ appDir: dirname(fileURLToPath(import.meta.
 export interface StartAalisOptions {
   /**
    * 安装集目录，也就是部署目录（package.json 与 node_modules 所在，源码形态另有 packages/），必须是绝对路径。
-   * 源码形态的入口传仓库根，脚手架生成的入口传项目目录。`--home`、`AALIS_HOME` 都没给时家目录在它下面：
+   * 源码形态的入口传仓库根，脚手架生成的入口传项目目录。`--data`、`AALIS_DATA` 都没给时数据目录在它下面：
    * `data/`，给了 `--profile` / `AALIS_PROFILE` 时是 `data-<名>/`。
    */
   appDir: string;
@@ -66,7 +73,7 @@ export interface StartAalisOptions {
    */
   consoleSink?: boolean;
   /**
-   * 文件日志写到家目录的 `logs/latest.log`，默认开（WebUI 与 CLI 的日志页尾读这个文件）。
+   * 文件日志写到数据目录的 `logs/latest.log`，默认开（WebUI 与 CLI 的日志页尾读这个文件）。
    * 启动时先把上一轮的日志改名保留（编号插在扩展名前：latest.1.log），更早的依次后移，保留 5 份。
    * 子命令模式一律不写文件日志。
    */
@@ -74,8 +81,8 @@ export interface StartAalisOptions {
   /** 退出时复原终端 raw-mode/alt-screen，默认 true */
   terminalRestore?: boolean;
   /**
-   * 命令行参数，默认 `process.argv.slice(2)`。开头的宿主参数先取走：`--home <目录>`、`--profile <名>`、
-   * `--init`（初始化家目录后退出）、`--service`（由服务管理器拉起：实例锁被占时以 0 退出，重启交给服务管理器）。余下的非空即子命令模式：命中执行后退出，未命中报错退出（exit 2），不进守护进程。
+   * 命令行参数，默认 `process.argv.slice(2)`。开头的宿主参数先取走：`--data <目录>`、`--profile <名>`、
+   * `--init`（初始化数据目录后退出）、`--service`（由服务管理器拉起：实例锁被占时以 0 退出，重启交给服务管理器）。余下的非空即子命令模式：命中执行后退出，未命中报错退出（exit 2），不进守护进程。
    * 宿主自管命令行时传显式数组（`[]` 即守护进程）。
    */
   argv?: string[];
@@ -112,7 +119,7 @@ function readCoreVersion(): string | undefined {
  * ② 子命令短路必须在 `app.start` 之前。
  */
 export async function startAalis(opts: StartAalisOptions): Promise<App> {
-  // JS 入口可能一个参数都不传：在动家目录之前停下，不落到缺省的家目录
+  // JS 入口可能一个参数都不传：在动数据目录之前停下，不落到缺省的数据目录
   if (typeof opts?.appDir !== 'string') {
     console.error(
       `[aalis] startAalis is missing appDir: pass the directory of the entry file as appDir, for example ${APP_DIR_EXAMPLE}.`,
@@ -121,7 +128,7 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   }
   const { consoleSink = true, fileLog = true, terminalRestore = true } = opts;
 
-  // ── 家目录：在任何日志与文件写入之前定下来 ──
+  // ── 数据目录：在任何日志与文件写入之前定下来 ──
   // 命令行与环境变量里写的相对路径按启动时的 cwd 解析一次：那是用户在 shell 里的意图。
   // 启动目录可能已被删除，这时 process.cwd() 会抛错；只有遇到相对路径才需要它。
   let startCwd: string | undefined;
@@ -131,37 +138,37 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
     startCwd = undefined;
   }
   let hostArgs: ReturnType<typeof parseHostArgs>;
-  let home: ReturnType<typeof resolveHome>;
+  let resolved: ReturnType<typeof resolveDataDir>;
   try {
     hostArgs = parseHostArgs(opts.argv ?? process.argv.slice(2));
-    home = resolveHome({ args: hostArgs, env: process.env, appDir: opts.appDir, cwd: startCwd });
+    resolved = resolveDataDir({ args: hostArgs, env: process.env, appDir: opts.appDir, cwd: startCwd });
   } catch (err) {
-    if (!(err instanceof HomeArgsError)) throw err;
+    if (!(err instanceof HostArgsError)) throw err;
     console.error(`[aalis] ${err.message}`);
     process.exit(2);
   }
   const appDir = normalize(opts.appDir);
-  const declared = derivePaths(home.home, appDir, home.profile);
+  const declared = derivePaths(resolved.dir, appDir, resolved.profile);
   if (hostArgs.init) {
     try {
-      initHome(declared);
+      initDataDir(declared);
     } catch (err) {
       console.error(`[aalis] ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);
     }
-    console.log(`[aalis] Initialized the home directory: ${declared.home}`);
+    console.log(`[aalis] Initialized the data directory: ${declared.data}`);
     process.exit(0);
   }
-  if (!isHomeInitialized(declared)) {
+  if (!isDataDirInitialized(declared)) {
     console.error(
-      `[aalis] The home directory is not initialized: ${declared.home}\n` +
+      `[aalis] The data directory is not initialized: ${declared.data}\n` +
         '[aalis] Run the start command once with --init (before any subcommand) to initialize it.',
     );
     process.exit(1);
   }
-  // 交给插件的家目录是真实路径：符号链接、大小写与末尾分隔符不同的写法指向同一个目录时，插件拿到的是同一个路径
+  // 交给插件的数据目录是真实路径：符号链接、大小写与末尾分隔符不同的写法指向同一个目录时，插件拿到的是同一个路径
   // （记忆库按它记归属）
-  const paths = derivePaths(realpathSync.native(declared.home), appDir, home.profile);
+  const paths = derivePaths(realpathSync.native(declared.data), appDir, resolved.profile);
   // 默认加载器从安装集的 package.json 找插件：缺了它会一个插件都不加载、照样起来，只留一行「发现 0 个插件」
   if (!opts.pluginLoader && !existsSync(join(paths.app, 'package.json'))) {
     console.error(
@@ -172,7 +179,7 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   }
   const subcommands = hostArgs.rest;
 
-  // ── 实例锁：同一家目录只许一个守护进程。要在写日志之前取到，否则第二个实例一起来就把正在写的 latest.log 轮转走 ──
+  // ── 实例锁：同一数据目录只许一个守护进程。要在写日志之前取到，否则第二个实例一起来就把正在写的 latest.log 轮转走 ──
   // 交接令牌读到就从环境里删掉，不让插件起的子进程与侧车继承它。子命令进程不取锁（它们以后经 socket 连实例）。
   const handoffToken = process.env[HANDOFF_ENV];
   delete process.env[HANDOFF_ENV];
@@ -190,7 +197,7 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
     if (!acquired.ok) {
       const { holder, file } = acquired;
       const occupied =
-        `[aalis] An instance is already running in the home directory ${paths.home}: pid ${holder.pid} (lock file ${file}).\n` +
+        `[aalis] An instance is already running in the data directory ${paths.data}: pid ${holder.pid} (lock file ${file}).\n` +
         '[aalis] If you are sure no instance is running (for example, the process was killed and this machine cannot look up ' +
         'process start times, or a container was killed and restarted within the same boot), delete this lock file and start again.';
       if (hostArgs.service) {
@@ -277,7 +284,7 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
         ? createServiceRestartStrategy()
         : createProcessRespawnStrategy({
             appDir: paths.app,
-            cwd: startCwd ?? paths.home,
+            cwd: startCwd ?? paths.data,
             ...(instanceLock ? { env: { [HANDOFF_ENV]: instanceLock.handoffToken } } : {}),
           }),
     // 宿主层决定 dev/prod；core 不读 process.env

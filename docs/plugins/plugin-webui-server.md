@@ -71,21 +71,21 @@ WebUI 使用单个访问 token + HttpOnly cookie 认证。HTTP 请求与 WebSock
 
 persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（加载顺序、运行时才启用），WebUI 先用临时 token，storage 上线后读回 `data:/webui/token` 并改用它，同时重写 `access.txt`；没有 token 文件时把当前 token 写进去。已用临时 token 登录的浏览器此时需要重新登录。
 
-`token` 与 `access.txt` 都按凭据写（存储的 `secret` 写法）：只给运行 Aalis 的系统用户读（0600），家目录在别人也进得去的位置时同样读不到；读回的 token 文件按凭据重写一遍，原先权限更宽的一并收紧。
+`token` 与 `access.txt` 都按凭据写（存储的 `secret` 写法）：只给运行 Aalis 的系统用户读（0600），数据目录在别人也进得去的位置时同样读不到；读回的 token 文件按凭据重写一遍，原先权限更宽的一并收紧。
 
 ### 访问凭据文件
 
 - **URI**: `data:/webui/access.txt`
-- **物理路径**: `data` 存储根对应目录下的 `webui/access.txt`，即家目录的 `state/webui/access.txt`；启动日志 `访问凭据已写入: ... （绝对路径: ...）` 直接给出
+- **物理路径**: `data` 存储根对应目录下的 `webui/access.txt`，即数据目录的 `state/webui/access.txt`；启动日志 `访问凭据已写入: ... （绝对路径: ...）` 直接给出
 - **内容**: 注释 + `URL:` + `Token:` + `一键登录:`（带 `?token=` 的完整 URL）
-- **写不进去时**：启动日志写「访问凭据未能写入」与两种修法：修好家目录 `state/webui/` 的写权限后重启；或改用 `tokenMode: fixed`，在 `fixedToken` 里填一个至少 32 个字符的 token，用它登录。`ephemeral` 模式的 token 只写在这个文件里，文件写不成就没有别处可查
+- **写不进去时**：启动日志写「访问凭据未能写入」与两种修法：修好数据目录 `state/webui/` 的写权限后重启；或改用 `tokenMode: fixed`，在 `fixedToken` 里填一个至少 32 个字符的 token，用它登录。`ephemeral` 模式的 token 只写在这个文件里，文件写不成就没有别处可查
 
-> 历史路径 `data/webui-access.txt` 早已被 `data/webui/access.txt` 取代；家目录布局调整后 `data` 根映射到 `state/`，现行文件是 `<家目录>/state/webui/access.txt`（URI 仍是 `data:/webui/access.txt`），不要再读家目录 `data/` 下的旧文件。
+> 历史路径 `data/webui-access.txt` 早已被 `data/webui/access.txt` 取代；数据目录布局调整后 `data` 根映射到 `state/`，现行文件是 `<数据目录>/state/webui/access.txt`（URI 仍是 `data:/webui/access.txt`），不要再读数据目录 `data/` 下的旧文件。
 
 ### 登录方式
 
 1. **一键登录 URL**：浏览器打开 `http://host:port/?token=<TOKEN>` → 服务端校验后 `Set-Cookie` 并 302 到同一路径，只去掉 `token`，其余查询串（如日志的筛选）照留。
-2. **手动登录**：访问 `http://host:port/`，在登录页粘贴 token → POST `/api/auth/login` `{ token }`。登录页写明 token 在哪：家目录的 `state/webui/access.txt`（启动日志「访问凭据已写入」那行给出完整路径；日志本身不打印 token），`fixed` 模式是配置项 `fixedToken`（密钥字段，启动后值存在家目录的 `secrets.yaml` 里，配置文件里是引用）。登录页不带内联脚本，脚本由不需登录的 `GET /api/auth/login.js` 给出（见下文「文档级 CSP」）。登录页的颜色取默认主题（偏中性深色与浅色，`@aalis/api-webui` 的 `DEFAULT_THEMES`）的令牌，深浅跟随系统，与前端同一套写法：不用卡片、不加阴影，圆角用小档。
+2. **手动登录**：访问 `http://host:port/`，在登录页粘贴 token → POST `/api/auth/login` `{ token }`。登录页写明 token 在哪：数据目录的 `state/webui/access.txt`（启动日志「访问凭据已写入」那行给出完整路径；日志本身不打印 token），`fixed` 模式是配置项 `fixedToken`（密钥字段，启动后值存在数据目录的 `secrets.yaml` 里，配置文件里是引用）。登录页不带内联脚本，脚本由不需登录的 `GET /api/auth/login.js` 给出（见下文「文档级 CSP」）。登录页的颜色取默认主题（偏中性深色与浅色，`@aalis/api-webui` 的 `DEFAULT_THEMES`）的令牌，深浅跟随系统，与前端同一套写法：不用卡片、不加阴影，圆角用小档。
 3. **登出**：POST `/api/auth/logout` 清除 cookie。
 
 ### 登录失败限速
@@ -168,7 +168,7 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 | `/api/page-file` | GET | 页面单元格里的文件按句柄下载（`?handle=<文件单元格的 handle>`），句柄由本插件签发；下发方式与错误同 `/api/session-file` |
 | `/api/layout` | GET · POST | owner 的布局记录（图标栏上固定的页面、会话面板的标签）/ 按一个操作改它，见下文「布局记录」 |
 | `/api/attention` | GET | 「需要处理」：`{ items: AttentionItem[] }`，推出未结的审批在前（审批服务不在时没有这一类），其后是插件故障（失败与缺服务的实例，只在等别的插件启动的不算）与插件的提示，每项计 1。见下文「需要处理」 |
-| `/api/config` | GET / PUT | 宿主配置：GET 回 `{ config, schema, restartKeys, home? }`：`config` 是配置文档里写了的核心键（`CORE_CONFIG_SCHEMA` 的键，不带插件配置等其余部分），`schema` 是 `CORE_CONFIG_SCHEMA`，`restartKeys` 是要重启才生效的键（取自 `@aalis/schema-config` 的 `CORE_RESTART_KEYS`，现在是 `logLevel`、`slowThresholdMs`；`name` 只是显示用的应用名称，保存即生效），`home` 是宿主路径的家目录（宿主不提供路径时没有）。PUT 只收核心键，请求体里有别的顶层键（插件配置、禁用名单等各有自己的路由）时回 400 并点名，什么都不写；文档里没写的核心键按 schema 默认值比较（回传的默认值不算改动、不写进文件）；提交 `null` 回到默认值并从文档删掉这个键。PUT 只保存、不重启，回执 `restartNeeded` 写明改了的键里有没有要重启的（界面据此出「重启以生效」）；落盘被拒回 409、写入失败回 500，两种都撤回文档里的改动 |
+| `/api/config` | GET / PUT | 宿主配置：GET 回 `{ config, schema, restartKeys, dataDir? }`：`config` 是配置文档里写了的核心键（`CORE_CONFIG_SCHEMA` 的键，不带插件配置等其余部分），`schema` 是 `CORE_CONFIG_SCHEMA`，`restartKeys` 是要重启才生效的键（取自 `@aalis/schema-config` 的 `CORE_RESTART_KEYS`，现在是 `logLevel`、`slowThresholdMs`；`name` 只是显示用的应用名称，保存即生效），`dataDir` 是宿主路径的数据目录（宿主不提供路径时没有）。PUT 只收核心键，请求体里有别的顶层键（插件配置、禁用名单等各有自己的路由）时回 400 并点名，什么都不写；文档里没写的核心键按 schema 默认值比较（回传的默认值不算改动、不写进文件）；提交 `null` 回到默认值并从文档删掉这个键。PUT 只保存、不重启，回执 `restartNeeded` 写明改了的键里有没有要重启的（界面据此出「重启以生效」）；落盘被拒回 409、写入失败回 500，两种都撤回文档里的改动 |
 | `/api/restart` | POST | 重启应用：发起之后回复，停机是异步的（先广播 `app:restarting`，`/admin` 随之推 `app.restarting`）；宿主没注入重启策略时回 500，写明改动在下次启动时生效，并记一条错误日志 |
 | `/api/services` · `/api/services/:name/prefer` | GET · POST / DELETE | 服务列表 / 设置或清除全局偏好的提供者（持久化到 `servicePreferences`） |
 | `/api/plugins/:instanceId/services/:name/prefer` | POST / DELETE | 设置或清除这个插件实例的本插件偏好（只对它生效，持久化到 `pluginServicePreferences`）；体与校验同全局偏好的那两条，插件实例不在时 POST 回 404。插件列表每项的 `servicePreferences` 是它声明的服务里设了的本插件偏好，`serviceSelections` 是这些服务此刻各落到的那一家与依据（`services.inspect(name, { for })` 选中的那一条） |
@@ -284,7 +284,7 @@ socket.onmessage = event => {
 
 ### 布局记录
 
-图标栏上固定的页面与会话面板的标签存在本插件的插件数据里（`pluginData:/webui-server/layout.json`，Node 宿主在家目录的 `state/plugins/webui-server/`），跟着 owner 走，换设备、换浏览器一致。不放进插件配置：保存配置会重载本插件、断开会话连接。
+图标栏上固定的页面与会话面板的标签存在本插件的插件数据里（`pluginData:/webui-server/layout.json`，Node 宿主在数据目录的 `state/plugins/webui-server/`），跟着 owner 走，换设备、换浏览器一致。不放进插件配置：保存配置会重载本插件、断开会话连接。
 
 - 按操作写（`POST /api/layout`）：固定、取消、上移、下移带 `page`（`{ op, page }`），会话面板标签的打开、关闭、上移、下移带 `tab`（`{ op, tab }`，`tab` 是宿主标签 `{ host }` 或页面），移出（`remove-tab`）只带插件标签。操作排队逐个应用，每个操作落盘成功才算数，两台设备同时改各自生效；落盘失败回 500，记录不变。
 - 固定只收此刻登记着、位置为 `plugin` 的页面，打开插件标签只收位置为 `session` 的页面；其余只动记录，所属插件停用时也能改。关闭只把标签标为关、位置不动，插件标签第一次打开时追加在末尾；移出把插件标签从表里删掉，再打开时追加在末尾，宿主标签只能关、不能移出（回 400）。每个列表最多 50 条（会话面板的标签连同宿主标签算），满了回 409，移出用不着的插件标签之后才能打开新的。

@@ -33,7 +33,7 @@ describe('WebUI 媒体路由', () => {
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-media-route-'));
-    // data 是 storage-local 的内置根，映射到家目录的 state/
+    // data 是 storage-local 的内置根，映射到数据目录的 state/
     mkdirSync(join(base, 'state', 'images'), { recursive: true });
     writeFileSync(join(base, 'state', 'images', 'cat.png'), PNG);
     writeFileSync(join(base, 'state', 'images', 'page.png'), '<!doctype html><script>alert(1)</script>');

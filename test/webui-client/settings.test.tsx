@@ -43,7 +43,7 @@ import { dataPath, hostTab, hostTabs, layoutStore, NOTES, pageTab, refOf, SETTIN
 //   会话服务不在、功能位 settings 为假时整个分区不出现；
 // - 插件分区从目录与地址都能进入，手动刷新让页面重取；
 // - 外观：主题选择（跟随系统时深浅各选一个）、导入与导出、插件经贡献点提供的主题，快捷栏与会话面板标签的排序与开关；
-// - 系统：宿主配置（来源与生效时机，要重启的键保存后出「重启以生效」）、服务偏好（全局偏好，模型服务照常一行）与家目录。
+// - 系统：宿主配置（来源与生效时机，要重启的键保存后出「重启以生效」）、服务偏好（全局偏好，模型服务照常一行）与数据目录。
 // ════════════════════════════════════════════════════════════
 
 let app: Harness | undefined;
@@ -972,7 +972,7 @@ describe('系统', () => {
           const restartNeeded = 'logLevel' in body;
           return { ok: true, message: '已保存', restartNeeded };
         }
-        return { config, schema: SCHEMA, restartKeys: ['logLevel'], home: '/home/zz/.aalis' };
+        return { config, schema: SCHEMA, restartKeys: ['logLevel'], dataDir: '/srv/zz-bot/data' };
       },
       '/api/services': SERVICES,
       '/api/services/llm/prefer': { ok: true },
@@ -981,7 +981,7 @@ describe('系统', () => {
     });
   }
 
-  it('宿主配置每行写生效值、来源（配置文件、默认）与要重启的键；家目录写出来', async () => {
+  it('宿主配置每行写生效值、来源（配置文件、默认）与要重启的键；数据目录写出来', async () => {
     app = await renderApp('/settings/system', {}, systemRest());
     await section().findByRole('group', { name: '应用名称' });
     expect(settingRow('应用名称').getByText('Bot')).toBeTruthy();
@@ -990,10 +990,10 @@ describe('系统', () => {
     expect(settingRow('日志等级').getByText('info')).toBeTruthy();
     expect(settingRow('日志等级').getByText('默认')).toBeTruthy();
     expect(settingRow('日志等级').getByText('重启后生效')).toBeTruthy();
-    expect(section().getByText('/home/zz/.aalis')).toBeTruthy();
+    expect(section().getByText('/srv/zz-bot/data')).toBeTruthy();
   });
 
-  it('英文界面：目录、宿主配置的来源与生效时机、家目录按英文', async () => {
+  it('英文界面：目录、宿主配置的来源与生效时机、数据目录按英文', async () => {
     app = await renderApp('/settings/system', {}, systemRest(language(['en'])));
     await section().findByRole('group', { name: '应用名称' });
     expect(
@@ -1004,7 +1004,7 @@ describe('系统', () => {
     expect(settingRow('应用名称').getByText('Config file')).toBeTruthy();
     expect(settingRow('日志等级').getByText('Default')).toBeTruthy();
     expect(settingRow('日志等级').getByText('Applies after restart')).toBeTruthy();
-    expect(section().getByRole('region', { name: 'Home directory' })).toBeTruthy();
+    expect(section().getByRole('region', { name: 'Data directory' })).toBeTruthy();
   });
 
   it('改要重启的键：只送这一个键，保存后出「重启以生效」与重启按钮；改别的键不出；恢复默认与选空的一项送 null', async () => {

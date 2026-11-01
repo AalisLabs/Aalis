@@ -7,7 +7,7 @@ import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { fixedRef, ref } from '../fixtures/service-ref.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
 
-// 宿主配置：GET /api/config 给出文档里写了的核心键、它们的 schema、要重启才生效的键与家目录。
+// 宿主配置：GET /api/config 给出文档里写了的核心键、它们的 schema、要重启才生效的键与数据目录。
 // PUT /api/config 只收 CORE_CONFIG_SCHEMA 的键（name / logLevel / slowThresholdMs）。别的顶层键回 400 并点名，什么都不写——
 // 不能静默丢弃却回复「已保存」（文档曾把 commandPrefix 记成顶层字段，用户照抄后 API 回 ok 但什么都没发生）。
 // PUT 只保存、不重启，改了要重启的键时回执写明，由前端出「重启以生效」；重启走 POST /api/restart。
@@ -63,7 +63,7 @@ function setup(opts: { save?: () => Promise<void>; restart?: () => void } = {}) 
       commands: ref(),
       services: { names: () => [], preferred: () => undefined, inspect: () => [] },
       self: 'zz-webui',
-      home: '/home/zz/.aalis',
+      dataDir: '/srv/zz-bot/data',
       versions: () => () => undefined,
       logger,
     },
@@ -76,7 +76,7 @@ function setup(opts: { save?: () => Promise<void>; restart?: () => void } = {}) 
 }
 
 describe('GET /api/config', () => {
-  it('给出文档里写了的核心键（不带插件配置等其余部分）、核心键的 schema、要重启才生效的键与家目录', async () => {
+  it('给出文档里写了的核心键（不带插件配置等其余部分）、核心键的 schema、要重启才生效的键与数据目录', async () => {
     const { get } = setup();
     const r = await get();
     expect(r.status).toBe(200);
@@ -84,7 +84,7 @@ describe('GET /api/config', () => {
       config: { name: 'Aalis', logLevel: 'info' },
       schema: toSource(CORE_CONFIG_SCHEMA),
       restartKeys: ['logLevel', 'slowThresholdMs'],
-      home: '/home/zz/.aalis',
+      dataDir: '/srv/zz-bot/data',
     });
   });
 });

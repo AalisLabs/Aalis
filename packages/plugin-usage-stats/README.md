@@ -1,6 +1,6 @@
 # @aalis/plugin-usage-stats
 
-用量统计：订阅 `@aalis/api-llm` 的 `llm:usage`，把每次模型调用（服务商、模型、调用方、会话、用途、输入、缓存命中、输出 token）记进家目录 `state/usage/llm-calls.jsonl`；「用量统计」页按天、按周、按模型列出用量，配置里填了单价才显示估算费用，服务商实现了余额查询才显示余额。
+用量统计：订阅 `@aalis/api-llm` 的 `llm:usage`，把每次模型调用（服务商、模型、调用方、会话、用途、输入、缓存命中、输出 token）记进数据目录 `state/usage/llm-calls.jsonl`；「用量统计」页按天、按周、按模型列出用量，配置里填了单价才显示估算费用，服务商实现了余额查询才显示余额。
 
 ## 安装
 

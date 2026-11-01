@@ -22,7 +22,7 @@ import { freePort, waitListening } from '../helpers/net.js';
 // ════════════════════════════════════════════════════════════
 // 会话条目里的文件句柄：她发到 WebUI 会话的文件（工作区里的文件等）在条目里给会话服务签发的句柄，不给存储地址；
 // WebUI 按句柄下载（GET /api/session-file），一律当附件以 octet-stream 下发。
-// 真 storage-local（data 根映射到家目录的 state/）、真会话服务、真 HTTP。
+// 真 storage-local（data 根映射到数据目录的 state/）、真会话服务、真 HTTP。
 // ════════════════════════════════════════════════════════════
 
 const TOKEN = 'zz-session-file-token-placeholder';
@@ -47,7 +47,7 @@ afterEach(async () => {
   warns.length = 0;
 });
 
-/** 会话管理、消息归档、会话服务与 webui-server，存储是临时家目录上的 storage-local */
+/** 会话管理、消息归档、会话服务与 webui-server，存储是临时数据目录上的 storage-local */
 async function setup() {
   const home = mkdtempSync(join(tmpdir(), 'aalis-session-file-'));
   homes.push(home);
@@ -73,7 +73,7 @@ async function setup() {
   await app.start();
   await waitListening(port);
 
-  /** 存储根在家目录里的位置：workspace 是默认工作区，data 是 state/，pluginData 是 state/plugins */
+  /** 存储根在数据目录里的位置：workspace 是默认工作区，data 是 state/，pluginData 是 state/plugins */
   const rootDirs: Record<string, string> = {
     workspace: paths.workspace,
     data: paths.state,

@@ -82,7 +82,7 @@ type MongoMemoryConfig = Pick<ConfigOf<typeof configSchema>, 'uri' | 'database'>
   Partial<Omit<ConfigOf<typeof configSchema>, 'uri' | 'database'>>;
 
 /** 库的归属记录：元数据集合里的一条，命名空间专用，不与插件的元数据混在一起 */
-const OWNER_NAMESPACE = 'aalis.home';
+const OWNER_NAMESPACE = 'aalis.data';
 const OWNER_KEY = 'owner';
 
 // ===== 数据库文档类型 =====
@@ -431,7 +431,7 @@ async function connectAndProvide(caps: Caps): Promise<void> {
 const openedBy = new Map<string, LifecycleCap>();
 
 /**
- * 库名留空时按家目录与实例派生（见 deriveDatabase），登记占用后连接、核对库的归属、建索引并发布服务。
+ * 库名留空时按数据目录与实例派生（见 deriveDatabase），登记占用后连接、核对库的归属、建索引并发布服务。
  * 停用或停机（lifecycle.signal abort）时 `client.close()`，让在途的连接与建索引以错误返回。
  * @internal 只为测试导出：以替身客户端直接调用（经 apply 会连真实的 mongod），不是公开 API
  */
@@ -439,8 +439,8 @@ export async function openAndProvide(
   client: MongoClient,
   mongoConfig: MongoMemoryConfig,
   { logger, lifecycle, provide }: Omit<Caps, 'config' | 'paths'>,
-  /** 本次激活所在的家目录（宿主经 host-paths 给出；宿主不提供时不做归属检查） */
-  owner?: Pick<HostPaths, 'home' | 'profile'>,
+  /** 本次激活所在的数据目录（宿主经 host-paths 给出；宿主不提供时不做归属检查） */
+  owner?: Pick<HostPaths, 'data' | 'profile'>,
 ): Promise<void> {
   const { suffix } = parseInstanceId(lifecycle.use.id);
   const database = mongoConfig.database || deriveDatabase(owner?.profile, suffix);
@@ -473,7 +473,7 @@ export async function openAndProvide(
       await claimOwnership(
         db,
         metaCollection,
-        { home: owner.home, instance: lifecycle.use.id },
+        { dir: owner.data, instance: lifecycle.use.id },
         database,
         mongoConfig.claimFrom ?? '',
         logger.use,
@@ -516,7 +516,7 @@ export async function openAndProvide(
 }
 
 /**
- * 库名留空时的派生：主家目录 aalis，profile 家目录 aalis_<p>，带后缀的实例再加后缀（aalis-b、aalis_<p>_b）。
+ * 库名留空时的派生：主数据目录 aalis，profile 数据目录 aalis_<p>，带后缀的实例再加后缀（aalis-b、aalis_<p>_b）。
  * profile 只含小写字母、数字与连字符，不含下划线：profile 与后缀之间用下划线接，两段拆得开，
  * profile test-b 的主实例（aalis_test-b）与 profile test 的 :b 实例（aalis_test_b）不会撞名。
  */
@@ -526,25 +526,25 @@ function deriveDatabase(profile: string | undefined, suffix: string | undefined)
 }
 
 /**
- * 核对库的归属：库里记着它归哪个家目录与哪个实例。两个家目录（例如两个部署目录各自的 data/，或复制出来的
+ * 核对库的归属：库里记着它归哪个数据目录与哪个实例。两个数据目录（例如两个部署目录各自的 data/，或复制出来的
  * 测试实例）连同一个 MongoDB、派生出同一个库名时，后来的那个以一行配置错误激活失败，不会共写。
- * 归属按家目录的路径认，不按随机 id：复制家目录时 id 会跟着复制，复制出来的实例就认不出来了。
- * 只在激活时核对一次：认领之后，原家目录里还在跑的实例不会察觉，所以认领前要先停掉它。
- * - 没有记录、库里也没有数据：记下本家目录，是新库。
+ * 归属按数据目录的路径认，不按随机 id：复制数据目录时 id 会跟着复制，复制出来的实例就认不出来了。
+ * 只在激活时核对一次：认领之后，原数据目录里还在跑的实例不会察觉，所以认领前要先停掉它。
+ * - 没有记录、库里也没有数据：记下本数据目录，是新库。
  * - 没有记录、库里已有数据：不默认认走，要配置里写 claimFrom: unowned 才认领（迁移时由迁移脚本写好记录）。
- * - 记录是别的家目录或别的实例：报错并点名；claimFrom 写的正是记录里的家目录时改记到本家目录（搬迁后认领）。
- * - 记录坏了（缺家目录或实例）：报错；claimFrom: unowned 时改写。
+ * - 记录是别的数据目录或别的实例：报错并点名；claimFrom 写的正是记录里的数据目录时改记到本数据目录（搬迁后认领）。
+ * - 记录坏了（缺数据目录或实例）：报错；claimFrom: unowned 时改写。
  */
 async function claimOwnership(
   db: Db,
   meta: Collection<MetadataDocument>,
-  me: { home: string; instance: string },
+  me: { dir: string; instance: string },
   database: string,
   claimFrom: string,
   logger: Logger,
 ): Promise<void> {
   const filter = { namespace: OWNER_NAMESPACE, key: OWNER_KEY };
-  const mine = { home: me.home, instance: me.instance };
+  const mine = { dir: me.dir, instance: me.instance };
   const doc = await meta.findOne(filter);
   if (!doc) {
     if (claimFrom !== 'unowned' && (await hasData(db))) {
@@ -553,35 +553,35 @@ async function claimOwnership(
     try {
       await meta.insertOne({ ...filter, data: mine, updatedAt: new Date() });
     } catch (err) {
-      // 另一个家目录同时在认领：唯一索引让后到的写入失败，按对方的记录重新核对
+      // 另一个数据目录同时在认领：唯一索引让后到的写入失败，按对方的记录重新核对
       if ((err as { code?: unknown }).code !== 11000) throw err;
       return claimOwnership(db, meta, me, database, claimFrom, logger);
     }
     logger.info(
-      `MongoDB 库 ${database} 记下归属：家目录 ${me.home}，实例 ${me.instance}` +
+      `MongoDB 库 ${database} 记下归属：数据目录 ${me.dir}，实例 ${me.instance}` +
         (claimFrom ? '；请从配置里删掉 claimFrom' : ''),
     );
     return;
   }
-  const record = doc.data as { home?: unknown; instance?: unknown } | null | undefined;
+  const record = doc.data as { dir?: unknown; instance?: unknown } | null | undefined;
   const owner =
-    typeof record?.home === 'string' && typeof record.instance === 'string'
-      ? { home: record.home, instance: record.instance }
+    typeof record?.dir === 'string' && typeof record.instance === 'string'
+      ? { dir: record.dir, instance: record.instance }
       : undefined;
-  if (owner?.home === me.home && owner.instance === me.instance) {
+  if (owner?.dir === me.dir && owner.instance === me.instance) {
     if (claimFrom)
-      logger.warn(`MongoDB 库 ${database} 本就归本家目录，claimFrom 用不上了：请从 ${me.instance} 的配置里删掉它`);
+      logger.warn(`MongoDB 库 ${database} 本就归本数据目录，claimFrom 用不上了：请从 ${me.instance} 的配置里删掉它`);
     return;
   }
-  if (owner ? claimFrom === owner.home : claimFrom === 'unowned') {
-    // 比对后写入：读到记录之后它被别人改了（两个家目录同时认领）就不覆盖，按新的记录重新核对
+  if (owner ? claimFrom === owner.dir : claimFrom === 'unowned') {
+    // 比对后写入：读到记录之后它被别人改了（两个数据目录同时认领）就不覆盖，按新的记录重新核对
     const { matchedCount } = await meta.updateOne(
       { ...filter, data: doc.data },
       { $set: { data: mine, updatedAt: new Date() } },
     );
     if (matchedCount === 0) return claimOwnership(db, meta, me, database, claimFrom, logger);
     logger.info(
-      `MongoDB 库 ${database} 的归属改到家目录 ${me.home}，实例 ${me.instance}；认领已完成，请从配置里删掉 claimFrom`,
+      `MongoDB 库 ${database} 的归属改到数据目录 ${me.dir}，实例 ${me.instance}；认领已完成，请从配置里删掉 claimFrom`,
     );
     return;
   }
@@ -590,13 +590,11 @@ async function claimOwnership(
       t('ownerRecordBroken', { database, namespace: OWNER_NAMESPACE, key: OWNER_KEY, instance: me.instance }),
     );
   }
-  if (owner.home === me.home) {
-    throw configError(
-      t('ownedBySibling', { database, owner: owner.instance, instance: me.instance, home: owner.home }),
-    );
+  if (owner.dir === me.dir) {
+    throw configError(t('ownedBySibling', { database, owner: owner.instance, instance: me.instance, dir: owner.dir }));
   }
   throw configError(
-    t('ownedByOtherHome', { database, home: owner.home, owner: owner.instance, instance: me.instance }),
+    t('ownedByOtherDataDir', { database, dir: owner.dir, owner: owner.instance, instance: me.instance }),
   );
 }
 

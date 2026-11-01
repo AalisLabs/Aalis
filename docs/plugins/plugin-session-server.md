@@ -67,7 +67,7 @@ definePlugin({
 - `sessionManager`：会话表与增删改都经它；审批按会话的根会话的机器人账号认限定了账号的接入；输入里的插话按根会话记下的聊天窗口（`originChat.multiParty`）标出。
 - `sessionSettings`：会话设置的管理面：设置的各行、各层、写入与写过的各处，建子会话时写下的那一层；缺席时这些方法与建子会话回 `unsupported`。
 - `storage`：已读记录的落点；签发文件句柄时按存储根的种类挡掉插件状态。
-- `paths`：审批的审计写在家目录的 `state/audit/approvals.jsonl`。
+- `paths`：审批的审计写在数据目录的 `state/audit/approvals.jsonl`。
 - `memory`：历史从存档归并。
 - `hooks`：`agent:turn:before` 判运行中、拼出在途回合的条目；`agent:turn:after` 记下结局；`agent:reply:before` 切分重试的几版回复；`agent:tool:after` 把审批的结算、「已发出」、「回合停止时还没结束」、退出码与转到后台的任务 id 写进工具结果的元数据；`memory:clear` 清掉消息历史之后通知订阅的客户端重新取快照。
 - `plugins`：房间分组的组名取适配器实例的显示名。
@@ -144,7 +144,7 @@ owner 自己的会话与房间的子会话不标：会话服务本身就是 owne
 - **形状**：`<载荷>.<签名>`，两段都是 base64url。载荷是存储地址与文件名，签名是密钥对会话 id 与载荷的 HMAC-SHA256。核验时先认形状，再比签名（定长比较），都过了才读载荷。
 - **用签名，不用服务端的表**：同一会话同一文件每次算出同一个句柄，快照与历史翻多少遍都不必记下什么，内存不随之增长。
 - **重启即失效**：密钥每次启动随机生成，只在内存里，不落盘。会话服务重启（停用后重新启用、重载）之后旧句柄一律核验不过；这时 `epoch` 也变了，客户端本来就要重新订阅，快照里是新句柄。
-- **不签发的**（api-storage 的 `canIssueFileHandle`，页面单元格的文件句柄同用这一条）：不是存储地址的来源（网址、data URL）、存储服务里没有的根，以及种类为 `data`、`pluginData` 的根。`data` 根映射到家目录的 `state/`，里面有 WebUI 的访问 token 与审计；`pluginData` 在 `state/plugins` 下。这些附件只有名字。owner 自己在 storage-local 里加的直通根（如指向 `/` 的 `host`）不按路径区分，种类不是这两种的照常签发。
+- **不签发的**（api-storage 的 `canIssueFileHandle`，页面单元格的文件句柄同用这一条）：不是存储地址的来源（网址、data URL）、存储服务里没有的根，以及种类为 `data`、`pluginData` 的根。`data` 根映射到数据目录的 `state/`，里面有 WebUI 的访问 token 与审计；`pluginData` 在 `state/plugins` 下。这些附件只有名字。owner 自己在 storage-local 里加的直通根（如指向 `/` 的 `host`）不按路径区分，种类不是这两种的照常签发。
 - **核验**：`resolveFile(sessionId, handle)` 回存储地址与文件名，传输层自己读出、当附件下发（WebUI 见 [plugin-webui-server](./plugin-webui-server.md#rest-api) 的 `/api/session-file`）。会话 id 不是签发时那个的、载荷或签名改动过的、重启之前签发的，都回 `undefined`。核验不看文件还在不在，删掉的文件由传输层读取时报出。
 
 ## 已读记录
@@ -183,7 +183,7 @@ owner 自己的会话与房间的子会话不标：会话服务本身就是 owne
 
 ### 审计
 
-请求与决定成对追加到家目录的 `state/audit/approvals.jsonl`（经 host-paths 取家目录），每行一个 JSON 对象，同一个 `id` 的请求总在它的决定之前。不进模型上下文。
+请求与决定成对追加到数据目录的 `state/audit/approvals.jsonl`（经 host-paths 取数据目录），每行一个 JSON 对象，同一个 `id` 的请求总在它的决定之前。不进模型上下文。
 
 ```jsonc
 { "type": "request", "id": "…", "at": 1760000000000, "sessionId": "…", "turnId": "…", "callId": "…",

@@ -2,7 +2,7 @@
  * @aalis/api-host-logs — 宿主日志契约
  *
  * 写日志是 core 发给每个插件的 logger；读整个日志流是宿主的管理能力（日志里有用户消息、路径与报错细节），不随 logger
- * 发给每个插件，要读的插件在 uses 里声明本描述符。Node 宿主 @aalis/runtime 把它独占登记在根上：历史读家目录的 logs/latest.log（本轮启动以来的
+ * 发给每个插件，要读的插件在 uses 里声明本描述符。Node 宿主 @aalis/runtime 把它独占登记在根上：历史读数据目录的 logs/latest.log（本轮启动以来的
  * 全部日志，启动期的也在里面），实时的接 App 的日志通道。别的宿主要给插件读日志，自己提供本描述符。
  */
 

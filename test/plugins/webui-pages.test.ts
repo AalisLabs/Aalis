@@ -20,7 +20,7 @@ import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
 // 声明式页面经真实 webui-server 与 HTTP：页面表、数据源与动作的服务端闸门、单元格里的媒体与文件、会话面板、
-// invalidate 推到 /admin。存储是临时家目录上的 storage-local，会话管理是只答 getSession 的替身。
+// invalidate 推到 /admin。存储是临时数据目录上的 storage-local，会话管理是只答 getSession 的替身。
 // ════════════════════════════════════════════════════════════
 
 const TOKEN = 'zz-webui-pages-token-placeholder-0';

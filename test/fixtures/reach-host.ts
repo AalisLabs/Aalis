@@ -16,7 +16,7 @@ import { provideHostPaths } from './host-paths.js';
 import { registerHubs } from './hubs.js';
 import { fakeMemory } from './session-memory.js';
 
-// 触及插件的测试件：一个 zz-slice2- 前缀的临时目录里放实例家目录、安装集与操作系统用户的家目录，起会话管理（内存替身的
+// 触及插件的测试件：一个 zz-slice2- 前缀的临时目录里放实例数据目录、安装集与操作系统用户的主目录，起会话管理（内存替身的
 // 会话表）、本地存储、本地进程、权限与触及插件。owner 是本机控制台与 onebot 的 <owner>。
 
 export const OWNER_QQ = '99999';
@@ -29,8 +29,8 @@ export async function projectSession(sm: SessionManagerService, root: string, wo
 }
 
 /** 本会话临时区：tmp/sessions/<会话 id 的 UTF-8 十六进制> */
-export const sessionTmpIn = (home: string, sessionId: string) =>
-  join(home, 'tmp', 'sessions', Buffer.from(sessionId).toString('hex'));
+export const sessionTmpIn = (dataDir: string, sessionId: string) =>
+  join(dataDir, 'tmp', 'sessions', Buffer.from(sessionId).toString('hex'));
 
 /** 一轮 owner 在会话里亲手发来的回合 */
 export const ownerTurn = (sessionId: string): OriginTurn => ({
@@ -43,19 +43,19 @@ export const ownerTurn = (sessionId: string): OriginTurn => ({
 export interface ReachDirs {
   /** 临时目录本身（真实路径） */
   base: string;
-  /** 实例家目录 */
-  home: string;
+  /** 实例数据目录 */
+  data: string;
   /** 安装集（真实路径）；交给 host-paths 的是 appLink 时，它是链接指向的目录 */
   app: string;
-  /** 操作系统用户的家目录 */
+  /** 操作系统用户的主目录 */
   user: string;
 }
 
-/** 建临时目录：家目录、安装集（带 node_modules）、用户家目录 */
+/** 建临时目录：数据目录、安装集（带 node_modules）、用户主目录 */
 export function reachDirs(): ReachDirs {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'zz-slice2-reach-')));
-  const dirs = { base, home: join(base, 'home'), app: join(base, 'app'), user: join(base, 'user') };
-  for (const dir of [dirs.home, join(dirs.app, 'node_modules'), dirs.user]) mkdirSync(dir, { recursive: true });
+  const dirs = { base, data: join(base, 'data'), app: join(base, 'app'), user: join(base, 'user') };
+  for (const dir of [dirs.data, join(dirs.app, 'node_modules'), dirs.user]) mkdirSync(dir, { recursive: true });
   return dirs;
 }
 
@@ -65,7 +65,7 @@ export function removeDirs(dirs: ReachDirs): void {
 
 /**
  * 起一个实例。`appPath` 是交给 host-paths 的安装集路径（缺省为 dirs.app）；`stored` 预置会话表；`logger` 接住各插件的日志。
- * 操作系统用户的家目录取 HOME：调用方先把 HOME 指到 dirs.user。交回的 paths 是交给插件的家目录布局
+ * 操作系统用户的主目录取 HOME：调用方先把 HOME 指到 dirs.user。交回的 paths 是交给插件的数据目录布局
  */
 export async function startReach(
   dirs: ReachDirs,
@@ -76,7 +76,7 @@ export async function startReach(
     opts.logger ? { logger: opts.logger } : {},
   );
   await registerHubs(app);
-  const paths = provideHostPaths(app, dirs.home, opts.appPath ?? dirs.app);
+  const paths = provideHostPaths(app, dirs.data, opts.appPath ?? dirs.app);
   const host = app.bind({ provide, events, sessionManager, reach });
   host.provide.use(memory, fakeMemory(opts.stored) as never);
   await app.plugin(storageLocalPlugin);

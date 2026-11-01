@@ -18,7 +18,7 @@ Aalis 提供两个互不相干的脚手架，先确认你需要哪个：
 | `npm create aalis-plugin` | 一个**插件骨架包**（npm 包） | 你要给 Aalis 写并发布一个扩展插件 | `create-aalis-plugin/src/cli.ts` |
 
 心智模型：
-- **项目** = 一个家目录 `data/`（主配置 `aalis.config.yaml`，密钥字段只放引用；密钥文件 `secrets.yaml`；另有数据与日志）+ 一行 `startAalis()` + 若干装进 `node_modules` 的 `@aalis/plugin-*`。运行时从项目 `package.json` 的依赖里发现并加载这些插件。
+- **项目** = 一个数据目录 `data/`（主配置 `aalis.config.yaml`，密钥字段只放引用；密钥文件 `secrets.yaml`；另有数据与日志）+ 一行 `startAalis()` + 若干装进 `node_modules` 的 `@aalis/plugin-*`。运行时从项目 `package.json` 的依赖里发现并加载这些插件。
 - **插件** = 一个默认导出 `definePlugin({ name, uses, apply })` 产物的 npm 包（`create-aalis-plugin` 生成 `src/index.ts`），被某个项目装进去后由 runtime 发现、交给 core 注册。
 
 两个脚手架都不写 `workspace:`（产物不在 Aalis 仓库里，外部装不上），依赖版本按生成时源上的最新版写，但写法不同：项目的根依赖写 `^<最新版>`，它是终端用户项目的锁定点，跨次版本升级走插件市场的「更新」（带预检与回滚）；插件的依赖写 `>=<最新版> <1.0.0`，它会发布出去被别人装，规则见 [第三方插件开发者指南](./third-party-plugin.md#_5-1-类型从哪里-import-依赖怎么归类)。
@@ -128,14 +128,14 @@ npm start -- status
 my-bot/
 ├── package.json        # @aalis/core + @aalis/runtime + 所选插件（版本见下），engines 写 Node 24.15.0 起
 ├── index.mjs           # 一行 startAalis 启动
-├── data/               # 家目录（**不入库**）：配置、密钥、数据与日志都在这里
+├── data/               # 数据目录（**不入库**）：配置、密钥、数据与日志都在这里
 │   ├── aalis.config.yaml   # 主配置：name / logLevel / plugins（含 plugin-i18n 的语言列表）/ disabledPlugins；密钥字段只放引用
 │   └── secrets.yaml        # 密钥的值（生成时为空，0600）
 ├── .gitignore          # node_modules/ /data/ /data-*/ *.log dist/
 └── README.md           # 启动、配置、装更多插件，以及第一次运行与安装排障的文档地址
 ```
 
-首次启动后，`data/` 里还会出现 `state/`（数据库、向量库、会话、附件、checkpoint、WebUI 凭据等）、`self/`（人设与技能）、`tmp/`、`cache/`、`logs/`（`latest.log`）、`run/`（实例锁）与 `workspace/`（文件工具的默认工作根）。这些子目录由用到它们的部分在启动时建出（多数是存储插件的内部根），完整布局见 [runtime 的「家目录」](../architecture/runtime.md#家目录)。
+首次启动后，`data/` 里还会出现 `state/`（数据库、向量库、会话、附件、checkpoint、WebUI 凭据等）、`self/`（人设与技能）、`tmp/`、`cache/`、`logs/`（`latest.log`）、`run/`（实例锁）与 `workspace/`（文件工具的默认工作根）。这些子目录由用到它们的部分在启动时建出（多数是存储插件的内部根），完整布局见 [runtime 的「数据目录」](../architecture/runtime.md#数据目录)。
 
 入口 `index.mjs`：
 
@@ -151,7 +151,7 @@ startAalis({ appDir: here }).catch(err => {
 });
 ```
 
-`startAalis()` 是 `@aalis/runtime` 的总入口（`packages/runtime/src/start.ts`）：`appDir` 是安装集（这个项目目录），家目录缺省是它下面的 `data/`；在同一个项目里另开一个实例用 `npm start -- --profile <名>`，家目录是 `data-<名>/`；设 `AALIS_HOME` 或用 `npm start -- --home <目录>` 启动可以把家目录放到别处（规则见 [runtime 的「家目录」](../architecture/runtime.md#家目录)）。新位置第一次要加 `--init` 初始化，如 `npm start -- --profile <名> --init`，它写的配置与脚手架一样不写平台档（见下文「配置约定」）；它不写语言列表，装了 plugin-i18n 时按它的默认英文显示，要改在设置里改。经 npm 启动时这些参数要放在 `--` 之后，并写在子命令之前，如 `npm start -- --home <目录> status`。它读家目录里的 `aalis.config.yaml`，用 node_modules 加载器扫项目依赖、按 `keywords` 含 `aalis-plugin` 发现插件并加载。
+`startAalis()` 是 `@aalis/runtime` 的总入口（`packages/runtime/src/start.ts`）：`appDir` 是安装集（这个项目目录），数据目录缺省是它下面的 `data/`；在同一个项目里另开一个实例用 `npm start -- --profile <名>`，数据目录是 `data-<名>/`；设 `AALIS_DATA` 或用 `npm start -- --data <目录>` 启动可以把数据目录放到别处（规则见 [runtime 的「数据目录」](../architecture/runtime.md#数据目录)）。新位置第一次要加 `--init` 初始化，如 `npm start -- --profile <名> --init`，它写的配置与脚手架一样不写平台档（见下文「配置约定」）；它不写语言列表，装了 plugin-i18n 时按它的默认英文显示，要改在设置里改。经 npm 启动时这些参数要放在 `--` 之后，并写在子命令之前，如 `npm start -- --data <目录> status`。它读数据目录里的 `aalis.config.yaml`，用 node_modules 加载器扫项目依赖、按 `keywords` 含 `aalis-plugin` 发现插件并加载。
 
 `package.json` 的依赖版本由脚手架逐包向源查：能查到最新版就写 `^<最新版>`，查不到的写 `"latest"`（`npm install` 时再取最新）。
 
@@ -176,7 +176,7 @@ startAalis({ appDir: here }).catch(err => {
 
 首次启动时 runtime 会把每个已装插件 `configSchema` 的默认值同步写回该文件（`config-sync`），几行的初始配置会展开成全量键值——这是预期行为，之后可直接在文件里改任意项；WebUI 配置页与文件双向同步。
 
-**密钥的值存在 `data/secrets.yaml` 里**，`data/aalis.config.yaml` 只放引用。填写时直接写进 `aalis.config.yaml` 或在 WebUI 配置页填都可以：启动或热重载时，runtime 把标了 `secret` 的字段上的明文移进 `secrets.yaml`（0600），原处换成 `{ $secret: '<键>' }`，日志只写字段路径与键名。运行中把已有的引用改写成明文时写回原来那个键（数组元素里的除外），这个键被别的插件共用时，它们一起换成新值并重载；启动时会另取新键，旧值留在 `secrets.yaml` 里。只想换某一个插件的 key，把它的字段改成指向新键的引用，并在 `secrets.yaml` 里加上这个键。移走之前的明文可能还留在编辑器的备份文件里。`data/` 在生成的 `.gitignore` 内、不入库；备份家目录时连同 `secrets.yaml` 一起备份。规则见 [运行态与配置文档](../core/config.md#密钥配置)。曾经走 `.env` + `${VAR}` 插值，但它承载的东西与配置文件完全重合，唯一区别只是「哪个文件进 git」；把家目录本身 ignore 掉之后，那一层就成了多余，已随 `${VAR}` 插值一并删除。**现在写 `${VAR}` 会被原样当作字面量字符串**（不再替换），不应再这样写。
+**密钥的值存在 `data/secrets.yaml` 里**，`data/aalis.config.yaml` 只放引用。填写时直接写进 `aalis.config.yaml` 或在 WebUI 配置页填都可以：启动或热重载时，runtime 把标了 `secret` 的字段上的明文移进 `secrets.yaml`（0600），原处换成 `{ $secret: '<键>' }`，日志只写字段路径与键名。运行中把已有的引用改写成明文时写回原来那个键（数组元素里的除外），这个键被别的插件共用时，它们一起换成新值并重载；启动时会另取新键，旧值留在 `secrets.yaml` 里。只想换某一个插件的 key，把它的字段改成指向新键的引用，并在 `secrets.yaml` 里加上这个键。移走之前的明文可能还留在编辑器的备份文件里。`data/` 在生成的 `.gitignore` 内、不入库；备份数据目录时连同 `secrets.yaml` 一起备份。规则见 [运行态与配置文档](../core/config.md#密钥配置)。曾经走 `.env` + `${VAR}` 插值，但它承载的东西与配置文件完全重合，唯一区别只是「哪个文件进 git」；把数据目录本身 ignore 掉之后，那一层就成了多余，已随 `${VAR}` 插值一并删除。**现在写 `${VAR}` 会被原样当作字面量字符串**（不再替换），不应再这样写。
 
 > 装更多插件：长尾插件交给 WebUI 的插件市场（可按名称、说明或提供的服务搜），装上立即加载；也可以在项目目录 `npm install @aalis/plugin-<name>`，之后重启实例或在 WebUI 插件区点「重新扫描」才加载。
 

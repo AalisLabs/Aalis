@@ -1,6 +1,6 @@
 # 运行态与配置文档
 
-core 只持运行态，不持配置文档。运行态有三样：各实例的配置、禁用态、服务偏好，决定「现在怎么跑」。配置文档记的是「下次启动用什么」，由宿主持有并落盘：Node 宿主 `@aalis/runtime` 读写家目录里的 `aalis.config.yaml`，并把文档作为 `host-config` 服务（契约 `@aalis/api-host-config`）提供给在 `uses` 里声明了它的插件。core 也不解释任何 schema：默认值回填与按 `configSchema` 裁剪未知字段属宿主政策。
+core 只持运行态，不持配置文档。运行态有三样：各实例的配置、禁用态、服务偏好，决定「现在怎么跑」。配置文档记的是「下次启动用什么」，由宿主持有并落盘：Node 宿主 `@aalis/runtime` 读写数据目录里的 `aalis.config.yaml`，并把文档作为 `host-config` 服务（契约 `@aalis/api-host-config`）提供给在 `uses` 里声明了它的插件。core 也不解释任何 schema：默认值回填与按 `configSchema` 裁剪未知字段属宿主政策。
 
 **源码**: `packages/core/src/orchestration/plugin.ts`（运行态）、`packages/api-host-config/src/index.ts`（文档契约）、`packages/runtime/src/config-store.ts`、`packages/runtime/src/config-sync.ts`
 
@@ -122,7 +122,7 @@ WebUI 的启停路由按这种方式持久化；WebUI 的改配置与新建实�
 - `withPluginConfigSync(loader, app, store, opts)`：导入定义后、登记前，把 `configSchema` 派生的默认值深合并进文档（密钥字段的默认值不写进文档），按 schema 裁剪未知字段（`configSync.trimUnknownFields=false` 可保留），并把密钥字段上的明文移进密钥存储。首次 apply 拿到的就是规范化后的配置。
 - `installConfigHotReload(app, store, discovery, opts)`：文档或 `secrets.yaml` 被外部修改后，先按改动前后的文档核对服务偏好（改了的与新加的经 `services.use.prefer` 应用，删掉的 `unprefer`，没变的不动），再卸载文件里已没有配置段的 `name:suffix` 实例（冷启动同样不会登记它们），再按同一政策同步，对解析后的配置与运行态有差异的实例调用 `updateConfig`，最后经发现驱动的 `registerConfiguredInstances()` 登记文件里新出现的后缀实例，判据与冷启动、`rescan()` 相同。在 `app:stopping` 时停止监听。
 
-`startAalis` 的装配序为：家目录 → 实例锁（守护模式）→ 文档与密钥存储 → App → host-paths 与 host-logs → host-config → 加载政策 → 发现 → 热重载。实例锁只有 `startAalis` 取，自组装宿主不经过这一步。
+`startAalis` 的装配序为：数据目录 → 实例锁（守护模式）→ 文档与密钥存储 → App → host-paths 与 host-logs → host-config → 加载政策 → 发现 → 热重载。实例锁只有 `startAalis` 取，自组装宿主不经过这一步。
 
 自组装宿主按同一顺序接线。`host-paths` 要先于登记插件提供：`@aalis/plugin-storage-local` 与 `@aalis/plugin-package-manager` 以 required 声明它，缺了会停在 pending。
 
@@ -137,7 +137,7 @@ import {
   installHostConfig,
 } from '@aalis/runtime';
 
-// 家目录与安装集，均为绝对路径
+// 数据目录与安装集，均为绝对路径
 const paths = derivePaths('/srv/aalis/home', '/srv/aalis/app');
 const { config, provider } = createFsYamlConfigProvider(paths.config);
 const store = createConfigStore(config, provider, createFsSecretsProvider(paths.secrets)); // 不给第三个参数则没有密钥存储
@@ -175,7 +175,7 @@ pluginServicePreferences:
 
 ## 密钥配置
 
-schema 里标了 `secret: true` 的字段是凭据（API key、token、可能带账号密码的连接串）。Node 宿主把它们的值存在家目录的 `secrets.yaml` 里（0600），`aalis.config.yaml` 里只放引用 `{ $secret: '<键>' }`：
+schema 里标了 `secret: true` 的字段是凭据（API key、token、可能带账号密码的连接串）。Node 宿主把它们的值存在数据目录的 `secrets.yaml` 里（0600），`aalis.config.yaml` 里只放引用 `{ $secret: '<键>' }`：
 
 ```yaml
 # aalis.config.yaml
@@ -195,7 +195,7 @@ plugins:
 - **保存**：先写 `secrets.yaml`、再写 `aalis.config.yaml`，文档里的引用落盘时它指向的键已经在盘上。`secrets.yaml` 的临时文件一律以 0600 创建，不沿用原文件的权限位。宿主经自己的写入（WebUI 改配置、删除实例、卸载插件、同步裁剪）换掉或删掉引用后，不再被任何配置引用的键在保存时从 `secrets.yaml` 删除，宿主新建、后来又没人引用的键同样删除。删除在主配置写成之后做，这一步写 `secrets.yaml` 失败不让保存报错，键留到下次保存再删。手改配置文件不会触发删除，手加进 `secrets.yaml`、还没被引用的键也不动。
 - **外部修改**：`secrets.yaml` 与主配置一样被监听，改动后只重新加载解析结果有变化的实例；有尚未生效的外部修改时保存同样拒写，之后与主配置拒写一样按文件核对：修好或改动 `secrets.yaml` 后，密钥与配置文档都以两个文件的内容为准，被拒的密钥写入与这期间没写进文件的配置改动一并作废，插件随之按文件重载；要保留那次改动，重新提交即可。写入因其它原因失败（如没有写权限）时，已提交、还没写成的密钥留在内存里，其间 `secrets.yaml` 被外部改动也并进新读到的内容，下次保存时写入。改成空文件或只剩注释时按空的密钥文件处理。两个文件写坏时，日志只给 YAML 的错误码与行列，不带原文：启动时解析失败拒绝启动，运行中解析失败沿用上一份内容。YAML 的警告（例如把 `!xxx` 当成标签）同样只记错误码与行列，不经 Node 的 process warning 打到 stderr。
 - **仍是明文的情况**：没有 `configSchema` 的插件、没有标 `secret` 的字段，值照旧留在 `aalis.config.yaml` 里；自组装宿主创建配置存储时不给密钥存储的，密钥字段也照旧以明文留在文档里。没装上或加载失败的插件，宿主不处理它们的配置段，明文原样保留；这类残留段冷启动时逐段告警，要手动删掉，或装好插件后再启动一次。
-- **保护**：存储插件不许经任何根读写 `secrets.yaml`（见 [plugin-storage-local 的「宿主控制文件」](../plugins/plugin-storage-local.md#宿主控制文件)）；脚手架生成的 `.gitignore` 已包含整个家目录 `data/`。备份家目录时连同 `secrets.yaml` 一起备份，只备份 `aalis.config.yaml` 的，恢复后引用落空，按上面「读取」一条处理。
+- **保护**：存储插件不许经任何根读写 `secrets.yaml`（见 [plugin-storage-local 的「宿主控制文件」](../plugins/plugin-storage-local.md#宿主控制文件)）；脚手架生成的 `.gitignore` 已包含整个数据目录 `data/`。备份数据目录时连同 `secrets.yaml` 一起备份，只备份 `aalis.config.yaml` 的，恢复后引用落空，按上面「读取」一条处理。
 
 > 早期版本支持 `${VAR_NAME}` 环境变量插值（配合 `.env` 使用），现已删除。该机制承载的能力
 > 与配置文件完全重合，唯一区别在于哪个文件纳入 git；将配置文件本身 ignore 后，这一层不再有意义。

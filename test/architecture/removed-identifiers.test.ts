@@ -355,7 +355,7 @@ const REMOVED: Array<[string, string]> = [
   ['stage.paper', '宿主路径的舞台 stage（白纸、公开作品与草稿三个目录），随白纸与作品发布移出主仓'],
   ['stage.public', '宿主路径的舞台 stage（白纸、公开作品与草稿三个目录），随白纸与作品发布移出主仓'],
   ['stage.drafts', '宿主路径的舞台 stage（白纸、公开作品与草稿三个目录），随白纸与作品发布移出主仓'],
-  // 家目录的 self 合成一个目录：storage-local 的人设卡、技能、编排定义三个内部根合成一个 self 根，插件经 api-storage 的
+  // 数据目录的 self 合成一个目录：storage-local 的人设卡、技能、编排定义三个内部根合成一个 self 根，插件经 api-storage 的
   // content 取 self:/<目录名>/
   ['personas:/', '人设卡的内部根 personas，并进 self 根（人设的目录是 content 的 self:/persona/）'],
   ['skills:/', '技能的内部根 skills，并进 self 根（技能的目录是 content 的 self:/skills/）'],
@@ -370,10 +370,19 @@ const REMOVED: Array<[string, string]> = [
     'OWNER_PLATFORM',
     '--init 与 create-aalis 给 cli、webui 写的平台档（OWNER_PLATFORM_PROFILES、OWNER_PLATFORMS）：工具分组没设时由 plugin-tools 按根会话的创建来源给',
   ],
-  // 家目录放在部署目录下：没有 profile 时是 data/，有 profile 时是 data-<名>/，不再放在用户主目录
-  ['defaultHome', 'startAalis 的入口代码兜底家目录：家目录缺省是部署目录下的 data/'],
+  // 数据目录放在部署目录下：没有 profile 时是 data/，有 profile 时是 data-<名>/，不再放在用户主目录
+  ['defaultHome', 'startAalis 的入口代码兜底数据目录：数据目录缺省是部署目录下的 data/'],
   ['profileOfRealHome', '按真实路径认 ~/.aalis-<名> 的 profile：profile 只认 --profile 与 AALIS_PROFILE'],
-  ['.aalis-dev', '源码开发用的家目录：pnpm dev 落在仓库的 data/'],
+  ['.aalis-dev', '源码开发用的数据目录：pnpm dev 落在仓库的 data/'],
+  // 「家目录」整套改叫「数据目录」：参数、环境变量、路径契约的字段与 runtime 的导出
+  ['家目录', '实例的家目录改叫数据目录（操作系统的那个叫用户主目录）'],
+  ['--home', '命令行参数 --home，改为 --data'],
+  ['AALIS_HOME', '环境变量 AALIS_HOME，改为 AALIS_DATA'],
+  ['HomeArgsError', 'runtime 的宿主参数错误，改名 HostArgsError'],
+  ['resolveHome', 'runtime 解析家目录的函数，改名 resolveDataDir'],
+  ['initHome', 'runtime 初始化家目录的函数，改名 initDataDir'],
+  ['isHomeInitialized', 'runtime 的初始化判据，改名 isDataDirInitialized'],
+  ['aalis.home', 'MongoDB 记忆库归属记录的命名空间，改为 aalis.data'],
 ];
 
 /**

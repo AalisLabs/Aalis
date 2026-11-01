@@ -48,9 +48,9 @@ const SEEN_URI = 'pluginData:/session-server/seen.json';
 const [MAJOR, MINOR] = SESSION_PROTOCOL_VERSION.split('.');
 
 const apps: App[] = [];
-/** 每个 App 一个临时家目录：会话服务的审批审计写在它下面 */
+/** 每个 App 一个临时数据目录：会话服务的审批审计写在它下面 */
 const homes: string[] = [];
-/** 像 runtime 一样在根上提供 host-paths，家目录是新建的临时目录 */
+/** 像 runtime 一样在根上提供 host-paths，数据目录是新建的临时目录 */
 function provideHome(app: App): void {
   const home = mkdtempSync(join(tmpdir(), 'aalis-session-server-'));
   homes.push(home);

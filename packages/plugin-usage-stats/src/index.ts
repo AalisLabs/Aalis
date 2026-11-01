@@ -1,12 +1,12 @@
 // ════════════════════════════════════════════════════════════
-// 用量统计：订阅 api-llm 的 llm:usage，每次模型调用在家目录的 state/usage/llm-calls.jsonl 里追加一行（时刻、服务商、模型、
+// 用量统计：订阅 api-llm 的 llm:usage，每次模型调用在数据目录的 state/usage/llm-calls.jsonl 里追加一行（时刻、服务商、模型、
 // 调用方、会话、用途与三种 token），启动时读回、按天与模型合计。「用量统计」页按天、按周、按模型列出输入、缓存命中与输出；
 // 配置里填了单价才有费用一列；有服务商的模型实现了余额查询（LLMModel.balance）才有「余额」一页，服务商上下线时随之增减
 // ════════════════════════════════════════════════════════════
 
 // biome-ignore lint/style/noRestrictedImports: 启动时按行流式读回账本，存储服务没有按行读
 import { createReadStream } from 'node:fs';
-// biome-ignore lint/style/noRestrictedImports: 账本是只追加的记录，存储服务没有追加写；位置取自 host-paths 给的家目录
+// biome-ignore lint/style/noRestrictedImports: 账本是只追加的记录，存储服务没有追加写；位置取自 host-paths 给的数据目录
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -43,7 +43,7 @@ const uses = {
   logger,
   lifecycle,
   events,
-  /** 账本在家目录的 state 下 */
+  /** 账本在数据目录的 state 下 */
   paths: hostPaths,
   /** 「用量统计」页；不在时照样记账 */
   webui: optional(webuiServer),

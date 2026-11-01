@@ -69,9 +69,9 @@ const SOURCE = {
   uninstalledFlagUnsaved:
     '插件 {name} 已卸载（已从根依赖与 node_modules 移除），但配置文件没写成（{error}）：需要时手动删掉配置文件里它的停用标记。',
   uninstalledConfigRemoved:
-    '插件 {name} 已卸载（已从根依赖与 node_modules 移除）。它的配置已从配置文件删除，只有它用的密钥一并删除；写在家目录 state/ 等处的数据不会删除，需要时请手动清理。',
+    '插件 {name} 已卸载（已从根依赖与 node_modules 移除）。它的配置已从配置文件删除，只有它用的密钥一并删除；写在数据目录 state/ 等处的数据不会删除，需要时请手动清理。',
   uninstalledConfigKept:
-    '插件 {name} 已卸载（已从根依赖与 node_modules 移除）。它的配置留在配置文件里，重装后照原配置启动；写在家目录 state/ 等处的数据不会删除，需要时请手动清理。',
+    '插件 {name} 已卸载（已从根依赖与 node_modules 移除）。它的配置留在配置文件里，重装后照原配置启动；写在数据目录 state/ 等处的数据不会删除，需要时请手动清理。',
   kindCore: '内核',
   kindRuntime: '宿主',
   kindApi: '服务契约',

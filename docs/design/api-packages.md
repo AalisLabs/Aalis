@@ -113,7 +113,7 @@ await entry?.use.chat({ messages });
 | `api-contributions` | — | `contributions` | （定义该扩展点） | `Contributions`, `ContributionRegistry`, `ContributionSpec`, `ContributionHandle`；默认提供者 plugin-contributions |
 | `api-host-config` | — | `host-config` | — | `HostConfig`，配置文档类型 `AalisConfig`（declaration merging 目标）；由宿主提供 |
 | `api-host-logs` | — | `host-logs` | — | `HostLogs`：最近的日志（`recent`）与订阅（`subscribe`，先补发历史再接实时，seq 连续）；业务层的订阅随激活撤回；由宿主提供 |
-| `api-host-paths` | — | `host-paths` | — | `HostPaths`：家目录、安装集与家目录布局的绝对路径；由宿主提供 |
+| `api-host-paths` | — | `host-paths` | — | `HostPaths`：数据目录、安装集与数据目录布局的绝对路径；由宿主提供 |
 | `api-plugin-source` | — | `plugin-source` | — | `PluginSourceService`；导出插件入口判定 `pluginDefinitionOf`；由宿主提供 |
 | `api-reach` | — | `reach` | — | `ReachService`（`forCall` 签发凭据）、`ReachCredential` 与品牌符号、`resolveReach` / `judgeReach`、三张受保护清单 `protectedLists`、`SandboxPolicy` / `sandboxPolicyOf`；默认提供者 plugin-reach |
 | `api-approval` | — | `approvals` | — | `ApprovalService`, `Approval`, `ApprovalRequest`, `ApprovalOutcome`, `ApprovalSettlement`, `ApprovalSurface`；业务层带 `registerSurface`；注入事件 `approval:created` / `approval:settled`；卡片清洗 `sanitizeForCard`；默认提供者 plugin-session-server |

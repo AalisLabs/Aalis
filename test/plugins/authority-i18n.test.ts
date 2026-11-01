@@ -259,7 +259,7 @@ describe('权限页与 users.json 读不出的提示按全局层的语言', () =
     ).toEqual([
       [
         'The user level table users.json cannot be read; the bans and levels in it were not loaded',
-        'Fix state/users.json in the home directory, then restart: it must be readable and intact version 5 JSON; old versions are not migrated, so if you do not need its records, move it away and restart. Until it is fixed, level changes only last for this run. Reason: not a valid v5 structure (version: 4)',
+        'Fix state/users.json in the data directory, then restart: it must be readable and intact version 5 JSON; old versions are not migrated, so if you do not need its records, move it away and restart. Until it is fixed, level changes only last for this run. Reason: not a valid v5 structure (version: 4)',
       ],
     ]);
   });

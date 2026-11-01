@@ -8,7 +8,7 @@ import { DefaultLogger } from '@aalis/core';
 import { CORE_CONFIG_SCHEMA, defaultsFrom } from '@aalis/schema-config';
 import { stringify as stringifyYaml } from 'yaml';
 import type { ConfigProvider, SecretProvider } from './config-store.js';
-import { assertAbsolute } from './home.js';
+import { assertAbsolute } from './data-dir.js';
 import {
   HOST_CORE_DIR,
   importPluginDefinition,
@@ -76,7 +76,7 @@ interface FsYamlConfigProviderResult {
 }
 
 /**
- * 创建一个基于 YAML 文件的 ConfigProvider。`absPath` 是配置文件的绝对路径（startAalis 传家目录里的 aalis.config.yaml）。
+ * 创建一个基于 YAML 文件的 ConfigProvider。`absPath` 是配置文件的绝对路径（startAalis 传数据目录里的 aalis.config.yaml）。
  *
  * - 同步读取 + 解析（值原样加载，不做任何替换）；文件不存在时告警并以内存默认配置启动
  * - `save()` 原子写回；写前比对盘上内容，有尚未生效的外部修改时拒写（抛 `ConfigSaveRefusedError`，只带路径）
@@ -109,7 +109,7 @@ interface FsSecretsProviderResult {
 }
 
 /**
- * 创建基于家目录 `secrets.yaml` 的密钥存储：顶层是「键 → 值」的映射。读写、拒写与监听同配置文件，
+ * 创建基于数据目录 `secrets.yaml` 的密钥存储：顶层是「键 → 值」的映射。读写、拒写与监听同配置文件，
  * 另有三处不同：文件不存在时按空映射处理、不告警（第一次保存时建出）；运行中改成空文件或只剩注释时按空映射处理；
  * 原子写的临时文件一律以 0600 创建，不沿用原文件的权限位。
  */
@@ -224,7 +224,7 @@ export function isRestartRollback(v: unknown): v is RestartRollback {
 export interface RespawnOptions {
   /** 安装集目录：开发模式（.ts 入口）在这里找本地 tsx */
   appDir: string;
-  /** 新进程的 cwd：启动时的 cwd，命令行里相对的 --home 才能解析到同一处 */
+  /** 新进程的 cwd：启动时的 cwd，命令行里相对的 --data 才能解析到同一处 */
   cwd: string;
   /** 额外交给新进程的环境变量（实例锁的交接令牌） */
   env?: Record<string, string>;

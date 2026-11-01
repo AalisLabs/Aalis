@@ -8,9 +8,9 @@ import {
   type ReachInput,
   resolveReach,
 } from '../../packages/api-reach/src/index.js';
-import { derivePaths } from '../../packages/runtime/src/home.js';
+import { derivePaths } from '../../packages/runtime/src/data-dir.js';
 
-// 触及的纯函数只认字符串形式的真实路径，用例不碰磁盘：用户家目录 /u，实例家目录 /u/.aalis，安装集是源码形态的 /opt/aalis。
+// 触及的纯函数只认字符串形式的真实路径，用例不碰磁盘：用户主目录 /u，实例数据目录 /u/.aalis，安装集是源码形态的 /opt/aalis。
 
 export const USER = '/u';
 export const PATHS = derivePaths('/u/.aalis', '/opt/aalis');

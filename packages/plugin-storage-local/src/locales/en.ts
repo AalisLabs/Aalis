@@ -11,7 +11,7 @@ export default defineLocale<Source>()({
   nameDescription: 'Only letters, digits, underscores and hyphens, starting with a letter; e.g. workspace, share',
   pathLabel: 'Local path',
   pathDescription:
-    'Absolute, or relative to the home directory; leave it empty for the default workspace directory; created if missing. Pointing it at / registers a host passthrough root (high risk).',
+    'Absolute, or relative to the data directory; leave it empty for the default workspace directory; created if missing. Pointing it at / registers a host passthrough root (high risk).',
   labelLabel: 'Display name',
   kindLabel: 'Kind tag',
   kindDescription: 'Semantic hint: workspace / data / tmp / pluginData / logs / custom / external / shared / host',
