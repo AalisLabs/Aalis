@@ -47,7 +47,7 @@ pnpm dev                        # 运行 tsx src/index.ts
 |---|---|---|
 | 每次 `git push` | 构建、Biome、Knip、快测试 | pre-push hook 自动跑 |
 | 合进 dev 之前、发布之前 | 全量（clean、构建、全部测试、core 覆盖率、Biome、Knip） | **手动** `pnpm preflight` |
-| 推到 dev、main 之后 | 构建、全部测试、覆盖率、Biome、Knip | 远端 CI 自动跑，也可在 Actions 页面手动运行 |
+| 推到 dev、main 之后 | 构建、全部测试、core 覆盖率、Biome、Knip | 远端 CI 自动跑，也可在 Actions 页面手动运行 |
 
 远端 CI（`.github/workflows/ci.yml`）在推送之后才跑，推送前的 hook 只跑快测试，所以**合进 dev 与发布之前必须自己跑通 `pnpm preflight`**，不能拿「能推上去」或「远端会跑」代替。
 
