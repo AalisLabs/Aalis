@@ -100,10 +100,10 @@ jobs:
       - name: Run integration tests
         run: pnpm exec vitest run test/integration
 
+  # 与 preflight 同一道门：只跑 test/core，只统计 packages/core/src，四项阈值都是 100（见 vitest.core-coverage.config.ts）
   coverage:
-    name: full coverage report
+    name: core coverage (100% thresholds)
     runs-on: ubuntu-latest
-    needs: [unit-tests, integration-tests]
     steps:
       - uses: actions/checkout@v5
 
@@ -119,29 +119,8 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # 同 unit-tests：浏览器、ffmpeg、中文字体与 Chrome 沙箱
-      - name: Install Chrome
-        run: pnpm exec puppeteer browsers install chrome
-
-      - name: System dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-noto-cjk
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-
-      - name: Build (produce dist for runtime imports)
-        run: pnpm -r build
-
-      - name: Run tests with coverage
-        run: pnpm run test --coverage
-
-      - name: Upload coverage report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: coverage/
-          retention-days: 7
+      - name: Core coverage
+        run: pnpm run coverage:core
 
   knip:
     name: knip (dead code / unused deps)
