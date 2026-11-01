@@ -58,6 +58,14 @@ jobs:
       - name: Install Chrome
         run: pnpm exec puppeteer browsers install chrome
 
+      # 绘图测试要 ffmpeg；页面布局测试要页面字体表里的 Noto Sans CJK；
+      # Ubuntu 23.10 起 AppArmor 不许非特权用户命名空间，Chrome 带沙箱起不来
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Build (produce dist for runtime imports)
         run: pnpm -r build
 
@@ -111,9 +119,15 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # 同 unit-tests：缓存命中时浏览器要单独装
+      # 同 unit-tests：浏览器、ffmpeg、中文字体与 Chrome 沙箱
       - name: Install Chrome
         run: pnpm exec puppeteer browsers install chrome
+
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Build (produce dist for runtime imports)
         run: pnpm -r build
