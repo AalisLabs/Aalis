@@ -220,6 +220,11 @@ export interface OptionDetail {
   description?: string | TextRef;
   /** 选上这一项会带上哪些成员的名字：界面在这一项下面写「包含 N 项」、点开列出；没有成员时不交 */
   members?: string[];
+  /**
+   * 多选里这一项代表其余全部（含以后才出现的项，如工具分组的 *）：选着它时界面把各项都显示为选上，取消别的一项存其余各项，
+   * 取消它即全不选
+   */
+  all?: true;
 }
 
 /**

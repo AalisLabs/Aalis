@@ -10,9 +10,9 @@ import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
 // 宿主回答的可选项来源（/api/models/:service）：工具分组按一条规则列出，已登记的分组与工具上出现过的分组取并集，登记过的写
-// 名字与概述，没登记的写原名，「*」总在最前、写「全部分组」，不带登记它的插件；有工具的分组带组内工具的名字（members，
-// 去重），不属于任何分组的工具另交 others；没有字段用的 platform 来源不再由宿主回答。插件经贡献点 webui:options 交的来源
-// 原样转交，可选项带的 members 照带。
+// 名字与概述，没登记的写原名，「*」总在最前、写「全部分组」、说明包括以后新装插件的分组、标明代表其余全部（all），
+// 不带登记它的插件；有工具的分组带组内工具的名字（members，去重），不属于任何分组的工具另交 others；没有字段用的 platform
+// 来源不再由宿主回答。插件经贡献点 webui:options 交的来源原样转交，可选项带的 members 照带。
 // ════════════════════════════════════════════════════════════
 
 const TOKEN = 'zz-option-sources-token-placeholder';
@@ -68,11 +68,11 @@ async function get(path: string): Promise<unknown> {
 }
 
 describe('宿主回答的可选项来源', () => {
-  it('工具分组：已登记的与工具上出现过的取并集，没登记的写原名，「*」写「全部分组」；有工具的分组带组内工具的名字（一个工具在几组就在每组都列，同一分组写了两遍的只列一次），「*」与没有工具的分组不带；没有无分组的工具时不交 others；不带登记它的插件', async () => {
+  it('工具分组：已登记的与工具上出现过的取并集，没登记的写原名，「*」写「全部分组」、带说明、标 all；有工具的分组带组内工具的名字（一个工具在几组就在每组都列，同一分组写了两遍的只列一次），「*」与没有工具的分组不带；没有无分组的工具时不交 others；不带登记它的插件', async () => {
     expect(await get('/api/models/toolGroups')).toEqual({
       models: ['*', 'zz-empty', 'zz-history', 'zz-web'],
       details: [
-        { value: '*', label: '* （全部分组）' },
+        { value: '*', label: '* （全部分组）', description: '包括以后新装插件的分组', all: true },
         { value: 'zz-empty', label: '空组' },
         { value: 'zz-history', label: 'zz-history', members: ['zz_both', 'zz_history'] },
         {

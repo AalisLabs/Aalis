@@ -16,7 +16,8 @@ import './SettingRow.css';
 // 恢复按钮一样回到下一层，文字与列表清空写的是空值。存的时候编辑控件不可用；写进去了、只是没落盘时写回来的那一句。
 // 值与作者默认按可选项的标签显示（动态可选项一并取来，不在可选项里的按来源另给的名字）；没有值时写可选项接口标了默认的那一项，
 // 没有就写声明给的「没设时」。可选项依赖另一项的，那一项眼下给不出可选项时不能改、写明不能调，生效值不在可选项里时
-// 写明按默认的哪一项
+// 写明按默认的哪一项。没有值时编辑从此刻的状态开始：选择框里有「不设」的那一项，停在它上面；别的控件（开关、勾选框、
+// 输入框）从此刻实际在用的值开始
 
 interface SettingRowProps {
   field: Field;
@@ -39,6 +40,8 @@ interface SettingRowProps {
   dependency?: Dependency;
   /** 没有生效值时这一项的含义（声明给的，或此刻实际在用的值） */
   unset?: string;
+  /** 没有生效值时此刻实际在用的值（声明字段的插件给的） */
+  actual?: unknown;
   /** 写进这一处：给值即写入，null 回到下一层；写不进去时抛错，写进去了、只是没落盘时交回那一句（文字） */
   save(value: unknown): Promise<unknown>;
 }
@@ -53,6 +56,7 @@ export function SettingRow({
   reset,
   dependency,
   unset,
+  actual,
   save,
 }: SettingRowProps) {
   const [version, refetch] = useReducer((n: number) => n + 1, 0);
@@ -81,6 +85,9 @@ export function SettingRow({
     );
   };
 
+  /** 选择框里有「不设」那一项（不是必填的选择与模型）：没有值时停在它上面；别的控件没有值时从此刻实际在用的值开始 */
+  const unsetChoice = (isModelField(field) || field.type === 'select') && !field.required;
+  const current = value === undefined && !unsetChoice ? actual : value;
   const fallback = options.find(option => option.isDefault);
   /** 写取值的称呼：可选项与来源另给的名字；值与作者默认都按它写 */
   const known = [...options, ...names];
@@ -120,7 +127,7 @@ export function SettingRow({
             {head}
             <Toggle
               label={field.label}
-              checked={value === true}
+              checked={current === true}
               disabled={busy}
               onChange={checked => commit(checked)}
             />
@@ -133,7 +140,7 @@ export function SettingRow({
             <div className="setting-row-main">{head}</div>
             <Editor
               field={field}
-              value={value}
+              value={current}
               options={{ options, names, others, error: optionsError, refetch }}
               labelId={labelId}
               busy={busy}

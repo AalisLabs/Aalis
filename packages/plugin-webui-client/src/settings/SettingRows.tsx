@@ -12,7 +12,7 @@ import { SettingRow } from './SettingRow';
 // 给）。全局层自己的各行（设置的「会话默认」选了全局）写作者默认：等于默认标「默认」，不等写「默认：<值>」与「恢复默认」；
 // 会话的「设置」改到全局时，生效值出自全局层或作者默认、又等于作者默认的行同样标「默认」。别的层自己的各行，这一层存着值、
 // 生效值却不出自它（存的值不合法）时，写明按哪一层生效，并给「恢复继承」清掉它。没有生效值的写声明给的「没设时」，另写此刻
-// 实际在用的值
+// 实际在用的值，编辑从它开始（见 SettingRow）
 
 interface SettingRowsProps {
   rows: readonly Row[];
@@ -63,6 +63,7 @@ export function SettingRows({ rows, layer, own = false, originOf, invalidOf, upd
         reset={resettable ? reset : undefined}
         dependency={dependencyOf(rows, row)}
         unset={unsetOf(row, authored)}
+        actual={row.actual?.value}
         save={value => update(row, value)}
       />
     );

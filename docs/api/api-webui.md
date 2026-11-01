@@ -730,7 +730,7 @@ interface LogQuery extends LogFilter { limit?: number } // 默认 200，上限 5
 | `GET /api/i18n/messages` | 查询参数 `ns`，逗号分隔 | `{ entries }`：语言包给这些 ns 补的译文（ns → 键 → 各包给的 `{ language, text, from }`），只留全局层语言链用得上的语言（与链里某种语言相同的，以及 en）；i18n 缺席时为空 |
 
 - 先找贡献点 `webui:options` 里同名的来源：插件经它交自己的可选项来源（`{ id, list(dependency?) }`，`id` 就是字段的 `dynamicOptions`），同名的有几家时取全局键最前的那家，`dependency` 原样交给它，回 `{ models, details }`。可选项（`OptionDetail`）带名字与说明，可以带成员 `members`（选上这一项会带上的成员的名字，界面在这一项下面写「包含 N 项」、点开列出）；插件的选项来源交得了 `members`、交不了 `others`。第一方的来源：plugin-i18n 的 `i18n-languages`、plugin-skills 的 `skills`、plugin-authority 的 `authority-operations` 与 `authority-groups`、两个向量化提供者的 `embedding-openai` 与 `embedding-ollama`。来源名按插件定，同一个插件开了几个实例时各实例的字段都取最前那家。
-- 没有贡献的来源由宿主回答：`llm`（模型列表，模型字段的可选项走它）；`toolGroups`（工具分组：已登记的分组与工具上出现过的分组的并集，`'*'` 是全部分组、总在最前，登记过的分组下面一行写它的说明；有工具的分组带组内工具的名字（`members`），不属于任何分组的工具另交 `others`，界面写在可选项末尾一行、点开列出）；`llm-thinking`（深度思考的档位：`dependency` 是条目 id `<提供者实例 id>/<模型 id>`，按那个模型声明的档位给，写法不对回 400；没带时回空的可选项，不替调用方挑模型；模型不能调时 `models` 与 `details` 为空）。
+- 没有贡献的来源由宿主回答：`llm`（模型列表，模型字段的可选项走它）；`toolGroups`（工具分组：已登记的分组与工具上出现过的分组的并集，`'*'` 是全部分组、总在最前、标 `all`，说明写「包括以后新装插件的分组」，登记过的分组下面一行写它的说明；有工具的分组带组内工具的名字（`members`），不属于任何分组的工具另交 `others`，界面写在可选项末尾一行、点开列出）；`llm-thinking`（深度思考的档位：`dependency` 是条目 id `<提供者实例 id>/<模型 id>`，按那个模型声明的档位给，写法不对回 400；没带时回空的可选项，不替调用方挑模型；模型不能调时 `models` 与 `details` 为空）。
 - 其余服务名合起那个服务各提供者的 `listModels()`，回 `{ models }`（如人设）。
 - 刷新：`:contextId` 是提供者的插件实例，与模型的 `contextId` 相同；名下的模型都不能运行时刷新、或名下没有模型时回 404。
 
@@ -754,6 +754,7 @@ interface OptionDetail {
   default?: true; // 没设时生效的那一项
   description?: string | TextRef; // 写在选项下面的一行说明（工具分组的概述）
   members?: string[]; // 选上这一项会带上的成员的名字（工具分组里的工具）；没有成员时不交
+  all?: true; // 多选里代表其余全部的一项（含以后才出现的项，工具分组的 '*'）：选着它时各项都显示为选上，取消别的一项存其余各项，取消它即全不选
 }
 ```
 

@@ -13,7 +13,8 @@ import { startSettings } from '../fixtures/session-settings.js';
 // 交这个会话的生效值，platform 是入口平台，只对没有出生平台的会话起作用。会话设置不在时取插件配置里的值。
 // 哪一层都没设（生效值是 undefined）时按会话从哪里建的算：根会话（子会话取根会话的）带创建来源，即在本机的 WebUI 或终端
 // 建的，开全部分组；其余一律不开，包括聊天平台的群与私聊（对端是 owner 的私聊也不开）和内部会话。不判 owner：为了 owner
-// 开了，owner 默认用什么工具就看不出来。会话管理缺席时不开。显式写的 []（任何一层）是不开。
+// 开了，owner 默认用什么工具就看不出来。会话管理缺席时不开。显式写的 []（任何一层）是不开。这时的值作为字段的 actual 交给
+// 会话设置：会话的行上写「此刻：全部分组 / 不开」，编辑从它开始，建子会话时写下父会话此刻的这个值；按层取的行没有 actual。
 // ════════════════════════════════════════════════════════════
 
 const TOOLS = '@aalis/plugin-tools';
@@ -91,12 +92,29 @@ describe('哪一层都没设：按会话从哪里建的算', () => {
     expect(registry.sessionGroups((await sm.createChildSession(cli.id, {})).id, 'cli')).toEqual(['*']);
   });
 
-  it('子会话建立时写下父会话的生效值：父会话没设工具分组时不写，子会话照样按根会话算', async () => {
+  it('会话的行上带此刻实际在用的值：本机建的是全部分组，聊天平台的不开；按层取的行没有', async () => {
+    const { sm, admin } = await start();
+    const webui = await sm.createSession({ name: 'w' }, { createdFrom: 'webui' });
+    const actual = (target: Parameters<typeof admin.rows>[0]) => {
+      const found = admin.rows(target).find(r => r.plugin === TOOLS && r.key === 'enabledToolGroups')?.actual;
+      return found && { value: found.value, label: resolveText(found.label as never, ['zh-CN']) };
+    };
+    expect(actual({ sessionId: webui.id, at: { platform: 'webui' } })).toEqual({ value: ['*'], label: '全部分组' });
+    expect(actual({ sessionId: GROUP, at: { platform: 'onebot' } })).toEqual({ value: [], label: '不开' });
+    expect(actual({ layer: { scope: 'platform', platform: 'webui' } })).toBeUndefined();
+    await admin.update({ sessionId: webui.id }, { plugin: TOOLS, key: 'enabledToolGroups', value: ['web'] });
+    expect(actual({ sessionId: webui.id, at: { platform: 'webui' } }), '设了就没有').toBeUndefined();
+  });
+
+  it('子会话建立时写下父会话的生效值：父会话没设工具分组时写下它此刻实际在用的值', async () => {
     const { sm, admin, registry } = await start();
     const webui = await sm.createSession({ name: 'w' }, { createdFrom: 'webui' });
     const metadata = admin.childMetadata(webui.id, { platform: 'webui' });
-    const written = (metadata['session-settings'] as { values: Array<{ plugin: string }> }).values;
-    expect(written.filter(entry => entry.plugin === TOOLS)).toEqual([]);
+    const written = (metadata['session-settings'] as { values: Array<{ plugin: string; key: string; value: unknown }> })
+      .values;
+    expect(written.filter(entry => entry.plugin === TOOLS)).toEqual([
+      { plugin: TOOLS, key: 'enabledToolGroups', value: ['*'] },
+    ]);
     const child = await sm.createChildSession(webui.id, { metadata });
     expect(registry.sessionGroups(child.id, 'webui')).toEqual(['*']);
   });

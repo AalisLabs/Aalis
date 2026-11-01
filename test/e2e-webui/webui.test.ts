@@ -2872,8 +2872,10 @@ describe('控件与文字的比例', () => {
     await page.locator('.setting-row[aria-label="工具分组"] .setting-row-main').click();
     await page.waitForSelector(aria('不属于任何分组的工具', 'button'));
     await audit('会话设置的多选');
-    // 无序的一项只有字那一段能点：这一行右端的空白处点了不勾选
+    // 无序的一项只有字那一段能点：这一行右端的空白处点了不改勾选（本机建的会话没设工具分组，各项从「全部」开始都勾着）
     const grouped = aria('甲组', 'checkbox');
+    const checked = () => page.$eval(grouped, input => (input as HTMLInputElement).checked);
+    const before = await checked();
     const [x, y] = await page.$eval(grouped, input => {
       const label = input.closest('label') as Element;
       label.scrollIntoView({ block: 'center' });
@@ -2882,7 +2884,7 @@ describe('控件与文字的比例', () => {
       return [right - 4, (top + bottom) / 2];
     });
     await page.mouse.click(x, y);
-    expect(await page.$eval(grouped, input => (input as HTMLInputElement).checked), '行右端的空白处').toBe(false);
+    expect([before, await checked()], '行右端的空白处').toEqual([true, true]);
     // 末尾不属于任何一项的那一行不缩进：展开按钮的左边与复选框的左边对齐
     const left = (selector: string) => page.$eval(selector, element => element.getBoundingClientRect().left);
     const others = aria('不属于任何分组的工具', 'button');
