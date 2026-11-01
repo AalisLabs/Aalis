@@ -153,7 +153,7 @@ describe('安装界面的语言', () => {
     try {
       const dir = join(root, answers.projectName);
       await writeProject(answers, { dir, registry: BASE.registry, host: BASE.host });
-      const config = await readFile(join(dir, 'home', 'aalis.config.yaml'), 'utf-8');
+      const config = await readFile(join(dir, 'data', 'aalis.config.yaml'), 'utf-8');
       expect(await readFile(join(dir, 'README.md'), 'utf-8')).toContain('An AI assistant project based on [Aalis]');
       expect(parse(config).plugins[I18N]).toEqual({ language: ['zh-CN', 'en'] });
       expect(JSON.parse(await readFile(join(dir, 'package.json'), 'utf-8')).description).toBe(
@@ -432,7 +432,7 @@ describe('真 CLI 的终端文字', () => {
     expect(yes.code).toBe(0);
     expect(yes.stdout).toContain('Next steps:');
     expect(`${yes.stdout}${yes.stderr}`).not.toMatch(CJK);
-    const config = parse(await readFile(join(dir, 'my-bot', 'home', 'aalis.config.yaml'), 'utf-8'));
+    const config = parse(await readFile(join(dir, 'my-bot', 'data', 'aalis.config.yaml'), 'utf-8'));
     expect(config.plugins[I18N]).toEqual({ language: ['en'] });
 
     const piped = await create('zh_CN.UTF-8', ['my-bot', '--lang', 'en', '--registry', registry]);
@@ -447,7 +447,7 @@ describe('真 CLI 的终端文字', () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('Next steps:');
     expect(`${result.stdout}${result.stderr}`).not.toMatch(CJK);
-    const config = parse(await readFile(join(dir, 'my-bot', 'home', 'aalis.config.yaml'), 'utf-8'));
+    const config = parse(await readFile(join(dir, 'my-bot', 'data', 'aalis.config.yaml'), 'utf-8'));
     expect(config.plugins[I18N]).toEqual({ language: ['en', 'zh-CN'] });
   });
 

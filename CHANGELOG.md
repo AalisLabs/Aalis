@@ -8,6 +8,19 @@
 
 ---
 
+## 未发布
+
+### 家目录放在部署目录下
+
+- @aalis/runtime（破坏性）：家目录的覆盖顺序改为 `--home` → `AALIS_HOME` → 部署目录（`appDir`）下的 `data/`；给了 `--profile <名>` 或 `AALIS_PROFILE` 时是部署目录下的 `data-<名>/`。`~/.aalis` 与 `~/.aalis-<名>` 不再是缺省位置。删 `StartAalisOptions.defaultHome` 与导出的 `profileOfRealHome`；`resolveHome` 的入参去掉 `defaultHome`，加必填的 `appDir`。profile 只认 `--profile` 与 `AALIS_PROFILE`，经 `--home` 或 `AALIS_HOME` 选中的家目录没有 profile。
+- @aalis/api-host-paths：导出缺省家目录的目录名 `HOME_DIR`（`'data'`）；`HostPaths.profile` 只在经 `--profile` 或 `AALIS_PROFILE` 选中时有。
+- @aalis/api-reach：拒读清单里的其他实例的家目录，由用户主目录下的 `.aalis*` 改为同一部署目录下的 `data/` 与 `data-*/`（本实例的除外）。
+- create-aalis：生成的项目的家目录由 `home/` 改为 `data/`，入口只传 `appDir`，`.gitignore` 忽略 `/data/` 与 `/data-*/`。已有项目里的 `home/` 不再被认出：不改名时提示家目录没初始化、拒绝启动，不会起一个空的家目录。
+- 本仓库：`pnpm dev` 不再带 `--home .aalis-dev`，与 `pnpm start` 一样落在仓库里的 `data/`；`.gitignore` 只忽略根上的 `/data/` 与 `/data-*/`。
+- @aalis/plugin-memory-mongodb：「数据库」一项的说明里，profile 家目录改写为部署目录下的 `data-<profile>`，派生规则不变。
+
+---
+
 ## 2026-11-01（core 不变，仍 0.21.0；25 个包：14 minor / 11 patch；删 6 个包）
 
 ### 白纸、远端代理与作品发布移出主仓

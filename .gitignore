@@ -11,8 +11,8 @@ docs/.vitepress/cache/
 !vite.config.ts
 .env
 .env.local
-data/
-.aalis-dev/
+/data/
+/data-*/
 aalis.config.yaml
 aalis.config.yaml.*
 workspace/

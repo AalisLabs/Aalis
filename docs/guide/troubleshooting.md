@@ -9,7 +9,7 @@
 |---|---|
 | 脚手架或插件市场的报错 | `npm install` 失败时认出的原因与修法，各类见下文「`npm install` 失败」 |
 | npm 的完整日志 | 脚手架报错里「npm 的完整日志：」那一行给出路径（在 npm 缓存目录的 `_logs/` 下，npm 打印了日志位置时才有这一行）；经插件市场安装时，npm 的整段输出记在 Aalis 的日志里（`npm install … 失败:` 那一行） |
-| `home/logs/latest.log` | Aalis 的完整日志，CLI 接管终端时照常写。终端里按 `Ctrl+L` 看，WebUI 在「运行状况」的日志标签 |
+| `data/logs/latest.log` | Aalis 的完整日志，CLI 接管终端时照常写。终端里按 `Ctrl+L` 看，WebUI 在「运行状况」的日志标签 |
 | `/doctor` | 失败与没起来的插件逐个写原因与修法，以及各插件登记的检查项（如识图 `service/media.vision`、Ollama Embedding 的 `service/embedding.ollama`）。在 CLI 或 WebUI 的聊天里输入；也可以在项目目录执行 `npm start -- doctor`，在一次性的进程里诊断完就退出，不占 WebUI 的端口、不连聊天平台 |
 
 ## Node 版本
@@ -103,7 +103,7 @@ WebUI 默认监听 `127.0.0.1:3000`。端口被别的程序占着时，WebUI 起
 WebUI 监听 127.0.0.1:3000 失败: listen EADDRINUSE: address already in use 127.0.0.1:3000；WebUI 不可用，其余功能照常运行
 ```
 
-查是谁占着：macOS 与 Linux 执行 `lsof -nP -iTCP:3000 -sTCP:LISTEN`，Windows 执行 `netstat -ano | findstr :3000`。停掉那个程序，或给 WebUI 换一个端口，写进 `home/aalis.config.yaml`：
+查是谁占着：macOS 与 Linux 执行 `lsof -nP -iTCP:3000 -sTCP:LISTEN`，Windows 执行 `netstat -ano | findstr :3000`。停掉那个程序，或给 WebUI 换一个端口，写进 `data/aalis.config.yaml`：
 
 ```yaml
 plugins:
@@ -115,7 +115,7 @@ plugins:
 
 ## 登录要的 token 在哪
 
-WebUI 要 token 登录。一键登录的链接写在家目录的 `state/webui/access.txt`（脚手架生成的项目里是 `home/state/webui/access.txt`），启动日志里「访问凭据已写入」那一行给出它的完整路径；日志本身不打印 token。把文件里「一键登录」那一行的链接粘进浏览器，或在登录页粘贴「Token」那一行的值。
+WebUI 要 token 登录。一键登录的链接写在家目录的 `state/webui/access.txt`（脚手架生成的项目里是 `data/state/webui/access.txt`），启动日志里「访问凭据已写入」那一行给出它的完整路径；日志本身不打印 token。把文件里「一键登录」那一行的链接粘进浏览器，或在登录页粘贴「Token」那一行的值。
 
 - 默认的 `tokenMode: persist` 把 token 存在 `state/webui/token`，重启沿用；要换一个新的，删掉这个文件后重启。
 - `ephemeral` 每次启动换一个新的，只写在 `access.txt` 里。
@@ -132,4 +132,4 @@ WebUI 要 token 登录。一键登录的链接写在家目录的 `state/webui/ac
 配置段 "@aalis/plugin-xxx" 对应的插件未找到，已忽略；若已卸载可删除该段（其中可能含密钥）
 ```
 
-不再用了就手动删掉：删 `home/aalis.config.yaml` 里 `plugins` 下的那一段；段里写成 `{ $secret: "<键>" }` 的密钥值在 `home/secrets.yaml` 里，没有别的段引用同一个键时一并删掉（手改文件不会触发宿主清理没人引用的密钥）。在插件市场卸载时勾上「同时删除配置（含 N 个密钥）」，宿主会删掉配置段与只有它用的密钥。
+不再用了就手动删掉：删 `data/aalis.config.yaml` 里 `plugins` 下的那一段；段里写成 `{ $secret: "<键>" }` 的密钥值在 `data/secrets.yaml` 里，没有别的段引用同一个键时一并删掉（手改文件不会触发宿主清理没人引用的密钥）。在插件市场卸载时勾上「同时删除配置（含 N 个密钥）」，宿主会删掉配置段与只有它用的密钥。

@@ -80,7 +80,7 @@ export default defineLocale<Source>()({
   nonTtyTier:
     '  npm create aalis@latest <name> -- --tier minimal    # the defaults of one tier: bare, minimal, standard, full',
   nonTtyKeys:
-    'Fill in keys for the plugins that need them in home/aalis.config.yaml after generating, or in the WebUI plugin area after starting.',
+    'Fill in keys for the plugins that need them in data/aalis.config.yaml after generating, or in the WebUI plugin area after starting.',
   cancelled: 'Cancelled; no files were generated.',
   catalogOffline: '(Cannot reach npm; the full tier falls back to the offline list)',
   catalogEmpty:
@@ -92,8 +92,8 @@ export default defineLocale<Source>()({
   unfilledKeys: 'Keys not filled in yet (their plugins cannot start until they are):',
   unfilledKey: '  {key} for {plugin}',
   keyWhereWebui:
-    '  Where: open the plugin in the WebUI plugin area after starting, or fill in its section under plugins in home/aalis.config.yaml',
-  keyWhere: '  Where: fill in its section under plugins in home/aalis.config.yaml',
+    '  Where: open the plugin in the WebUI plugin area after starting, or fill in its section under plugins in data/aalis.config.yaml',
+  keyWhere: '  Where: fill in its section under plugins in data/aalis.config.yaml',
   fullOthers:
     'Other plugins that need credentials, addresses or paths: after starting, Needs attention in the WebUI lists them as needing configuration or failed; configure them from there.',
   firstRun: 'First run: {url}',

@@ -252,12 +252,14 @@ describe('拒读清单', () => {
       [`${PATHS.home}/self/zz-new`, false],
       [`${PATHS.logs}/latest.log`, false],
       [PATHS.config, false],
-      ['/u/.aalis-dev/aalis.config.yaml', true],
-      ['/u/.aalis-x/state/db', true],
-      ['/u/.aalisx/a', false],
+      // 同一部署目录下的其他实例：缺省的 data/ 与别的 profile 的 data-<名>/；用户主目录下的旧位置不再特殊
+      ['/opt/aalis/data/aalis.config.yaml', true],
+      ['/opt/aalis/data-x/state/db', true],
+      ['/opt/aalis/datax/a', false],
+      ['/u/.aalis-x/aalis.config.yaml', false],
     ]);
     const dev = protectedLists({
-      paths: derivePaths('/u/.aalis-dev', '/opt/aalis'),
+      paths: derivePaths('/opt/aalis/data-dev', '/opt/aalis'),
       userHome: '/u',
       platform: 'linux',
       form: 'source',
@@ -266,8 +268,8 @@ describe('拒读清单', () => {
     expectHits(
       'denyRead',
       [
-        ['/u/.aalis/aalis.config.yaml', true],
-        ['/u/.aalis-dev/logs/latest.log', false],
+        ['/opt/aalis/data/aalis.config.yaml', true],
+        ['/opt/aalis/data-dev/logs/latest.log', false],
       ],
       dev,
     );
@@ -338,7 +340,7 @@ describe('用户家目录是根目录', () => {
       [
         ['/.ssh/id_ed25519', true],
         ['/.aws/credentials', true],
-        ['/.aalis-dev/x', true],
+        ['/opt/aalis/data-dev/x', true],
         ['/srv/a.txt', false],
       ],
       rooted,

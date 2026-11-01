@@ -1,7 +1,7 @@
-import { chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, isAbsolute, join, normalize, resolve } from 'node:path';
-import type { HostPaths } from '@aalis/api-host-paths';
+import { isAbsolute, join, normalize, resolve } from 'node:path';
+import { HOME_DIR, type HostPaths } from '@aalis/api-host-paths';
 import { CORE_CONFIG_SCHEMA, defaultsFrom } from '@aalis/schema-config';
 import { stringify as stringifyYaml } from 'yaml';
 
@@ -18,7 +18,7 @@ export function assertAbsolute(what: string, p: string): void {
   if (!isFullyAbsolute(p)) throw new Error(`${what} must be an absolute path: ${p}`);
 }
 
-/** profile 名既拼进 `~/.aalis-<profile>`，也拼进数据库名：只许小写字母、数字与连字符，挡住 `../x` 这类跳出。 */
+/** profile 名既拼进 `data-<profile>`，也拼进数据库名：只许小写字母、数字与连字符，挡住 `../x` 这类跳出。 */
 const PROFILE_PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
 const CONFIG_FILE = 'aalis.config.yaml';
@@ -90,71 +90,40 @@ export function parseHostArgs(argv: readonly string[]): HostArgs {
 export interface ResolveHomeInput {
   args: Pick<HostArgs, 'home' | 'profile'>;
   env: Readonly<Record<string, string | undefined>>;
-  /** 宿主代码给的兜底家目录，优先级最低，必须是绝对路径 */
-  defaultHome?: string;
+  /** 部署目录（安装集），必须是绝对路径：没另行指定时家目录在它下面 */
+  appDir: string;
   /** 解析命令行与环境变量里相对路径的基准：启动时的 cwd。取不到（目录已被删除）时不给，只有遇到相对路径才需要它 */
   cwd?: string;
-  /** 用户主目录 */
+  /** 用户主目录：展开 `--home`、`AALIS_HOME` 开头的 `~` */
   userHome?: string;
 }
 
 /**
- * 家目录的覆盖顺序：`--home` → `AALIS_HOME` → `--profile` / `AALIS_PROFILE`（`~/.aalis-<p>`）→ 宿主的 defaultHome → `~/.aalis`。
- * 指定了 profile、同时又有更高优先级的 `--home` 或 `AALIS_HOME` 时报错，不静默忽略 profile：
- * 以为进了测试实例、实际写进主实例，是这类配置错误最坏的后果。
+ * 家目录的覆盖顺序：`--home` → `AALIS_HOME` → 部署目录下的 `data/`；给了 `--profile` / `AALIS_PROFILE` 时是部署目录下的
+ * `data-<p>/`。家目录不放在用户主目录下：一个部署的配置、数据与日志都在部署目录里。
+ * 指定了 profile、同时又有 `--home` 或 `AALIS_HOME` 时报错，不静默忽略 profile：以为进了测试实例、实际写进主实例，
+ * 是这类配置错误最坏的后果。profile 只由这两处给，经 `--home` 选中的目录不论叫什么都没有 profile。
  */
 export function resolveHome(input: ResolveHomeInput): { home: string; profile?: string } {
-  const { args, env } = input;
-  const userHome = input.userHome ?? homedir();
+  const { args, env, appDir } = input;
+  // 部署目录是宿主代码给的值：写错了不论这次谁胜出都报，免得换一台没设环境变量的机器才暴露
+  if (!isFullyAbsolute(appDir)) throw new HomeArgsError(`appDir must be an absolute path: ${appDir}`);
   // 环境变量设成空串（`AALIS_HOME=` 用来清掉它）视同没设
   const explicit = args.home ?? nonEmpty(env.AALIS_HOME);
   const profile = args.profile ?? nonEmpty(env.AALIS_PROFILE);
-  // defaultHome 是宿主代码写死的值：写错了不论这次谁胜出都报，免得换一台没设环境变量的机器才暴露
-  if (input.defaultHome !== undefined && !isFullyAbsolute(input.defaultHome)) {
-    throw new HomeArgsError(`defaultHome must be an absolute path: ${input.defaultHome}`);
-  }
   if (explicit !== undefined && profile !== undefined) {
     const homeSource = args.home !== undefined ? '--home' : 'AALIS_HOME';
     const profileSource = args.profile !== undefined ? '--profile' : 'AALIS_PROFILE';
     throw new HomeArgsError(`Both ${homeSource} and ${profileSource} are set; use only one of them`);
   }
-  if (explicit !== undefined) return withProfile(toAbsolute(explicit, userHome, input.cwd), userHome);
-  if (profile !== undefined) {
-    if (!PROFILE_PATTERN.test(profile)) {
-      throw new HomeArgsError(
-        `Invalid profile name "${profile}": use only lowercase letters, digits and hyphens, start with a letter or digit, and keep it within 32 characters`,
-      );
-    }
-    return { home: join(userHome, `.aalis-${profile}`), profile };
+  if (explicit !== undefined) return { home: toAbsolute(explicit, input.userHome ?? homedir(), input.cwd) };
+  if (profile === undefined) return { home: join(normalize(appDir), HOME_DIR) };
+  if (!PROFILE_PATTERN.test(profile)) {
+    throw new HomeArgsError(
+      `Invalid profile name "${profile}": use only lowercase letters, digits and hyphens, start with a letter or digit, and keep it within 32 characters`,
+    );
   }
-  if (input.defaultHome !== undefined) return withProfile(normalize(input.defaultHome), userHome);
-  return { home: join(userHome, '.aalis') };
-}
-
-/**
- * `~/.aalis-<p>` 就是 profile p 的家目录：经 `--home`、`AALIS_HOME` 或 defaultHome 选中它时同样带上 profile，
- * 插件按 profile 派生的名字（如记忆库名）对同一个家目录才一样。这里按路径的写法认，认不出的写法由
- * {@link profileOfRealHome} 按真实路径补认。
- */
-function withProfile(home: string, userHome: string): { home: string; profile?: string } {
-  const profile = /^\.aalis-(.+)$/.exec(basename(home))?.[1];
-  if (profile === undefined || !PROFILE_PATTERN.test(profile)) return { home };
-  return resolve(home) === resolve(userHome, `.aalis-${profile}`) ? { home, profile } : { home };
-}
-
-/**
- * 按真实路径补认 profile：家目录的真实路径就是 `~/.aalis-<p>` 的真实路径时为 p。补上按写法认不出的情形：
- * 大小写写错、经指向它的符号链接选中、用户主目录本身是符号链接。`~/.aalis-<p>` 自己是指向别处的链接时，
- * 经那个别处的路径选中仍认不出。用户主目录不存在时没有 profile。
- */
-export function profileOfRealHome(realHome: string, userHome: string = homedir()): string | undefined {
-  let realUserHome: string;
-  try {
-    realUserHome = realpathSync.native(userHome);
-  } catch {
-    return undefined;
-  }
-  return withProfile(realHome, realUserHome).profile;
+  return { home: join(normalize(appDir), `${HOME_DIR}-${profile}`), profile };
 }
 
 function nonEmpty(value: string | undefined): string | undefined {

@@ -4,8 +4,8 @@ import { openAndProvide } from '../../packages/plugin-memory-mongodb/src/index.j
 import { fixedRef } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
-// 记忆库按家目录区分：库名加 profile 一段，库里记着它归哪个家目录与实例。两个家目录（开发用的 .aalis-dev 与
-// 生产的 ~/.aalis，或复制出来的测试实例）连同一个 MongoDB、派生出同一个库名时，后来的那个以一行配置错误失败，
+// 记忆库按家目录区分：库名加 profile 一段，库里记着它归哪个家目录与实例。两个家目录（两个部署目录各自的 data/，
+// 或复制出来的测试实例）连同一个 MongoDB、派生出同一个库名时，后来的那个以一行配置错误失败，
 // 不会共写；库里已有数据却没有记录时不默认认走；claimFrom 用来在搬迁后认领。
 // 客户端与集合都是替身，不连任何真实的 mongod。
 // ════════════════════════════════════════════════════════════
@@ -196,7 +196,7 @@ describe('plugin-memory-mongodb 库的归属', () => {
     ['数据在另一个名字的消息集合里', { history: [{ sessionId: 's' }] }],
   ])('库里已有数据却没有归属记录（%s）：不默认认走；claimFrom: unowned 时认领', async (_label, seed) => {
     const server = fakeServer(seed);
-    const err = await failure(openAndProvide(server.client, config(), caps(NAME), { home: '/dev/.aalis-dev' }));
+    const err = await failure(openAndProvide(server.client, config(), caps(NAME), { home: '/dev/data' }));
     expect(err?.name).toBe('ConfigError');
     expect(err?.message).toContain('没有记录它归哪个家目录');
     expect(server.calls.closes).toBe(1);

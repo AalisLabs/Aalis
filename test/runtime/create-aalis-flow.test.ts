@@ -400,7 +400,7 @@ describe('create-aalis --yes', () => {
       { cwd: dir, timeout: 10_000, env: { ...ZH_ENV, OLLAMA_HOST: ollamaHostValue } },
     );
     const pkg = JSON.parse(await readFile(join(dir, 'my-bot', 'package.json'), 'utf-8'));
-    const config = parse(await readFile(join(dir, 'my-bot', 'home', 'aalis.config.yaml'), 'utf-8'));
+    const config = parse(await readFile(join(dir, 'my-bot', 'data', 'aalis.config.yaml'), 'utf-8'));
     return { deps: Object.keys(pkg.dependencies), config, stdout };
   }
 

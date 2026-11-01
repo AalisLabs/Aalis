@@ -11,16 +11,7 @@ import { createConfigStore, installHostConfig } from './config-store.js';
 import { type ConfigSyncOptions, installConfigHotReload, withPluginConfigSync } from './config-sync.js';
 import { type ConsoleSinkHandle, installConsoleSink } from './console-sink.js';
 import { appendCrashLog, type FileLoggerHandle, setupFileLogger } from './file-logger.js';
-import {
-  derivePaths,
-  HomeArgsError,
-  initHome,
-  isFullyAbsolute,
-  isHomeInitialized,
-  parseHostArgs,
-  profileOfRealHome,
-  resolveHome,
-} from './home.js';
+import { derivePaths, HomeArgsError, initHome, isHomeInitialized, parseHostArgs, resolveHome } from './home.js';
 import { createHostLogs } from './host-logs.js';
 import { acquireInstanceLock, type InstanceLock } from './instance-lock.js';
 import { createNodeModulesPluginLoader } from './node-modules-loader.js';
@@ -41,7 +32,7 @@ import { installTerminalStateRestorer } from './terminal.js';
 //
 // 独立部署（scaffold 生成的 index.mjs）：
 //   import { startAalis } from '@aalis/runtime';
-//   startAalis({ appDir: here, defaultHome: join(here, 'home') });   // 从 node_modules 加载插件 + 默认开控制台/文件日志
+//   startAalis({ appDir: here });   // 从 node_modules 加载插件 + 默认开控制台/文件日志，家目录缺省是 here/data
 //
 // monorepo 自托管（src/index.ts）传仓库根与 monorepo 风味的加载器：
 //   startAalis({ appDir, pluginLoader: createFsPluginLoader(join(appDir, 'packages')) });
@@ -61,15 +52,11 @@ const APP_DIR_EXAMPLE = 'startAalis({ appDir: dirname(fileURLToPath(import.meta.
 
 export interface StartAalisOptions {
   /**
-   * 安装集目录（package.json 与 node_modules 所在，源码形态另有 packages/），必须是绝对路径。
-   * 源码形态的入口传仓库根，脚手架生成的入口传项目目录。
+   * 安装集目录，也就是部署目录（package.json 与 node_modules 所在，源码形态另有 packages/），必须是绝对路径。
+   * 源码形态的入口传仓库根，脚手架生成的入口传项目目录。`--home`、`AALIS_HOME` 都没给时家目录在它下面：
+   * `data/`，给了 `--profile` / `AALIS_PROFILE` 时是 `data-<名>/`。
    */
   appDir: string;
-  /**
-   * 宿主代码给的兜底家目录，必须是绝对路径。优先级最低：`--home`、`AALIS_HOME`、`--profile` / `AALIS_PROFILE`
-   * 都没给时才用它，再没有就是 `~/.aalis`。
-   */
-  defaultHome?: string;
   /** 插件加载器，默认 createNodeModulesPluginLoader(安装集)；monorepo 传 createFsPluginLoader(<仓库>/packages) */
   pluginLoader?: PluginLoader;
   /**
@@ -147,10 +134,7 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   let home: ReturnType<typeof resolveHome>;
   try {
     hostArgs = parseHostArgs(opts.argv ?? process.argv.slice(2));
-    home = resolveHome({ args: hostArgs, env: process.env, defaultHome: opts.defaultHome, cwd: startCwd });
-    if (!isFullyAbsolute(opts.appDir)) {
-      throw new HomeArgsError(`appDir must be an absolute path: ${opts.appDir}`);
-    }
+    home = resolveHome({ args: hostArgs, env: process.env, appDir: opts.appDir, cwd: startCwd });
   } catch (err) {
     if (!(err instanceof HomeArgsError)) throw err;
     console.error(`[aalis] ${err.message}`);
@@ -176,9 +160,8 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
     process.exit(1);
   }
   // 交给插件的家目录是真实路径：符号链接、大小写与末尾分隔符不同的写法指向同一个目录时，插件拿到的是同一个路径
-  // （记忆库按它记归属）。profile 按写法认不出时按真实路径再认一次，派生的库名才跟着同一个目录走
-  const realHome = realpathSync.native(declared.home);
-  const paths = derivePaths(realHome, appDir, home.profile ?? profileOfRealHome(realHome));
+  // （记忆库按它记归属）
+  const paths = derivePaths(realpathSync.native(declared.home), appDir, home.profile);
   // 默认加载器从安装集的 package.json 找插件：缺了它会一个插件都不加载、照样起来，只留一行「发现 0 个插件」
   if (!opts.pluginLoader && !existsSync(join(paths.app, 'package.json'))) {
     console.error(

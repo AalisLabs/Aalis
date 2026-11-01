@@ -370,6 +370,10 @@ const REMOVED: Array<[string, string]> = [
     'OWNER_PLATFORM',
     '--init 与 create-aalis 给 cli、webui 写的平台档（OWNER_PLATFORM_PROFILES、OWNER_PLATFORMS）：工具分组没设时由 plugin-tools 按根会话的创建来源给',
   ],
+  // 家目录放在部署目录下：没有 profile 时是 data/，有 profile 时是 data-<名>/，不再放在用户主目录
+  ['defaultHome', 'startAalis 的入口代码兜底家目录：家目录缺省是部署目录下的 data/'],
+  ['profileOfRealHome', '按真实路径认 ~/.aalis-<名> 的 profile：profile 只认 --profile 与 AALIS_PROFILE'],
+  ['.aalis-dev', '源码开发用的家目录：pnpm dev 落在仓库的 data/'],
 ];
 
 /**
