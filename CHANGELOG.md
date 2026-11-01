@@ -8,9 +8,11 @@
 
 ---
 
-## 未发布
+## 2026-11-01 第二节（core 不变，仍 0.21.0；20 个包：9 minor / 11 patch）
 
 ### 数据目录：放在部署目录下，「家目录」整套改叫「数据目录」
+
+runtime 0.19.0、api-host-paths 0.3.0、api-reach 0.4.0、api-webui 0.14.0、plugin-memory-mongodb 0.14.0、plugin-storage-local 0.16.0、plugin-webui-server 0.18.0、plugin-webui-client 0.17.0、create-aalis 0.10.0；文字与注释跟着改的 api-host-logs 0.1.1、api-storage 0.10.1、plugin-authority 0.15.1、plugin-cli 0.14.2、plugin-mcp-client 0.15.1、plugin-package-manager 0.10.1、plugin-reach 0.3.1、plugin-session-server 0.3.1、plugin-skills 0.15.1、plugin-usage-stats 0.2.1、schema-config 0.16.1。
 
 - @aalis/runtime（破坏性）：实例的配置、密钥、数据与日志所在的目录改叫数据目录。覆盖顺序改为 `--data` → `AALIS_DATA` → 部署目录（`appDir`）下的 `data/`；给了 `--profile <名>` 或 `AALIS_PROFILE` 时是部署目录下的 `data-<名>/`。`~/.aalis` 与 `~/.aalis-<名>` 不再是缺省位置。命令行参数 `--home` 改为 `--data`，环境变量 `AALIS_HOME` 改为 `AALIS_DATA`，旧写法不再认。命令开头那一段里不认识的 `--` 参数（包括 `--home`）报错退出（退出码 2），不再当成子命令。删 `StartAalisOptions.defaultHome` 与导出的 `profileOfRealHome`；`resolveHome`、`initHome`、`isHomeInitialized`、`HomeArgsError`、`ResolveHomeInput` 改名为 `resolveDataDir`、`initDataDir`、`isDataDirInitialized`、`HostArgsError`、`ResolveDataDirInput`，`HostArgs.home` 改为 `data`；`resolveDataDir` 入参去掉 `defaultHome`、加必填的 `appDir`，返回 `{ dir, profile? }`。profile 只认 `--profile` 与 `AALIS_PROFILE`，经 `--data` 或 `AALIS_DATA` 选中的数据目录没有 profile。启动提示与报错里的 home directory 改为 data directory。
 - @aalis/api-host-paths（破坏性）：`HostPaths.home` 改为 `HostPaths.data`；导出缺省数据目录的目录名 `DATA_DIR_NAME`（`'data'`）；`HostPaths.profile` 只在经 `--profile` 或 `AALIS_PROFILE` 选中时有。
