@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-storage-local",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -31,7 +31,7 @@
     "@aalis/api-checkpoint": "workspace:>=0.2.0 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.16.0 <1.0.0",
     "@aalis/api-doctor": "workspace:>=0.9.0 <1.0.0",
-    "@aalis/api-host-paths": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-host-paths": "workspace:>=0.2.0 <1.0.0",
     "@aalis/api-storage": "workspace:>=0.9.0 <1.0.0",
     "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
   },
