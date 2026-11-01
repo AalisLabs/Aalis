@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DefaultLogger, definePlugin, type Logger, lifecycle } from '../../packages/core/src/index.js';
 import type { Activation } from '../../packages/core/src/orchestration/activation.js';
 import { activatePlugin, type PluginRecord } from '../../packages/core/src/orchestration/plugin-activation.js';
@@ -97,13 +97,21 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
     const ctx = host.create('p');
     const { state, acquire } = startPlugin(ctx, true);
 
-    const t0 = Date.now();
-    await ctx.disposeAsync(50); // 闸门永不开
-    const elapsed = Date.now() - t0;
-
-    expect(elapsed).toBeGreaterThanOrEqual(50); // 确实等到了超时才放行
-    expect(elapsed).toBeLessThan(2000); // 而不是干等 apply
-    expect(state.released).toBe(false); // 这一项确实没赶上，是超时的既定代价
+    // 假时钟：真实时间量不准超时（定时器按事件循环缓存的毫秒到期，Date.now 量出来可能少 1ms）
+    vi.useFakeTimers();
+    try {
+      let returned = false;
+      const disposing = ctx.disposeAsync(50).then(() => {
+        returned = true;
+      }); // 闸门永不开
+      await vi.advanceTimersByTimeAsync(49);
+      expect(returned).toBe(false); // 超时之前一直等着 apply
+      await vi.advanceTimersByTimeAsync(1);
+      await disposing; // 到了超时就放行，而不是干等 apply
+      expect(state.released).toBe(false); // 这一项确实没赶上，是超时的既定代价
+    } finally {
+      vi.useRealTimers();
+    }
 
     acquire.resolve();
   });
