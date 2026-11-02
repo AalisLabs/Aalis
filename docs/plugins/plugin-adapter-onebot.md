@@ -7,6 +7,8 @@
 
 OneBot 协议适配器，通过 WebSocket 连接一个或多个 OneBot 实现端（如 go-cqhttp、Lagrange 等），支持 v11/v12 协议自动检测。
 
+Aalis 是 WebSocket 客户端，主动去连实现端，所以实现端要开正向 WebSocket（NapCat 的网络配置里新建「WebSocket 服务器」），把它的地址填进连接的 `url`；实现端设了 token 的，`accessToken` 填同一个。不支持反向 WebSocket，也就是实现端主动连过来的那种（NapCat 里的「WebSocket 客户端」）。
+
 ## 插件声明
 
 ```typescript

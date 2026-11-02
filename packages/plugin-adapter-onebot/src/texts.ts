@@ -10,7 +10,8 @@ const SOURCE = {
   connectionsLabel: '连接列表',
   connectionsDescription: '配置一个或多个 OneBot WebSocket 连接',
   urlLabel: 'WebSocket 地址',
-  urlDescription: '如 ws://127.0.0.1:8080',
+  urlDescription:
+    '实现端开的正向 WebSocket 地址（NapCat 里新建「WebSocket 服务器」，不是「WebSocket 客户端」），如 ws://127.0.0.1:8080',
   accessTokenLabel: '鉴权 Token',
   accessTokenDescription: '可选，与 OneBot 实现端一致',
   selfIdLabel: '机器人 ID',

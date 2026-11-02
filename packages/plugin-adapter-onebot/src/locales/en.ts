@@ -6,7 +6,8 @@ export default defineLocale<Source>()({
   connectionsLabel: 'Connections',
   connectionsDescription: 'One or more OneBot WebSocket connections',
   urlLabel: 'WebSocket URL',
-  urlDescription: 'For example ws://127.0.0.1:8080',
+  urlDescription:
+    'Forward WebSocket address served by the OneBot implementation (in NapCat, add a "WebSocket server", not a "WebSocket client"), for example ws://127.0.0.1:8080',
   accessTokenLabel: 'Access token',
   accessTokenDescription: 'Optional; must match the OneBot implementation',
   selfIdLabel: 'Bot ID',
