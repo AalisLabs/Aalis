@@ -159,6 +159,8 @@ export default withMermaid(defineConfig({
   lang: 'zh-CN',
   cleanUrls: true,
   lastUpdated: true,
+  // 只预加载框架、主题与页面自身；mermaid 的图表模块与 katex 只有两篇用到，降为空闲时的 prefetch
+  shouldPreload: (link) => /\/(framework|theme)\.|\.md\./.test(link),
   markdown: {
     // 行内代码统一 v-pre：Vue 跳过编译，`{{ }}` 与 <Tag> 原样显示。
     // 根治「行内代码里的 {{outputs.<out>}} 被当插值解析而 build 失败」——零文档改动。
