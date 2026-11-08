@@ -457,6 +457,8 @@ const ACTION_TIMEOUT = 30000;
 const HEARTBEAT_INTERVAL = 30000;
 const HEARTBEAT_TIMEOUT = 10000;
 const CONNECT_TIMEOUT = 15000;
+/** 握手被拒时日志里留的响应体字符数 */
+const REJECTED_BODY_LIMIT = 4096;
 
 // ===== 请求事件 =====
 /** 好友申请、入群邀请与加群申请合成的系统通知的 IncomingMessage.source */
@@ -1426,16 +1428,27 @@ function runAdapter(caps: Caps): void {
     const ws = new WebSocket(state.config.url, { headers });
     state.ws = ws;
 
-    // 诊断：捕获 unexpected-response（服务器返回非 101 时触发，且不会触发 error）
+    // 握手被拒（服务器回了非 101，如鉴权不过的 401）：记下状态码、响应头与响应体后立即断开重连。挂了这个监听时 ws 不自己
+    // 中断握手、也不触发 error，不断开就要干等连接超时。响应体只留开头一段：地址指错到别的服务时它可能很大、一直不结束；
+    // 读完、读到上限、读到一半断开都在这时断开
+    let rejected = false;
     ws.on('unexpected-response', (_req, res) => {
+      rejected = true;
       logger.use.warn(`OneBot unexpected-response: status=${res.statusCode}, headers=${JSON.stringify(res.headers)}`);
       let body = '';
-      res.on('data', (chunk: Buffer) => {
-        body += chunk.toString();
-      });
-      res.on('end', () => {
+      const finish = () => {
+        if (ws.readyState !== WebSocket.CONNECTING) return;
         logger.use.warn(`OneBot unexpected-response body: ${body}`);
+        ws.terminate();
+      };
+      res.setEncoding('utf8');
+      res.on('data', (chunk: string) => {
+        body += chunk;
+        if (body.length < REJECTED_BODY_LIMIT) return;
+        body = body.slice(0, REJECTED_BODY_LIMIT);
+        finish();
       });
+      res.on('close', finish);
     });
 
     // 连接超时：如果 WS 握手在 CONNECT_TIMEOUT 内未完成，主动关闭并触发重连
@@ -1499,6 +1512,15 @@ function runAdapter(caps: Caps): void {
           return;
         }
 
+        // 不对应任何请求的失败回执：实现端拒绝了这条连接（如 token 不对时回完就断开）或报了别的错，照原话记下。
+        // 回执带数字返回码，事件没有：顶层碰巧有 status: 'failed' 的事件照常往下走
+        if (data.status === 'failed' && typeof data.retcode === 'number') {
+          const resp = data as OneBotActionResponse;
+          const detail = resp.message ? `，${resp.message}` : '';
+          logger.use.warn(`OneBot 实现端报错: ${state.config.url}，返回码 ${resp.retcode}${detail}`);
+          return;
+        }
+
         // 事件分发（需要协议已确定）
         if (!state.protocol) return;
 
@@ -1539,6 +1561,8 @@ function runAdapter(caps: Caps): void {
 
     ws.on('error', err => {
       clearTimeout(connectTimer);
+      // 握手被拒后上面自己 terminate 引出的这条不是新的错，原因已经记过
+      if (rejected) return;
       logger.use.warn(
         `OneBot 连接错误: ${err.message}, code=${(err as NodeJS.ErrnoException).code}, readyState=${ws.readyState}`,
       );
