@@ -218,12 +218,18 @@ export function openYamlFile<T extends object>(absPath: string, opts: YamlFileOp
               logger.warn(`${label.source}不是一个映射（得到 ${kind}），本次变更已忽略`);
               return;
             }
+            // 处理器里的保存要看到这次的内容已读入，先推进；处理器拒收（抛错）时退回，与解析失败一样搁置：
+            // 之后的保存照样拒写，不把这份手改盖掉
+            const before = { raw, reconcilePending };
             raw = current;
             reconcilePending = false;
             try {
               onChange(parsed as T);
             } catch (err) {
-              logger.warn(`${label.source}变更处理器抛错：${err instanceof Error ? err.message : String(err)}`);
+              ({ raw, reconcilePending } = before);
+              logger.warn(
+                `${label.source}变更处理器抛错，本次变更已忽略，仍在使用上一份内容：${err instanceof Error ? err.message : String(err)}`,
+              );
             }
           }, 300);
         };

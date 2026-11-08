@@ -59,6 +59,28 @@ describe('登记入参：原样生效、拷贝、危险键不进实例配置', (
     });
   });
 
+  it('数组里的数组也拷开：插件就地改内层、调用方事后改内层，都碰不到对方', async () => {
+    const payload = { matrix: [[1, 2]] };
+    const seen: { config?: Record<string, unknown> } = {};
+    const app = makeApp();
+    await app.plugin(
+      definePlugin({
+        name: 'grid',
+        uses: { config },
+        apply({ config: pluginConfig }) {
+          const c = pluginConfig.use as typeof payload;
+          seen.config = c;
+          c.matrix[0].push(3);
+        },
+      }),
+      payload,
+    );
+    await app.plugins.idle();
+    payload.matrix[0][0] = 999;
+    expect(payload.matrix).toEqual([[999, 2]]);
+    expect(seen.config).toEqual({ matrix: [[1, 2, 3]] });
+  });
+
   it('Date 等非纯对象是原子值：按引用透传，原型保持', async () => {
     const seen: { config?: Record<string, unknown> } = {};
     const stamp = new Date('2021-01-01');

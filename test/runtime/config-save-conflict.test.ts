@@ -104,6 +104,29 @@ describe('save 写前比对磁盘实况', () => {
     expect(readFileSync(path, 'utf-8')).toBe(draft);
   });
 
+  // 递归别名解出的成环数组让整份文档被拒：不论环在插件配置段还是别的顶层键，文档与运行态都不动，
+  // 之后的保存同解析失败一样拒写，不把这份手改整份盖掉
+  it.each([
+    ['插件配置段', A.replace('model: x\n', 'model: y\n    rows: &r [1, *r]\n')],
+    ['别的顶层键', `${A.replace('model: x\n', 'model: y\n')}extra: &r [1, *r]\n`],
+  ])('成环的配置（环在%s）：本次变更不生效，之后的保存拒写、盘上原样', async (_where, edited) => {
+    writeFileSync(path, A);
+    const { config, provider } = createFsYamlConfigProvider(path);
+    const store = createConfigStore(config, provider);
+    let changes = 0;
+    stop = store.watch(() => changes++);
+    await settle();
+
+    writeFileSync(path, edited);
+    await quiet();
+    expect(changes).toBe(0);
+    expect(store.getPluginConfig('llm-openai').model).toBe('x');
+    expect(Object.hasOwn(store.getAll(), 'extra')).toBe(false);
+    store.setPluginConfig('cli', { lastView: 'logs' });
+    await expect(store.persist()).rejects.toThrow(/外部修改/);
+    expect(readFileSync(path, 'utf-8')).toBe(edited);
+  });
+
   it('拒写之后把文件原样改回：这次变更照样投递，宿主据此按文件核对；核对后恢复去重', async () => {
     writeFileSync(path, A);
     const { provider } = createFsYamlConfigProvider(path);

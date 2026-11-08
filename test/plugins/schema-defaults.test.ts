@@ -75,6 +75,13 @@ describe('defaultsFrom 派生规则', () => {
     });
   });
 
+  it('数组里的数组 default 也拷开：改派生结果的内层不写脏 schema', () => {
+    const row = [1];
+    const schema: ConfigSchema = { grid: { type: 'textarea', label: 'G', default: [row] } };
+    (defaultsFrom(schema) as { grid: number[][] }).grid[0].push(2);
+    expect(row).toEqual([1]);
+  });
+
   it('非纯对象 default 保引用（Date 不被拆成普通对象）', () => {
     const stamp = new Date('2020-01-01');
     const schema: ConfigSchema = {

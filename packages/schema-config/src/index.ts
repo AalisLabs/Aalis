@@ -1103,21 +1103,37 @@ function isPlainConfigObject(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
-function cloneConfigValue(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(item => (isPlainConfigObject(item) ? cloneConfigObject(item) : item));
-  }
-  if (isPlainConfigObject(value)) return cloneConfigObject(value);
-  return value;
+/** 原型就是 Array.prototype 的数组：子类的 map 会经 species 重新构造实例，按类实例透传 */
+function isPlainConfigArray(value: unknown): value is unknown[] {
+  return Array.isArray(value) && Object.getPrototypeOf(value) === Array.prototype;
 }
 
-export function cloneConfigObject(obj: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj)) {
-    if (isUnsafeConfigKey(key)) continue;
-    out[key] = cloneConfigValue(value);
-  }
+/** 自有可枚举键逐个拷进新的纯对象，危险键跳过 */
+function cloneEntries(obj: object, path: Set<object>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(obj)
+      .filter(([key]) => !isUnsafeConfigKey(key))
+      .map(([key, item]) => [key, cloneConfigValue(item, path)]),
+  );
+}
+
+/**
+ * 纯对象与普通数组逐层拷，同一条路径（path）上再遇到自己即环，抛错；共享而无环的引用照常拷成两份；类实例（含数组
+ * 子类）按引用透传。抛错时整次拷贝作废，path 不必复原
+ */
+function cloneConfigValue(value: unknown, path: Set<object> = new Set()): unknown {
+  const array = isPlainConfigArray(value);
+  if (!array && !isPlainConfigObject(value)) return value;
+  if (path.has(value)) throw new Error('The config contains a circular reference');
+  path.add(value);
+  const out = array ? value.map(item => cloneConfigValue(item, path)) : cloneEntries(value, path);
+  path.delete(value);
   return out;
+}
+
+/** 总是新建纯对象：入参是类实例时取它的自有可枚举键；null、undefined 抛错 */
+export function cloneConfigObject(obj: Record<string, unknown>): Record<string, unknown> {
+  return cloneEntries(obj, new Set([obj]));
 }
 
 // PluginMeta.configSchema 由本包经 declaration merging 挂上。

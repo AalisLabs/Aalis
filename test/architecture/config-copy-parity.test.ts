@@ -63,4 +63,55 @@ describe('core / schema-config 配置拷贝规则对齐', () => {
     expect((coreOut as { polluted?: unknown }).polluted).toBeUndefined();
     expect((schemaOut as { polluted?: unknown }).polluted).toBeUndefined();
   });
+
+  it('数组里的数组两边都拷开，共享无环的两边都拷成两份，环两边都拒收', () => {
+    const row = [1, 2];
+    const fixture = { matrix: [row], rows: [row, row] };
+    for (const clone of [cloneFromCore, cloneFromSchema]) {
+      const out = clone(fixture) as typeof fixture;
+      expect(out).toEqual(fixture);
+      expect(out.matrix[0]).not.toBe(row);
+      expect(out.rows[0]).not.toBe(out.rows[1]);
+    }
+    const loop: unknown[] = [];
+    loop.push(loop);
+    const self: Record<string, unknown> = {};
+    self.self = self;
+    for (const clone of [cloneFromCore, cloneFromSchema]) {
+      for (const cyclic of [{ loop }, self]) {
+        expect(() => clone(cyclic)).toThrow();
+        expect(() => clone(cyclic)).not.toThrow(RangeError);
+      }
+    }
+  });
+
+  it('最外层总是新建纯对象（null 抛错），数组子类按引用透传，危险键在数组的数组里也滤掉', () => {
+    class Cfg {
+      nested = { a: 1 };
+    }
+    class Tagged extends Array<number> {
+      constructor(
+        readonly tag: string,
+        ...items: number[]
+      ) {
+        super(...items);
+      }
+    }
+    const tagged = new Tagged('t', 1, 2);
+    const unsafe = JSON.parse('{"rows":[[{"__proto__":{"polluted":"yes"},"ok":1}]]}') as Record<string, unknown>;
+    for (const clone of [cloneFromCore, cloneFromSchema]) {
+      const instance = new Cfg();
+      const out = clone(instance as unknown as Record<string, unknown>);
+      expect(out).not.toBe(instance);
+      expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+      expect(out.nested).not.toBe(instance.nested);
+      expect(() => clone(null as unknown as Record<string, unknown>)).toThrow(TypeError);
+      const kept = (clone({ tagged }) as { tagged: Tagged }).tagged;
+      expect(kept).toBe(tagged);
+      expect(kept.tag).toBe('t');
+      const cell = (clone(unsafe) as { rows: Array<Array<Record<string, unknown>>> }).rows[0][0];
+      expect(cell).toEqual({ ok: 1 });
+      expect(Object.hasOwn(cell, '__proto__')).toBe(false);
+    }
+  });
 });

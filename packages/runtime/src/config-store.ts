@@ -317,8 +317,11 @@ export function createConfigStore(
       onChangeCallback = onChange;
       const configWatch = provider?.watch?.(next => {
         const previous = config;
-        config = normalize(next);
-        fileDoc = snapshot(config);
+        // 先算完再换：拷贝拒收（如成环的数组）时抛出，文档与运行态都不动，文件层据此搁置这次变更
+        const normalized = normalize(next);
+        const doc = snapshot(normalized);
+        config = normalized;
+        fileDoc = doc;
         onChangeCallback?.(previous);
       });
       if (configWatch) unwatchFns.push(configWatch);

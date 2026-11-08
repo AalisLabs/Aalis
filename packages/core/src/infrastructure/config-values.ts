@@ -5,11 +5,11 @@
  * `constructor` / `prototype` 同属配置层无合法含义的键，一并跳过。
  *
  * 拷贝只服务「调用方不得通过别名写穿实例配置」：登记与 bounce 时把入参拷进 entry。
- * 纯对象递归拷、数组拷一层（元素若为纯对象也拷）；Date / Map / 类实例等原子值
- * 按引用透传，调用方不得依赖其不可变。
+ * 纯对象与普通数组逐层拷，同一条路径上再遇到自己即环，抛错；共享而无环的引用照常拷成两份。
+ * Date / Map / 类实例（含数组子类）等原子值按引用透传，调用方不得依赖其不可变。
  *
- * 规则与 `@aalis/schema-config` 的 `cloneConfigObject` 对齐（该包零运行时依赖，不能 import 这里）。
- * 防漂移：`test/architecture/config-copy-parity.test.ts`。
+ * 规则与 `@aalis/schema-config` 的 `cloneConfigObject` 对齐（core 不依赖任何包；该包不依赖 core 的运行时，
+ * WebUI 前端也引它）。防漂移：`test/architecture/config-copy-parity.test.ts`。
  */
 
 const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
@@ -24,19 +24,32 @@ export function isPlainConfigObject(value: unknown): value is Record<string, unk
   return proto === Object.prototype || proto === null;
 }
 
-function cloneConfigValue(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(item => (isPlainConfigObject(item) ? cloneConfigObject(item) : item));
-  }
-  if (isPlainConfigObject(value)) return cloneConfigObject(value);
-  return value;
+/** 原型就是 Array.prototype 的数组：子类的 map 会经 species 重新构造实例，按类实例透传 */
+function isPlainConfigArray(value: unknown): value is unknown[] {
+  return Array.isArray(value) && Object.getPrototypeOf(value) === Array.prototype;
 }
 
-export function cloneConfigObject(obj: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj)) {
-    if (isUnsafeConfigKey(key)) continue;
-    out[key] = cloneConfigValue(value);
-  }
+/** 自有可枚举键逐个拷进新的纯对象，危险键跳过 */
+function cloneEntries(obj: object, path: Set<object>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(obj)
+      .filter(([key]) => !isUnsafeConfigKey(key))
+      .map(([key, item]) => [key, cloneConfigValue(item, path)]),
+  );
+}
+
+/** path：当前这条路径上的纯对象与数组。抛错时整次拷贝作废，path 不必复原 */
+function cloneConfigValue(value: unknown, path: Set<object>): unknown {
+  const array = isPlainConfigArray(value);
+  if (!array && !isPlainConfigObject(value)) return value;
+  if (path.has(value)) throw new Error('配置里有环状引用');
+  path.add(value);
+  const out = array ? value.map(item => cloneConfigValue(item, path)) : cloneEntries(value, path);
+  path.delete(value);
   return out;
+}
+
+/** 总是新建纯对象：入参是类实例时取它的自有可枚举键；null、undefined 抛错 */
+export function cloneConfigObject(obj: Record<string, unknown>): Record<string, unknown> {
+  return cloneEntries(obj, new Set([obj]));
 }

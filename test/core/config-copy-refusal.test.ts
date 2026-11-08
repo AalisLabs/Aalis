@@ -85,12 +85,26 @@ describe('配置无法拷贝时管理动作返回 false', () => {
   it('共享但无环的引用（同一对象出现两次）照常拷贝成两份', async () => {
     const { app } = await mk();
     const shared = { k: 1 };
-    const ok = await app.plugin(definePlugin({ name: 'dag', apply() {} }), { x: shared, y: shared });
+    const row = [1, 2];
+    const ok = await app.plugin(definePlugin({ name: 'dag', apply() {} }), { x: shared, y: shared, rows: [row, row] });
     await app.plugins.idle();
-    const cfg = app.plugins.getPlugin('dag')?.config as { x: unknown; y: unknown };
+    const cfg = app.plugins.getPlugin('dag')?.config as { x: unknown; y: unknown; rows: unknown[] };
     expect(ok).toBe(true);
     expect(cfg.x).toEqual({ k: 1 });
     expect(cfg.x).not.toBe(cfg.y);
+    expect(cfg.rows).toEqual([row, row]);
+    expect(cfg.rows[0]).not.toBe(cfg.rows[1]);
+  });
+
+  it('数组里的环同样拒收；拒因写明是环状引用，不靠调用栈溢出', async () => {
+    const { app, log } = await mk();
+    const loop: unknown[] = [];
+    loop.push(loop);
+    const viaArray = await app.plugin(definePlugin({ name: 'arr', apply() {} }), { loop });
+    const viaObject = await app.plugin(definePlugin({ name: 'obj', apply() {} }), cyclic());
+    expect({ viaArray, viaObject }).toEqual({ viaArray: false, viaObject: false });
+    expect(log.records.filter(r => r.message.includes('环状引用'))).toHaveLength(2);
+    expect(log.records.some(r => r.message.includes('call stack'))).toBe(false);
   });
 
   it('getter 或 Proxy 抛错同样只让本条返回 false，旧配置不变', async () => {
