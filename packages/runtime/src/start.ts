@@ -393,6 +393,15 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+  // 关掉所在的终端时 shell 给前台作业发 SIGHUP，默认动作是不经停机直接结束，插件收尾与清理里的落盘全被跳过。
+  // 收到它时终端已经挂断，之后写 stdout/stderr 都报 EIO。直接写流的（终端界面停用时写的复原序列）出错即是未捕获的 'error'；
+  // console 只在流上没有别的 'error' 监听时才自己接住，有工作线程（经 tsx 跑源码时就有）时它的输出接在这两条流上，管道留下的
+  // 监听把错误再抛出来，console 也接不住。未捕获的 'error' 经顶部的 fatal handler 以 1 退出，停机断在中途。
+  // 输出已无处可去，先给两条流挂上空的监听再停机
+  process.on('SIGHUP', () => {
+    for (const stream of [process.stdout, process.stderr]) stream.on('error', () => {});
+    void shutdown();
+  });
 
   return app;
 }

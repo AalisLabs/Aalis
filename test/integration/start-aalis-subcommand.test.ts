@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
@@ -13,8 +13,10 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { nodeProcessProbe } from '../../packages/runtime/src/instance-lock.js';
@@ -33,7 +35,7 @@ import { nodeProcessProbe } from '../../packages/runtime/src/instance-lock.js';
 // 3. 子命令进程无重启策略——否则 `restart` 在 app.stop ≥ 500ms 时 spawn 出 argv 仍带 restart 的
 //    detached 子进程，无限连环（实测 5 代）。
 //
-// 守护路径（argv 为空）作为对照：旧日志轮转为 latest.1.log、文件日志照常写、SIGTERM 优雅退出；另守启动收敛后的 pending 告警把「等待仍在激活的
+// 守护路径（argv 为空）作为对照：旧日志轮转为 latest.1.log、文件日志照常写、SIGTERM 与 SIGHUP 优雅退出；另守启动收敛后的 pending 告警把「等待仍在激活的
 // 提供者」与「缺少」分开报。
 // ════════════════════════════════════════════════════════════
 
@@ -228,6 +230,15 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     expect(saved).toContain('filled: 9');
     expect(saved).not.toContain('stale');
     expect(saved).toContain('servicePreferences:\n  commands: e2e-probe\n');
+  });
+
+  it('守护路径：SIGHUP（关掉所在的终端时 shell 发给前台作业）与 SIGTERM 一样走完停机：关闭日志落盘、放掉实例锁，exit 0', async () => {
+    const dir = project();
+    const r = await run(dir, [], { AALIS_E2E_MODE: 'daemon', AALIS_E2E_SIGNAL: 'SIGHUP' });
+    expect(r.signal).toBeNull();
+    expect(r.code).toBe(0);
+    expect(readLog(dir)).toContain('已停止');
+    expect(readdirSync(join(dir, 'run')).filter(n => n.endsWith('.lock'))).toEqual([]);
   });
 
   it('守护路径：启动收敛后的告警把缺的沿链追到根，仍在后台激活的插件所提供的服务报成等待，只在等的不告警', async () => {
@@ -564,4 +575,96 @@ describe('startAalis 数据目录（真实子进程）', () => {
     expect(r.stderr).toContain('Both AALIS_DATA and --profile are set');
     expect(existsSync(join(dir, 'first-config.json'))).toBe(false);
   });
+});
+
+// 伪终端：python3 的 pty 模块开一对主从端，夹具自成会话、以从端为控制终端（如同在终端窗口里直接运行），读着主端直到夹具写出
+// ready，再关掉主端，即关掉终端窗口：系统挂断从端、给会话首进程（夹具）发 SIGHUP，之后读从端得到结尾、写从端报 EIO。
+// 不经 tsx 的包装进程，夹具本身就是会话首进程。夹具没写 ready 就退出时照报它的结局；关掉终端后至多等 limit 秒，
+// 还没退出就 SIGKILL 并报 hung。
+const PTY_HARNESS = `
+import fcntl, os, pty, select, sys, termios, time
+ready, limit, cmd = sys.argv[1], float(sys.argv[2]), sys.argv[3:]
+master, slave = pty.openpty()
+pid = os.fork()
+if pid == 0:
+    try:
+        os.setsid()
+        fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+        for fd in (0, 1, 2):
+            os.dup2(slave, fd)
+        os.execv(cmd[0], cmd)
+    finally:
+        os._exit(127)
+os.close(slave)
+deadline = time.time() + limit
+while not os.path.exists(ready) and time.time() < deadline:
+    if select.select([master], [], [], 0.05)[0]:
+        try:
+            if not os.read(master, 65536):
+                break
+        except OSError:
+            break
+os.close(master)
+deadline = time.time() + limit
+while time.time() < deadline:
+    done, status = os.waitpid(pid, os.WNOHANG)
+    if done:
+        print('signal %d' % os.WTERMSIG(status) if os.WIFSIGNALED(status) else 'exit %d' % os.WEXITSTATUS(status))
+        sys.exit(0)
+    time.sleep(0.05)
+os.kill(pid, 9)
+os.waitpid(pid, 0)
+print('hung')
+`;
+
+const python3 = process.platform !== 'win32' && spawnSync('python3', ['-c', 'pass'], { timeout: 10_000 }).status === 0;
+
+describe.skipIf(!python3)('startAalis 关掉所在的终端（真实子进程，伪终端）', () => {
+  const dirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** 在伪终端里以守护进程跑夹具（终端界面开着），起来后关掉终端；返回夹具的结局：exit N、signal N 或 hung */
+  const runOnClosedTerminal = (dir: string): Promise<string> =>
+    new Promise((resolveRun, reject) => {
+      const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve('tsx')).href;
+      const inherited: Record<string, string | undefined> = { ...process.env };
+      delete inherited.AALIS_PROFILE;
+      const child = spawn(
+        'python3',
+        ['-I', '-c', PTY_HARNESS, join(dir, 'ready'), '15', process.execPath, '--import', tsxLoader, fixture],
+        {
+          cwd: dir,
+          env: {
+            ...inherited,
+            HOME: dir,
+            USERPROFILE: dir,
+            AALIS_DATA: dir,
+            AALIS_E2E_MODE: 'tty',
+            TSX_TSCONFIG_PATH: join(repoRoot, 'tsconfig.test.json'),
+          },
+          stdio: ['ignore', 'pipe', 'inherit'],
+        },
+      );
+      let out = '';
+      child.stdout.on('data', d => {
+        out += String(d);
+      });
+      child.on('error', reject);
+      child.on('close', () => resolveRun(out.trim()));
+    });
+
+  // 停机途中两条流都有写：终端界面停用时往 stdout 写复原序列，e2e-probe 收尾时的 warn 经控制台日志写 stderr
+  it('终端界面开着时关掉终端：走完停机，关闭日志落盘、放掉实例锁，exit 0；停机途中写终端报的 EIO 不打断停机', async () => {
+    const dir = makeProject();
+    dirs.push(dir);
+    expect(await runOnClosedTerminal(dir)).toBe('exit 0');
+    expect(existsSync(join(dir, 'uncaught.txt')) ? readFileSync(join(dir, 'uncaught.txt'), 'utf-8') : '').toBe('');
+    const log = readLog(dir);
+    expect(log).toContain('e2e-probe 收尾');
+    expect(log).toContain('已停止');
+    expect(readdirSync(join(dir, 'run')).filter(n => n.endsWith('.lock'))).toEqual([]);
+  }, 45_000);
 });

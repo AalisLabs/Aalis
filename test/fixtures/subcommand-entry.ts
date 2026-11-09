@@ -3,7 +3,10 @@
 //
 // 环境变量：
 //   AALIS_E2E_MODE     'subcommand'（默认；按 process.argv 分发）| 'default-loader'（不传插件加载器）| 'no-app-dir'（不传 appDir）| 'daemon'（传 argv: []，
-//                      startAalis 返回后自发 SIGTERM，验证守护路径的文件日志与优雅退出仍在）
+//                      startAalis 返回后自发 AALIS_E2E_SIGNAL（缺省 SIGTERM），验证守护路径的文件日志与优雅退出仍在）|
+//                      'tty'（守护进程，另载终端界面插件，e2e-probe 收尾时记一条 warn、经控制台日志写到 stderr；未捕获的异常
+//                      当场记进 cwd/uncaught.txt，fatal handler 的崩溃日志是异步追加的，赶不上先落定的停机；startAalis
+//                      返回后写 cwd/ready，不自发信号，由测试关掉它所在的伪终端）
 //   AALIS_E2E_SLOW_MS  内联插件 onDispose 的延迟毫秒数（>=500 即让 app.stop 慢过重启策略的等待窗口）
 //   AALIS_E2E_APPLY_MS 设了才多登记几个内联插件：e2e-slow 提供 e2e-slow-svc，其 apply 延迟这么多毫秒（验证配置里的
 //                      慢操作阈值）；e2e-waiting 依赖 e2e-slow-svc 与没人提供的 e2e-missing-svc，e2e-patient 只依赖
@@ -13,9 +16,9 @@
 // 代数护栏：cwd/gen.txt 记录本入口被启动的次数。若重启策略在子命令模式下被错误注入，`restart`
 // 子命令会 spawn 一个 argv 仍带 restart 的 detached 子进程——第二代在这里立刻退出，不再往下走，
 // 测试据 gen.txt 断言只有一代。
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { config, definePlugin, defineService, lifecycle, provide, services } from '@aalis/core';
+import { config, definePlugin, defineService, lifecycle, logger, provide, services } from '@aalis/core';
 import { commands } from '../../packages/api-commands/src/index.js';
 import { hostConfig } from '../../packages/api-host-config/src/index.js';
 import { hostPaths } from '../../packages/api-host-paths/src/index.js';
@@ -29,6 +32,9 @@ const mode = process.env.AALIS_E2E_MODE ?? 'subcommand';
 // 'restart' 模式的第一代经 app.restart() 拉起第二代，第二代照常运行；除此之外第二次启动都是被错误拉起的
 if (gen > (mode === 'restart' ? 2 : 1)) process.exit(99);
 const slowMs = Number(process.env.AALIS_E2E_SLOW_MS ?? '0');
+if (mode === 'tty') {
+  process.on('uncaughtException', err => appendFileSync(resolve(process.cwd(), 'uncaught.txt'), `${String(err)}\n`));
+}
 
 const plugin = definePlugin({
   name: 'e2e-probe',
@@ -39,8 +45,8 @@ const plugin = definePlugin({
     // 密钥字段：值存进 secrets.yaml，first-config.json 记下的是解析后的原值
     token: { type: 'string', label: 'T', secret: true },
   },
-  uses: { provide, lifecycle, services, config },
-  apply({ provide, lifecycle, services, config }) {
+  uses: { provide, lifecycle, services, config, logger },
+  apply({ provide, lifecycle, services, config, logger }) {
     writeFileSync(resolve(process.cwd(), 'first-config.json'), JSON.stringify(config.use));
     provide.use(commands, {
       has: (name: string) => name === 'probe' || name === 'restart',
@@ -62,6 +68,7 @@ const plugin = definePlugin({
     } as never);
     lifecycle.use.onDispose(async () => {
       if (slowMs > 0) await new Promise<void>(r => setTimeout(r, slowMs));
+      if (mode === 'tty') logger.use.warn('e2e-probe 收尾');
     });
   },
 });
@@ -102,10 +109,12 @@ const middlePlugin = definePlugin({
   },
 });
 const chainedPlugin = definePlugin({ name: 'e2e-chained', uses: { middle: middleService }, apply() {} });
-const inline =
-  applyMs === undefined
+const inline = [
+  ...(applyMs === undefined
     ? [plugin]
-    : [plugin, slowPlugin, waitingPlugin, patientPlugin, brokenPlugin, middlePlugin, chainedPlugin];
+    : [plugin, slowPlugin, waitingPlugin, patientPlugin, brokenPlugin, middlePlugin, chainedPlugin]),
+  ...(mode === 'tty' ? [(await import('../../packages/plugin-cli/src/index.js')).default] : []),
+];
 
 const pluginLoader = {
   async discover() {
@@ -123,16 +132,17 @@ const opts = {
   ...(mode === 'no-app-dir' ? {} : { appDir: process.env.AALIS_E2E_APP_DIR ?? process.cwd() }),
   consoleSink: false,
   terminalRestore: false,
-  ...(mode === 'daemon' ? { argv: [] } : {}),
+  ...(mode === 'daemon' || mode === 'tty' ? { argv: [] } : {}),
 } as StartAalisOptions;
 const app = await startAalis(opts);
+if (mode === 'tty') writeFileSync(resolve(process.cwd(), 'ready'), String(process.pid));
 // 'restart' 模式的第一代：守护进程起来后调 app.restart()。前台由重启策略拉起第二代并交出实例锁，第二代就绪后
 // 第一代退出；以 --service 启动时第一代停掉后以服务重启的退出码结束，由服务管理器拉起（这里没有服务管理器）。
 if (mode === 'restart' && gen === 1) {
   writeFileSync(resolve(process.cwd(), 'gen1-pid.txt'), String(process.pid));
   (app.bind({ services }).services.use.get('app') as { restart(): void }).restart();
 }
-// 守护路径：startAalis 已挂好 SIGTERM 处理器，自发一次走优雅退出（app.stop → flush → exit 0）。
+// 守护路径：startAalis 已挂好信号处理器，自发一次走优雅退出（app.stop → flush → exit 0）。
 // 退出前经宿主提供的插件来源重扫一次，记下返回的新登记名单（插件都已注册，应为空）与 e2e-probe 是从哪个包加载的；
 // 再记下宿主装配的配置文档：host-config 是否在根上、文档里的服务偏好是否已应用。
 if (mode === 'daemon' || (mode === 'restart' && gen === 2)) {
@@ -161,5 +171,5 @@ if (mode === 'daemon' || (mode === 'restart' && gen === 2)) {
       preferred: host.preferred(commands) ?? null,
     }),
   );
-  process.kill(process.pid, 'SIGTERM');
+  process.kill(process.pid, (process.env.AALIS_E2E_SIGNAL ?? 'SIGTERM') as NodeJS.Signals);
 }
