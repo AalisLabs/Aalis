@@ -647,7 +647,8 @@ export class PluginManager implements PluginManagerService {
       );
     }
 
-    this.#host.runtime.notify('plugins:changed');
+    // 关机轮不发：停机打断的这一轮没有收敛，之后的状态归停机计划
+    if (!this.#shuttingDown) this.#host.runtime.notify('plugins:changed');
   }
 
   /**

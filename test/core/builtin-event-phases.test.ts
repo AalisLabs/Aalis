@@ -130,3 +130,25 @@ describe('内置事件：屏障节等监听器', () => {
     await app.stop();
   });
 });
+
+describe('内置事件：关机轮', () => {
+  it('停机打断在飞的重算：那一轮不发 plugins:changed', async () => {
+    const app = new App({ name: 'T', logLevel: 'error', slowThresholdMs: 0 });
+    const { events: bus } = app.bind({ events });
+    const seen: string[] = [];
+    let stopping = false;
+    bus.use.on('plugins:changed', () => void seen.push(stopping ? '停机之后' : '停机之前'));
+    let release!: () => void;
+    const gate = new Promise<void>(r => {
+      release = r;
+    });
+    void app.plugin(definePlugin({ name: 'slow', apply: () => gate }));
+    await new Promise(r => setTimeout(r, 5));
+    stopping = true;
+    const stopped = app.stop();
+    release();
+    await stopped;
+    await new Promise(r => setTimeout(r, 5));
+    expect(seen).not.toContain('停机之后');
+  });
+});
