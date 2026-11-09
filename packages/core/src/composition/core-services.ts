@@ -138,8 +138,9 @@ export interface Services {
   inspect(key: ServiceKey, scope?: PreferenceScope): ServiceInfo[];
   /** 偏好的提供者（contextId）；无偏好为 undefined */
   preferred(key: ServiceKey, scope?: PreferenceScope): string | undefined;
-  /** 设偏好，一律记下：指向的那家不在场（含独占条目存续期间）就按下一级挑，在场后生效 */
+  /** 设偏好，一律记下：指向的那家不在场（含独占条目存续期间）就按下一级挑，在场后生效。值没变时不发服务变更 */
   prefer(key: ServiceKey, contextId: string, scope?: PreferenceScope): void;
+  /** 清偏好；本来就没有时不发服务变更 */
   unprefer(key: ServiceKey, scope?: PreferenceScope): void;
 }
 export const services = builtin<Services>('services');
@@ -169,12 +170,10 @@ export function coreProviders(
     inspect: (key, scope) => container.inspect(keyName(key), scope?.for),
     preferred: (key, scope) => container.getPreferred(keyName(key), scope?.for),
     prefer: (key, contextId, scope) => {
-      container.prefer(keyName(key), contextId, scope?.for);
-      runtime.serviceChanged(keyName(key));
+      if (container.prefer(keyName(key), contextId, scope?.for)) runtime.serviceChanged(keyName(key));
     },
     unprefer: (key, scope) => {
-      container.unprefer(keyName(key), scope?.for);
-      runtime.serviceChanged(keyName(key));
+      if (container.unprefer(keyName(key), scope?.for)) runtime.serviceChanged(keyName(key));
     },
   };
   const [, provideFor] = entry<Provide>(provide, c => (descriptor, implementation, options) => {
@@ -197,9 +196,9 @@ export function coreProviders(
     runtime.serviceChanged(name);
     // 一个激活登记多个条目（每个模型、每个存储根各一条）时带上条目 id，否则同名的登记行无从区分
     c.logger.debug(entryId === c.id ? `服务已注册: ${name}` : `服务已注册: ${name}（${entryId}）`);
+    // 重复退订、激活关闭后再退订都是空操作，不通知
     return () => {
-      off();
-      runtime.serviceChanged(name);
+      if (off()) runtime.serviceChanged(name);
     };
   });
   return {

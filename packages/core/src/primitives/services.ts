@@ -77,7 +77,7 @@ export class ServiceContainer {
    * `provide(descriptor, impl)` 处约束。
    *
    * @param owner 清理归属（注册方这次激活的身份），拆卸时按它整体摘除。
-   * @returns 退订闭包；条目已不在（退订过、已被 unregisterByOwner 清走）时无动作
+   * @returns 退订闭包，返回这次是否摘掉了条目；条目已不在（退订过、已被 unregisterByOwner 清走）时无动作、返回 false
    */
   register(
     name: string,
@@ -85,7 +85,7 @@ export class ServiceContainer {
     contextId: string,
     owner: symbol,
     options?: { priority?: number; label?: unknown; exclusive?: boolean; descriptor?: object },
-  ): () => void {
+  ): () => boolean {
     // 空实现会骗过缺席判断；非有限 priority 让 sort 比较器返回 NaN，先登记者盖过后来的有限值
     if (instance === null || instance === undefined) {
       throw new Error('provide 的实现不能为空');
@@ -118,9 +118,10 @@ export class ServiceContainer {
       // 查 registry 当前数组而非闭包捕获的 list：服务名空掉时表项会被删，再注册会新建数组
       const current = this.#entries.get(name);
       const idx = current?.indexOf(entry) ?? -1;
-      if (!current || idx < 0) return;
+      if (!current || idx < 0) return false;
       current.splice(idx, 1);
       if (current.length === 0) this.#entries.delete(name);
+      return true;
     };
   }
 
@@ -283,20 +284,22 @@ export class ServiceContainer {
   /**
    * 设置偏好（按 contextId）：给 consumer 是该消费者实例的本插件偏好，否则是全局偏好。
    * 一律记下：指向的那家不在场（含独占条目存续期间）就按下一级挑，它登记后生效。管理面经 `services.prefer()` 调用
-   * （另发 service:changed）；直接调用容器不会通知绑定层。
+   * （值变了才另发 service:changed）；直接调用容器不会通知绑定层。返回值是否变了
    * @internal
    */
-  prefer(name: string, contextId: string, consumer?: string): void {
+  prefer(name: string, contextId: string, consumer?: string): boolean {
+    if (this.getPreferred(name, consumer) === contextId) return false;
     if (!this.#preferences.has(name)) this.#preferences.set(name, new Map());
     this.#preferences.get(name)!.set(consumer, contextId);
+    return true;
   }
 
   /**
-   * 清除偏好（consumer 同 {@link prefer}）；管理面经 `services.unprefer()` 调用
+   * 清除偏好（consumer 同 {@link prefer}）；管理面经 `services.unprefer()` 调用。返回原来有没有
    * @internal
    */
-  unprefer(name: string, consumer?: string): void {
-    this.#preferences.get(name)?.delete(consumer);
+  unprefer(name: string, consumer?: string): boolean {
+    return this.#preferences.get(name)?.delete(consumer) ?? false;
   }
 
   /**

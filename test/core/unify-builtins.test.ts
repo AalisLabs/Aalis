@@ -11,7 +11,6 @@ import {
   config,
   definePlugin,
   defineService,
-  events,
   type Logger,
   provide,
   services,
@@ -76,13 +75,11 @@ describe('内置能力', () => {
     expect(host.services.use.preferred('__t:kv')).toBeUndefined();
   });
 
-  it('unprefer 与 prefer 同形：不返回值，没有可清的偏好也发 service:changed', async () => {
-    const host = makeApp().bind({ services, events });
-    const changed: string[] = [];
-    host.events.use.on('service:changed', name => void changed.push(name));
+  // 何时通知见 preference-unchanged.test.ts
+  it('unprefer 与 prefer 同形：不返回值', () => {
+    const host = makeApp().bind({ services });
     expect(host.services.use.unprefer('__t:none')).toBeUndefined();
-    await Promise.resolve();
-    expect(changed.filter(name => name.startsWith('__t:'))).toEqual(['__t:none']);
+    expect(host.services.use.prefer('__t:none', 'x')).toBeUndefined();
   });
 
   it('provide 的 entryId：条目取给定的逻辑身份（如托管的前端包名，core 不检查格式），清理仍归登记它的激活', async () => {
