@@ -14,7 +14,7 @@
 // 监听事件（返回 dispose 函数；随这次激活撤回）
 const off = events.use.on('inbound:message', async (msg) => { ... });
 
-// sticky 事件：注册晚于发出也能在下一个微任务收到补发；派发进行中登记的排在本轮末尾送达，要等前面的监听器返回或超时。每个监听器只收到一次（'app:ready' / 'app:started'）
+// sticky 事件：注册晚于发出（含派发进行中登记的）在下一个微任务收到补发，每个监听器只收到一次（'app:ready' / 'app:started'）
 events.use.on('app:ready', () => { ... });
 
 // 发出事件（按注册顺序依次 await 每个 handler，永不拒绝）
@@ -24,6 +24,7 @@ await events.use.emit('outbound:message', outMsg);
 ### 实现特性
 
 - 异步串行：`emit()` 会 await 每个 handler 完成后再执行下一个
+- 一次 `emit()` 只送达它开始时已登记的监听器：派发途中新登记的不收这一次（sticky 事件经补发收到，屏障也不等它），途中退订的不再收到
 - 按注册顺序调用
 - `on()` 返回 dispose 函数，可随时移除监听
 - 每次 `on()` 是一条独立登记：同一函数登记两次触发两次，各自的 dispose 只移除自己那条；两次激活共用同一函数也互不影响

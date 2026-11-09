@@ -26,8 +26,9 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
  * 设计原则：
  * - **零 I/O 知识**：LogHub 不感知 stdout / 文件 / TTY / 染色等任何渲染细节
  * - **零状态**：不持有任何 buffer。启动期日志暂存由 runtime 的 bootstrap-buffer 负责
- * - **写一次，多处订阅**：`push` 同步广播给所有 `onEntry` 订阅者；单个订阅者抛错（含返回被拒的 Promise）不影响
- *   其余订阅者，也不让日志调用抛出。订阅者本身就是日志的去处，它的失败无处可报，就此丢弃（见 reportQuietly）
+ * - **写一次，多处订阅**：`push` 同步广播给开始分发时已订阅的 `onEntry` 订阅者，与事件总线同一规则：分发途中新订阅的
+ *   不收这一条，途中退订的跳过；每次订阅一条，同一函数订阅两次各收一份、各自退订。单个订阅者抛错（含返回被拒的
+ *   Promise）不影响其余订阅者，也不让日志调用抛出。订阅者本身就是日志的去处，它的失败无处可报，就此丢弃（见 reportQuietly）
  *
  * 每个 `App` 拥有自己的 LogHub（沙盒、集成测试可独立通道）；
  * `LogHub.default` 是进程级共享中枢，供未注入自定义 hub 的 Logger 使用。
@@ -36,7 +37,7 @@ export class LogHub {
   /** 进程级默认中枢——所有未显式传 hub 的 Logger 都用它 */
   static readonly default: LogHub = new LogHub();
 
-  #listeners: Set<(entry: LogEntry) => void> = new Set();
+  #listeners = new Set<{ fn: (entry: LogEntry) => void }>();
   /** 单调递增的 entry seq；首条 = 0。 */
   #nextSeq = 0;
 
@@ -46,15 +47,16 @@ export class LogHub {
   }
 
   onEntry(listener: (entry: LogEntry) => void): () => void {
-    this.#listeners.add(listener);
+    const subscription = { fn: listener };
+    this.#listeners.add(subscription);
     return () => {
-      this.#listeners.delete(listener);
+      this.#listeners.delete(subscription);
     };
   }
 
   /** 接收一条日志（Logger 内部调用） */
   push(entry: LogEntry): void {
-    for (const fn of this.#listeners) reportQuietly(() => fn(entry));
+    for (const sub of [...this.#listeners]) if (this.#listeners.has(sub)) reportQuietly(() => sub.fn(entry));
   }
 }
 

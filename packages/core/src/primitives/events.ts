@@ -15,7 +15,8 @@ interface EventEntry {
 interface EventBusOptions {
   /**
    * 一次性事件（sticky）：emit 后保留最近一次参数；后续 on 监听该事件时在下一个微任务里用缓存参数补发回调（异步，
-   * 与 emit 的投递语义一致）。派发进行中登记进同一张表的监听器由本轮派发送达，不再补发，每个监听器只收到一次。
+   * 与 emit 的投递语义一致）。派发进行中登记的监听器不在本轮派发里，同样经补发收到；补发之前又开始了一次 emit 的，
+   * 由那次送达、不再补发。每个监听器只收到一次。
    * 缓存在总线存续期间一直有效：被热重载的插件重新激活后仍能拿到启动通知。App 标记 'app:ready'、'app:started'。
    */
   sticky?: readonly string[];
@@ -53,8 +54,6 @@ export class EventBus {
   /** sticky 事件最近一次的参数 */
   // biome-ignore lint/suspicious/noExplicitAny: 同上
   readonly #stickyArgs = new Map<string, any[]>();
-  /** 正在被 emit 遍历的登记表：派发中途登记进其中的监听器由本轮遍历送达，不再补发 */
-  readonly #dispatching = new Set<Set<EventEntry>>();
 
   constructor(options: EventBusOptions = {}) {
     this.#options = options;
@@ -82,11 +81,11 @@ export class EventBus {
     const entry: EventEntry = { handler, owner };
     set.add(entry);
 
-    if (this.#stickyArgs.has(event) && !this.#dispatching.has(set)) {
+    if (this.#stickyArgs.has(event)) {
       const args = this.#stickyArgs.get(event) as AalisEvents[E];
       queueMicrotask(() => {
-        // 注册可能在微任务执行前被立即 dispose；此时跳过补发
-        if (!set!.has(entry)) return;
+        // 微任务执行前已退订，或登记之后又开始了一次 emit（参数已换新：它的快照含这条登记、会送达），都不补发
+        if (!set!.has(entry) || this.#stickyArgs.get(event) !== args) return;
         // 补发没有 emit 调用方兜底——handler 同步抛错会直达 uncaughtException
         // 崩进程，异步抛错变 unhandledRejection，必须就地捕获。
         try {
@@ -137,10 +136,11 @@ export class EventBus {
     const set = this.#handlers.get(event);
     if (!set) return;
     const limit = this.#options.handlerLimit?.(event);
-    // 标记的是这张表而不是事件名：派发途中表被清空后重建，新表里的登记仍走补发
-    this.#dispatching.add(set);
-    // 直接迭代活表：handler 中 dispose 尚未访问的条目会被正确跳过（Set 迭代语义）
-    for (const { handler, owner } of set) {
+    // 只送达派发开始时已登记的：途中新登记的不收这一次（sticky 另经补发），处理时退订又重登的不会被这次 emit 一直再调；
+    // 途中退订的跳过
+    for (const entry of [...set]) {
+      if (!set.has(entry)) continue;
+      const { handler, owner } = entry;
       try {
         if (!limit) {
           await handler(...args);
@@ -155,7 +155,5 @@ export class EventBus {
         this.#reportHandlerError(event, err, owner);
       }
     }
-    // 循环体逐个接住监听器的错误、本身不抛，摘标记不需要 finally
-    this.#dispatching.delete(set);
   }
 }

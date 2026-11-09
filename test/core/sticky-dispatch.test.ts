@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { App, definePlugin, defineService, events, type Logger, provide } from '../../packages/core/src/index.js';
 
-// sticky 事件（app:ready / app:started）派发进行中登记的监听器只收到一次：本轮遍历活表会访问到它，
-// 不能再补发一次。OneBot 适配器在 app:ready 里建连接，重复送达会建出两条连接。只用公开 API。
+// sticky 事件（app:ready / app:started）派发进行中登记的监听器只收到一次：它不在本轮派发里，经补发收到，
+// 不能两边都送。OneBot 适配器在 app:ready 里建连接，重复送达会建出两条连接。只用公开 API。
 
 const quiet: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => quiet };
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
