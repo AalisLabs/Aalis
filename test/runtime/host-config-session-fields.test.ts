@@ -305,20 +305,11 @@ describe('host-config:changed', () => {
 
   it('加载插件时补写配置段（首批与之后的热加载都算）各发一次（带 instanceId）；配置段已齐时不发', async () => {
     const w = world({ plugins: { q: { known: 0, mood: 'calm' } } });
-    const definitions = new Map([
-      ['p', probe('p').definition],
-      ['q', probe('q').definition],
-      ['r', probe('r').definition],
-    ]);
-    const sync = withPluginConfigSync(
-      { discover: async () => [], load: async ({ name }) => definitions.get(name) ?? null },
-      w.app,
-      w.store,
-    );
-    await sync.loader.load({ name: 'p', source: 'zz' });
-    await sync.loader.load({ name: 'q', source: 'zz' });
+    const sync = withPluginConfigSync({ discover: async () => [], load: async () => null }, w.app, w.store);
+    sync.loader.prepare(probe('p').definition);
+    sync.loader.prepare(probe('q').definition);
     sync.finishInitialLoad();
-    await sync.loader.load({ name: 'r', source: 'zz' });
+    sync.loader.prepare(probe('r').definition);
     expect(w.store.getPluginConfig('r')).toEqual({ known: 0, mood: 'calm' });
     expect(w.changes).toEqual([{ instanceId: 'p' }, { instanceId: 'r' }]);
   });

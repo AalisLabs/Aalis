@@ -1,5 +1,5 @@
 import type { PluginSourceService } from '@aalis/api-plugin-source';
-import { type App, type PluginDefinition, type PluginRegistration, parseInstanceId } from '@aalis/core';
+import { type App, definePlugin, type PluginDefinition, type PluginRegistration, parseInstanceId } from '@aalis/core';
 import type { ConfigStore } from './config-store.js';
 import { describeDangling } from './secrets.js';
 
@@ -32,11 +32,14 @@ export interface PluginDescriptor {
  * - `discover()` 列出当前可用的插件条目
  * - `load(descriptor)` 把条目导入成插件定义（模块默认导出的 definePlugin 产物）；不是插件返回 null
  * - `reload(descriptor)` 可选——热扫描时用（fs loader 用 mtime 做 cache buster），不提供时退化为 `load()`
+ * - `prepare(definition)` 可选——发现驱动定下要登记的定义后、交给 core 之前逐个调用（宿主的配置同步政策挂在这里）；
+ *   插件名已被别的包占下而跳过的定义不经过它
  */
 export interface PluginLoader {
   discover(): Promise<PluginDescriptor[]>;
   load(descriptor: PluginDescriptor): Promise<PluginDefinition | null>;
   reload?(descriptor: PluginDescriptor): Promise<PluginDefinition | null>;
+  prepare?(definition: PluginDefinition): void;
 }
 
 export interface PluginDiscovery extends PluginSourceService {
@@ -81,20 +84,39 @@ export function createPluginDiscovery(
     return { definition, instanceId, config, disabled: doc.isPluginDisabled(instanceId) };
   };
 
-  /** 导入一批描述符并备好各自的登记项；单个失败（含 id 撞上危险键、文档拒取）只记该条，不拖累其余 */
+  /**
+   * 导入一批描述符并备好各自的登记项；单个失败（含 id 撞上危险键、文档拒取）只记该条，不拖累其余。
+   * 插件名是登记的身份：同一批里两个包声明同一个插件名时只留先发现的那个，后一个跳过并告警点名两个包。
+   * 跳过要在 prepare 与备登记项之前：留给 core 去拒收为时已晚——后一个的 schema 已同步进先到者的配置段
+   * （裁掉先到者的字段并落盘），配置里的后缀实例也按后一个的定义登记
+   */
   async function importAll(descriptors: PluginDescriptor[], fresh: boolean) {
     const loaded: PluginRegistration[] = [];
+    /** 本批已占下的插件名 → 占下它的包（描述符名） */
+    const claimed = new Map<string, string>();
+    /** 加载器交回的全部定义名，含随后校验不过、被跳过的：冷启动据此不把它们的配置段当孤儿 */
+    const declared = new Set<string>();
     for (const desc of descriptors) {
       try {
-        // 加载器已按入口约定判定（pluginDefinitionOf），不是插件返回 null；定义本身的校验在注册时做
+        // 加载器已按入口约定判定（pluginDefinitionOf），不是插件返回 null。定义在占名之前按 core 的规则校验：
+        // 名字只让给 core 会收下的定义，先到的过不了校验（如包里自带一份 core，描述符不是宿主的）时同名的后来者照常登记
         const definition = fresh && loader.reload ? await loader.reload(desc) : await loader.load(desc);
         if (!definition) continue;
+        declared.add(definition.name);
+        definePlugin(definition);
+        const holder = claimed.get(definition.name);
+        if (holder !== undefined) {
+          log.warn(`包 "${desc.name}" 与 "${holder}" 声明了同一个插件名 "${definition.name}"，只加载 "${holder}"`);
+          continue;
+        }
+        loader.prepare?.(definition);
         loaded.push(registration(definition));
+        claimed.set(definition.name, desc.name);
       } catch (err) {
         log.error(`加载插件 "${desc.name}" 失败:`, err);
       }
     }
-    return loaded;
+    return { loaded, declared };
   }
 
   /**
@@ -117,13 +139,14 @@ export function createPluginDiscovery(
 
   /**
    * 单实例配置段找不到对应插件（多为直接 `npm uninstall` 后残留）：冷启动时逐段告警一次。
-   * 发现到却导入失败的已有加载错误，不重复报；多实例键由 {@link configuredInstances} 报。
+   * 发现到却没登记上的（导入失败、定义校验不过）已有加载错误，不重复报，按描述符名与加载器交回的定义名两样认；
+   * 多实例键由 {@link configuredInstances} 报。
    */
-  function warnOrphanedConfig(known: Map<string, PluginDefinition>, discovered: PluginDescriptor[]): void {
+  function warnOrphanedConfig(declared: ReadonlySet<string>, discovered: PluginDescriptor[]): void {
     const attempted = new Set(discovered.map(d => d.name));
     for (const configKey of Object.keys(doc.get('plugins') ?? {})) {
       if (parseInstanceId(configKey).suffix) continue;
-      if (known.has(configKey) || attempted.has(configKey) || app.plugins.getPlugin(configKey)) continue;
+      if (declared.has(configKey) || attempted.has(configKey) || app.plugins.getPlugin(configKey)) continue;
       log.warn(`配置段 "${configKey}" 对应的插件未找到，已忽略；若已卸载可删除该段（其中可能含密钥）`);
     }
   }
@@ -132,9 +155,9 @@ export function createPluginDiscovery(
     async loadAll() {
       const discovered = await loader.discover();
       log.info(`发现 ${discovered.length} 个插件`);
-      const loaded = await importAll(discovered, false);
+      const { loaded, declared } = await importAll(discovered, false);
       const known = new Map(loaded.map(item => [item.definition.name, item.definition]));
-      warnOrphanedConfig(known, discovered);
+      warnOrphanedConfig(declared, discovered);
       await app.pluginAll([...loaded, ...configuredInstances(name => known.get(name))]);
       // app:ready / app:started 的发出时机依赖「返回即全部收敛」；引导路径不在任何 apply 内，无自等死锁面。
       await app.plugins.idle();
@@ -148,7 +171,7 @@ export function createPluginDiscovery(
         if (registered) known.set(registered.definition.name, registered.definition);
         else fresh.push(desc);
       }
-      const loaded = await importAll(fresh, true);
+      const { loaded } = await importAll(fresh, true);
       for (const item of loaded) known.set(item.definition.name, item.definition);
       const results = await app.pluginAll([...loaded, ...configuredInstances(name => known.get(name))]);
       // 模块自报的 name 与描述符不同且已注册时 register 会拒绝——那不算热加载，不报进名单。

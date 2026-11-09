@@ -134,6 +134,16 @@ describe('加载前配置同步', () => {
     await f.app.stop();
   });
 
+  it('被包装的加载器自带的 prepare 照常调用', async () => {
+    const seen: string[] = [];
+    const { app, store } = hostedApp({ plugins: { p1: { unknown: true } } });
+    const prepared = withPluginConfigSync({ ...NO_PLUGINS, prepare: d => void seen.push(d.name) }, app, store);
+    prepared.loader.prepare(p1Module);
+    expect(seen).toEqual(['p1']);
+    expect(store.getPluginConfig('p1')).toEqual({ known: 0 });
+    await app.stop();
+  });
+
   it('异步落盘失败被记录，不重试整批或撤销已激活实例', async () => {
     let writes = 0;
     const { app, store } = hostedApp(

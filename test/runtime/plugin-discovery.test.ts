@@ -10,6 +10,7 @@ import {
   provide,
 } from '../../packages/core/src/index.js';
 import { createConfigStore } from '../../packages/runtime/src/config-store.js';
+import { withPluginConfigSync } from '../../packages/runtime/src/config-sync.js';
 import {
   createPluginDiscovery,
   type PluginDescriptor,
@@ -111,7 +112,7 @@ describe('冷启动：先全部登记、再统一激活', () => {
     expect(app.plugins.getPlugin('rs-scan:work')?.state).toBe('active');
   });
 
-  it('找不到插件的单实例配置段逐段告警一次；已发现（含导入失败、描述符名与定义名不同）、已登记与多实例键不报', async () => {
+  it('找不到插件的单实例配置段逐段告警一次；已发现（含导入失败、描述符名与定义名不同、定义校验不过）、已登记与多实例键不报', async () => {
     const warns: string[] = [];
     const logger: Logger = {
       debug() {},
@@ -127,6 +128,7 @@ describe('冷启动：先全部登记、再统一激活', () => {
           'present:work': {},
           broken: {},
           'def-name': {},
+          'bad-def': { apiKey: 'sk-PLACEHOLDER' },
           'pre-registered': {},
           'gone-plugin': { apiKey: 'sk-PLACEHOLDER' },
           'gone-plugin:x': {},
@@ -142,11 +144,14 @@ describe('冷启动：先全部登记、再统一激活', () => {
           { name: 'broken', source: 'stub' },
           // 描述符名（包名）与定义名不同：配置键按定义名写
           { name: 'pkg-alias', source: 'stub' },
+          // 装着但定义坏了（如包里自带一份 core），名字又与包名不同：它的配置段不是孤儿，不能引导去删
+          { name: '@zz/bad-pkg', source: 'stub' },
         ];
       },
       async load(desc) {
         if (desc.name === 'broken') throw new Error('import failed');
         if (desc.name === 'pkg-alias') return definePlugin({ name: 'def-name', apply() {} });
+        if (desc.name === '@zz/bad-pkg') return { name: 'bad-def', uses: { x: {} }, apply() {} } as never;
         return definePlugin({ name: desc.name, reusable: true, apply() {} });
       },
     };
@@ -425,5 +430,115 @@ describe('按配置文档登记', () => {
     await discovery(loader).loadAll();
     expect(errors).toContain('加载插件 "constructor" 失败:');
     expect(app.plugins.getPlugin('fine')?.state).toBe('active');
+  });
+});
+
+describe('两个包声明了同一个插件名', () => {
+  function recording() {
+    const warnings: string[] = [];
+    const logger: Logger = {
+      debug() {},
+      info() {},
+      warn: (...args: unknown[]) => void warnings.push(args.map(String).join(' ')),
+      error() {},
+      child: () => logger,
+    };
+    return { logger, warnings };
+  }
+  /** 包名 → 它的入口导出的定义；发现序即 Map 的插入序 */
+  function packages(definitions: Map<string, PluginDefinition>): PluginLoader {
+    return {
+      async discover() {
+        return [...definitions.keys()].map(name => ({ name, source: 'mem' }));
+      },
+      async load(desc) {
+        return definitions.get(desc.name) ?? null;
+      },
+    };
+  }
+  const SCHEMA_A = { apiKey: { type: 'string', label: 'K' } } as const;
+  const SCHEMA_B = { token: { type: 'string', label: 'T', default: 'from-b' } } as const;
+
+  it('冷启动：先发现的那个登记，主实例与后缀实例都用它；后一个跳过，告警点名两个包', async () => {
+    const { logger, warnings } = recording();
+    const { app, discovery } = world({ plugins: { 'zz-same:2': {} } }, logger);
+    const ran: string[] = [];
+    const copy = (from: string) => definePlugin({ name: 'zz-same', reusable: true, apply: () => void ran.push(from) });
+    await discovery(
+      packages(
+        new Map([
+          ['zz-same', copy('zz-same')],
+          ['@zz/fork', copy('@zz/fork')],
+        ]),
+      ),
+    ).loadAll();
+    expect(app.plugins.getPlugin('zz-same:2')?.state).toBe('active');
+    expect(ran).toEqual(['zz-same', 'zz-same']);
+    expect(warnings.filter(line => line.includes('zz-same'))).toEqual([
+      '包 "@zz/fork" 与 "zz-same" 声明了同一个插件名 "zz-same"，只加载 "zz-same"',
+    ]);
+  });
+
+  it('冷启动：先发现的那个定义过不了 core 的校验，名字让给后一个，不告警同名', async () => {
+    const { logger, warnings } = recording();
+    const { app, discovery } = world({}, logger);
+    // 例如包里自带一份 core 或契约包：自己的 definePlugin 放行，宿主的 core 不认它的描述符
+    const broken = { name: 'zz-same', uses: { x: {} }, apply() {} } as unknown as PluginDefinition;
+    const fork = definePlugin({ name: 'zz-same', apply() {} });
+    await discovery(
+      packages(
+        new Map([
+          ['zz-same', broken],
+          ['@zz/fork', fork],
+        ]),
+      ),
+    ).loadAll();
+    expect(app.plugins.getPlugin('zz-same')?.state).toBe('active');
+    expect(app.plugins.getPlugin('zz-same')?.definition).toBe(fork);
+    expect(warnings.filter(line => line.includes('声明了同一个插件名'))).toEqual([]);
+  });
+
+  it('冷启动：先发现的那个备登记项时抛错，名字让给后一个，不告警同名', async () => {
+    const { logger, warnings } = recording();
+    const { app, discovery } = world({}, logger);
+    // 配置表单一读就抛：core 的校验不读它，备登记项（按表单取配置）时才抛
+    const first = {
+      name: 'zz-same',
+      apply() {},
+      get configSchema(): never {
+        throw new Error('zz-表单坏了');
+      },
+    } as unknown as PluginDefinition;
+    const fork = definePlugin({ name: 'zz-same', apply() {} });
+    await discovery(
+      packages(
+        new Map([
+          ['zz-same', first],
+          ['@zz/fork', fork],
+        ]),
+      ),
+    ).loadAll();
+    expect(app.plugins.getPlugin('zz-same')?.definition).toBe(fork);
+    expect(warnings.filter(line => line.includes('声明了同一个插件名'))).toEqual([]);
+  });
+
+  it('冷启动：配置段只按登记的那个的 schema 同步，后一个的 schema 不裁它的字段', async () => {
+    const { app, store } = world({ plugins: { 'zz-same': { apiKey: 'k' } } });
+    const sync = withPluginConfigSync(
+      packages(
+        new Map([
+          ['zz-same', definePlugin({ name: 'zz-same', configSchema: SCHEMA_A, apply() {} })],
+          ['@zz/fork', definePlugin({ name: 'zz-same', configSchema: SCHEMA_B, apply() {} })],
+        ]),
+      ),
+      app,
+      store,
+    );
+    try {
+      await createPluginDiscovery(app, sync.loader, store).loadAll();
+    } finally {
+      sync.finishInitialLoad();
+    }
+    expect(store.getPluginConfig('zz-same')).toEqual({ apiKey: 'k' });
   });
 });
