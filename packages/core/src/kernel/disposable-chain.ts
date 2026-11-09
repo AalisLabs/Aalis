@@ -22,11 +22,16 @@ function describe(label?: string, index?: number): string {
 }
 
 /**
- * 是否 thenable：core 内部判断回调返回值要不要等、要不要接住拒绝的唯一写法，不从包根导出。
+ * 是否 thenable：core 内部判断回调返回值要不要等、要不要接住拒绝的唯一写法，不从包根导出。不抛：读 then 就抛错的怪值
+ * 不是可用的 thenable，按普通返回值处理，免得判定本身抛在调用方没准备接的地方。
  * @internal
  */
 export function isThenable(value: unknown): value is PromiseLike<unknown> {
-  return typeof (value as PromiseLike<unknown> | undefined)?.then === 'function';
+  try {
+    return typeof (value as PromiseLike<unknown> | undefined)?.then === 'function';
+  } catch {
+    return false;
+  }
 }
 
 /**
