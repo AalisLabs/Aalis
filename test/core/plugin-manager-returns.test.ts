@@ -269,3 +269,37 @@ describe('enable / disable / bounce 的 false 分支（口径句里点名的「�
     await app.stop();
   });
 });
+
+describe('拒收日志的错误', () => {
+  it('定义校验失败、配置无法拷贝、新配置无法拷贝：抛出的错误作日志的附加参数，不拼进消息', async () => {
+    const calls: Array<{ message: string; args: unknown[] }> = [];
+    const record = (message: string, ...args: unknown[]) => void calls.push({ message, args });
+    const logger = { debug: record, info: record, warn: record, error: record, child: () => logger };
+    const app = new App({ name: 'T', logger });
+    const definitionError = new Error('uses 读取失败');
+    const configError = new Error('配置读取失败');
+    const throwing = (error: Error) => ({
+      get bad(): never {
+        throw error;
+      },
+    });
+    const odd = {
+      name: 'odd',
+      get uses(): never {
+        throw definitionError;
+      },
+      apply() {},
+    } as unknown as PluginDefinition;
+    expect(await app.plugins.register(odd)).toBe(false);
+    expect(await app.plugins.register(plugin('cfg'), throwing(configError))).toBe(false);
+    expect(await app.plugins.register(plugin('live'))).toBe(true);
+    const updateError = new Error('新配置读取失败');
+    expect(await app.plugins.updateConfig('live', throwing(updateError))).toBe(false);
+    for (const error of [definitionError, configError, updateError]) {
+      const call = calls.find(c => c.args.includes(error));
+      expect(call, error.message).toBeDefined();
+      expect(call?.message).not.toContain(error.message);
+    }
+    await app.stop();
+  });
+});

@@ -211,7 +211,7 @@ export class PluginManager implements PluginManagerService {
       validateDefinition(definition);
       if (instanceId !== undefined) assertValidInstanceId(instanceId);
     } catch (err) {
-      this.#logger.error(`插件定义校验失败，拒绝注册: ${summarizeError(err)}`);
+      this.#logger.error('插件定义校验失败，拒绝注册:', err);
       return false;
     }
 
@@ -242,7 +242,7 @@ export class PluginManager implements PluginManagerService {
     try {
       copy = cloneConfigObject(config);
     } catch (err) {
-      this.#logger.error(`插件 "${id}" 的配置无法拷贝，拒绝注册: ${summarizeError(err)}`);
+      this.#logger.error(`插件 "${id}" 的配置无法拷贝，拒绝注册:`, err);
       return false;
     }
     const state = disabled ? 'disabled' : 'pending';
@@ -465,7 +465,7 @@ export class PluginManager implements PluginManagerService {
     try {
       entry.config = cloneConfigObject(config);
     } catch (err) {
-      this.#logger.warn(`updateConfig: 插件 "${instanceId}" 的新配置无法拷贝，保留旧配置: ${summarizeError(err)}`);
+      this.#logger.warn(`updateConfig: 插件 "${instanceId}" 的新配置无法拷贝，保留旧配置:`, err);
       return false;
     }
     return entry.state === 'disabled' || this.bounce(instanceId);

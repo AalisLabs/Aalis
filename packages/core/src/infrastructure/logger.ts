@@ -344,7 +344,7 @@ function causeTail(error: Error): string {
 }
 
 /**
- * 抛出值的说明（`PluginEntry.error`，以及注册、改配置被拒时的日志）。Error：消息原样保留（多行消息照样多行），后接因果链
+ * 抛出值的说明（`PluginEntry.error`）。Error：消息原样保留（多行消息照样多行），后接因果链
  * 摘要：cause 各层取首行，以 ` ← ` 相连，层数上限与收尾说明同日志；AggregateError 层之后接子错误（见 {@link aggregateTail}）。
  * 包装错误常写成「前缀: cause 的消息」：上一层首行以本层首行结尾，且两者相同或其间以 `:` / `：`（其后可有空白）分隔时，
  * 省略本层；首行为空的层不列。其余值取渲染结果首行并限长（见 {@link describeLayer}）。绝不抛。

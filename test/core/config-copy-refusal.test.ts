@@ -7,7 +7,14 @@ import { App, definePlugin, type Logger } from '../../packages/core/src/index.js
 type Rec = { level: string; message: string };
 function recording(): Logger & { records: Rec[] } {
   const records: Rec[] = [];
-  const at = (level: string) => (message: string) => void records.push({ level, message });
+  // 错误作附加参数交来：连同参数记下，拒因才看得到
+  const at =
+    (level: string) =>
+    (message: string, ...args: unknown[]) =>
+      void records.push({
+        level,
+        message: [message, ...args.map(a => (a instanceof Error ? a.message : String(a)))].join(' '),
+      });
   const l = { records, debug: at('debug'), info: at('info'), warn: at('warn'), error: at('error'), child: () => l };
   return l;
 }
