@@ -384,7 +384,9 @@ function createTarget<P, B>(
           }
           const previous = entries.get(key);
           const entry: Entry = { item };
-          // 先占位再执行任何用户回调：旧 off 或新 register 的重入替换都必须成为最新条目。
+          // 先占位再执行任何用户回调：旧 off 或新 register 的重入替换都必须成为最新条目。挪到末尾：换提供者时按登记到达的
+          // 先后补登记，与在场时新提供者上的次序相同
+          entries.delete(key);
           entries.set(key, entry);
           if (previous?.off) {
             const off = previous.off;

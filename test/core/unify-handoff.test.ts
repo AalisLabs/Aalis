@@ -89,6 +89,43 @@ describe('同键替换失败', () => {
   });
 });
 
+describe('同键替换', () => {
+  /** 按登记先后记下名字的登记表 */
+  const ordered = defineService<
+    { register(name: string): () => void; names(): string[] },
+    { register(name: string): () => void }
+  >('zz-ordered-hub', port => {
+    const table = port.registrar<string>({ key: name => name, register: (provider, name) => provider.register(name) });
+    return { register: name => table.add(name) };
+  });
+  const orderedHub = () => {
+    const names: string[] = [];
+    return {
+      register(name: string) {
+        names.push(name);
+        return () => void names.splice(names.indexOf(name), 1);
+      },
+      names: () => [...names],
+    };
+  };
+
+  it('同键替换之后换提供者：新提供者上补登记的次序与登记到达的先后相同', async () => {
+    const { app, host } = world();
+    const a = orderedHub();
+    const b = orderedHub();
+    host.provide.use(ordered, a, { priority: 1, entryId: 'root/a' });
+    const activation = activationHost(app).create('consumer');
+    const bound = activationHost(app).bind(activation, { ordered }).ordered;
+    bound.use.register('x');
+    bound.use.register('y');
+    bound.use.register('x');
+    expect(a.names()).toEqual(['y', 'x']);
+    host.provide.use(ordered, b, { priority: 2, entryId: 'root/b' });
+    await sleep(0);
+    expect(b.names()).toEqual(['y', 'x']);
+  });
+});
+
 describe('port.track 与 registrar 同一清理契约', () => {
   it('手动退订启动的异步清理被随后的关闭等到；重复退订只执行一次', async () => {
     const { app } = world();
