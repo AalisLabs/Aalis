@@ -623,6 +623,64 @@ describe('停止、撤回、停用与会话删除', () => {
     expect(w.notices()).toEqual([]);
   });
 
+  // 守卫可能等一道审批，这时登记工具的插件被停用或重启：批下来时旧登记的处理函数是旧实例的闭包，状态已作废；
+  // 重启后同名登记的新实例也不替这次调用执行，审批是按旧登记的声明判的
+  it('等审批时工具撤回登记，批下来也不执行，重启后的同名新登记也不执行（可转后台与否都一样）', async () => {
+    let approve = () => {};
+    const approval = new Promise<null>(resolve => {
+      approve = () => resolve(null);
+    });
+    const w = world({ guard: () => approval });
+    const ran: string[] = [];
+    const offPlain = w.plain('zz_plain', async () => {
+      ran.push('zz-old');
+      return JSON.stringify({ ran: 'zz-old' });
+    });
+    const offSlow = w.slow();
+    const results = [w.registry.execute('zz_plain', {}, turn().ctx), w.registry.execute('zz_slow', {}, turn().ctx)];
+    await flush();
+    expect(w.guarded).toHaveLength(2);
+    offPlain();
+    offSlow();
+    expect(
+      w.guarded.map(ctx => ctx.signal?.aborted),
+      '撤回登记时守卫收到的信号要断开，未决的审批随之撤销',
+    ).toEqual([true, true]);
+    w.plain('zz_plain', async () => {
+      ran.push('zz-new');
+      return JSON.stringify({ ran: 'zz-new' });
+    });
+    w.slow();
+    approve();
+    expect((await Promise.all(results)).map(parse)).toEqual([
+      { error: '调用已中止，未执行' },
+      { error: '调用已中止，未执行' },
+    ]);
+    expect(ran).toEqual([]);
+    expect(w.runs).toEqual([]);
+  });
+
+  // 守卫照信号撤掉审批、回拒绝时，结局仍按撤回认：拒绝是撤回引出的，不是这次调用被拒
+  it('等审批时工具撤回登记，守卫因信号断开而拒绝的，回「调用已中止，未执行」', async () => {
+    let approve = () => {};
+    const approval = new Promise<null>(resolve => {
+      approve = () => resolve(null);
+    });
+    const w = world({
+      guard: ctx =>
+        Promise.race([
+          approval,
+          new Promise<string>(resolve => ctx.signal?.addEventListener('abort', () => resolve('审批已撤销'))),
+        ]),
+    });
+    const off = w.plain('zz_plain', async () => JSON.stringify({ ran: true }));
+    const result = w.registry.execute('zz_plain', {}, turn().ctx);
+    await flush();
+    off();
+    approve();
+    expect(parse(await result)).toEqual({ error: '调用已中止，未执行' });
+  });
+
   it('plugin-tools 停用（收尾）时在跑的落成 aborted 并写盘，之后落定的不改结局、不通知', async () => {
     const w = world();
     const store = memoryStore();

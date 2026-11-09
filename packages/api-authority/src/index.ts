@@ -179,7 +179,7 @@ export interface ExecutionGuardContext {
    * 需要确认的指令没有它（定时任务、编排注入的指令）就无从确认，按拒绝处理
    */
   confirmIntent?: () => Promise<boolean>;
-  /** 调用方回合的中止信号：守卫等审批期间回合中止，审批即撤销 */
+  /** 调用方的中止信号（回合中止、工具撤回登记等）：守卫等审批期间断开，审批即撤销 */
   signal?: AbortSignal;
   /**
    * 取用判定（工具执行中经工具调用上下文的 approveFor 交来）：给了即按它对每个参与者判、代替等级裁决，三分同等级裁决；

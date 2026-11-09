@@ -117,7 +117,7 @@ export interface Approval {
  * - `timeout`：等满时限；
  * - `ineligible`：发起回合的类别或参与者不能产生审批（起它的那一轮不是人亲手的，或参与者里没有人能批）；
  * - `rate-limit`：同一会话树（根会话连同各级子会话）的审批超过频率上限；
- * - `turn-ended`：发起它的回合结束或中止；
+ * - `turn-ended`：发起它的回合结束或中止，或发起方的中止信号断开（如工具撤回登记）；
  * - `shutdown`：审批服务停止。
  */
 export type ApprovalSource = 'answer' | 'absent' | 'timeout' | 'ineligible' | 'rate-limit' | 'turn-ended' | 'shutdown';
@@ -232,7 +232,7 @@ export interface SurfaceBinding {
 
 /** 提供者契约。审批面不直接在这里登记：经 {@link approvals} 的绑定门面登记，随激活撤回 */
 export interface ApprovalService {
-  /** 发起一个审批并等它结算。signal 是发起回合的中止信号，中止即按 cancelled 结算 */
+  /** 发起一个审批并等它结算。signal 是发起方的中止信号（回合中止、工具撤回登记等），中止即按 cancelled 结算 */
   request(req: ApprovalRequest, signal?: AbortSignal): Promise<ApprovalOutcome>;
   /** 已推给审批面、还没结算的审批 */
   list(filter?: { sessionId?: string }): Approval[];

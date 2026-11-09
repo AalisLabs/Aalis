@@ -32,6 +32,8 @@ interface Entry {
   tool: RegisteredTool;
   definition: ToolDefinition;
   yieldSeconds?: number;
+  /** 撤回登记时 abort：还在过守卫的调用随之撤掉审批，批下来也不交给它的处理函数 */
+  withdrawn: AbortController;
 }
 
 /**
@@ -66,7 +68,11 @@ export class ToolRegistry implements ToolService {
     this.taskTools = new Map(
       backgroundTaskTools(this.tasks).map(tool => [
         tool.definition.function.name,
-        { tool: { ...tool, pluginName: '@aalis/plugin-tools' }, definition: tool.definition },
+        {
+          tool: { ...tool, pluginName: '@aalis/plugin-tools' },
+          definition: tool.definition,
+          withdrawn: new AbortController(),
+        },
       ]),
     );
   }
@@ -82,12 +88,17 @@ export class ToolRegistry implements ToolService {
     if (this.tools.has(name)) {
       this.logger.warn(`工具 "${name}" 已存在，将被覆盖 (来自 ${contextId})`);
     }
-    const entry: Entry = { tool: { ...tool, pluginName: contextId }, ...this.declare(tool) };
+    const entry: Entry = {
+      tool: { ...tool, pluginName: contextId },
+      ...this.declare(tool),
+      withdrawn: new AbortController(),
+    };
     this.tools.set(name, entry);
     this.logger.debug(`注册工具: ${name} (来自 ${contextId})`);
     // 退订按条目引用比对：同名重注册后，旧退订闭包不得误删新登记（按 name + contextId 比对会）。
-    // 这个登记在跑的调用随撤回一并中止（所属插件停用），不论它是否已被同名登记顶掉
+    // 这个登记在跑的调用随撤回一并中止（所属插件停用），不论它是否已被同名登记顶掉；还在过守卫的（可转后台与否）不再执行
     return () => {
+      entry.withdrawn.abort();
       this.tasks.withdraw(entry, name);
       if (this.tools.get(name) !== entry) return;
       this.tools.delete(name);
@@ -96,7 +107,7 @@ export class ToolRegistry implements ToolService {
   }
 
   /** 发给模型的声明与让出时限：声明了 background、参数表里没有同名项的补上两项参数；有同名项的当作没声明 */
-  private declare(tool: Omit<RegisteredTool, 'pluginName'>): Omit<Entry, 'tool'> {
+  private declare(tool: Omit<RegisteredTool, 'pluginName'>): Omit<Entry, 'tool' | 'withdrawn'> {
     const fn = tool.definition.function;
     if (!tool.background) return { definition: tool.definition };
     const taken = takenBackgroundParams(fn.parameters);
@@ -291,9 +302,15 @@ export class ToolRegistry implements ToolService {
     // 占到的位置没交给 run 的（守卫拒绝或抛错、已中止）一律让出
     let handedOver = false;
     try {
-      const verdict = await this.guard(tool, toolArgs, callCtx);
+      // 守卫收到的信号连着这条登记：等审批期间工具撤回登记（所属插件停用、重启）时，挂着的审批随之撤掉
+      const withdrawn = entry.withdrawn.signal;
+      const signal = callCtx.signal ? AbortSignal.any([callCtx.signal, withdrawn]) : withdrawn;
+      const verdict = await this.guard(tool, toolArgs, { ...callCtx, signal });
+      // 撤回先认，守卫因此撤掉审批的拒绝不算这次调用的结局：撤回的登记的处理函数是旧实例的闭包，可转后台与否都不再交给它；
+      // 同名的新登记也不接手，审批按的是这个登记的声明
+      if (withdrawn.aborted) return failure('调用已中止，未执行');
       if (!verdict.ok) return failure(toSource(verdict.reason));
-      // 等审批期间这次调用可能已被中止（工具撤回登记、会话删除、执行器停用）
+      // 等审批期间这次调用可能已被中止（会话删除、执行器停用）
       if (call?.controller.signal.aborted) return failure('调用已中止，未执行');
 
       if (resolveCapabilityPolicy(tool).visibility === 'restricted') {

@@ -49,7 +49,7 @@ interface ExecutionGuardContext {
   callId?: string;                   // 这次工具调用的 id；审批卡据它挂到工具卡上
   inbound?: InboundTurn;             // 调用所在的入站回合；缺省 = 不在由入站消息驱动的回合里（编排节点、mcp-server 等）
   confirmIntent?: () => Promise<boolean>; // 向发出者本人核对意图（指令用），resolve true 为确认
-  signal?: AbortSignal;              // 调用方回合的中止信号：等审批期间中止，审批即撤销
+  signal?: AbortSignal;              // 调用方的中止信号（回合中止、工具撤回登记等）：等审批期间断开，审批即撤销
   check?: (who: UserIdentity) => Verdict; // 取用判定（工具执行中经 approveFor 交来）：代替等级裁决，不再判确认
 }
 

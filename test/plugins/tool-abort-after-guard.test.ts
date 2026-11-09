@@ -48,7 +48,7 @@ describe('工具执行与回合中止信号', () => {
       ac.abort();
       release();
       const result = await pending;
-      expect(seenSignal).toBe(ac.signal);
+      expect(seenSignal?.aborted, '回合中止时守卫拿到的信号随之断开').toBe(true);
       expect(JSON.parse(result.content).error).toContain('回合已中止');
       expect(executed()).toBe(0);
     } finally {
