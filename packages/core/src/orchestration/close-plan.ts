@@ -31,7 +31,7 @@ type Kind = 'drain' | 'close';
 interface Stage {
   ctx: Activation;
   kind: Kind;
-  /** 无约束时的自然次序：插件先于根、插件之间后挂的先关、同一激活先收尾后关闭 */
+  /** 无约束时的自然次序：插件先于根、插件之间按调用方给的次序（没逐个给出的子激活后挂的先关）、同一激活先收尾后关闭 */
   index: number;
   /** 必须先于本阶段的阶段 → 该约束是否为硬约束（归属、required 依赖；optional 依赖为软） */
   after: Map<Stage, boolean>;
@@ -114,8 +114,8 @@ function planClose(roots: Activation[], owned: Map<Activation, () => void>, logg
     const close: Stage = { ctx, kind: 'close', index: -1, after: new Map(), before: new Set() };
     drainOf.set(ctx, drain);
     closeOf.set(ctx, close);
-    // 插件之间无依赖关系时后挂的先关（与清理链的逆序同一惯例；后挂的常隐含依赖先挂的）
-    for (const child of [...ctx.children].reverse()) visit(child);
+    // 调用方没有逐个给出的子激活：后挂的先关（与清理链的逆序同一惯例；后挂的常隐含依赖先挂的）
+    for (const child of [...ctx.children].reverse()) if (!drainOf.has(child)) visit(child);
     drain.index = stages.push(drain) - 1;
     close.index = stages.push(close) - 1;
   };

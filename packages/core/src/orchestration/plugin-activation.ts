@@ -89,7 +89,9 @@ export async function retireBatch(
     if (entry.activation) closing.push({ entry, activation: entry.activation, loaded });
   }
   try {
-    const roots = opts?.planRoot ? [opts.planRoot] : closing.map(item => item.activation);
+    // 给定次序就是无依赖时的关闭次序；停机时根排在最后（它名下其余的激活随根补进计划）
+    const roots = closing.map(item => item.activation);
+    if (opts?.planRoot) roots.push(opts.planRoot);
     await closeActivations(roots, deps.disposeTimeoutMs, deps.logger, opts?.settle);
   } catch (err) {
     deps.logger.error('拆卸抛错:', err);
