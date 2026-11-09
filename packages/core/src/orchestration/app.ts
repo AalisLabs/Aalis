@@ -191,7 +191,7 @@ export class App {
    * @param config     实例配置，原样生效：core 不合并默认值，也不读配置文档（那是宿主的事）
    * @param instanceId 实例 ID（多实例时为 `name:suffix`，留空则使用 definition.name）
    * @param options.disabled 以禁用态登记（宿主按配置文档的禁用名单传入）
-   * @returns 同 `plugins.register`：false = 被拒（重名、未声明 reusable 的多实例、校验失败等），拒因已记一笔
+   * @returns 同 `plugins.register`：false = 被拒（重名、未声明 reusable 的多实例、多实例 id 不是 name:后缀、校验失败等），拒因已记一笔
    */
   plugin(
     definition: PluginDefinition,

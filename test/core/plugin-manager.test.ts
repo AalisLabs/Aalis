@@ -169,6 +169,21 @@ describe('App plugin lifecycle', () => {
     expect(app.plugins.getPlugin('solo:extra')).toBeUndefined();
   });
 
+  it('reusable 的多实例 id 须为「本插件名:后缀」：别的形状被拒，占不到别的插件的 id', async () => {
+    const { app, state } = makeApp();
+    const multi = makePlugin('multi', state, { reusable: true });
+    expect(await app.plugins.register(multi, {}, 'victim')).toBe(false);
+    expect(await app.plugins.register(multi, {}, 'other:x')).toBe(false);
+    expect(await app.plugins.register(multi, {}, 'multi:')).toBe(false);
+    expect(await app.plugins.register(makePlugin('victim', state), {})).toBe(true);
+    expect(await app.plugins.register(multi, {}, 'multi:x')).toBe(true);
+    await app.plugins.idle();
+    expect(app.plugins.getStatus().map(s => [s.instanceId, s.name])).toEqual([
+      ['victim', 'victim'],
+      ['multi:x', 'multi'],
+    ]);
+  });
+
   it('provides 声明与实际注册不符 → state=error', async () => {
     const { app } = makeApp();
     const missing = defineService<unknown>('pm-nonexistent-svc');

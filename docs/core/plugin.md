@@ -103,11 +103,11 @@ PluginManager 只有一个状态变更入口：服务上下线、注册、启停
 
 六个管理动作（`register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig`）一律返回 `Promise<boolean>`：
 
-**false** = 主体不在注册表，或本次动作被状态 / 政策规则挡下，例如重名、未声明 `reusable` 的多实例、`disposed` 单向终态、`disabled` 态的 bounce，以及**定义或实例 id 校验失败**（含空白、危险键 `__proto__` / `constructor` / `prototype`）。从 `beginShutdown()` 起，新发起的六个动作都立即返回 false，不改状态或配置。
+**false** = 主体不在注册表，或本次动作被状态 / 政策规则挡下，例如重名、未声明 `reusable` 的多实例、多实例 id 不是 `name:后缀`、`disposed` 单向终态、`disabled` 态的 bounce，以及**定义或实例 id 校验失败**（含空白、危险键 `__proto__` / `constructor` / `prototype`）。从 `beginShutdown()` 起，新发起的六个动作都立即返回 false，不改状态或配置。
 
 **true** = 正常运行中其余已受理的请求，含主体已在目标态的幂等情形。正常运行中，对已在途卸载再次 `unload` 会 join 首次卸载，返回时该实例已拆卸并离开注册表；进入停机后不再 join 或新增拆卸。
 
-每个 false 分支都已记一笔日志：注册被拒、该插件或实例因此不会运行的记 error（定义或实例 id 校验失败，含定义里有另一份 `@aalis/core` 造的对象；未声明 `reusable` 的多实例；配置无法拷贝）；重名这类只是重复请求被忽略的与其余政策挡下的记 warn；主体不存在、`disposed` 终态与停机中 debug。正常运行中 true 只说明请求已受理，不说明激活已落定——那看 `idle()`；停机完整完成信号是 `app.stop()`。
+每个 false 分支都已记一笔日志：注册被拒、该插件或实例因此不会运行的记 error（定义或实例 id 校验失败，含定义里有另一份 `@aalis/core` 造的对象；未声明 `reusable` 的多实例；多实例 id 不是 `name:后缀`；配置无法拷贝）；重名这类只是重复请求被忽略的与其余政策挡下的记 warn；主体不存在、`disposed` 终态与停机中 debug。正常运行中 true 只说明请求已受理，不说明激活已落定——那看 `idle()`；停机完整完成信号是 `app.stop()`。
 
 管理动作只改运行态（实例配置、禁用态），不写配置文档。要跨重启保留，调用方在动作成功后经 host-config 写文档并 `save()`，见 [运行态与配置文档](config.md)。
 

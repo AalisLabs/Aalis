@@ -224,9 +224,17 @@ export class PluginManager implements PluginManagerService {
       this.#logger.warn(`插件 "${id}" 已注册，跳过`);
       return false;
     }
-    if (id !== definition.name && !definition.reusable) {
-      this.#logger.error(`插件 "${definition.name}" 未声明 reusable，不允许多实例注册 "${id}"`);
-      return false;
+    // 多实例的 id 须为「name:后缀」：宿主按 id 的前缀找回定义（parseInstanceId），别的形状还会占掉别的插件的 id
+    if (id !== definition.name) {
+      if (!definition.reusable) {
+        this.#logger.error(`插件 "${definition.name}" 未声明 reusable，不允许多实例注册 "${id}"`);
+        return false;
+      }
+      const { moduleName, suffix } = parseInstanceId(id);
+      if (moduleName !== definition.name || !suffix) {
+        this.#logger.error(`插件 "${definition.name}" 的多实例 id 须为 "${definition.name}:<后缀>"，拒绝注册 "${id}"`);
+        return false;
+      }
     }
 
     // 环状引用、读取抛错的 getter 或 Proxy 只让本条注册失败，不让 registerAll 整批拒绝

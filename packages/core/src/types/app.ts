@@ -59,7 +59,7 @@ export interface PluginStatusEntry {
  * **false = 主体不在注册表，或本次动作被状态 / 政策规则挡下**；**true = 其余，含主体已在目标态的幂等情形**。
  * 每个 false 分支都已记一笔日志，调用方不必重复，按级别分：
  * - error：注册被拒、该插件或实例因此不会运行——定义或实例 id 校验失败（含定义里有另一份 core 造的对象）、未声明 reusable
- *   的多实例、注册时配置无法拷贝；
+ *   的多实例、多实例 id 不是「name:后缀」、注册时配置无法拷贝；
  * - warn：重名（重复请求被忽略）、disabled 态的 bounce、updateConfig 的新配置无法拷贝；
  * - debug：主体不在注册表、'disposed' 终态（含卸载在途）、停机中。
  * true 只说明请求已受理，不说明激活已落定——那看 `idle()`。
