@@ -8,6 +8,7 @@ import { buildSeatbeltArgs } from '../../packages/plugin-code-sandbox-os/src/san
 // - 信号只能发给同一沙箱里的进程：给沙箱外同一用户的进程（包括 Aalis 自己）发信号被拒，杀自己启动的子进程照常。
 // - POSIX 信号量按建它的进程放行：同一沙箱里建的照常用（Python 的 multiprocessing 父子进程共用 Queue），
 //   沙箱外仍在运行的进程建的按名字打不开。
+// - POSIX 共享内存不放行：沙箱外的进程建的按名字打不开，读不到、也改不了里面的内容。
 // ════════════════════════════════════════════════════════════
 
 const darwin = process.platform === 'darwin';
@@ -80,5 +81,43 @@ describe.skipIf(!python3)('Seatbelt 沙箱的 POSIX 信号量', () => {
     expect(r.stderr).toContain('PermissionError');
     holder.stdin.end();
     expect(await exited).toEqual([0, null]);
+  });
+});
+
+describe.skipIf(!python3)('Seatbelt 沙箱的 POSIX 共享内存', () => {
+  it('沙箱外的进程建的共享内存，沙箱里按名字打不开，里面的内容不变', async () => {
+    // 沙箱外的进程建一块具名共享内存、写进 holder；标准输入关闭时读出内容、删掉名字再退出
+    const name = `/zz-shm-${process.pid}`;
+    const holder = spawn(
+      'python3',
+      [
+        '-I',
+        '-c',
+        [
+          'import _posixshmem, mmap, os, sys',
+          `fd = _posixshmem.shm_open('${name}', os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600); os.ftruncate(fd, 16)`,
+          "m = mmap.mmap(fd, 16); m[:6] = b'holder'; print('ready', flush=True)",
+          `sys.stdin.read(); print(bytes(m[:6]).decode(), flush=True); _posixshmem.shm_unlink('${name}')`,
+        ].join('\n'),
+      ],
+      { stdio: ['pipe', 'pipe', 'inherit'] },
+    );
+    outsiders.push(holder);
+    let out = '';
+    holder.stdout.setEncoding('utf-8').on('data', chunk => {
+      out += chunk;
+    });
+    const closed = once(holder, 'close');
+    await once(holder.stdout, 'data');
+    const r = sandboxed('python3', [
+      '-I',
+      '-c',
+      `import _posixshmem, mmap, os; mmap.mmap(_posixshmem.shm_open('${name}', os.O_RDWR, 0), 16)[:6] = b'inside'`,
+    ]);
+    // 先让持有者读出内容、删掉名字再断言：断言失败也不留下这块共享内存
+    holder.stdin.end();
+    expect(await closed).toEqual([0, null]);
+    expect(r.stderr).toContain('PermissionError');
+    expect(out).toBe('ready\nholder\n');
   });
 });

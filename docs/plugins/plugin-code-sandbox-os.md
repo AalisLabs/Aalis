@@ -61,6 +61,7 @@ export default definePlugin({
 | 环境变量 | 仅放行白名单（`--clearenv`/`env -i`），宿主 secrets 不进沙箱 |
 | 信号 | 只能发给沙箱里的进程（脚本自己与它启动的子孙），沙箱外同一用户的进程（包括 Aalis 自己）发不到：macOS 由 Seatbelt 限定信号目标（`(allow signal (target same-sandbox))`），Linux 由 pid 命名空间隔开 |
 | POSIX 信号量 | macOS 按建它的进程放行（`(allow ipc-posix-sem (semaphore-owner same-sandbox))`）：沙箱里建的照常用（Python 的 multiprocessing 的锁与 `Queue` 靠它），沙箱外仍在运行的进程建的按名字也打不开；建它的进程已退出、名字没被删的不在此限。Linux 挂的是沙箱自己的 `/dev`（`--dev /dev`），`/dev/shm` 下的具名信号量只在沙箱内可见 |
+| POSIX 共享内存 | macOS 不放行：Seatbelt 对共享内存只能按名字过滤、不能按建它的进程，放行就能按名字读写、删掉沙箱外同一用户进程建的。沙箱内外都不能经具名共享内存交换数据，Python 的 `multiprocessing.shared_memory` 在 macOS 沙箱里报 `PermissionError`（`Queue`、`Pool`、`Value` 不靠它，照常）。Linux 挂的是沙箱自己的 `/dev`（`--dev /dev`），`/dev/shm` 下的共享内存只在沙箱内可见，沙箱里建的照常用 |
 | 资源/超时 | 不限 CPU、内存与运行时长。code_runner 不带超时：等多久由执行器的让出时限管，到点转后台、脚本照常运行，只由中止信号停下；别的调用方给了 `SandboxRunRequest.timeout` 时，到点由 process 服务对外层启动器所在的进程组发 SIGKILL |
 | 停止键 | 回合中止时按 process 服务的中止语义停掉：POSIX 先 SIGTERM、宽限 2000ms 后 SIGKILL，打的是外层启动器所在的进程组 |
 
