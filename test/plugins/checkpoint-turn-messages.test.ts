@@ -1,15 +1,16 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { agent as agentService } from '../../packages/api-agent/src/index.js';
+import { authority } from '../../packages/api-authority/src/index.js';
 import { checkpoint } from '../../packages/api-checkpoint/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatResponse } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { App, definePlugin, lifecycle, optional, provide } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import checkpointPlugin from '../../packages/plugin-checkpoint/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
@@ -163,5 +164,110 @@ describe('连对话回滚只删这一轮的消息', () => {
 
     await host.checkpoint.use.rollbackWithChat(SESSION, turnId as string);
     expect(await host.memory.use.getHistory(SESSION, 50)).toEqual([]);
+  });
+});
+
+describe('停机时还在跑的回合', () => {
+  // memory 的提供者经 optional 依赖又用到 checkpoint 时两者成环，关停先放行环内的收尾，后登记的 memory 可能先关完、撤下服务，
+  // 拆卸时提交这一轮就抓不到它的消息时间戳，连对话回滚删不掉这一轮的消息
+  it('memory 提供者与 checkpoint 经 optional 依赖成环且先关：提交照样记下这一轮的消息时间戳', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'aalis-cp-turn-'));
+    dirs.push(base);
+    const app = new App({ name: 'T', logLevel: 'error' });
+    apps.push(app);
+    await registerHubs(app);
+    provideHostPaths(app, base);
+    await app.plugin(storageLocalPlugin, {});
+    await app.plugin(checkpointPlugin, { rootDir: 'data:/checkpoints', coverage: 'all', keepSessions: 0 });
+    const at = Date.now();
+    await app.plugin(
+      definePlugin({
+        name: 'zz-memory-cycle',
+        provides: [memory],
+        uses: { provide, checkpoint: optional(checkpoint) },
+        apply(caps) {
+          caps.provide.use(memory, {
+            getMessagesBySessionRange: async () => [
+              { role: 'user', content: '<A>', timestamp: at, metadata: { [WellKnownMetadataKeys.TurnId]: 'zz-turn' } },
+            ],
+          } as never);
+        },
+      }),
+    );
+    await app.plugins.idle();
+    const input = { message: { content: '<A>', sessionId: SESSION, platform: 'test' } };
+    // 默认动作不落定：这一轮停机时还在跑
+    void app
+      .bind({ hooks })
+      .hooks.use.run(
+        'agent:turn:before',
+        { turnId: 'zz-turn', sessionId: SESSION, inputs: [input] },
+        () => new Promise<void>(() => {}),
+      );
+    await tick();
+
+    await app.stop();
+    const manifests = readdirSync(base, { recursive: true, encoding: 'utf8' }).filter(p => p.endsWith('manifest.json'));
+    expect(manifests, '这一轮没有提交').toHaveLength(1);
+    expect(JSON.parse(readFileSync(join(base, manifests[0]), 'utf8')).messageTimestamps).toEqual([at]);
+  });
+
+  it('收尾之后、撤回钩子之前才开始的一轮：清理时照样提交', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'aalis-cp-turn-'));
+    dirs.push(base);
+    const app = new App({ name: 'T', logLevel: 'error' });
+    apps.push(app);
+    await registerHubs(app);
+    provideHostPaths(app, base);
+    await app.plugin(storageLocalPlugin, {});
+    await app.plugin(checkpointPlugin, { rootDir: 'data:/checkpoints', coverage: 'all', keepSessions: 0 });
+    const at = Date.now();
+    await app.plugin(
+      definePlugin({
+        name: 'zz-memory',
+        provides: [memory],
+        uses: { provide },
+        apply(caps) {
+          caps.provide.use(memory, {
+            getMessagesBySessionRange: async () => [
+              { role: 'user', content: '<A>', timestamp: at, metadata: { [WellKnownMetadataKeys.TurnId]: 'zz-late' } },
+            ],
+          } as never);
+        },
+      }),
+    );
+    const host = app.bind({ hooks });
+    const input = { message: { content: '<A>', sessionId: SESSION, platform: 'test' } };
+    // 与 checkpoint 经 optional 依赖成环且后登记：环内先都收尾，它再先关完，它的清理落在 checkpoint 收尾之后、关闭之前。
+    // 清理里开一轮，等这一轮进了 checkpoint 再返回；默认动作不落定，这一轮停机时还在跑
+    await app.plugin(
+      definePlugin({
+        name: 'zz-late-turn',
+        provides: [authority],
+        uses: { provide, lifecycle, checkpoint: optional(checkpoint) },
+        apply(caps) {
+          caps.provide.use(authority, {} as never);
+          caps.lifecycle.use.onDispose(
+            () =>
+              new Promise<void>(entered => {
+                void host.hooks.use.run(
+                  'agent:turn:before',
+                  { turnId: 'zz-late', sessionId: SESSION, inputs: [input] },
+                  () => {
+                    entered();
+                    return new Promise<void>(() => {});
+                  },
+                );
+              }),
+          );
+        },
+      }),
+    );
+    await app.plugins.idle();
+
+    await app.stop();
+    const manifests = readdirSync(base, { recursive: true, encoding: 'utf8' }).filter(p => p.endsWith('manifest.json'));
+    expect(manifests, '这一轮没有提交').toHaveLength(1);
+    expect(JSON.parse(readFileSync(join(base, manifests[0]), 'utf8')).messageTimestamps).toEqual([at]);
   });
 });

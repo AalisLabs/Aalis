@@ -60,4 +60,4 @@ definePlugin({
 
 ## 拆卸顺序
 
-`storage` 声明为 required，不只是因为快照要经它落盘，更是为了关停次序。关停以激活为单位分 drain / close：checkpoint 对 storage 是普通依赖，消费者整个 close 完提供者才 drain，因此 `lifecycle.use.onDispose` 里的 `flushAll()` 仍能调 `storage.use.writeFile`。单独禁用或热重载 storage 时本插件作为正在用它的 required 下游并入同一批先关，`flushAll` 同样能落盘。依赖交接放 `onDrain`；本插件冲刷用的是自己的依赖，放在 `onDispose` 与「消费者 close 期间依赖仍可用」一致。
+`storage` 声明为 required，不只是因为快照要经它落盘，更是为了关停次序。关停以激活为单位分 drain / close：checkpoint 对 storage 是普通依赖，消费者整个 close 完提供者才 drain；单独禁用或热重载 storage 时本插件作为正在用它的 required 下游并入同一批先关。因此拆卸时提交还在跑的回合（`flushAll()`）总能调 `storage.use.writeFile`。提交放在 `lifecycle.use.onDrain`：它要向 optional 的 memory 抓这一轮的消息时间戳，memory 的提供者经 optional 依赖又用到本插件时两者成环，关停先放行环内的收尾，清理时 memory 可能已撤下。`onDispose` 再提交一遍收尾之后才开始的回合。

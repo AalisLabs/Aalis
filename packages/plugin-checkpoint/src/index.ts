@@ -23,9 +23,8 @@ const uses = {
   /**
    * storage 是硬依赖：本插件的快照/manifest 全部经 storage 落盘。
    *
-   * 声明成 required 同时决定关停次序：storage 排在本插件之后退场，onDispose 里的 flushAll 才写得动。
-   * 该保证只在 app.stop() 的整体拓扑逆序成立；单独禁用/热重载 storage 时 flushAll 会落空
-   * （回合 blob 在写点已落盘，丢的只是在飞回合的 manifest）。
+   * 声明成 required 同时决定关停次序：本插件关完 storage 才收尾，单独停用或重载 storage 时本插件也随之先关，
+   * 收尾与清理里的 flushAll 都写得动。
    */
   storage,
   /** 只有「回滚整轮对话」用得到（抓消息时间戳、删消息）；没有 memory 也能做纯文件回滚 */
@@ -144,7 +143,10 @@ function run(caps: Caps): void {
     await next();
   });
 
-  // 拆卸时提交所有还在跑的回合，避免崩溃/重载时丢失
+  // 拆卸时提交所有还在跑的回合，避免崩溃/重载时丢失。在收尾里提交：抓本轮消息时间戳要用 optional 的 memory，memory 的
+  // 提供者经 optional 依赖又用到本插件时两者成环，关停先放行环内的收尾，本插件清理时 memory 可能已撤下。
+  // 清理再提交一遍收尾之后、撤回钩子之前才开始的回合
+  lifecycle.use.onDrain(() => service.flushAll());
   lifecycle.use.onDispose(() => service.flushAll());
 
   logger.info(`checkpoint 服务就绪 rootUri=${cfg.rootUri} maxFileSize=${cfg.maxFileSize}`);
