@@ -84,11 +84,15 @@ export function createPluginDiscovery(
     return { definition, instanceId, config, disabled: doc.isPluginDisabled(instanceId) };
   };
 
+  /** 经本驱动交给 core 的定义 → 导出它的包（描述符名）：插件名已登记时据此说出是哪个包占下的 */
+  const packageOf = new WeakMap<PluginDefinition, string>();
+
   /**
    * 导入一批描述符并备好各自的登记项；单个失败（含 id 撞上危险键、文档拒取）只记该条，不拖累其余。
-   * 插件名是登记的身份：同一批里两个包声明同一个插件名时只留先发现的那个，后一个跳过并告警点名两个包。
-   * 跳过要在 prepare 与备登记项之前：留给 core 去拒收为时已晚——后一个的 schema 已同步进先到者的配置段
-   * （裁掉先到者的字段并落盘），配置里的后缀实例也按后一个的定义登记
+   * 插件名是登记的身份：名字已登记或已被同一批里先发现的包占下时，后来的包跳过，占下它的是别的包就告警点名两个包。
+   * 跳过要在 prepare 与备登记项之前：留给 core 去拒收为时已晚——后来者的 schema 已同步进先到者的配置段
+   * （裁掉先到者的字段并落盘），配置里的后缀实例也按后来者的定义登记。
+   * 包名与插件名不同的包，热扫描按包名查不到它已登记，会再导入一次：占下名字的就是它自己，照样跳过，不算冲突
    */
   async function importAll(descriptors: PluginDescriptor[], fresh: boolean) {
     const loaded: PluginRegistration[] = [];
@@ -104,14 +108,22 @@ export function createPluginDiscovery(
         if (!definition) continue;
         declared.add(definition.name);
         definePlugin(definition);
-        const holder = claimed.get(definition.name);
+        const registered = app.plugins.getPlugin(definition.name)?.definition;
+        const holder = claimed.get(definition.name) ?? (registered ? packageOf.get(registered) : undefined);
+        if (holder === desc.name) continue;
         if (holder !== undefined) {
           log.warn(`包 "${desc.name}" 与 "${holder}" 声明了同一个插件名 "${definition.name}"，只加载 "${holder}"`);
+          continue;
+        }
+        // 已登记、但不是经本驱动登记的（宿主直接登记），说不出包名
+        if (registered) {
+          log.warn(`包 "${desc.name}" 声明的插件名 "${definition.name}" 已登记，跳过`);
           continue;
         }
         loader.prepare?.(definition);
         loaded.push(registration(definition));
         claimed.set(definition.name, desc.name);
+        packageOf.set(definition, desc.name);
       } catch (err) {
         log.error(`加载插件 "${desc.name}" 失败:`, err);
       }
@@ -120,17 +132,17 @@ export function createPluginDiscovery(
   }
 
   /**
-   * 配置键里的 `name:suffix` 实例：模块查得到定义才登记，已在注册表的跳过。
+   * 配置键里的 `name:suffix` 实例：模块查得到定义才登记，已在注册表的跳过。模块的定义取这一批新登记的（`batch`），
+   * 没有就取注册表里该模块在册实例的（{@link moduleDefinitionOf}）：插件名已登记的包在导入后即被跳过，
+   * 它的后缀实例跟已登记的定义走，与主实例跑同一份代码。
    * 冷启动、热扫描与热重载共用，任何一处都不得少收
    */
-  function configuredInstances(
-    definitionOf: (moduleName: string) => PluginDefinition | undefined,
-  ): PluginRegistration[] {
+  function configuredInstances(batch: ReadonlyMap<string, PluginDefinition> = new Map()): PluginRegistration[] {
     const items: PluginRegistration[] = [];
     for (const configKey of Object.keys(doc.get('plugins') ?? {})) {
       const { moduleName, suffix } = parseInstanceId(configKey);
       if (!suffix || app.plugins.getPlugin(configKey)) continue;
-      const definition = definitionOf(moduleName);
+      const definition = batch.get(moduleName) ?? moduleDefinitionOf(app, moduleName);
       if (definition) items.push(registration(definition, configKey));
       else log.warn(`多实例配置 "${configKey}" 对应的模块 "${moduleName}" 未找到，跳过`);
     }
@@ -158,23 +170,17 @@ export function createPluginDiscovery(
       const { loaded, declared } = await importAll(discovered, false);
       const known = new Map(loaded.map(item => [item.definition.name, item.definition]));
       warnOrphanedConfig(declared, discovered);
-      await app.pluginAll([...loaded, ...configuredInstances(name => known.get(name))]);
+      await app.pluginAll([...loaded, ...configuredInstances(known)]);
       // app:ready / app:started 的发出时机依赖「返回即全部收敛」；引导路径不在任何 apply 内，无自等死锁面。
       await app.plugins.idle();
     },
 
     async rescan() {
-      const known = new Map<string, PluginDefinition>();
-      const fresh: PluginDescriptor[] = [];
-      for (const desc of await loader.discover()) {
-        const registered = app.plugins.getPlugin(desc.name);
-        if (registered) known.set(registered.definition.name, registered.definition);
-        else fresh.push(desc);
-      }
+      const fresh = (await loader.discover()).filter(desc => !app.plugins.getPlugin(desc.name));
       const { loaded } = await importAll(fresh, true);
-      for (const item of loaded) known.set(item.definition.name, item.definition);
-      const results = await app.pluginAll([...loaded, ...configuredInstances(name => known.get(name))]);
-      // 模块自报的 name 与描述符不同且已注册时 register 会拒绝——那不算热加载，不报进名单。
+      const known = new Map(loaded.map(item => [item.definition.name, item.definition]));
+      const results = await app.pluginAll([...loaded, ...configuredInstances(known)]);
+      // core 拒收的（定义校验不过、已在停机等）不算热加载，不报进名单。
       // 报的是登记进注册表的主实例名（定义名），不是加载器给的描述符名（通常是包名，二者可以不同）。
       const names = loaded.filter((_, i) => results[i]).map(item => item.definition.name);
       for (const name of names) log.info(`热加载插件: ${name}`);
@@ -183,7 +189,7 @@ export function createPluginDiscovery(
 
     async registerConfiguredInstances() {
       // 主实例已卸载时用同模块任一在册实例的定义，与冷启动时这一段照常登记一致
-      await app.pluginAll(configuredInstances(name => moduleDefinitionOf(app, name)));
+      await app.pluginAll(configuredInstances());
     },
   };
 }

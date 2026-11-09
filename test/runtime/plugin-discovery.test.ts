@@ -541,4 +541,63 @@ describe('两个包声明了同一个插件名', () => {
     }
     expect(store.getPluginConfig('zz-same')).toEqual({ apiKey: 'k' });
   });
+
+  it('热扫描：新装的包声明了已登记的插件名，跳过它（后缀实例用已登记的定义、配置段不按它同步），告警点名两个包', async () => {
+    const { logger, warnings } = recording();
+    const { app, store } = world({ plugins: { 'zz-same': { apiKey: 'k' } } }, logger);
+    const ran: string[] = [];
+    const copy = (from: string, configSchema: typeof SCHEMA_A | typeof SCHEMA_B) =>
+      definePlugin({ name: 'zz-same', reusable: true, configSchema, apply: () => void ran.push(from) });
+    const definitions = new Map([['zz-same', copy('zz-same', SCHEMA_A)]]);
+    const sync = withPluginConfigSync(packages(definitions), app, store);
+    const discovery = createPluginDiscovery(app, sync.loader, store);
+    await discovery.loadAll();
+    sync.finishInitialLoad();
+    definitions.set('@zz/fork', copy('@zz/fork', SCHEMA_B));
+    store.setPluginConfig('zz-same:2', {});
+    expect(await discovery.rescan()).toEqual([]);
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('zz-same:2')?.state).toBe('active');
+    expect(ran).toEqual(['zz-same', 'zz-same']);
+    expect(store.getPluginConfig('zz-same')).toEqual({ apiKey: 'k' });
+    expect(warnings.filter(line => line.includes('zz-same'))).toEqual([
+      '包 "@zz/fork" 与 "zz-same" 声明了同一个插件名 "zz-same"，只加载 "zz-same"',
+    ]);
+  });
+
+  it('热扫描：包名与插件名不同的包会被再导入一次，占下这个名字的就是它自己，不告警，后缀实例仍用已登记的定义', async () => {
+    const { logger, warnings } = recording();
+    const w = world({}, logger);
+    let version = 0;
+    const ran: number[] = [];
+    const discovery = w.discovery({
+      async discover() {
+        return [{ name: '@zz/alias', source: 'mem' }];
+      },
+      async load() {
+        const v = ++version;
+        return definePlugin({ name: 'zz-alias', reusable: true, apply: () => void ran.push(v) });
+      },
+    });
+    await discovery.loadAll();
+    w.store.setPluginConfig('zz-alias:2', {});
+    expect(await discovery.rescan()).toEqual([]);
+    await w.app.plugins.idle();
+    expect(w.app.plugins.getPlugin('zz-alias:2')?.state).toBe('active');
+    expect(ran).toEqual([1, 1]);
+    expect(warnings).toEqual([]);
+  });
+
+  it('热扫描：包声明的插件名已由宿主直接登记，跳过它并告警，后缀实例用已登记的定义', async () => {
+    const { logger, warnings } = recording();
+    const w = world({ plugins: { 'zz-host:2': {} } }, logger);
+    const ran: string[] = [];
+    const copy = (from: string) => definePlugin({ name: 'zz-host', reusable: true, apply: () => void ran.push(from) });
+    await w.app.plugin(copy('host'));
+    expect(await w.discovery(packages(new Map([['@zz/pkg', copy('@zz/pkg')]]))).rescan()).toEqual([]);
+    await w.app.plugins.idle();
+    expect(w.app.plugins.getPlugin('zz-host:2')?.state).toBe('active');
+    expect(ran).toEqual(['host', 'host']);
+    expect(warnings).toEqual(['包 "@zz/pkg" 声明的插件名 "zz-host" 已登记，跳过']);
+  });
 });
