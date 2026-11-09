@@ -16,7 +16,8 @@
 // 只是有的消费者清理时提供者已收尾。归属约束与环外的约束一条不松。
 //
 // 计划里除了本计划要关的激活，还有已在别的计划里、还没关完、又必须先于本计划某个成员关完的激活：根名下的插件激活
-// （停机），与依赖成员所提供服务的消费者。它们与本计划的成员按同一套边排序，只是不替那边收尾：轮到它关闭时等那边关完。
+// （停机），与依赖成员所提供服务的消费者。它们与本计划的成员按同一套边排序（成员指向它们收尾阶段的边除外：那一段在
+// 这里是空的），只是不替那边收尾：轮到它关闭时等那边关完。
 // 于是后一份计划拆提供者之前，会等前一份计划里还在收尾的消费者。
 //
 // 边只来自框架自己管理的关系：每个激活声明的服务（含尚未访问的 optional）在编排
@@ -130,9 +131,10 @@ function planClose(roots: Activation[], owned: Map<Activation, () => void>, logg
     for (const [provider, required] of providersOf.get(ctx)!) {
       const providerDrain = drainOf.get(provider);
       if (!providerDrain) continue; // 提供者不在本次关闭范围内：它活得更久，无需约束
-      // 文件头的三种依赖边：根用插件的、插件用插件的；插件用根的不加
+      // 文件头的三种依赖边：根用插件的、插件用插件的；插件用根的不加。别的计划里的提供者在这里的收尾阶段是空的，
+      // 连过去排不了先后，只会与有用的边凑成假环
       if (ctx.children.has(provider)) link(drain, closeOf.get(provider)!, required);
-      else if (!provider.children.has(ctx)) link(close, providerDrain, required);
+      else if (!provider.children.has(ctx) && owned.has(provider)) link(close, providerDrain, required);
     }
   }
 
