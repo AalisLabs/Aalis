@@ -250,11 +250,11 @@ function createTarget<P, B>(
         if (typeof ret === 'function') {
           follower.cleanup = ret as () => unknown;
         } else if (isThenable(ret)) {
-          // attach 同步契约：不 await 取 cleanup；接住拒绝以免逃成 unhandledRejection
+          // attach 同步契约：不 await 取 cleanup；接住拒绝以免逃成 unhandledRejection，拒因照常记下
           scope.logger.warn(
             `${name} 跟随回调返回了 thenable（attach 应同步返回 cleanup 函数；该 Promise 已被接住，拒绝不会逃逸）`,
           );
-          ret.then(undefined, () => undefined);
+          ret.then(undefined, err => scope.logger.warn(`${name} 跟随回调返回的 Promise 被拒:`, err));
         }
       } catch (err) {
         scope.logger.warn(`${name} 跟随回调抛错（订阅保持，等下次提供者变更）:`, err);

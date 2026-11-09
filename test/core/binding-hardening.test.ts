@@ -156,6 +156,21 @@ describe('follow：只认函数 cleanup，thenable 拒绝被接住', () => {
     expect(thenableWarns, `warnings=${warnings.join(' | ')}`).toHaveLength(1);
   });
 
+  it('返回的 Promise 被拒：拒绝原因记进日志，不被吞掉', async () => {
+    const { app, host, warnings } = world();
+    const d = defineService<{ tag: string }>('zz-bind-async-reason');
+    host.use(d, { tag: 'a' }, { entryId: 'root/a' });
+    const activation = activationHost(app).create('c');
+    const ref = activationHost(app).bind(activation, { ref: d }).ref;
+    // @ts-expect-error 期望 TS 拒绝 async attach
+    ref.follow(async () => {
+      throw new Error('ECONNREFUSED-zz');
+    });
+    await sleep(5);
+    expect(warnings.filter(w => w.includes('ECONNREFUSED-zz'))).toHaveLength(1);
+    await activation.disposeAsync();
+  });
+
   it('同步函数返回已拒绝 Promise：无 unhandledRejection 且 warn 一次', async () => {
     const { app, host, warnings } = world();
     const d = defineService<{ tag: string }>('zz-bind-thenable-attach');
