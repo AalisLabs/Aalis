@@ -199,6 +199,7 @@ export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void
           const images = await svc.transformModelImages(
             [`data:${format.mime};base64,${Buffer.from(bytes).toString('base64')}`],
             'passthrough',
+            callCtx.signal,
           );
           if (images.length === 0) return JSON.stringify({ error: '图片无法读取或转换为可发送形态' });
           // content 会落库、也会在后续回合被回看：措辞对未来也成立，并带上来源便于重新查看

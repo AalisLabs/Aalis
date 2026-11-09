@@ -549,7 +549,7 @@ export class MediaServiceImpl implements MediaService {
     return frames;
   }
 
-  /** 已读到的动图或视频字节 → 关键帧：写进临时文件再抽；写不出、抽不出或抽帧出错时为 [] */
+  /** 已读到的动图或视频字节 → 关键帧：写进临时文件再抽；写不出、抽不出或抽帧出错时为 []，中止时抛中止原因 */
   private async framesOf(bytes: Uint8Array, maxFrames: number, signal?: AbortSignal): Promise<string[]> {
     const local = await materializeBytes(bytes);
     if (!local) {
@@ -559,6 +559,8 @@ export class MediaServiceImpl implements MediaService {
     try {
       return await this.framesFromLocal(local.path, maxFrames, signal);
     } catch (err) {
+      // 中止不按抽帧失败处理：返回 [] 会让调用方退回整图识别，中止之后还发起一次识图
+      signal?.throwIfAborted();
       this.logger.warn(`[frames] 抽帧失败: ${(err as Error).message}`);
       return [];
     } finally {
@@ -589,8 +591,14 @@ export class MediaServiceImpl implements MediaService {
    * 会被当成 base64 送出去，触发 `illegal base64 data at input byte N`（实测 400、整轮
    * 回复失败）。已经是 data URI / http 的逐字节原样返回；交不出合法形态的那一张丢弃并
    * warn——留着它等于让整轮请求被 provider 拒收。
+   *
+   * signal（analyze_image 直通分支交这次调用的）交给读来源字节与抽帧：中止时抛中止原因，不跑满 ffprobe、ffmpeg 的超时。
    */
-  async transformModelImages(images: string[], delivery: 'passthrough' | 'describe'): Promise<string[]> {
+  async transformModelImages(
+    images: string[],
+    delivery: 'passthrough' | 'describe',
+    signal?: AbortSignal,
+  ): Promise<string[]> {
     if (delivery === 'describe') return [];
     const out: string[] = [];
     /** 交给 provider 前的最后一道：非 data URI / http 的一律物化成 data URL，失败就丢这一张。 */
@@ -603,9 +611,10 @@ export class MediaServiceImpl implements MediaService {
     };
 
     for (const data of images) {
-      const bytes = await readSourceBytes(data);
+      const bytes = await readSourceBytes(data, signal);
       // 抽不出帧的动图退回整图规范化，不丢图：已是 data URI 的原样交出，只有裸 ref 才会在规范化里失败被丢弃
-      const frames = bytes && needsFrames(bytes) ? await this.framesOf(bytes, this.cfg.animatedImage.maxFrames) : [];
+      const frames =
+        bytes && needsFrames(bytes) ? await this.framesOf(bytes, this.cfg.animatedImage.maxFrames, signal) : [];
       if (frames.length > 0) {
         this.logger.info(`[passthrough] 动图抽帧 ${frames.length} 帧直通主模型`);
         out.push(...frames); // 抽帧产物已是 data URI

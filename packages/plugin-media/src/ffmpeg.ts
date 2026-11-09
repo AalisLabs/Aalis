@@ -68,6 +68,8 @@ export async function getFrameCount(filePath: string, signal?: AbortSignal): Pro
     const n = Number.parseInt(r.stdout.trim(), 10);
     return Number.isNaN(n) ? 0 : n;
   } catch {
+    // 中止不是数不出帧：抛中止原因，调用方停下，不按抽不出帧退回整图
+    signal?.throwIfAborted();
     return 0;
   }
 }

@@ -26,7 +26,8 @@ const logger = { info: () => {}, debug: () => {}, warn: () => {}, error: () => {
 const PNG = `data:image/png;base64,${Buffer.from('89504e470d0a1a0a', 'hex').toString('base64')}`;
 const ANIMATED_GIF = `data:image/gif;base64,${Buffer.from(gif(2)).toString('base64')}`;
 
-function setup() {
+/** delivery 'auto'：主模型能看图（工具上下文的 acceptsImages）时走直通分支 */
+function setup(delivery: 'describe' | 'auto' = 'describe') {
   const requests: ChatModelRequest[] = [];
   const vision: LLMModel = {
     id: 'zz-vision',
@@ -42,7 +43,7 @@ function setup() {
     },
   };
   const cfg = {
-    vision: { recognizeOnArrival: true, delivery: 'describe', maxTokens: 300, think: false, prompt: '' },
+    vision: { recognizeOnArrival: true, delivery, maxTokens: 300, think: false, prompt: '' },
     audio: { maxTokens: 1024, think: true },
     video: { maxTokens: 300, think: false },
     animatedImage: { maxFrames: 4 },
@@ -130,15 +131,19 @@ describe('analyze_image 可转后台', () => {
     await expect(pending).rejects.toBeDefined();
   });
 
-  it('动图抽帧：中止信号交给 ffprobe 与 ffmpeg，中止时抽帧随之停下', async () => {
-    const { svc } = setup();
-    const calls = frameTools('ffmpeg');
+  it.each([
+    ['ffprobe', ['ffprobe']],
+    ['ffmpeg', ['ffprobe', 'ffmpeg']],
+  ] as const)('%s 途中中止：中止信号交给已调用的抽帧工具，停下回错，不退回整图识别', async (hang, called) => {
+    const { requests, svc } = setup();
+    const calls = frameTools(hang);
     const ac = new AbortController();
     const pending = svc.describeImage(ANIMATED_GIF, { noCache: true, signal: ac.signal });
-    await vi.waitFor(() => expect(calls.map(c => c.cmd)).toEqual(['ffprobe', 'ffmpeg']));
+    await vi.waitFor(() => expect(calls.map(c => c.cmd)).toEqual(called));
     for (const { cmd, signal } of calls) expect(signal, cmd).toBe(ac.signal);
     ac.abort();
     await expect(pending).rejects.toBeDefined();
+    expect(requests, '识图模型一次也没被调用').toHaveLength(0);
   });
 
   it('网址来源：下载来源字节也随中止信号停下，不等满下载时限', async () => {
@@ -165,5 +170,25 @@ describe('analyze_image 可转后台', () => {
       server.closeAllConnections();
       await new Promise(resolve => server.close(resolve));
     }
+  });
+
+  it.each([
+    ['ffprobe', ['ffprobe']],
+    ['ffmpeg', ['ffprobe', 'ffmpeg']],
+  ] as const)('主模型能看图、直通时 %s 途中中止：中止信号交给已调用的抽帧工具，停下回错，不回 ok', async (hang, called) => {
+    const { analyze, requests } = setup('auto');
+    const calls = frameTools(hang);
+    const ac = new AbortController();
+    const pending = analyze.handler(
+      { image: ANIMATED_GIF, task: '看看' },
+      toolContext({ sessionId: 's', signal: ac.signal, acceptsImages: true }),
+    );
+    await vi.waitFor(() => expect(calls.map(c => c.cmd)).toEqual(called));
+    for (const { cmd, signal } of calls) expect(signal, cmd).toBe(ac.signal);
+    ac.abort();
+    const out = await pending;
+    expect(typeof out, '回的是错误文本，不带图').toBe('string');
+    expect(JSON.parse(out as string)).toEqual({ error: expect.any(String) });
+    expect(requests, '识图模型一次也没被调用').toHaveLength(0);
   });
 });
