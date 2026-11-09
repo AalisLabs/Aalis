@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type FlowControlService, flowControl } from '../../packages/api-flow-control/src/index.js';
 import { gateway, INBOUND_PHASE } from '../../packages/api-gateway/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { App, definePlugin, events, provide, services } from '../../packages/core/src/index.js';
+import { App, definePlugin, events, optional, provide, services } from '../../packages/core/src/index.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
@@ -104,7 +104,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
         caps.provide.use(storage, service as never);
       },
     });
-    return { definition, files: mem.files, hold, entered };
+    return { definition, service, files: mem.files, hold, entered };
   };
   const gate = () => {
     let open!: () => void;
@@ -160,6 +160,41 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
     svc.setMuted('zz-b', 600, 'onebot');
     await app.plugins.unload('@aalis/plugin-flow-control');
     expect(Object.keys(readMutes()).sort()).toEqual(['zz-a', 'zz-b', 'zz-old']);
+  });
+
+  // storage 的提供者经 optional 依赖又用到 flow-control（如 optional 用 storage 与 flow-control 的平台适配器）时两者成环，
+  // 关停先放行环内的收尾，后登记的 storage 可能先关完、撤下服务，flow-control 清理时它已不在
+  it('storage 提供者与 flow-control 经 optional 依赖成环且先关：停机前排着的禁言照样写进 storage', async () => {
+    const p = provider('zz-storage', '{}');
+    app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
+    await app.plugin(flowControlPlugin, {});
+    await app.plugin(
+      definePlugin({
+        name: 'zz-storage-cycle',
+        provides: [storage],
+        uses: { provide, flow: optional(flowControl) },
+        apply(caps) {
+          caps.provide.use(storage, p.service as never);
+        },
+      }),
+    );
+    await app.plugins.idle();
+    const svc = svcOf();
+    const write = gate();
+    const entered = gate();
+    p.hold.write = write.promise;
+    p.entered.write = entered.open;
+    svc.setMuted('zz-a', 600, 'onebot');
+    await entered.promise; // 第一笔写在飞，第二笔排在写链上
+    svc.setMuted('zz-b', 600, 'onebot');
+
+    const stopping = app.stop();
+    // 关停只在 Promise 上推进（core 的定时器只作时限）：让出一轮宏任务，微任务清空时它已推进到等这笔写盘的那一步
+    await new Promise(resolve => setImmediate(resolve));
+    write.open();
+    await stopping;
+    expect(Object.keys(JSON.parse(p.files.get(URI) ?? '{}')).sort()).toEqual(['zz-a', 'zz-b']);
   });
 
   it('按字母序整批登记（flow-control 先于 storage-local）：禁言能恢复，setMuted 后磁盘保留原有会话', async () => {

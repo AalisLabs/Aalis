@@ -330,9 +330,12 @@ async function run(caps: Caps): Promise<void> {
   }, SWEEP_INTERVAL_MS);
   if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
 
+  // 写盘是交给 storage 的依赖交接，在收尾里等完：storage 的提供者经 optional 依赖又用到本插件时两者成环，
+  // 关停先放行环内的收尾，本插件清理时 storage 可能已撤下
+  lifecycle.use.onDrain(() => saveChain);
   lifecycle.use.onDispose(async () => {
     clearInterval(sweepTimer);
-    // 整表快照在写链里才取：先等排队的写落完再清表，否则清空后的空表会被写回磁盘
+    // 整表快照在写链里才取：收尾之后才排上的写也先等它落完再清表，否则清空后的空表会被写回磁盘
     await saveChain;
     states.clear();
   });
