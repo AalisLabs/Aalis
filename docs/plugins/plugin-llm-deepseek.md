@@ -5,7 +5,7 @@
 
 ## 概述
 
-DeepSeek API 的 LLM 提供者：为每个可用模型实现一个 `LLMModel`（`@aalis/api-llm`）并注册为 `llm` 服务条目，支持流式输出、工具调用和思考模式。
+DeepSeek API 的 LLM 提供者：为每个可用模型实现一个 `LLMModel`（`@aalis/api-llm`）并注册为 `llm` 服务条目，支持流式输出、工具调用、思考模式和图片输入。
 
 ## 插件声明
 
@@ -31,7 +31,7 @@ definePlugin({
 | `baseUrl` | string | `'https://api.deepseek.com'` | API 地址：API 端点完整前缀（官方无版本段）；插件只在其后拼 /chat/completions 与 /models |
 | `customModels` | textarea | `''` | 自定义模型：手动添加的模型名称（每行一个或逗号分隔）。用于补充自动发现列表中未出现的模型。与自动发现重复时会提示去重。 |
 | `discoverModels` | boolean | `true` | 自动发现模型：启动时请求 /models 发现可用模型。网关不提供 /models 时关闭：不发发现请求，只注册 customModels（此时必填）。 |
-| `modelCapabilities` | textarea | `''` | 单模型能力覆盖：按行指定某个模型的能力集。有该模型的表项时**覆盖**插件启发式推断，与 adapter 默认能力仍取并集。 格式：`&lt;modelId&gt;: &lt;cap1&gt;,&lt;cap2&gt;,...`，每行一条。如：deepseek-chat: chat,tool_calling,streaming |
+| `modelCapabilities` | textarea | `''` | 单模型能力覆盖：按行指定某个模型的能力集。有该模型的表项时**覆盖**插件启发式推断，与 adapter 默认能力仍取并集。 格式：`&lt;modelId&gt;: &lt;cap1&gt;,&lt;cap2&gt;,...`，每行一条。如：deepseek-flash: chat,tool_calling,streaming,thinking,vision 可用能力：chat / tool_calling / vision / streaming / thinking 等。 |
 | `providerCapabilities` | string | `''` | 适配器默认能力（逗号分隔）：为本适配器下所有模型额外补充的能力。最终某模型的能力 = 此处能力 ∪ 模型级别能力。例：chat,tool_calling,streaming |
 | `timeout` | number | `120` | 停顿超时（秒）：多久收不到新的生成内容算超时（秒）。一直在输出（含思考内容）不算超时；不流式的请求要在这段时间内收到整份回复。0 = 不限制。 |
 | `temperature` | number | `0.7` | 温度：0-2，越高越随机 |
@@ -61,6 +61,7 @@ definePlugin({
 - **错误信息**: 对话请求失败时的错误信息会经 agent 发回会话，只写状态码与原因：非 2xx 时写状态码，401/403、402、404、429、5xx 各加一句提示（密钥无效或没有权限、余额不足或需要付费、模型或地址不对、请求过多或额度不足、上游服务故障），并附上游 JSON 里的说明（`error.message`、`error` 字符串或顶层 `message`，折成一行后截断）；取不到说明（如 HTML 错误页）时写「详情见日志」。超时、连不上、插件已停用或重载（停用或重载之后还拿着旧句柄发的请求）各一句；非流式请求的应答是 200 但不是 JSON 时写明。响应体与底层原因（如 `connect ECONNREFUSED <地址>`）只记 warn 日志，响应体先把换行与连续空白折叠成一个空格，再截断到 500 个字符（按代理对安全截断）。模型发现失败的原因带响应体摘录（同样折叠与截断）
 - **`baseUrl` 校验**: 带用户名或密码（`user:pass@`）、带查询串或片段（`?` 或 `#` 之后的部分）或解析不了的 `baseUrl` 在读配置时报配置错误，实例转为出错、不发请求，错误信息不带 URL；密钥填在 `apiKey`。带凭据的 URL 本就发不出请求（fetch 拒绝），凭据还会出现在报错与 WebUI 的模型下拉里；插件在 `baseUrl` 后面拼路径，带查询串或片段时拼出来的地址是坏的
 - **能力覆盖**: `modelCapabilities` 每行按**最后一个**冒号切分模型 id 与能力段，`baseUrl` 指向兼容网关时带冒号的模型 id（如 `qwen3:8b`）照原样写即可
+- **图片输入**: 带图的 user 消息编成文字之后的 `image_url` 段。DeepSeek 只收 user 消息里的图，工具结果里的图由 `prepareLLMMessages` 挪到这段工具应答之后的一条 user 消息上。插件不按模型名推断 `vision`：要让能看图的模型（如 `deepseek-flash`）看图，在 `modelCapabilities` 里写上它的完整能力并带 `vision`，例如 `deepseek-flash: chat,tool_calling,streaming,thinking,vision`（这一行覆盖推断，漏写的能力就没有了）。`vision` 决定 media 能否选它做识别模型，以及它做主模型时能不能亲眼看图
 - **system 位置归一化**: DeepSeek 把请求里所有 system 消息提升到上下文最前部，排在历史之后的每轮材料会让历史的前缀缓存失效。出口因此把首个非 system 消息之后的 system 消息改为 `user`，一律补 `[系统提示]` 标记（自带 `[系统通知]` 这类标记的也补），空内容保持原样。本轮指令块豁免：`metadata.injector` 属于 `DIRECTIVE_KINDS`（workflow 代发的任务、宿主通知、空闲开话题的提示）的消息保持 system，改成 user 会被模型当成真实用户在指挥。代价是它们渲染时被提到上下文最前部、离决策点远；这类回合低频，牺牲该轮缓存（见[消息到 LLM 的处理流水线](../concepts/message-llm-pipeline.md) §9）
 
 ## 配置校验

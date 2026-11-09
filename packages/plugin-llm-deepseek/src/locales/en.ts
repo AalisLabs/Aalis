@@ -32,7 +32,7 @@ export default defineLocale<Source>()({
     'Request /models at startup to discover the available models. Turn it off when the gateway does not provide /models: no discovery request is sent and only customModels are registered (then required).',
   modelCapabilitiesLabel: 'Per-model capability overrides',
   modelCapabilitiesDescription:
-    "Set a model's capabilities line by line. A line for a model **overrides** the plugin's heuristics and is still combined with the adapter defaults.\nFormat: `<modelId>: <cap1>,<cap2>,...`, one per line. For example: deepseek-chat: chat,tool_calling,streaming",
+    "Set a model's capabilities line by line. A line for a model **overrides** the plugin's heuristics and is still combined with the adapter defaults.\nFormat: `<modelId>: <cap1>,<cap2>,...`, one per line. For example: deepseek-flash: chat,tool_calling,streaming,thinking,vision\nAvailable capabilities: chat / tool_calling / vision / streaming / thinking and so on.",
   providerCapabilitiesLabel: 'Adapter default capabilities (comma-separated)',
   providerCapabilitiesDescription:
     "Capabilities added to every model of this adapter. A model's capabilities = these ∪ its per-model capabilities. For example: chat,tool_calling,streaming",

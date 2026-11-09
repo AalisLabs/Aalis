@@ -213,7 +213,10 @@ type DeepSeekConfig = ConfigOf<typeof configSchema>;
 
 // ===== DeepSeek API 消息格式 =====
 
-type APIMessageContent = string | null;
+type APIMessageContent =
+  | string
+  | null
+  | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>;
 
 interface APIMessage {
   role: string;
@@ -763,8 +766,17 @@ class DeepSeekClient {
       content: msg.content ?? null,
     };
 
-    // DeepSeek API 不支持 image_url content 类型
-    // 图片应由 plugin-media 预处理为文本描述，不传递给 API
+    // 多模态：图片只能放在 user 消息里，编成文字之后的 image_url 段（工具结果里的图 prepareLLMMessages 已挪到 user 消息上）
+    if (msg.images && msg.images.length > 0 && msg.role === 'user') {
+      const parts: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> = [];
+      if (msg.content) {
+        parts.push({ type: 'text', text: msg.content });
+      }
+      for (const img of msg.images) {
+        parts.push({ type: 'image_url', image_url: { url: img } });
+      }
+      apiMsg.content = parts;
+    }
 
     // 传递思考内容给 API（工具调用循环中需要）
     if (msg.reasoningContent) {

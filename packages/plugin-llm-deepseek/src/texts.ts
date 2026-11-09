@@ -31,7 +31,7 @@ const SOURCE = {
     '启动时请求 /models 发现可用模型。网关不提供 /models 时关闭：不发发现请求，只注册 customModels（此时必填）。',
   modelCapabilitiesLabel: '单模型能力覆盖',
   modelCapabilitiesDescription:
-    '按行指定某个模型的能力集。有该模型的表项时**覆盖**插件启发式推断，与 adapter 默认能力仍取并集。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：deepseek-chat: chat,tool_calling,streaming',
+    '按行指定某个模型的能力集。有该模型的表项时**覆盖**插件启发式推断，与 adapter 默认能力仍取并集。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：deepseek-flash: chat,tool_calling,streaming,thinking,vision\n可用能力：chat / tool_calling / vision / streaming / thinking 等。',
   providerCapabilitiesLabel: '适配器默认能力（逗号分隔）',
   providerCapabilitiesDescription:
     '为本适配器下所有模型额外补充的能力。最终某模型的能力 = 此处能力 ∪ 模型级别能力。例：chat,tool_calling,streaming',
