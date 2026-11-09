@@ -391,7 +391,16 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
     await fileLogger?.dispose();
     process.exit(0);
   };
-  process.on('SIGINT', shutdown);
+  // 停机要等插件收尾，停机途中再按 Ctrl+C 不打断它（npm start 一次 Ctrl+C 本就送来两个 SIGINT）。要立即退出改按 Ctrl+\：
+  // 不接 SIGQUIT，按默认动作当场结束，卡住的事件循环也拦不住；Windows 上对应的是 Ctrl+Break（SIGBREAK）。
+  // 提示是给按着键的人看的，直接写 stderr，不经日志：日志级别与控制台输出的设置都可能把它滤掉
+  process.on('SIGINT', () => {
+    if (!stopping)
+      console.error(
+        `[aalis] Shutting down; press ${process.platform === 'win32' ? 'Ctrl+Break' : 'Ctrl+\\'} to quit now without waiting.`,
+      );
+    void shutdown();
+  });
   process.on('SIGTERM', shutdown);
   // 关掉所在的终端时 shell 给前台作业发 SIGHUP，默认动作是不经停机直接结束，插件收尾与清理里的落盘全被跳过。
   // 收到它时终端已经挂断，之后写 stdout/stderr 都报 EIO。直接写流的（终端界面停用时写的复原序列）出错即是未捕获的 'error'；

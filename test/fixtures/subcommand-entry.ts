@@ -3,7 +3,7 @@
 //
 // 环境变量：
 //   AALIS_E2E_MODE     'subcommand'（默认；按 process.argv 分发）| 'default-loader'（不传插件加载器）| 'no-app-dir'（不传 appDir）| 'daemon'（传 argv: []，
-//                      startAalis 返回后自发 AALIS_E2E_SIGNAL（缺省 SIGTERM），验证守护路径的文件日志与优雅退出仍在）|
+//                      startAalis 返回后自发 AALIS_E2E_SIGNAL（缺省 SIGTERM；逗号隔开的几个依次发），验证守护路径的文件日志与优雅退出仍在）|
 //                      'tty'（守护进程，另载终端界面插件，e2e-probe 收尾时记一条 warn、经控制台日志写到 stderr；未捕获的异常
 //                      当场记进 cwd/uncaught.txt，fatal handler 的崩溃日志是异步追加的，赶不上先落定的停机；startAalis
 //                      返回后写 cwd/ready，不自发信号，由测试关掉它所在的伪终端）
@@ -171,5 +171,5 @@ if (mode === 'daemon' || (mode === 'restart' && gen === 2)) {
       preferred: host.preferred(commands) ?? null,
     }),
   );
-  process.kill(process.pid, (process.env.AALIS_E2E_SIGNAL ?? 'SIGTERM') as NodeJS.Signals);
+  for (const signal of (process.env.AALIS_E2E_SIGNAL ?? 'SIGTERM').split(',')) process.kill(process.pid, signal);
 }

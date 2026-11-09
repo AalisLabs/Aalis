@@ -238,7 +238,17 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     expect(r.signal).toBeNull();
     expect(r.code).toBe(0);
     expect(readLog(dir)).toContain('已停止');
+    expect(r.stderr).not.toContain('to quit now');
     expect(readdirSync(join(dir, 'run')).filter(n => n.endsWith('.lock'))).toEqual([]);
+  });
+
+  it('守护路径：Ctrl+C（SIGINT）开始停机时提示一次要立即退出改按 Ctrl+\\，停机途中再来的 SIGINT（npm start 一次 Ctrl+C 送来两个）不打断停机、不重复提示，exit 0', async () => {
+    const dir = project();
+    const r = await run(dir, [], { AALIS_E2E_MODE: 'daemon', AALIS_E2E_SIGNAL: 'SIGINT,SIGINT' });
+    expect(r.signal).toBeNull();
+    expect(r.code).toBe(0);
+    expect(r.stderr.split('[aalis] Shutting down; press Ctrl+\\ to quit now without waiting.')).toHaveLength(2);
+    expect(readLog(dir)).toContain('已停止');
   });
 
   it('守护路径：启动收敛后的告警把缺的沿链追到根，仍在后台激活的插件所提供的服务报成等待，只在等的不告警', async () => {
@@ -578,12 +588,13 @@ describe('startAalis 数据目录（真实子进程）', () => {
 });
 
 // 伪终端：python3 的 pty 模块开一对主从端，夹具自成会话、以从端为控制终端（如同在终端窗口里直接运行），读着主端直到夹具写出
-// ready，再关掉主端，即关掉终端窗口：系统挂断从端、给会话首进程（夹具）发 SIGHUP，之后读从端得到结尾、写从端报 EIO。
-// 不经 tsx 的包装进程，夹具本身就是会话首进程。夹具没写 ready 就退出时照报它的结局；关掉终端后至多等 limit 秒，
+// ready。之后按 action：close 关掉主端，即关掉终端窗口：系统挂断从端、给会话首进程（夹具）发 SIGHUP，之后读从端得到结尾、
+// 写从端报 EIO；keys 先按 Ctrl+C，读到停机提示（打出 hint）再按 Ctrl+\。
+// 不经 tsx 的包装进程，夹具本身就是会话首进程。夹具没写 ready 就退出时照报它的结局；之后至多等 limit 秒，
 // 还没退出就 SIGKILL 并报 hung。
 const PTY_HARNESS = `
 import fcntl, os, pty, select, sys, termios, time
-ready, limit, cmd = sys.argv[1], float(sys.argv[2]), sys.argv[3:]
+ready, limit, action, cmd = sys.argv[1], float(sys.argv[2]), sys.argv[3], sys.argv[4:]
 master, slave = pty.openpty()
 pid = os.fork()
 if pid == 0:
@@ -597,14 +608,27 @@ if pid == 0:
         os._exit(127)
 os.close(slave)
 deadline = time.time() + limit
-while not os.path.exists(ready) and time.time() < deadline:
-    if select.select([master], [], [], 0.05)[0]:
-        try:
-            if not os.read(master, 65536):
-                break
-        except OSError:
-            break
-os.close(master)
+out = b''
+def pump(done):
+    global out
+    while not done() and time.time() < deadline:
+        if select.select([master], [], [], 0.05)[0]:
+            try:
+                chunk = os.read(master, 65536)
+            except OSError:
+                return
+            if not chunk:
+                return
+            out += chunk
+pump(lambda: os.path.exists(ready))
+if action == 'keys':
+    os.write(master, b'\\x03')
+    pump(lambda: b'to quit now' in out)
+    if b'to quit now' in out:
+        print('hint')
+    os.write(master, b'\\x1c')
+else:
+    os.close(master)
 deadline = time.time() + limit
 while time.time() < deadline:
     done, status = os.waitpid(pid, os.WNOHANG)
@@ -619,22 +643,26 @@ print('hung')
 
 const python3 = process.platform !== 'win32' && spawnSync('python3', ['-c', 'pass'], { timeout: 10_000 }).status === 0;
 
-describe.skipIf(!python3)('startAalis 关掉所在的终端（真实子进程，伪终端）', () => {
+describe.skipIf(!python3)('startAalis 在终端里运行（真实子进程，伪终端）', () => {
   const dirs: string[] = [];
 
   afterEach(() => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  /** 在伪终端里以守护进程跑夹具（终端界面开着），起来后关掉终端；返回夹具的结局：exit N、signal N 或 hung */
-  const runOnClosedTerminal = (dir: string): Promise<string> =>
+  /** 在伪终端里以守护进程跑夹具（终端界面开着），启动后关掉终端或按键；返回夹具的结局：exit N、signal N 或 hung */
+  const runInTerminal = (
+    dir: string,
+    action: 'close' | 'keys',
+    extraEnv: Record<string, string> = {},
+  ): Promise<string> =>
     new Promise((resolveRun, reject) => {
       const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve('tsx')).href;
       const inherited: Record<string, string | undefined> = { ...process.env };
       delete inherited.AALIS_PROFILE;
       const child = spawn(
         'python3',
-        ['-I', '-c', PTY_HARNESS, join(dir, 'ready'), '15', process.execPath, '--import', tsxLoader, fixture],
+        ['-I', '-c', PTY_HARNESS, join(dir, 'ready'), '15', action, process.execPath, '--import', tsxLoader, fixture],
         {
           cwd: dir,
           env: {
@@ -644,6 +672,7 @@ describe.skipIf(!python3)('startAalis 关掉所在的终端（真实子进程，
             AALIS_DATA: dir,
             AALIS_E2E_MODE: 'tty',
             TSX_TSCONFIG_PATH: join(repoRoot, 'tsconfig.test.json'),
+            ...extraEnv,
           },
           stdio: ['ignore', 'pipe', 'inherit'],
         },
@@ -660,11 +689,19 @@ describe.skipIf(!python3)('startAalis 关掉所在的终端（真实子进程，
   it('终端界面开着时关掉终端：走完停机，关闭日志落盘、放掉实例锁，exit 0；停机途中写终端报的 EIO 不打断停机', async () => {
     const dir = makeProject();
     dirs.push(dir);
-    expect(await runOnClosedTerminal(dir)).toBe('exit 0');
+    expect(await runInTerminal(dir, 'close')).toBe('exit 0');
     expect(existsSync(join(dir, 'uncaught.txt')) ? readFileSync(join(dir, 'uncaught.txt'), 'utf-8') : '').toBe('');
     const log = readLog(dir);
     expect(log).toContain('e2e-probe 收尾');
     expect(log).toContain('已停止');
     expect(readdirSync(join(dir, 'run')).filter(n => n.endsWith('.lock'))).toEqual([]);
+  }, 45_000);
+
+  // 终端界面开着时 Ctrl+C 是按键：它先归还终端（退出 raw 模式）再发 SIGINT，此后 Ctrl+\ 才由终端变成 SIGQUIT。
+  // e2e-probe 的收尾拖 20 秒，正常停机要等到清理宽限（5 秒）用完；以 SIGQUIT 结束说明没等停机
+  it('终端界面开着时按 Ctrl+C：终端上出现改按 Ctrl+\\ 的提示，接着按 Ctrl+\\ 当场退出，不等停机做完', async () => {
+    const dir = makeProject();
+    dirs.push(dir);
+    expect(await runInTerminal(dir, 'keys', { AALIS_E2E_SLOW_MS: '20000' })).toBe('hint\nsignal 3');
   }, 45_000);
 });

@@ -27,7 +27,7 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 
 | 导出 | 作用 |
 |---|---|
-| `startAalis(opts?)` | **一行启动**：解析数据目录 → 读数据目录里的 `aalis.config.yaml` 与 `secrets.yaml` → 组装 `App` 并接上宿主路径与配置文档 → 从安装集的 `node_modules` 发现并登记已装插件 → 启动 + 挂 SIGINT/SIGTERM/SIGHUP 优雅退出（SIGHUP 即关掉所在的终端，停机途中写已挂断的终端出错不打断停机）+ 进程级重生。返回 `App`。数据目录见「数据目录」一节，装配顺序见「startAalis 的装配顺序」。 |
+| `startAalis(opts?)` | **一行启动**：解析数据目录 → 读数据目录里的 `aalis.config.yaml` 与 `secrets.yaml` → 组装 `App` 并接上宿主路径与配置文档 → 从安装集的 `node_modules` 发现并登记已装插件 → 启动 + 挂 SIGINT/SIGTERM/SIGHUP 优雅退出（SIGHUP 即关掉所在的终端，停机途中写已挂断的终端出错不打断停机；SIGINT 开始停机时在 stderr 提示改按 Ctrl+\ 当场退出，SIGQUIT 不接）+ 进程级重生。返回 `App`。数据目录见「数据目录」一节，装配顺序见「startAalis 的装配顺序」。 |
 | `createNodeModulesPluginLoader(appDir)` | **独立部署**插件加载器：读安装集（绝对路径）`package.json` 的 `dependencies`+`optionalDependencies`，按 `isLoadablePlugin`（**唯一标准：`keywords` 含 `aalis-plugin`**；契约 `aalis-api`/前端 `aalis-interface`/核心 `aalis-core`/工具链 `aalis-runtime`/工具库 `aalis-util` 因不带该词自然排除，无名前缀/service/subsystem 回退、无 marker 排除）发现并动态 import。包目录按 `node_modules` 逐级上溯定位，入口按 `import()` 的规则解析（`exports` 取 `"."` 的 import 条件目标，没有 `exports` 时按 `main`）。 |
 | `createFsPluginLoader(packagesDir)` | **monorepo 自托管**加载器：扫给定的 packages 目录（绝对路径，本仓库入口传 `<仓库>/packages`），复用同一 `aalis-plugin` 纯关键词正向门。 |
 | `createPluginDiscovery(app, loader, store)` | 发现驱动：`loadAll()` 发现并导入全部插件，按配置存储取各实例的配置（解析密钥引用后）与禁用标记（含 `name:suffix` 实例），整批交给 `app.pluginAll`，返回时已静置；`rescan()` 登记新出现的插件与配置里尚未注册的 `name:suffix` 实例，返回本次新登记的主实例名（定义名），即 `plugin-source` 服务的实现；`registerConfiguredInstances()` 只登记配置里尚未注册的 `name:suffix` 实例（模块取注册表里该模块在册实例的定义，主实例优先；主实例已卸载时取同模块其它在册实例的），供配置热重载调用。插件名已登记或已被同一批里先发现的包占下时，后来声明它的包跳过，告警点名两个包；后缀实例的模块定义取这一批新登记的，没有就取注册表里在册的。加载器契约 `PluginLoader`（`discover` / `load` / 可选 `reload` / 可选 `prepare`：发现驱动定下要登记的定义后、交给 core 之前逐个调用）由本包导出。 |
