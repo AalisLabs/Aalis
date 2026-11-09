@@ -275,7 +275,7 @@ optional 上下线与选中的那一家换人不改变目标态，不级联 boun
 1. **Phase A 成批关闭**：本轮目标不再是 active 的（含 required 依赖已不在、仍在后台初始化的），连同 required 服务会随这批一起失去全部提供者的下游，它们之间的次序由关停编排按实际绑定决定。
 2. **Phase B 正向遍历 activate**：提供者先于消费者 active。单个激活至多等 `AppOptions.slowThresholdMs`（默认 60000），超过即 warn 点名、转入后台，接着激活后面的插件；后台期间它登记的服务不对外，依赖方保持 pending，它落定后另触发一次重算。
 
-如本轮有变动则进入下一轮，直到稳定或达到轮次上限（`maxRounds = 2×插件数 + 8`）。
+如本轮有变动则进入下一轮，直到稳定。
 
 整体停机（`app.stop()`）单飞：先冻闸并进入停机态（`apply` 尚未完成的激活此刻收到 `lifecycle.use.signal` 的 abort），再 `idle()`，再发 `app:stopping`，等监听器完成（单个至多等 `slowThresholdMs`）后执行停机计划；仍在初始化的激活在收尾段至多再等 `disposeTimeoutMs`，到期不再等待、继续。每次调用都返回完整停机的同一 Promise；监听器与清理回调不能 await 或返回它，以免等待自身。全部 active 插件与根激活进同一张计划：每个激活 drain 后 close。边规则与依赖成环时的处理见 [插件定义与能力](core/context.md)。单插件 unload / disable / bounce 同样先关正在用它的 required 下游（传递闭包），下游收尾时提供者仍在。动态 `services.use.get` 不产生依赖边，关停期间可能取到空。
 

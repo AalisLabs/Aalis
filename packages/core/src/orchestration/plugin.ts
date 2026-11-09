@@ -514,7 +514,7 @@ export class PluginManager implements PluginManagerService {
    * 1. 按 required 依赖正序（提供者→消费者）拓扑排序。
    * 2. Phase A：把目标不再是 active 的成批关闭，它们之间的次序由关停编排按实际依赖定。
    * 3. Phase B：正向遍历，激活目标 active 且依赖满足的 pending entry（提供者先起、消费者后起）。
-   * 4. 本轮有变动则继续下一轮，直到稳定或达到 maxRounds；最后发 plugins:changed。
+   * 4. 本轮有变动则继续下一轮，直到稳定；最后发 plugins:changed。
    *
    * 判据只有一条：服务此刻在不在容器里（别的计划正关着的提供者不算在）。
    */
@@ -548,23 +548,14 @@ export class PluginManager implements PluginManagerService {
   }
 
   /**
-   * 按图规模取 2N+8（+8 为小图垫底），不暴露调优旋钮：重算的轮数上限，也是初始化期 required 缺失的重试额度。
-   * 每次现算而非入口冻结：注册期 recompute 排队立即返回，后续 app.plugin() 会在 `#recomputeOnce` 在飞时追加
-   * entry（每轮快照重取），上限须随图同步增长，否则合法的增量注册流会被按旧规模误判为振荡。
-   */
-  #maxRounds(): number {
-    return this.#plugins.size * 2 + 8;
-  }
-
-  /**
    * 初始化期 required 缺失的自动重试预算。两条路径记在同一份记录里：激活时 required 绑定抛不可用，后台激活的 required
-   * 依赖下线被拆。按条目跨重算累计（`#queued` 补跑、落定后补的重算都不重置），首次按当时的 {@link #maxRounds}
-   * 取额；激活成功、enable、bounce 时清零。返回这次拆卸的目标态：未用尽回 pending，用尽转 error、不再自动重试，
-   * 说明里点名这次缺的服务 missing，这次抛出的不可用错误（cause，激活路径才有）挂在 failure 上。在拆卸之前调用（写终态的
-   * 是随后的 retireBatch），不抛。
+   * 依赖下线被拆。额度按图规模取 2×插件数+8（+8 为小图垫底，不设调优旋钮），首次取额时按当时的插件数算；之后按条目
+   * 跨重算累计（`#queued` 补跑、落定后补的重算都不重置），激活成功、enable、bounce 时清零。返回这次拆卸的目标态：
+   * 未用尽回 pending，用尽转 error、不再自动重试，说明里点名这次缺的服务 missing，这次抛出的不可用错误（cause，
+   * 激活路径才有）挂在 failure 上。在拆卸之前调用（写终态的是随后的 retireBatch），不抛。
    */
   #spendRetry(entry: PluginRecord, missing: string, cause?: unknown): 'pending' | 'error' {
-    entry.retriesLeft = (entry.retriesLeft ?? this.#maxRounds()) - 1;
+    entry.retriesLeft = (entry.retriesLeft ?? this.#plugins.size * 2 + 8) - 1;
     if (entry.retriesLeft > 0) return 'pending';
     const message = `初始化期间 required 依赖反复缺失（最后一次缺 "${missing}"），自动重试未收敛，已停止；enable 或 bounce 后重试`;
     entry.failure = coreFailure(message, 'required-retry-exhausted', { service: missing }, cause);
@@ -576,16 +567,10 @@ export class PluginManager implements PluginManagerService {
   /** 单次完整重算：fixed-point 状态转移 + plugins:changed 通知 */
   async #recomputeOnce(): Promise<void> {
     let changed = true;
-    let rounds = 0;
-    // 普通依赖级联的拆除波、激活波至多 {@link #maxRounds} 轮，超出即点名振荡。初始化期间 required 再次消失
-    // 不属于单调级联，它的自动重试另按条目计预算（{@link #spendRetry}），`#queued` 补跑重置本函数的轮数也放不开它。
-    let lastRoundFlips = new Set<string>();
 
     // 停机后不再做状态转移：拆卸全归停机计划，这里再拆已冻进计划的激活会与计划互等
-    converge: while (changed && rounds < this.#maxRounds() && !this.#shuttingDown) {
+    converge: while (changed && !this.#shuttingDown) {
       changed = false;
-      rounds++;
-      lastRoundFlips = new Set();
 
       this.#order ??= topoSortByDeps([...this.#plugins.values()], this.#logger);
       const order = this.#order;
@@ -598,7 +583,6 @@ export class PluginManager implements PluginManagerService {
         const target = (entry: PluginRecord): PluginState => {
           const unmet = entry.spec.required.find(name => this.#lost(name, leaving))!;
           this.#logger.info(`依赖 "${unmet}" 不可用，停用插件: ${entry.instanceId}`);
-          lastRoundFlips.add(entry.instanceId);
           // 本 flight 此刻没有在飞的激活：activating 即后台，它 apply 里拿到的已是旧实例，拆它记入重试预算
           return entry.state === 'activating' ? this.#spendRetry(entry, unmet) : 'pending';
         };
@@ -619,21 +603,8 @@ export class PluginManager implements PluginManagerService {
         // 上面拿到的是正在关闭的实例。等它关完、服务下线触发重算再判定
         if (entry.spec.required.some(name => this.#host.closing(services.ownerOf(name, entry.instanceId)!))) continue;
         // 'retry'：required 缺失、预算未用尽，已回到 pending，下一轮重新观察依赖
-        if ((await this.#activate(entry)) === 'retry' || (entry.state as PluginState) === 'active') {
-          changed = true;
-          lastRoundFlips.add(entry.instanceId);
-        }
+        if ((await this.#activate(entry)) === 'retry' || (entry.state as PluginState) === 'active') changed = true;
       }
-    }
-
-    if (changed && rounds >= this.#maxRounds()) {
-      // 静态 required 环由 topoSortByDeps 检出并另行告警；到这里仍在翻转的
-      // 状态变化已超出本轮收敛上限。点名末轮仍在翻转的插件——矛盾对必在其中。
-      // 每处 changed = true 都登记了翻转者，走到这里名单必不为空。
-      this.#logger.warn(
-        `recompute ${rounds} 轮未收敛（上限 ${this.#maxRounds()} = 2×插件数+8），` +
-          `疑似插件间状态振荡。最后一轮仍在翻转: ${[...lastRoundFlips].join(', ')}`,
-      );
     }
 
     // 关机轮不发：停机打断的这一轮没有收敛，之后的状态归停机计划

@@ -12,7 +12,7 @@ import {
 import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
-// 编排层的边缘路径：required 真环的兜底排序、关停计划里的混合依赖环、重算振荡的点名告警、
+// 编排层的边缘路径：required 真环的兜底排序、关停计划里的混合依赖环、
 // 管理动作的幂等早退、卸载在途时的 join、注册期与激活期的非 Error 抛出值。
 // ════════════════════════════════════════════════════════════
 
@@ -212,52 +212,6 @@ describe('关停编排：混合依赖环', () => {
     expect(w.at('warn').filter(line => line.includes('required 依赖成环'))).toEqual([
       '关停顺序：required 依赖成环 [w, y]，环内成员先全部收尾再关，有的消费者清理时提供者已收尾',
     ]);
-  });
-});
-
-describe('重算振荡', () => {
-  it('插件对来回翻转超过 2N+8 轮：告警点名末轮仍在翻转的插件，振荡停下后照常收敛', async () => {
-    const w = world();
-    const gate = defineService<object>('zz-oe-osc-gate');
-    const blocker = defineService<object>('zz-oe-osc-blocker');
-    let offGate = w.host.use(gate, {});
-    const LIMIT = 12;
-    let takeovers = 0;
-    // opener 有 gate 才起并提供 blocker；closer 有 blocker 才起，起来就收走 gate、关闭时还回去。
-    // 两者互相否定：closer 随 opener 同批退场、又同轮重新激活，每轮翻转一次，直到 closer 第 LIMIT 次之后不再收 gate。
-    await w.app.plugin(
-      definePlugin({
-        name: 'opener',
-        uses: { gate, provide },
-        provides: [blocker],
-        apply: ({ provide }) => void provide.use(blocker, {}),
-      }),
-    );
-    // 先静置：closer 的登记另起一次重算，轮数从它起算，不随登记与在飞重算的交错漂移
-    await w.app.plugins.idle();
-    await w.app.plugin(
-      definePlugin({
-        name: 'closer',
-        uses: { blocker, lifecycle },
-        apply({ lifecycle }) {
-          if (takeovers >= LIMIT) return;
-          takeovers++;
-          offGate();
-          lifecycle.use.onDispose(() => {
-            offGate = w.host.use(gate, {});
-          });
-        },
-      }),
-    );
-    await w.app.plugins.idle();
-
-    const oscillation = w.at('warn').filter(x => x.includes('轮未收敛'));
-    expect(oscillation).toEqual([
-      'recompute 12 轮未收敛（上限 12 = 2×插件数+8），疑似插件间状态振荡。最后一轮仍在翻转: opener, closer',
-    ]);
-    expect(takeovers).toBe(LIMIT);
-    expect(stateOf(w.app, 'opener')).toBe('active');
-    expect(stateOf(w.app, 'closer')).toBe('active');
   });
 });
 
