@@ -94,10 +94,9 @@ function registerOffice(caps: Caps): void {
   }
 
   if (cfg.pdf.enabled) {
-    // 缺 process 时不取句柄：pdf_convert 要回「请启用 process 提供方」的明确提示，
-    // 而不是让句柄在调用点抛出被当成转换失败
-    const proc = caps.processService.present ? caps.processService.use : undefined;
-    registerPdfTools(tools, sessions, storage, outputUri, proc);
+    // process 是 optional，可能晚于本插件上线，每次调用现查。缺它时不取句柄：pdf_convert 要回「请启用 process 提供方」
+    // 的明确提示，而不是让句柄在调用点抛出被当成转换失败
+    registerPdfTools(tools, sessions, storage, outputUri, caps.processService);
     logger.use.info('PDF 工具已启用');
   }
 

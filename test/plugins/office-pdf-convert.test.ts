@@ -4,6 +4,7 @@ import type { StorageService } from '../../packages/api-storage/src/index.js';
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { registerPdfTools } from '../../packages/plugin-office/src/tools/pdf.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { fixedRef } from '../fixtures/service-ref.js';
 import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
@@ -45,7 +46,7 @@ function register(proc?: ProcessService) {
     {} as never,
     storage,
     'workspace:/office',
-    proc,
+    fixedRef(proc),
   );
   if (!convert) throw new Error('pdf_convert 没有登记');
   return convert;

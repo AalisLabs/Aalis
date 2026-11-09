@@ -1,6 +1,7 @@
 import type { ProcessService } from '@aalis/api-process';
 import { resolveAgainstCwd, type StorageService } from '@aalis/api-storage';
 import type { BoundTools } from '@aalis/api-tools';
+import type { ServiceSelection } from '@aalis/core';
 import { PageSizes, PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import type { DocSessionManager } from '../session.js';
 import { joinUri } from '../utils.js';
@@ -22,7 +23,8 @@ export function registerPdfTools(
   sessions: DocSessionManager,
   storage: StorageService,
   outputUri: string,
-  proc?: ProcessService,
+  /** process 服务的选择层，调用时现查 */
+  proc: Pick<ServiceSelection<ProcessService>, 'present' | 'use'>,
 ) {
   function parentUri(uri: string): string {
     const i = uri.lastIndexOf('/');
@@ -236,7 +238,7 @@ export function registerPdfTools(
       const outUri = args.outputDir ? resolveAgainstCwd(String(args.outputDir), outputUri) : parentUri(inputUri);
       const resolveLocal = storage.resolveLocalPath?.bind(storage);
       if (!resolveLocal) throw new Error('PDF 转换需要存储提供本地路径能力（resolveLocalPath）。');
-      if (!proc) throw new Error('PDF 转换需要 process 服务，请启用 @aalis/plugin-process-local。');
+      if (!proc.present) throw new Error('PDF 转换需要 process 服务，请启用 @aalis/plugin-process-local。');
       let inputLocal: string;
       let outDirLocal: string;
       try {
@@ -247,7 +249,7 @@ export function registerPdfTools(
       }
 
       try {
-        await proc.execFile('soffice', ['--headless', '--convert-to', 'pdf', '--outdir', outDirLocal, inputLocal], {
+        await proc.use.execFile('soffice', ['--headless', '--convert-to', 'pdf', '--outdir', outDirLocal, inputLocal], {
           signal: ctx.signal,
         });
       } catch (e) {
