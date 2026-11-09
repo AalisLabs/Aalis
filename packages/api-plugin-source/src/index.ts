@@ -15,6 +15,11 @@ export interface PluginSourceService {
    * 要判断某个插件是否就位，看 plugins 服务的注册表，不看返回值。
    */
   rescan(): Promise<string[]>;
+  /**
+   * 以 name 登记的主实例是从哪个包加载的：经本来源登记的回包名，没有登记或不是经本来源登记的（宿主直接登记）回 undefined。
+   * 插件名是登记的身份：名字已登记时，本来源跳过之后声明同一个名字的包，注册表里那个插件不是它们，判某个包装没装上看这里
+   */
+  loadedFrom(name: string): string | undefined;
 }
 
 export const pluginSource = defineService<PluginSourceService>('plugin-source');

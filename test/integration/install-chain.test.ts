@@ -114,6 +114,7 @@ function makePm(projectRoot: string, restarts: unknown[] = [], proc: PackageMana
       }
     },
     rescanPlugins: async () => [],
+    loadedFrom: () => undefined,
     isPluginRegistered: () => false,
     unloadPlugin: async () => {},
     restartApp: r => {

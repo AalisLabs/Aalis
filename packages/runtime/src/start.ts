@@ -321,7 +321,11 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
     opts.configSync,
   );
   const discovery = createPluginDiscovery(app, configLoader.loader, store);
-  host.provide.use(pluginSource, { rescan: () => discovery.rescan() }, { exclusive: true });
+  host.provide.use(
+    pluginSource,
+    { rescan: () => discovery.rescan(), loadedFrom: name => discovery.loadedFrom(name) },
+    { exclusive: true },
+  );
   // 不变量①：App 构造完成后再让 sink 监听终端归属事件——此前没有事件总线可订阅。
   consoleHandle.bindEvents(host.events.use);
 

@@ -43,6 +43,10 @@ export default defineLocale<Source>()({
   installedLoaded: 'Installed and loaded: {target}',
   installedNotLoaded:
     'Installed into {where}, but although it declares itself a plugin it was not loaded; check its keywords and entry export',
+  installedNameTaken:
+    'Installed {target}, but the plugin name {name} it declares is already taken by {holder}, so it was not loaded',
+  installedNameTakenByHost:
+    'Installed {target}, but the plugin name {name} it declares is already taken by a plugin the host registered directly, so it was not loaded',
   installedNonPlugin: 'Installed {target} (not a plugin package, so it does not appear in the plugin list)',
   workspaceInstall:
     'The root dependencies use the workspace: protocol, so npm install is refused here (it would write package-lock.json and break the pnpm workspace)',

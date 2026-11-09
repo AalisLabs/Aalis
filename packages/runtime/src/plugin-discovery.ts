@@ -191,5 +191,11 @@ export function createPluginDiscovery(
       // 主实例已卸载时用同模块任一在册实例的定义，与冷启动时这一段照常登记一致
       await app.pluginAll(configuredInstances());
     },
+
+    // 与 importAll 判「插件名已被哪个包占下」读同一份记录（packageOf）
+    loadedFrom(name) {
+      const registered = app.plugins.getPlugin(name)?.definition;
+      return registered ? packageOf.get(registered) : undefined;
+    },
   };
 }

@@ -16,12 +16,14 @@
 ```ts
 interface PluginSourceService {
   rescan(): Promise<string[]>;
+  loadedFrom(name: string): string | undefined;
 }
 ```
 
 - `rescan()` 重新发现插件，登记新出现且尚未注册的插件，以及配置文档里尚未注册的 `name:suffix` 实例（所属模块早已注册的也登记）。
 - 返回本次新登记的主实例名（即定义名）。
 - 兑现时新插件已登记并尽力即时激活，不等状态机静置。要判断某个插件是否就位，看 plugins 服务的注册表（`getStatus()`），不看返回值。
+- `loadedFrom(name)` 回以 `name` 登记的主实例是从哪个包加载的：经本来源登记的回包名，没有登记或不是经本来源登记的（宿主直接登记）回 `undefined`。插件名是登记的身份：名字已登记时，之后声明同一个名字的包被跳过，注册表里那个插件不是它们。要判断某个包装没装上，看它而不是只看名字已登记。
 
 Node 宿主里，`startAalis` 用 `createPluginDiscovery(app, loader, store)` 构造发现驱动：冷启动调用 `loadAll()`，把发现的插件连同配置文档里的配置（解析密钥引用后）与禁用标记整批交给 `app.pluginAll`；`rescan` 以本描述符独占登记在根上。扫描范围由加载器决定：`createNodeModulesPluginLoader` 读取项目 `package.json` 的直接依赖，`createFsPluginLoader` 扫描 `packages/` 目录。
 
@@ -39,7 +41,7 @@ const names = source.present ? await source.use.rescan() : [];
 
 | 插件 | 用途 | 宿主未提供时 |
 |---|---|---|
-| plugin-package-manager | 装完新包后让宿主发现它 | 视同本次没有新插件；随后仍按注册表判定，声明为插件的包报「未被加载」 |
+| plugin-package-manager | 装完新包后让宿主发现它，按 `loadedFrom` 判它装没装上 | 视同本次没有新插件、已登记的都不是经它加载的：声明为插件的包报未加载，插件名已登记的报被宿主直接登记的插件占用 |
 | plugin-webui-server | `POST /api/plugins/scan` | 返回 503 |
 
 ## 入口判定

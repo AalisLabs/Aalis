@@ -38,6 +38,8 @@ const SOURCE = {
   installedPending: '已安装 {target}，尚未激活，正在等待 required 依赖满足',
   installedLoaded: '已安装并加载：{target}',
   installedNotLoaded: '已装到 {where}，但它声明为插件却未被加载——请检查其 keywords 与入口导出',
+  installedNameTaken: '已安装 {target}，但它声明的插件名 {name} 已被 {holder} 占用，未加载',
+  installedNameTakenByHost: '已安装 {target}，但它声明的插件名 {name} 已被宿主直接登记的插件占用，未加载',
   installedNonPlugin: '已安装 {target}（非插件包，不进入插件列表）',
   workspaceInstall: '根依赖含 workspace: 协议，拒绝在此运行 npm install（会写出 package-lock.json 并搅坏 pnpm 工作区）',
   workspaceUpdate: '根依赖含 workspace: 协议，拒绝在此运行 npm install',

@@ -104,6 +104,7 @@ describe('包管理自己的失败原因按全局层的语言', () => {
       projectRoot: () => ROOT,
       readText: async path => (path in files ? JSON.stringify(files[path]) : undefined),
       rescanPlugins: async () => [],
+      loadedFrom: () => undefined,
       isPluginRegistered: () => false,
       unloadPlugin: async () => {},
       restartApp: () => {},

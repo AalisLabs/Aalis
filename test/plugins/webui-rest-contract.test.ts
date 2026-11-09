@@ -148,7 +148,7 @@ const doubles = definePlugin({
       ],
     } as never);
     provide.use(commands, { getAll: () => [{ name: 'zz', pluginName: PROBE }] } as never);
-    provide.use(pluginSource, { rescan: async () => [] });
+    provide.use(pluginSource, { rescan: async () => [], loadedFrom: () => undefined });
     provide.use(packageManager, {
       install: async () => ({ ok: true, message: '已安装 zz-plugin-remote', plugin: PROBE }),
       uninstall: async () => ({ ok: false, message: '它提供的服务还有人在用' }),

@@ -255,13 +255,12 @@ function createService(caps: Caps): PackageManagerService {
         return undefined;
       }
     },
-    // 宿主不提供插件来源（打包宿主）时视同本次没有新插件；随后仍按注册表判定，声明为插件的包会报「未被加载」
+    // 宿主不提供插件来源（打包宿主）时视同本次没有新插件
     rescanPlugins: async () => (await (caps.source.present ? caps.source.use.rescan() : undefined)) ?? [],
-    // 判据取运行时注册表而非 rescan 返回值（理由见 PackageManagerDeps.isPluginRegistered）。
-    // plugins 服务缺席时保守返回 false——宁可让「声明为插件却没加载」的诊断多报一次，
-    // 也不要在真没装上时谎报成功。
-    isPluginRegistered: name =>
-      caps.plugins.present ? caps.plugins.use.getStatus().some(p => p.name === name) : false,
+    // 宿主不提供插件来源时没有经它登记的插件：已登记的同名插件一律不是这次装的包
+    loadedFrom: name => (caps.source.present ? caps.source.use.loadedFrom(name) : undefined),
+    // 与发现驱动跳过声明了已登记插件名的包同一判据：看主实例。plugins 服务缺席时视同没有登记
+    isPluginRegistered: name => (caps.plugins.present ? caps.plugins.use.getPlugin(name) !== undefined : false),
     pluginStatus: () => (caps.plugins.present ? caps.plugins.use.getStatus() : []),
     availableServices: () => caps.services.use.names(),
     idle: async () => {
@@ -330,17 +329,20 @@ export interface PackageManagerDeps {
   readText(absPath: string): Promise<string | undefined>;
   rescanPlugins(): Promise<string[]>;
   /**
-   * 目标插件此刻是否已在运行时注册表里。
+   * 以这个插件名登记的主实例是从哪个包加载的（插件来源的 `loadedFrom`）；没有登记或不是经插件来源登记的为 undefined。
    *
-   * 这是判定「本次安装是否就位」的**唯一正确判据**。不能用 `rescanPlugins()` 的返回值：
+   * 这是判定「本次安装是否就位」的**唯一正确判据**：此刻注册表里的这个插件是从目标包加载的。不能用 `rescanPlugins()` 的返回值：
    * 它是全局副作用的产物——宿主的 rescan 对已注册插件直接跳过，返回的是「本次扫描新
    * 加载的**全部**插件」，与本次目标无对应关系。用它会在两个场景下给出错误结论：
    * 重装已注册插件时恒返回空（误报失败）；两个安装并发时先跑完的那个会把对方的战果
-   * 一并算作自己的（谎报），后跑的则拿到空数组（误报失败）。
+   * 一并算作自己的（谎报），后跑的则拿到空数组（误报失败）。也不能只看插件名已登记：名字被别的包或宿主占着时，
+   * 发现驱动跳过目标包，注册表里那个插件不是它。
    *
    * 传入的是**定义 name**（经 {@link PackageManagerDeps.resolveDefinitionName} 解析），
    * 不是 npm 包名——二者可以不同。
    */
+  loadedFrom(name: string): string | undefined;
+  /** 以这个插件名登记的主实例此刻是否在注册表里：不是从目标包加载的，就是插件名被占着、目标包被跳过 */
   isPluginRegistered(name: string): boolean;
   /**
    * 运行时插件状态，供服务依赖者判定（{@link findServiceDependents}）与装后回执（按主实例状态说明）。
@@ -751,7 +753,8 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
   /**
    * 装完的统一判定：rescan 出新插件即成功；没出新插件时按目标是否**声明自己是插件**分流。
    * 「声明了插件却没被发现」正是那条静默假成功——必须报失败，否则用户看到 ok 却什么也没装上。
-   * 就位查的是加载器解析出的定义 name，不是 npm 包名。就位但主实例没有激活时仍回 ok：包确实装上、已进插件列表；
+   * 就位查的是以加载器解析出的定义 name 登记的主实例是不是从目标包加载的，不是 npm 包名，也不只看名字已登记：名字被别的包或
+   * 宿主占着时发现驱动跳过目标包，同样报失败并说出占着名字的是谁。就位但主实例没有激活时仍回 ok：包确实装上、已进插件列表；
    * message 按重算落定后的状态说明——激活失败（如缺配置，改好配置即可重试）、慢激活转入后台仍在进行、等待 required 依赖。
    */
   async function settleInstall(npmPkg: string, installedPkgJsonPath: string, where: string): Promise<InstallResult> {
@@ -759,7 +762,8 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // rescan 只当副作用用（让加载器发现新包），**不看返回值**——判据是目标自身是否就位。
     await deps.rescanPlugins();
     const defName = await definitionNameFor(target);
-    if (deps.isPluginRegistered(defName)) {
+    const holder = deps.loadedFrom(defName);
+    if (holder === target) {
       await deps.idle?.();
       const main = deps.pluginStatus?.().find(p => p.instanceId === defName);
       const settled = (message: TextRef): InstallResult => ({ ok: true, message, plugin: defName });
@@ -774,8 +778,13 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
       return settled(t('installedLoaded', { target }));
     }
     const meta = await readJson(installedPkgJsonPath);
-    if (declaresPlugin(meta)) return { ok: false, message: t('installedNotLoaded', { where }) };
-    return { ok: true, message: t('installedNonPlugin', { target }) };
+    if (!declaresPlugin(meta)) return { ok: true, message: t('installedNonPlugin', { target }) };
+    if (!deps.isPluginRegistered(defName)) return { ok: false, message: t('installedNotLoaded', { where }) };
+    const taken =
+      holder === undefined
+        ? t('installedNameTakenByHost', { target, name: defName })
+        : t('installedNameTaken', { target, name: defName, holder });
+    return { ok: false, message: taken };
   }
 
   /**

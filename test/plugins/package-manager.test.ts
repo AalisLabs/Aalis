@@ -80,8 +80,10 @@ function makeHarness(
     /** `npm view` 失败时的 stderr（装前类型闸连不上源）；不给则照 viewOut 应答。 */
     failView?: string;
     rescan?: string[];
-    /** 运行时注册表里已有的插件名——settleInstall 的真正判据。 */
+    /** 运行时注册表里已有的插件名 */
     registered?: string[];
+    /** 已登记的插件各是从哪个包加载的——settleInstall 的真正判据；缺省为与插件名同名的包 */
+    loadedFrom?: Record<string, string>;
     json?: Record<string, Record<string, unknown>>;
     /** 原样返回的文本文件（优先于 json）；用于快照类断言。 */
     text?: Record<string, string>;
@@ -153,6 +155,10 @@ function makeHarness(
     rescanPlugins: async () => opts.rescan ?? ['@scope/foo'],
     // 默认认为目标已就位（多数用例走成功路径）；需要测失败态的用例显式传 registered: []
     isPluginRegistered: name => (opts.registered ?? ['@scope/foo', 'foo', '@scope/ui']).includes(name),
+    loadedFrom: name =>
+      (opts.registered ?? ['@scope/foo', 'foo', '@scope/ui']).includes(name)
+        ? (opts.loadedFrom?.[name] ?? name)
+        : undefined,
     unloadPlugin: vi.fn(async () => {}),
     cleanupConfig: vi.fn(async () => {}),
     restartApp: vi.fn(r => {
@@ -422,6 +428,21 @@ describe('install（只有一条路径：写根依赖）', () => {
     expect(r.plugin, '不进插件列表的包没有插件可指').toBeUndefined();
   });
 
+  it('本就不是插件的包：注册表里有从别的包加载的同名插件，照样报非插件包，不指向那个插件', async () => {
+    const h = makeHarness({
+      registered: ['@scope/ui'],
+      loadedFrom: { '@scope/ui': '@scope/ui-plugin' },
+      json: {
+        [rootPkg]: {},
+        [`${ROOT}/node_modules/@scope/ui/package.json`]: { keywords: ['aalis', 'aalis-interface'] },
+      },
+    });
+    const r = await createPackageManager(h.deps).install('@scope/ui');
+    expect(r.ok).toBe(true);
+    expect(toSource(r.message)).toContain('非插件包');
+    expect(r.plugin).toBeUndefined();
+  });
+
   // ── 判据必须是「目标自身是否就位」，不能是 rescan 的返回值 ──
   // rescan 返回的是本次扫描**新加载的全部**插件（core 对已注册者直接跳过），与本次目标无对应。
   // 下面两条是实测复现过的误判，用测试钉住。
@@ -460,6 +481,7 @@ describe('install（只有一条路径：写根依赖）', () => {
     const warns: string[] = [];
     const h = makeHarness({
       registered: ['other-name'],
+      loadedFrom: { 'other-name': 'plugin-mismatch' },
       resolveDefinitionName: async () => 'other-name',
       warns,
       json: {
@@ -1643,7 +1665,10 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       productionApps.push(app);
       const host = app.bind({ provide, services });
       const discovery = createPluginDiscovery(app, createNodeModulesPluginLoader(proj), store);
-      host.provide.use(pluginSource, { rescan: () => discovery.rescan() });
+      host.provide.use(pluginSource, {
+        rescan: () => discovery.rescan(),
+        loadedFrom: name => discovery.loadedFrom(name),
+      });
       host.provide.use(defineService<object>('process'), {
         readExternalFile: async (abs: string) => {
           try {
@@ -1672,6 +1697,73 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       await app.plugins.idle();
       expect(app.plugins.getPlugin('other-name')?.state, '定义 name 已登记').toBe('active');
       expect(r.ok, `市场就位判据应对齐运行时身份，实际 message=${toSource(r.message)}`).toBe(true);
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
+  });
+
+  // 插件名是登记的身份：发现驱动跳过声明了已登记插件名的包，包装上了也不加载；注册表里同名的那个不是它
+  it('包声明的插件名已被别的包或宿主占下：回执报未加载与占着名字的是谁，不指向它；占着名字的包重装照常报已加载', async () => {
+    const proj = mkdtempSync(join(tmpdir(), 'aalis-pm-taken-'));
+    try {
+      const rootDeps: Record<string, string> = {};
+      /** 装上一个声明插件名 pluginName 的包：写进根依赖与 node_modules */
+      const place = (pkg: string, pluginName: string) => {
+        rootDeps[pkg] = '1.0.0';
+        writeFileSync(
+          join(proj, 'package.json'),
+          JSON.stringify({ name: 'host', private: true, dependencies: rootDeps }),
+        );
+        const dir = join(proj, 'node_modules', pkg);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(
+          join(dir, 'package.json'),
+          JSON.stringify({ name: pkg, version: '1.0.0', main: 'index.mjs', keywords: ['aalis-plugin'] }),
+        );
+        writeFileSync(join(dir, 'index.mjs'), `export default { name: "${pluginName}", apply() {} };\n`);
+      };
+      place('zz-pm-holder', 'zz-pm-taken');
+
+      const { app, store } = hostedApp({ name: 'PM' });
+      productionApps.push(app);
+      const host = app.bind({ provide, services });
+      const discovery = createPluginDiscovery(app, createNodeModulesPluginLoader(proj), store);
+      host.provide.use(pluginSource, {
+        rescan: () => discovery.rescan(),
+        loadedFrom: name => discovery.loadedFrom(name),
+      });
+      host.provide.use(defineService<object>('process'), {
+        readExternalFile: async (abs: string) => readFileSync(abs),
+        execFile: async (_cmd: string, args: readonly string[]) => ({
+          stdout: args[0] === 'view' ? '["aalis-plugin"]' : '',
+          stderr: '',
+          code: 0,
+        }),
+        makeTempDir: async () => ({ path: '/tmp/fake-pm', cleanup: async () => undefined }),
+      });
+      await discovery.rescan();
+      await app.plugin(definePlugin({ name: 'zz-pm-hosted', apply() {} }), {});
+      provideHostPaths(app, proj);
+      await app.plugins.register(packageManagerPlugin, {});
+      await app.plugins.idle();
+      const svc = host.services.use.get(packageManager);
+      if (!svc) throw new Error('package-manager 未就绪');
+
+      place('zz-pm-claimant', 'zz-pm-taken');
+      expect(toSource(await svc.install('zz-pm-claimant'))).toEqual({
+        ok: false,
+        message: '已安装 zz-pm-claimant，但它声明的插件名 zz-pm-taken 已被 zz-pm-holder 占用，未加载',
+      });
+      place('zz-pm-hosted-claimant', 'zz-pm-hosted');
+      expect(toSource(await svc.install('zz-pm-hosted-claimant'))).toEqual({
+        ok: false,
+        message: '已安装 zz-pm-hosted-claimant，但它声明的插件名 zz-pm-hosted 已被宿主直接登记的插件占用，未加载',
+      });
+      expect(toSource(await svc.install('zz-pm-holder'))).toEqual({
+        ok: true,
+        message: '已安装并加载：zz-pm-holder',
+        plugin: 'zz-pm-taken',
+      });
     } finally {
       rmSync(proj, { recursive: true, force: true });
     }
@@ -1707,6 +1799,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
           rescanned.resolve();
           return loaded;
         },
+        loadedFrom: name => discovery.loadedFrom(name),
       });
       host.provide.use(defineService<object>('process'), {
         readExternalFile: async (abs: string) => readFileSync(abs),
@@ -1782,7 +1875,10 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       productionApps.push(app);
       const host = app.bind({ provide, services });
       const discovery = createPluginDiscovery(app, createNodeModulesPluginLoader(proj), store);
-      host.provide.use(pluginSource, { rescan: () => discovery.rescan() });
+      host.provide.use(pluginSource, {
+        rescan: () => discovery.rescan(),
+        loadedFrom: name => discovery.loadedFrom(name),
+      });
       host.provide.use(defineService<object>('process'), {
         readExternalFile: async (abs: string) => {
           try {
