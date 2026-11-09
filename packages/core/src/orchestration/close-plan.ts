@@ -44,8 +44,7 @@ function link(earlier: Stage, later: Stage, hard: boolean): void {
 
 /**
  * 截止点：本轮涉及的激活停止新增绑定、登记「正由本计划关闭」。
- * 真正的 drain/close 仍由 {@link closeActivations} 执行。已在别的计划里的激活跳过。
- * 整张计划冻完后，初始化仍在进行的激活立即 abort；其余在各自收尾段开始时 abort（Resources.drain）。
+ * 真正的 drain/close 仍由 {@link closeActivations} 执行。已在别的计划里的激活跳过。不发取消信号，见 {@link abortInitializing}。
  */
 export function freezeActivations(roots: Activation[]): Map<Activation, () => void> {
   const settle = new Map<Activation, () => void>();
@@ -56,9 +55,16 @@ export function freezeActivations(roots: Activation[]): Map<Activation, () => vo
     for (const child of ctx.children) freeze(child);
   };
   for (const root of roots) freeze(root);
-  // abort 监听器同步执行插件代码，放在遍历之后：它看到的是已冻完的整张计划
-  for (const ctx of settle.keys()) if (ctx.resources.initializing) ctx.resources.abort();
   return settle;
+}
+
+/**
+ * 给计划里初始化仍在进行的激活发取消信号；其余在各自收尾段开始时 abort（Resources.drain）。监听器同步执行插件代码，可能重入
+ * 发起别的计划或 stop()。管理动作的计划排定之后再发：那之后才冻进别的计划的激活不会被算进这张计划去等。停机冻的是根激活整棵树，
+ * 冻完就发：此后管理动作一律拒绝，重入的 stop() 拿到的是同一次停机，没有别的计划会把它们算进去。
+ */
+export function abortInitializing(settle: Map<Activation, () => void>): void {
+  for (const ctx of settle.keys()) if (ctx.resources.initializing) ctx.resources.abort();
 }
 
 /**
@@ -75,7 +81,10 @@ export async function closeActivations(
 ): Promise<void> {
   const owned = settle ?? freezeActivations(roots);
   try {
-    for (const { ctx, kind } of planClose(roots, owned, logger)) {
+    const plan = planClose(roots, owned, logger);
+    // 已冻的计划（停机）在冻结时已发过取消信号
+    if (!settle) abortInitializing(owned);
+    for (const { ctx, kind } of plan) {
       // 单阶段失败不拖垮同批：与清理链「单项失败继续后续」同一政策
       try {
         if (owned.has(ctx))

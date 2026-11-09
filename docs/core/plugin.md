@@ -72,7 +72,7 @@ register(definition, config?, instanceId?, { disabled? })
 - 落定：成功则先转 `active` 再上线服务（发 `service:changed`），依赖方随之激活；失败进 `error`，服务从未上线；`apply` 期间 required 依赖丢失的回到 `pending`（计入下文的重试预算）。无论哪种都另补一次重算。
 - 后台激活的 required 依赖下线时被拆掉（它 `apply` 里拿到的已是旧实例），abort 与宽限同下文，回到 `pending` 并计入下文的重试预算（用尽转 `error`）。在飞（未到阈值）的激活由重算等它落定后再按依赖判定。
 
-`apply` 尚未完成时被停机或管理动作接手（`disable` / `unload` / `bounce`，或它的 required 提供者被这样处理），或后台激活因 required 依赖下线被拆，它的 `lifecycle.use.signal` 在关闭计划冻结后立即 abort，重算不再等它；关闭时自它的收尾段开始至多再等 `disposeTimeoutMs` 让 `apply` 落定，到期仍未落定就不再等待，流程继续。被放弃的 `apply` 之后落定也不会改写条目（让位检查比对状态），它迟到的 `provide.use` / `events.use.on` 按已关闭的激活拒收、`onDispose` 就地执行。
+`apply` 尚未完成时被停机或管理动作接手（`disable` / `unload` / `bounce`，或它的 required 提供者被这样处理），或后台激活因 required 依赖下线被拆，它的 `lifecycle.use.signal` 在关闭计划排定后立即 abort（停机在冻结时），重算不再等它；关闭时自它的收尾段开始至多再等 `disposeTimeoutMs` 让 `apply` 落定，到期仍未落定就不再等待，流程继续。被放弃的 `apply` 之后落定也不会改写条目（让位检查比对状态），它迟到的 `provide.use` / `events.use.on` 按已关闭的激活拒收、`onDispose` 就地执行。
 
 ### 旧实例停下之前不起新实例
 

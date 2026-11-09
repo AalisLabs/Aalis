@@ -4,7 +4,7 @@ import { type PluginEntry, type PluginState, parseInstanceId } from '../types/pl
 
 import type { Activation } from './activation.js';
 import type { ActivationHost } from './activation-host.js';
-import { freezeActivations } from './close-plan.js';
+import { abortInitializing, freezeActivations } from './close-plan.js';
 import {
   type ActivationDeps,
   activatePlugin,
@@ -102,6 +102,7 @@ export class PluginManager implements PluginManagerService {
     // 排队的重算已无意义；清掉排队项，让在飞重算/手动拆卸结束后 idle 能落定。
     this.#queued = false;
     this.#shutdownSettle = freezeActivations([this.#host.root]);
+    abortInitializing(this.#shutdownSettle);
   }
 
   /** idle() 的等待者——在 recompute flight 排干（无在飞、无排队、无挂起段）时统一放行 */

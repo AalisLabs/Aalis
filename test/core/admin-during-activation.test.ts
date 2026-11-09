@@ -10,6 +10,7 @@ import {
   provide,
   services,
 } from '../../packages/core/src/index.js';
+import { deferred } from '../helpers/deferred.js';
 import { HubRegistry, hub } from '../helpers/hub.js';
 
 // 管理操作撞上 activating 窗口（apply 在飞）的行为锚。
@@ -447,5 +448,47 @@ describe('updateConfig 撞上 activating 窗口', () => {
     expect(reapplyAt).toBeGreaterThanOrEqual(0);
     expect(disposedAt).toBeLessThan(reapplyAt);
     expect(trace.filter(t => t.startsWith('apply:')).sort()).toEqual(['apply:{"n":1}', 'apply:{"n":2}']);
+  });
+});
+
+describe('管理动作排定关闭计划后，仍在初始化的激活当即 abort', () => {
+  it('停用提供者：初始化中的依赖方先被 abort，另一个依赖方的收尾才开始', async () => {
+    const app = new App({ name: 'T', logLevel: 'error' });
+    apps.push(app);
+    const svc = defineService<{ v: number }>('zz-abort-order');
+    const order: string[] = [];
+    await app.plugin(
+      definePlugin({
+        name: 'prov',
+        uses: { provide },
+        provides: [svc],
+        apply: ({ provide }) => void provide.use(svc, { v: 1 }),
+      }),
+    );
+    await app.plugin(
+      definePlugin({
+        name: 'active-dep',
+        uses: { s: svc, lifecycle },
+        apply: ({ lifecycle }) => void lifecycle.use.onDrain(() => void order.push('drain:active-dep')),
+      }),
+    );
+    const entered = deferred();
+    void app.plugin(
+      definePlugin({
+        name: 'starting-dep',
+        uses: { s: svc, lifecycle },
+        async apply({ lifecycle }) {
+          const { signal } = lifecycle.use;
+          entered.resolve();
+          await new Promise(resolve =>
+            signal.addEventListener('abort', () => resolve(order.push('abort:starting-dep'))),
+          );
+        },
+      }),
+    );
+    await entered.promise;
+    await app.plugins.disable('prov');
+    await app.plugins.idle();
+    expect(order).toEqual(['abort:starting-dep', 'drain:active-dep']);
   });
 });
