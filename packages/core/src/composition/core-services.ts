@@ -90,7 +90,7 @@ export const lifecycle = builtin<LifecycleCap>('lifecycle');
 
 export const logger = builtin<Logger>('logger');
 
-/** 插件自己的配置视图（只读）。宿主级的配置管理是另一项能力，不默认发给插件。 */
+/** 本次激活的配置：激活时从当前配置拷的一份，改它只影响本次激活。宿主级的配置管理是另一项能力，不默认发给插件。 */
 export const config = builtin<Readonly<Record<string, unknown>>>('config');
 
 // ----- provide / services（发布与动态查找）-----

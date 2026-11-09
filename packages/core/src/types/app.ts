@@ -74,7 +74,7 @@ export interface PluginManagerService {
   getStatus(): PluginStatusEntry[];
   /**
    * 获取单个插件条目：调用时刻的浅快照，之后的状态变化不改它（要最新的就再调一次，或看 getStatus），写它也进不了注册表。
-   * `config` 与 `definition` 仍是运行中的同一对象，只读：改配置走 updateConfig
+   * `config` 是当前配置的一份拷贝；`definition` 是登记时的定义对象，core 已在登记时取定它的字段，改它不生效。改配置走 updateConfig
    */
   getPlugin(instanceId: string): PluginEntry | undefined;
   /**

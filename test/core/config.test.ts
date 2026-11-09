@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { App, config, definePlugin, type PluginDefinition } from '../../packages/core/src/index.js';
 
-// core 只持各实例的运行配置：登记与 bounce 时把入参拷进 entry，危险键不进实例配置。
+// core 只持各实例的运行配置：登记与 updateConfig 时把入参拷进注册表，每次激活与 getPlugin 再各交一份拷贝；危险键不进实例配置。
 // 配置文档（默认值合并、危险键闸、落盘、外部变更）在 runtime，
 // 见 test/runtime/config-store.test.ts 与 test/runtime/config-sync.test.ts。
 
@@ -201,5 +201,75 @@ describe('bounce / updateConfig 入参拷贝', () => {
     (seen as { nested: { k: number } }).nested.k = 7;
     expect(payload).toEqual({ nested: { k: 1 } });
     await app.stop();
+  });
+});
+
+describe('每次激活一份配置：与其他内置服务一样', () => {
+  it('插件就地改 config.use：只影响这一次激活，下次激活与管理面看到的仍是当前配置', async () => {
+    const app = makeApp();
+    const seen: unknown[] = [];
+    await app.plugin(
+      definePlugin({
+        name: 'writer',
+        uses: { config },
+        apply({ config }) {
+          const own = config.use as { keywords: string[]; top?: boolean };
+          seen.push(structuredClone(own));
+          own.keywords.push('z');
+          own.top = true;
+        },
+      }),
+      { keywords: ['x', 'y'] },
+    );
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('writer')?.config).toEqual({ keywords: ['x', 'y'] });
+    await app.plugins.bounce('writer');
+    await app.plugins.idle();
+    expect(seen).toEqual([{ keywords: ['x', 'y'] }, { keywords: ['x', 'y'] }]);
+  });
+
+  it('管理面改 getPlugin().config：进不了注册表，下次激活照旧', async () => {
+    const app = makeApp();
+    const seen: unknown[] = [];
+    await app.plugin(
+      definePlugin({ name: 'reader', uses: { config }, apply: ({ config }) => void seen.push({ ...config.use }) }),
+      { mode: 'a' },
+    );
+    await app.plugins.idle();
+    const view = app.plugins.getPlugin('reader')!.config;
+    view.mode = 'b';
+    expect(app.plugins.getPlugin('reader')?.config).toEqual({ mode: 'a' });
+    await app.plugins.bounce('reader');
+    await app.plugins.idle();
+    expect(seen).toEqual([{ mode: 'a' }, { mode: 'a' }]);
+  });
+  it('数组子类与别的类实例一样按引用透传：config.use 拿到的是同一个实例，字段保留', async () => {
+    const app = makeApp();
+    class Tagged extends Array<number> {
+      tag = 't';
+    }
+    const tagged = Tagged.from([1, 2]) as Tagged;
+    const got: unknown[] = [];
+    await app.plugin(
+      definePlugin({ name: 'arr', uses: { config }, apply: ({ config }) => void got.push(config.use.list) }),
+      { list: tagged },
+    );
+    await app.plugins.idle();
+    expect(got[0]).toBe(tagged);
+    expect((got[0] as Tagged).tag).toBe('t');
+  });
+
+  it('按引用透传的叶子在激活时读不了（登记后被撤销的 Proxy）：这次激活转 error 并记下原因，管理动作照常回布尔', async () => {
+    const app = makeApp();
+    class Handle {}
+    const { proxy, revoke } = Proxy.revocable(new Handle(), {});
+    await app.plugin(definePlugin({ name: 'zz-revoked', apply() {} }), { handle: proxy });
+    await app.plugins.idle();
+    revoke();
+    await expect(app.plugins.bounce('zz-revoked')).resolves.toBe(true);
+    await app.plugins.idle();
+    const [status] = app.plugins.getStatus();
+    expect(status.state).toBe('error');
+    expect(status.error).toContain('revoked');
   });
 });

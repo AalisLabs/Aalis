@@ -34,7 +34,7 @@ describe('宿主服务只交出契约方法', () => {
     expect((raw as unknown as Record<string, unknown>).beginShutdown).toBeUndefined();
   });
 
-  it('宿主侧 app.plugins.getPlugin 也是调用时刻的浅快照：写它进不了注册表，config 与 definition 仍是同一对象', async () => {
+  it('宿主侧 app.plugins.getPlugin 也是调用时刻的浅快照：写它进不了注册表；config 每次是一份拷贝，definition 是登记时那个对象', async () => {
     const app = world();
     await app.plugin(definePlugin({ name: 'p', apply() {} }), { v: 1 });
     await app.plugins.idle();
@@ -43,7 +43,8 @@ describe('宿主服务只交出契约方法', () => {
     snap.state = 'disabled';
     const now = app.plugins.getPlugin('p')!;
     expect(now.state).toBe('active');
-    expect(now.config).toBe(snap.config);
+    expect(now.config).toEqual(snap.config);
+    expect(now.config).not.toBe(snap.config);
     expect(now.definition).toBe(snap.definition);
   });
 

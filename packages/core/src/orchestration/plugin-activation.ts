@@ -19,6 +19,7 @@ import type { ActivationHost } from './activation-host.js';
 import { closeActivations } from './close-plan.js';
 import { missingRequiredService } from '../composition/binding.js';
 import type { DefinitionSpec } from '../composition/plugin-definition.js';
+import { cloneConfigObject } from '../infrastructure/config-values.js';
 import { type Logger, summarizeError } from '../infrastructure/logger.js';
 
 /**
@@ -118,7 +119,7 @@ export function requiredSatisfied(entry: PluginRecord, services: ServiceContaine
  * 本次 required 引用缺席：记一次重试（deps.spendRetry），清理失败激活后回到 pending，并让重算继续观察可能已恢复的
  * 依赖；重试余额用尽则转 error。其余失败转为 error 态（带 message），外层 recompute 不会重试。
  * 前置条件（唯一调用方 PluginManager.#activate 由 Phase B 调用，Phase B 在同一拍里已判定）：entry 为 pending、
- * 旧激活已清，required 依赖都有提供者，且它为这些服务选中的那一家都未进关闭计划。同步段返回时 entry.activation 已是本次激活。
+ * 旧激活已清，required 依赖都有提供者，且它为这些服务选中的那一家都未进关闭计划。同步段返回时 entry.activation 已是本次激活（配置拷贝失败时没有激活）。
  * 转入后台期间它的服务暂不对外（ServiceContainer.hold）；成功时先写 active 再上线，失败与被接管时随拆卸摘除。
  */
 export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps): Promise<'retry' | undefined> {
@@ -128,10 +129,11 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
   // 先标记为 activating，防止服务变更触发的重算导致重入
   entry.state = 'activating';
 
-  const activation = host.create(entry.instanceId, entry.config);
-  entry.activation = activation;
-
   try {
+    // 与其他内置服务一样，每次激活一份：插件改它只影响本次激活，碰不到注册表与下一次激活。拷贝在 try 里：按引用透传的
+    // 叶子此刻可能读不了（如登记后被撤销的 Proxy），这时没有激活可拆，照激活失败转 error
+    const activation = host.create(entry.instanceId, cloneConfigObject(entry.config));
+    entry.activation = activation;
     // 登记后再 await，让拆卸路径能先等 apply 落定（见 Resources.trackInitialization）
     // 按取定的 uses 装配；this 仍是定义对象
     const caps = host.bind(activation, entry.spec.uses);
@@ -190,7 +192,8 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
       logger.debug(`插件 "${entry.instanceId}" 激活中止且已被管理操作接管（现态 ${entry.state}）:`, err);
       return;
     }
-    const missing = missingRequiredService(err, activation.resources, entry.spec.required);
+    // 接管已让位，entry.activation 就是本次激活；配置拷贝失败时没有激活，也就谈不上缺服务
+    const missing = entry.activation && missingRequiredService(err, entry.activation.resources, entry.spec.required);
     if (missing !== undefined) {
       entry.failure = undefined;
       const target = deps.spendRetry(entry, missing);

@@ -438,7 +438,7 @@ export class PluginManager implements PluginManagerService {
     const entry = this.#plugins.get(instanceId);
     if (!entry) return undefined;
     const { definition, config, state, failure } = entry;
-    return { definition, instanceId, config, state, error: errorOf(failure), failure };
+    return { definition, instanceId, config: cloneConfigObject(config), state, error: errorOf(failure), failure };
   }
 
   /** 换上新配置并按 bounce 重启（见 {@link PluginManagerService.updateConfig}） */
@@ -446,7 +446,7 @@ export class PluginManager implements PluginManagerService {
     const entry = this.#target('updateConfig', instanceId);
     if (!entry) return false;
     // 入参可能是调用方还要继续用的活对象（WebUI PUT / config-sync 浅铺开的 payload）。
-    // entry 持有自己的拷贝：插件经内置 config 就地改嵌套不得写穿调用方的对象。拷贝失败时保留旧配置并拒绝
+    // 注册表持有自己的拷贝：调用方之后改它不影响实例。拷贝失败时保留旧配置并拒绝
     try {
       entry.config = cloneConfigObject(config);
     } catch (err) {
@@ -646,11 +646,11 @@ export class PluginManager implements PluginManagerService {
    */
   #activate(entry: PluginRecord): Promise<'retry' | undefined> {
     const landing = activatePlugin(entry, this.#deps);
-    // 同步段已挂上本次激活；清引用最早在一个微任务之后
-    const activation = entry.activation!;
-    const { signal } = activation.resources;
+    // 同步段已挂上本次激活（配置拷贝失败时没有）；清引用最早在一个微任务之后
+    const activation = entry.activation;
     // 没有待落定的 apply（同步段里就失败了，正在回滚）：照旧等它收尾
-    if (!activation.resources.initializing) return landing;
+    if (!activation?.resources.initializing) return landing;
+    const { signal } = activation.resources;
     return new Promise((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const letGo = (): void => {

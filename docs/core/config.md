@@ -6,7 +6,7 @@ core 只持运行态，不持配置文档。运行态有三样：各实例的配
 
 ## 插件配置解析
 
-插件用 `@aalis/schema-config` 的 `defineConfig` 定义 schema，在 apply 中调用 `parseConfig(schema, config.use, logger.use)`，取得带默认值的配置；需要传递配置类型时使用 `ConfigOf<typeof schema>`。Core 的 config 服务仍提供原始只读视图，不依赖 schema-config。
+插件用 `@aalis/schema-config` 的 `defineConfig` 定义 schema，在 apply 中调用 `parseConfig(schema, config.use, logger.use)`，取得带默认值的配置；需要传递配置类型时使用 `ConfigOf<typeof schema>`。Core 的 config 服务交给插件的是本次激活的一份配置拷贝（不补默认值），不依赖 schema-config。
 
 缺省值（undefined / null）按字段默认值处理。普通字段的无效值回落默认并告警；标记 `onInvalid: 'error'` 的字段在显式值无效时拒绝，避免错误地址或启动参数被替换后继续运行。顶层错误使插件激活失败；数组元素里的不可恢复错误只跳过该元素。写宿主文件路径的 `string` / `textarea` 字段声明 `format: 'absolute-path'`（只收绝对路径）或 `'executable'`（绝对路径或按 PATH 查找的命令名），相对路径按无效处理；判定忽略首尾空白，交给插件的值也去掉首尾空白，空串与只有空白都表示未填（必填字段算缺失），只看写法、与宿主平台无关。URL 格式、跨字段条件等业务语义由插件在产生副作用前核对。标了 `secret: true` 的字段由宿主在交给插件之前把引用解析成原值（见[密钥配置](#密钥配置)），插件读到的就是原值；字段上仍是引用时说明键不在宿主的密钥存储里，`parseConfig` 一律拒绝激活并点名键名，不回落默认值，数组元素里的也让整次解析失败。
 
@@ -16,7 +16,7 @@ core 只持运行态，不持配置文档。运行态有三样：各实例的配
 
 | 运行态 | 写入口 | 读入口 |
 |---|---|---|
-| 实例配置 | 登记时传入（`app.plugin` / `app.pluginAll` / `plugins.register`）；`plugins.updateConfig` 替换（禁用态同样替换、保持禁用，启用时按新配置激活） | 插件经内置服务 `config`（`config.use`，本激活的只读视图）；管理面经 `plugins.getPlugin(id).config` |
+| 实例配置 | 登记时传入（`app.plugin` / `app.pluginAll` / `plugins.register`）；`plugins.updateConfig` 替换（禁用态同样替换、保持禁用，启用时按新配置激活） | 插件经内置服务 `config`（`config.use`，每次激活从当前配置拷一份，改它只影响本次激活）；管理面经 `plugins.getPlugin(id).config`（同样是拷贝） |
 | 禁用态 | 登记时的 `{ disabled }`；`plugins.enable` / `disable` | `plugins.getStatus()`、`plugins.getPlugin(id).state` |
 | 服务偏好 | `services.use.prefer` / `unprefer`（全局，或给 `{ for }` 按插件实例） | `services.use.preferred` |
 

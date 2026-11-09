@@ -75,7 +75,7 @@ type CoreFailureCode = 'required-retry-exhausted' | 'provides-not-registered' | 
 function parseInstanceId(instanceId: string): { moduleName: string; suffix?: string };
 ```
 
-公开类型不声明内部激活记录。`getPlugin()` 交出调用时刻的浅快照：之后的状态变化不改它，要最新的就再调一次或看 `getStatus()`，写它也进不了注册表；`config` 与 `definition` 仍是运行中的同一对象，只读，状态与配置变更须经管理 API。状态摘要 `PluginStatusEntry` 同样带 `error` 与 `failure`，另含 `provides` / `reusable`，以及激活超过 `slowThresholdMs` 仍未完成、已转入后台（`state` 为 `activating`）时的 `slow: true`、旧实例关完仍有工作没落定（停下之前同一 id 不起新实例）时的 `lingering: true`（否则都不给）；`uses` 是完整声明的快照，每项为 `{ key, service, kind: 'required' | 'optional' }`，保留参数别名，零声明为 `[]`。Core 基础服务也计入。配置详情经 `getPlugin(instanceId)` 从 `entry.config` / `entry.definition` 读取。
+公开类型不声明内部激活记录。`getPlugin()` 交出调用时刻的浅快照：之后的状态变化不改它，要最新的就再调一次或看 `getStatus()`，写它也进不了注册表；`config` 是当前配置的一份拷贝，`definition` 是登记时的定义对象（字段已在登记时取定，改它不生效），状态与配置变更须经管理 API。状态摘要 `PluginStatusEntry` 同样带 `error` 与 `failure`，另含 `provides` / `reusable`，以及激活超过 `slowThresholdMs` 仍未完成、已转入后台（`state` 为 `activating`）时的 `slow: true`、旧实例关完仍有工作没落定（停下之前同一 id 不启动新实例）时的 `lingering: true`（否则都不给）；`uses` 是完整声明的快照，每项为 `{ key, service, kind: 'required' | 'optional' }`，保留参数别名，零声明为 `[]`。Core 基础服务也计入。配置详情经 `getPlugin(instanceId)` 从 `entry.config` / `entry.definition` 读取。
 
 ---
 
