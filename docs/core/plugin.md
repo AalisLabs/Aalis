@@ -107,7 +107,7 @@ PluginManager 只有一个状态变更入口：服务上下线、注册、启停
 
 **true** = 正常运行中其余已受理的请求，含主体已在目标态的幂等情形。正常运行中，对已在途卸载再次 `unload` 会 join 首次卸载，返回时该实例已拆卸并离开注册表；进入停机后不再 join 或新增拆卸。
 
-每个 false 分支都已记一笔日志：注册被拒、该插件或实例因此不会运行的记 error（定义或实例 id 校验失败，含定义里有另一份 `@aalis/core` 造的对象；未声明 `reusable` 的多实例；多实例 id 不是 `name:后缀`；配置无法拷贝）；重名这类只是重复请求被忽略的与其余政策挡下的记 warn；主体不存在、`disposed` 终态与停机中 debug。正常运行中 true 只说明请求已受理，不说明激活已落定——那看 `idle()`；停机完整完成信号是 `app.stop()`。
+每个 false 分支都已记一笔日志：注册被拒、该插件或实例因此不会运行的记 error（定义或实例 id 校验失败，含定义里有另一份 `@aalis/core` 造的对象；未声明 `reusable` 的多实例；多实例 id 不是 `name:后缀`；配置无效）；重名这类只是重复请求被忽略的与其余政策挡下的记 warn；主体不存在、`disposed` 终态与停机中 debug。正常运行中 true 只说明请求已受理，不说明激活已落定——那看 `idle()`；停机完整完成信号是 `app.stop()`。
 
 管理动作只改运行态（实例配置、禁用态），不写配置文档。要跨重启保留，调用方在动作成功后经 host-config 写文档并 `save()`，见 [运行态与配置文档](config.md)。
 
@@ -117,7 +117,7 @@ PluginManager 只有一个状态变更入口：服务上下线、注册、启停
 
 ### `register(definition, config?, instanceId?, options?)`
 
-注册并尝试激活。`config` 原样生效（core 不合并默认值、不读配置文档）；`options.disabled` 为 `true` 时以禁用态登记、不激活。手写的定义对象（没经 `definePlugin`）在这里补上同一道校验。缺 / 空 / 非法 `name`、`uses` 非描述符、非法 `instanceId`（空、危险键），以及定义里有另一份 `@aalis/core` 造的描述符或 `optional` 包装，各记一笔 error 并返回 false。配置无法拷贝（环状引用、读取抛错的 getter 或 Proxy）时同样记 error 并返回 false，不登记；`registerAll` 的其余条目照常登记。停机中立即返回 false，不登记。
+注册并尝试激活。`config` 原样生效（core 不合并默认值、不读配置文档）；`options.disabled` 为 `true` 时以禁用态登记、不激活。手写的定义对象（没经 `definePlugin`）在这里补上同一道校验。缺 / 空 / 非法 `name`、`uses` 非描述符、非法 `instanceId`（空、危险键），以及定义里有另一份 `@aalis/core` 造的描述符或 `optional` 包装，各记一笔 error 并返回 false。不传 `config` 即 `{}`；配置无效（不是纯对象：`null`、数组、原始值、类实例；或无法拷贝：环状引用、读取抛错的 getter 或 Proxy）时同样记 error 并返回 false，不登记；`registerAll` 的其余条目照常登记。停机中立即返回 false，不登记。
 
 定义在登记时取定：core 用到的字段（`name`、`displayName`、`reusable`、`uses`、`provides`、`apply`）当场各读一次，之后的激活、排序与状态都读这一份；登记后再改定义对象不生效，要换定义先卸载再重新登记。读字段与拷配置都在查重之前完成，其中的 getter 或 Proxy 重入登记同一 id 时，重入的那次先登记，外层这次按重名被拒。
 
@@ -141,7 +141,7 @@ PluginManager 只有一个状态变更入口：服务上下线、注册、启停
 
 ### `updateConfig(instanceId, config)`
 
-换上新的运行配置，再按 `bounce` 重启。入参拷贝后再挂到 entry，插件经内置 `config` 就地改嵌套不会写穿调用方的对象；拷贝失败时返回 false，保留旧配置。正常运行中 `disabled` 态只换上新配置、保持禁用，返回 true，启用时按新配置激活。停机中返回 false，不更换配置。
+换上新的运行配置，再按 `bounce` 重启。入参拷贝后再挂到 entry，插件经内置 `config` 就地改嵌套不会写穿调用方的对象；配置无效（规则同 `register`）时返回 false，保留旧配置。正常运行中 `disabled` 态只换上新配置、保持禁用，返回 true，启用时按新配置激活。停机中返回 false，不更换配置。
 
 ## 反应式监听
 

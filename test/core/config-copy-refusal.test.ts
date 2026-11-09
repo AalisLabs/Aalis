@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { App, definePlugin, type Logger } from '../../packages/core/src/index.js';
+import { App, config, definePlugin, type Logger } from '../../packages/core/src/index.js';
 
 // 管理动作只返回布尔：配置拷贝失败（环状引用、getter 或 Proxy 抛错）时本条返回 false、记 warn，
 // 不让 register / registerAll / bounce / updateConfig 整个拒绝，也不留下停在 pending 的前序条目。只用公开 API。
@@ -141,5 +141,72 @@ describe('配置无法拷贝时管理动作返回 false', () => {
       viaUpdate,
       hConfig: app.plugins.getPlugin('h')?.config,
     }).toEqual({ viaRegister: 'resolved:false', gRegistered: false, viaUpdate: 'resolved:false', hConfig: { ok: 1 } });
+  });
+});
+
+describe('配置不是纯对象：register 与 updateConfig 一样拒收', () => {
+  // 「没给配置」在接口上只有不传一种写法（即 {}）。null 多半是上游出错，当 {} 会让插件按默认值悄悄启动；
+  // 数组、原始值、类实例会被拷成 {"0": …} 之类改了形的对象。都拒收，本条返回 false 并记一笔
+  class Cfg {
+    a = 1;
+  }
+  const shapes: Array<[string, unknown]> = [
+    ['null', null],
+    ['空数组', []],
+    ['数组', [1, 2]],
+    ['字符串', 'ab'],
+    ['数字', 5],
+    ['类实例', new Cfg()],
+  ];
+
+  it.each(shapes)('%s：register 返回 false、不登记，error 点名插件', async (_, config) => {
+    const { app, log } = await mk();
+    const ok = await app.plugin(definePlugin({ name: 'shape', apply() {} }), config as Record<string, unknown>);
+    expect({ ok, registered: app.plugins.getPlugin('shape') !== undefined }).toEqual({ ok: false, registered: false });
+    expect(
+      log.records.some(r => r.level === 'error' && r.message.includes('"shape"') && r.message.includes('纯对象')),
+    ).toBe(true);
+  });
+
+  it.each(shapes)('%s：updateConfig 返回 false、保留旧配置，warn 点名插件', async (_, config) => {
+    const { app, log } = await mk();
+    await app.plugin(definePlugin({ name: 'shape', apply() {} }), { v: 1 });
+    await app.plugins.idle();
+    const ok = await app.plugins.updateConfig('shape', config as Record<string, unknown>);
+    expect({ ok, config: app.plugins.getPlugin('shape')?.config }).toEqual({ ok: false, config: { v: 1 } });
+    expect(
+      log.records.some(r => r.level === 'warn' && r.message.includes('"shape"') && r.message.includes('纯对象')),
+    ).toBe(true);
+  });
+
+  it('不传配置即 {}', async () => {
+    const { app } = await mk();
+    expect(await app.plugin(definePlugin({ name: 'none', apply() {} }))).toBe(true);
+    expect(app.plugins.getPlugin('none')?.config).toEqual({});
+  });
+});
+
+describe('登记收下的是拷贝', () => {
+  it('登记后调用方改它的配置对象：重启后的 config.use 与 getPlugin 仍是登记时的值', async () => {
+    const app = new App({ name: 'T', logLevel: 'error' });
+    apps.push(app);
+    const seen: unknown[] = [];
+    const cfg = { a: 1, nested: { list: [[1]] } };
+    await app.plugin(
+      definePlugin({
+        name: 'cfg-owner',
+        uses: { config },
+        apply: ({ config }) => void seen.push(structuredClone(config.use)),
+      }),
+      cfg,
+    );
+    await app.plugins.idle();
+    cfg.a = 2;
+    cfg.nested.list[0].push(9);
+    await app.plugins.bounce('cfg-owner');
+    await app.plugins.idle();
+    const registered = { a: 1, nested: { list: [[1]] } };
+    expect(seen).toEqual([registered, registered]);
+    expect(app.plugins.getPlugin('cfg-owner')?.config).toEqual(registered);
   });
 });

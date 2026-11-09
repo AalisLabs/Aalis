@@ -53,3 +53,9 @@ function cloneConfigValue(value: unknown, path: Set<object>): unknown {
 export function cloneConfigObject(obj: Record<string, unknown>): Record<string, unknown> {
   return cloneEntries(obj, new Set([obj]));
 }
+
+/** 管理动作收下的配置：只收纯对象，null、数组、原始值与类实例抛错（不改形、不当空配置），再拷成自己的一份 */
+export function ownConfigObject(value: unknown): Record<string, unknown> {
+  if (!isPlainConfigObject(value)) throw new Error('配置须为纯对象，不能是 null、数组、原始值或类实例');
+  return cloneConfigObject(value);
+}

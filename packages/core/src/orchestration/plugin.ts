@@ -19,7 +19,7 @@ import {
   type PluginDefinition,
   validateDefinition,
 } from '../composition/plugin-definition.js';
-import { cloneConfigObject } from '../infrastructure/config-values.js';
+import { cloneConfigObject, ownConfigObject } from '../infrastructure/config-values.js';
 import { deferredLogger, type Logger, type LogWriter, summarizeError } from '../infrastructure/logger.js';
 
 export type { PluginEntry, PluginState };
@@ -221,12 +221,12 @@ export class PluginManager implements PluginManagerService {
     }
     const { definition, config, instanceId, disabled } = own;
     const id = instanceId ?? spec.name;
-    // 环状引用、读取抛错的 getter 或 Proxy
+    // 不传即 {}；不是纯对象的、环状引用、读取抛错的 getter 或 Proxy 都拒收
     let copy: Record<string, unknown>;
     try {
-      copy = cloneConfigObject(config ?? {});
+      copy = config === undefined ? {} : ownConfigObject(config);
     } catch (err) {
-      this.#logger.error(`插件 "${id}" 的配置无法拷贝，拒绝注册:`, err);
+      this.#logger.error(`插件 "${id}" 的配置无效，拒绝注册:`, err);
       return false;
     }
 
@@ -448,11 +448,11 @@ export class PluginManager implements PluginManagerService {
     const entry = this.#target('updateConfig', instanceId);
     if (!entry) return false;
     // 入参可能是调用方还要继续用的活对象（WebUI PUT / config-sync 浅铺开的 payload）。
-    // 注册表持有自己的拷贝：调用方之后改它不影响实例。拷贝失败时保留旧配置并拒绝
+    // 注册表持有自己的拷贝：调用方之后改它不影响实例。不是纯对象或拷贝失败时保留旧配置并拒绝
     try {
-      entry.config = cloneConfigObject(config);
+      entry.config = ownConfigObject(config);
     } catch (err) {
-      this.#logger.warn(`updateConfig: 插件 "${instanceId}" 的新配置无法拷贝，保留旧配置:`, err);
+      this.#logger.warn(`updateConfig: 插件 "${instanceId}" 的新配置无效，保留旧配置:`, err);
       return false;
     }
     return entry.state === 'disabled' || this.bounce(instanceId);
