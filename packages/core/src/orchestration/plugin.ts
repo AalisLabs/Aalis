@@ -20,7 +20,7 @@ import {
   validateDefinition,
 } from '../composition/plugin-definition.js';
 import { cloneConfigObject } from '../infrastructure/config-values.js';
-import { type Logger, summarizeError } from '../infrastructure/logger.js';
+import { deferredLogger, type Logger, type LogWriter, summarizeError } from '../infrastructure/logger.js';
 
 export type { PluginEntry, PluginState };
 export { parseInstanceId };
@@ -45,7 +45,7 @@ export interface PluginRegistration {
  */
 export class PluginManager implements PluginManagerService {
   #plugins = new Map<string, PluginRecord>();
-  #logger: Logger;
+  #logger: LogWriter;
   readonly #host: ActivationHost;
   /** 单个异步清理项的等待上限（毫秒；0=不设限），由 App 从 AppOptions 注入 */
   readonly #disposeTimeoutMs: number;
@@ -139,7 +139,8 @@ export class PluginManager implements PluginManagerService {
     this.#host = host;
     this.#disposeTimeoutMs = disposeTimeoutMs;
     this.#slowMs = slowMs;
-    this.#logger = logger.child('plugins');
+    // 状态改到一半时记的日志推迟交给宿主（见 deferredLogger）；交给编排层自由函数的也是这一个
+    this.#logger = deferredLogger(logger.child('plugins'));
     this.#deps = {
       host,
       logger: this.#logger,

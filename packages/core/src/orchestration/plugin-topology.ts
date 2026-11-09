@@ -6,7 +6,7 @@
 // ============================================================
 
 import type { PluginRecord } from './plugin-activation.js';
-import type { Logger } from '../infrastructure/logger.js';
+import type { LogWriter } from '../infrastructure/logger.js';
 
 /**
  * 按"提供者 → 消费者"方向的拓扑排序（Kahn），结果正序即激活顺序。
@@ -19,7 +19,7 @@ import type { Logger } from '../infrastructure/logger.js';
  *
  * 残留环（仅由 required 形成的真环）按声明序兜底追加。
  */
-export function topoSortByDeps(entries: PluginRecord[], logger: Logger): PluginRecord[] {
+export function topoSortByDeps(entries: PluginRecord[], logger: LogWriter): PluginRecord[] {
   const providersOf = new Map<string, string[]>();
   for (const e of entries) {
     for (const service of e.spec.provides ?? []) {

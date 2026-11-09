@@ -78,6 +78,12 @@ export interface Logger {
 }
 
 /**
+ * 只写日志、不派生子作用域的那一面：core 内部只往里写的地方（插件管理器与编排层）收这个。
+ * @internal
+ */
+export type LogWriter = Pick<Logger, LogLevel>;
+
+/**
  * 不抛的 Logger：各方法经 reportQuietly 转发，child 派生的同样包一层；派生失败时沿用这一层（少一级作用域）。
  * @internal
  */
@@ -100,6 +106,25 @@ export function quietLogger(inner: Logger): Logger {
     },
   };
   return quiet;
+}
+
+/**
+ * 推迟交付的 Logger：调用当场返回，日志在下一个微任务交给 inner，彼此的先后不变。inner 须不抛（App 交来的是
+ * {@link quietLogger} 派生的）。插件管理器用它：状态改到一半时记的日志不当场执行宿主的日志代码，宿主日志回调里发起的
+ * 管理动作或 stop() 看到的是改完之后的状态。插件自己的日志不推迟。
+ * @internal
+ */
+export function deferredLogger(inner: Logger): LogWriter {
+  const forward =
+    (level: LogLevel): Logger[LogLevel] =>
+    (...args) =>
+      queueMicrotask(() => inner[level](...args));
+  return {
+    debug: forward('debug'),
+    info: forward('info'),
+    warn: forward('warn'),
+    error: forward('error'),
+  };
 }
 
 /**

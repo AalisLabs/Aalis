@@ -20,7 +20,7 @@ import { closeActivations } from './close-plan.js';
 import { missingRequiredService } from '../composition/binding.js';
 import type { DefinitionSpec } from '../composition/plugin-definition.js';
 import { cloneConfigObject } from '../infrastructure/config-values.js';
-import { type Logger, summarizeError } from '../infrastructure/logger.js';
+import { type LogWriter, summarizeError } from '../infrastructure/logger.js';
 
 /**
  * 注册表里的记录：公开的 {@link PluginEntry} 加上登记时取定的定义、这次激活与重试余额（不进公开类型）。
@@ -40,7 +40,7 @@ export interface PluginRecord extends Omit<PluginEntry, 'error'> {
  */
 export interface ActivationDeps {
   host: ActivationHost;
-  logger: Logger;
+  logger: LogWriter;
   /** 拆卸时单个异步清理项的等待上限，也是 abort 后等在飞初始化落定的宽限（毫秒；缺省不设限） */
   disposeTimeoutMs?: number;
   /**

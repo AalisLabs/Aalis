@@ -24,7 +24,7 @@
 // ============================================================
 
 import type { Activation } from './activation.js';
-import type { Logger } from '../infrastructure/logger.js';
+import type { LogWriter } from '../infrastructure/logger.js';
 
 type Kind = 'drain' | 'close';
 interface Stage {
@@ -70,7 +70,7 @@ export function freezeActivations(roots: Activation[]): Map<Activation, () => vo
 export async function closeActivations(
   roots: Activation[],
   timeoutMs: number | undefined,
-  logger: Logger,
+  logger: LogWriter,
   settle?: Map<Activation, () => void>,
 ): Promise<void> {
   const owned = settle ?? freezeActivations(roots);
@@ -91,7 +91,7 @@ export async function closeActivations(
   }
 }
 
-function planClose(roots: Activation[], owned: Map<Activation, () => void>, logger: Logger): Stage[] {
+function planClose(roots: Activation[], owned: Map<Activation, () => void>, logger: LogWriter): Stage[] {
   const drainOf = new Map<Activation, Stage>();
   const closeOf = new Map<Activation, Stage>();
   const providersOf = new Map<Activation, Map<Activation, boolean>>();
