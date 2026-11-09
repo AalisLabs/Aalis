@@ -27,7 +27,7 @@ interface PluginEntry {
 
 | code | 情形 | 数据 |
 |---|---|---|
-| `required-retry-exhausted` | 初始化期间 required 依赖反复缺失、自动重试用尽 | `service`：最后一次缺的服务 |
+| `required-retry-exhausted` | 初始化期间 required 依赖反复缺失、自动重试用尽 | `service`：最后一次缺的服务；最后一次是激活时抛出的不可用错误时，它挂成 `cause` |
 | `provides-not-registered` | 激活完成时 provides 声明的服务没有登记 | `services`：缺的那些 |
 | `exclusive-conflict` | 服务为独占登记期间又登记同名提供者 | `service` |
 | `service-unavailable` | 业务句柄选不到提供者（`ServiceUnavailableError`） | `service`；指名或钉住的那一家另给 `provider` |

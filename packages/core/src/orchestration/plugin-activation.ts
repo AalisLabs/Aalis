@@ -43,11 +43,8 @@ export interface ActivationDeps {
   logger: LogWriter;
   /** 拆卸时单个异步清理项的等待上限，也是 abort 后等在飞初始化落定的宽限（毫秒；缺省不设限） */
   disposeTimeoutMs?: number;
-  /**
-   * 初始化期 required 缺失时记一次重试（missing 为这次缺的服务），返回这次拆卸的目标态：余额未用尽为 pending，
-   * 用尽为 error（已写原因，点名 missing）
-   */
-  spendRetry: (entry: PluginRecord, missing: string) => 'pending' | 'error';
+  /** 初始化期 required 缺失时记一次重试，返回这次拆卸的目标态（见 PluginManager 的 #spendRetry） */
+  spendRetry: (entry: PluginRecord, missing: string, cause?: unknown) => 'pending' | 'error';
   /** 关完的激活仍有工作没落定（rest 落定时兑现）：记在实例 id 名下，落定之前同一 id 不起新实例 */
   linger: (instanceId: string, rest: Promise<unknown>) => void;
 }
@@ -196,7 +193,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     const missing = entry.activation && missingRequiredService(err, entry.activation.resources, entry.spec.required);
     if (missing !== undefined) {
       entry.failure = undefined;
-      const target = deps.spendRetry(entry, missing);
+      const target = deps.spendRetry(entry, missing, err);
       // 用尽时 spendRetry 已记 error「已停止」，不再说等待恢复
       if (target === 'pending')
         logger.debug(`插件 "${entry.instanceId}" 初始化期间 required 服务不可用，清理后等待依赖恢复`);

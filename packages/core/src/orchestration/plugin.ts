@@ -559,14 +559,16 @@ export class PluginManager implements PluginManagerService {
    * 初始化期 required 缺失的自动重试预算。两条路径记在同一份记录里：激活时 required 绑定抛不可用，后台激活的 required
    * 依赖下线被拆。按条目跨重算累计（`#queued` 补跑、落定后补的重算都不重置），首次按当时的 {@link #maxRounds}
    * 取额；激活成功、enable、bounce 时清零。返回这次拆卸的目标态：未用尽回 pending，用尽转 error、不再自动重试，
-   * 说明里点名这次缺的服务 missing。在拆卸之前调用（写终态的是随后的 retireBatch），不抛。
+   * 说明里点名这次缺的服务 missing，这次抛出的不可用错误（cause，激活路径才有）挂在 failure 上。在拆卸之前调用（写终态的
+   * 是随后的 retireBatch），不抛。
    */
-  #spendRetry(entry: PluginRecord, missing: string): 'pending' | 'error' {
+  #spendRetry(entry: PluginRecord, missing: string, cause?: unknown): 'pending' | 'error' {
     entry.retriesLeft = (entry.retriesLeft ?? this.#maxRounds()) - 1;
     if (entry.retriesLeft > 0) return 'pending';
     const message = `初始化期间 required 依赖反复缺失（最后一次缺 "${missing}"），自动重试未收敛，已停止；enable 或 bounce 后重试`;
-    entry.failure = coreFailure(message, 'required-retry-exhausted', { service: missing });
-    this.#logger.error(`插件 "${entry.instanceId}" ${message}`);
+    entry.failure = coreFailure(message, 'required-retry-exhausted', { service: missing }, cause);
+    // 不可用错误另作附加参数：failure 不整体下发，宿主日志里要看得到 apply 里哪一行访问了缺席的句柄
+    this.#logger.error(`插件 "${entry.instanceId}" ${message}`, ...(cause === undefined ? [] : [cause]));
     return 'error';
   }
 

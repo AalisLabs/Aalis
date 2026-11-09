@@ -296,14 +296,22 @@ describe('初始化期间 required 依赖消失', () => {
     expect(attempts).toBe(firstLimit);
     expect(consumer(app).state).toBe('error');
     expect(activationOf(app, 'consumer')).toBeUndefined();
-    // 点名的是 apply 抛出的不可用错误里的服务：apply 抛错前已把它恢复，此刻容器里并不缺
+    // 点名的是 apply 抛出的不可用错误里的服务：apply 抛错前已把它恢复，此刻容器里并不缺。最后一次的不可用错误挂成 cause
     expect(consumer(app).error).toBe(
-      '初始化期间 required 依赖反复缺失（最后一次缺 "activation-required-loss"），自动重试未收敛，已停止；enable 或 bounce 后重试',
+      '初始化期间 required 依赖反复缺失（最后一次缺 "activation-required-loss"），自动重试未收敛，已停止；enable 或 bounce 后重试' +
+        ' ← 服务 "activation-required-loss" 不可用（"consumer" 声明的依赖当前没有提供者）',
     );
     expect(consumer(app).failure).toEqual(
       expect.objectContaining({ code: 'required-retry-exhausted', service: 'activation-required-loss' }),
     );
+    expect((consumer(app).failure as Error).cause).toEqual(
+      expect.objectContaining({ name: 'ServiceUnavailableError', service: 'activation-required-loss' }),
+    );
     expect(errors.filter(message => String(message).includes('自动重试未收敛'))).toHaveLength(1);
+    // 同一个不可用错误作这条 error 日志的附加参数：宿主日志里看得到 apply 里哪一行访问了缺席的句柄
+    expect(errors[errors.findIndex(message => String(message).includes('自动重试未收敛')) + 1]).toBe(
+      (consumer(app).failure as Error).cause,
+    );
     // 用尽的那一次只记 error，不再说等待依赖恢复
     expect(debugs.filter(message => message.includes('等待依赖恢复'))).toHaveLength(attempts - 1);
     if (mode === 'register') expect(helpers, '新注册的正常插件仍须完成激活').toBe(attempts);
@@ -426,6 +434,9 @@ describe('初始化期间 required 依赖消失', () => {
     expect(attempts).toBe(10);
     expect(consumer(app).error).toContain('最后一次缺 "activation-required-loss"');
     expect(errors.filter(message => String(message).includes('自动重试未收敛'))).toHaveLength(1);
+    // 被重算拆掉时用尽，没有这一次抛出的不可用错误：failure 不带 cause，那条 error 也不多带一个 undefined 参数
+    expect((consumer(app).failure as Error).cause).toBeUndefined();
+    expect(errors).not.toContain(undefined);
 
     stable = true;
     expect(await app.plugins.enable('consumer')).toBe(true);

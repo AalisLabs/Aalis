@@ -16,7 +16,12 @@ export type CoreFailureCode =
   | 'exclusive-conflict'
   | 'service-unavailable';
 
-/** core 自己的失败：普通 Error 挂上 code 与数据属性 */
-export function coreFailure(message: string, code: CoreFailureCode, data: Record<string, unknown>): Error {
-  return Object.assign(new Error(message), { code }, data);
+/** core 自己的失败：普通 Error 挂上 code 与数据属性；有导致它的错误时挂成 cause */
+export function coreFailure(
+  message: string,
+  code: CoreFailureCode,
+  data: Record<string, unknown>,
+  cause?: unknown,
+): Error {
+  return Object.assign(new Error(message, cause === undefined ? undefined : { cause }), { code }, data);
 }

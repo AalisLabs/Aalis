@@ -19,7 +19,8 @@ export interface PluginEntry {
   /**
    * 激活失败的说明，由 {@link failure} 现算：错误消息后接 cause 链摘要（各层消息首行，以 ` ← ` 相连，至多 5 层；AggregateError
    * 层之后接子错误首行，至多 3 条）。非 Error 的值只取首行、限 200 字符。初始化期间 required 依赖反复缺失、自动重试用尽时是
-   * core 的固定说明：「初始化期间 required 依赖反复缺失（最后一次缺 "<服务名>"），…已停止；…」。
+   * core 的固定说明：「初始化期间 required 依赖反复缺失（最后一次缺 "<服务名>"），…已停止；…」，激活时抛出的不可用错误挂成 cause、
+   * 照样接在后面。
    */
   error?: string;
   /**
