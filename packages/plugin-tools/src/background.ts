@@ -206,6 +206,8 @@ interface BackgroundTasksDeps {
   /** 发 tool:output、background:changed 与结束通知 */
   events: Pick<Events, 'emit'>;
   limits: BackgroundLimits;
+  /** 本次激活的中止信号：收尾开始时断开，此后不再接可转后台的调用 */
+  signal: AbortSignal;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -308,6 +310,7 @@ export class BackgroundTasks implements BackgroundTaskService {
   readonly limits: BackgroundLimits;
   private readonly logger: Logger;
   private readonly events: Pick<Events, 'emit'>;
+  private readonly signal: AbortSignal;
   private readonly records = new Map<string, TaskRecord>();
   /** 占着位置的可转后台调用：从过守卫之前到落定 */
   private readonly calls = new Set<Call>();
@@ -326,6 +329,7 @@ export class BackgroundTasks implements BackgroundTaskService {
     this.logger = deps.logger;
     this.events = deps.events;
     this.limits = deps.limits;
+    this.signal = deps.signal;
   }
 
   // ---- 服务 ----
@@ -372,9 +376,11 @@ export class BackgroundTasks implements BackgroundTaskService {
 
   /**
    * 占一个位置。同一会话里对话回合中在跑的可转后台调用（前台与后台一起数，等审批的也算）满了时，回拒绝的结果（JSON），
-   * 列出这个会话在跑的后台任务，不执行、不过守卫。不在回合里的调用不会转后台，不占名额、不受上限挡
+   * 列出这个会话在跑的后台任务，不执行、不过守卫。不在回合里的调用不会转后台，不占名额、不受上限挡。
+   * 停用（收尾）之后一律回拒绝：收尾到撤回登记之间执行器仍对外可用，这时占到位置的调用片刻之后就随工具撤回登记被中止
    */
   admit(ctx: ToolCallRequest, owner: object, plan: Plan): Call | string {
+    if (this.signal.aborted) return JSON.stringify({ error: '工具注册表正在停用，未执行' });
     const counted = inTurn(ctx);
     const inSession = [...this.calls].filter(call => call.inTurn && call.sessionId === ctx.sessionId);
     if (counted && inSession.length >= this.limits.maxPerSession) {

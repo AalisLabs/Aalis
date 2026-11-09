@@ -83,10 +83,12 @@ function world(opts: WorldOptions = {}) {
       emitted.push({ event, payload });
     },
   };
+  const lifecycle = new AbortController();
   const tasks = new BackgroundTasks({
     logger,
     events: events as never,
     limits: { maxWaitSeconds: opts.maxWaitSeconds ?? 600, maxPerSession: opts.maxPerSession ?? 4 },
+    signal: lifecycle.signal,
   });
   const registry = new ToolRegistry(logger, tasks, () => []);
   const guarded: ExecutionGuardContext[] = [];
@@ -103,6 +105,11 @@ function world(opts: WorldOptions = {}) {
     runs,
     guarded,
     warnings,
+    /** 插件停用的收尾：与 core 同序，先断开本次激活的信号，再跑收尾 */
+    close: () => {
+      lifecycle.abort();
+      return tasks.close();
+    },
     slow: (name = 'zz_slow', spec: Spec = {}) => registry.register(slowTool(runs, name, spec), 'zz-test'),
     plain: (name: string, handler: RegisteredTool['handler']) =>
       registry.register(
@@ -622,7 +629,7 @@ describe('停止、撤回、停用与会话删除', () => {
     await w.tasks.restore(ownView(store.service, 'tools'));
     w.slow('zz_slow', { hang: true });
     await w.registry.execute('zz_slow', { runInBackground: true }, turn().ctx);
-    await w.tasks.close();
+    await w.close();
     expect(w.runs[0].ctx.signal?.aborted).toBe(true);
     expect(w.tasks.list()[0]).toMatchObject({ status: 'aborted', reason: { source: '工具注册表停用时还在跑' } });
     expect(store.saved()?.tasks[0]).toMatchObject({ status: 'aborted' });
@@ -630,6 +637,30 @@ describe('停止、撤回、停用与会话删除', () => {
     await flush();
     expect(w.tasks.list()[0].status).toBe('aborted');
     expect(w.notices()).toEqual([]);
+  });
+
+  // 收尾之后、撤回登记之前执行器仍对外可用（单独停用或热重载 plugin-tools 时，optional 用它的插件照常在调）。这时到的调用
+  // 片刻之后就随工具撤回登记被中止：照常执行的话，命令执行到一半就被打断
+  it('plugin-tools 停用（收尾）之后才到的可转后台调用不执行、不过守卫、不登记', async () => {
+    const w = world();
+    const store = memoryStore();
+    await w.tasks.restore(ownView(store.service, 'tools'));
+    w.slow();
+    await w.close();
+    const writes = store.writes();
+    const results = [
+      w.registry.execute('zz_slow', { runInBackground: true }, turn().ctx),
+      w.registry.execute('zz_slow', {}, turn().ctx),
+    ];
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect((await Promise.all(results)).map(parse)).toEqual([
+      { error: expect.stringContaining('停用') },
+      { error: expect.stringContaining('停用') },
+    ]);
+    expect(w.runs, '不执行').toEqual([]);
+    expect(w.guarded, '不过守卫').toEqual([]);
+    expect(w.tasks.list(), '不登记').toEqual([]);
+    expect(store.writes(), '不再写盘').toBe(writes);
   });
 
   it('会话删除停掉它的任务并删掉登记，不通知；别的会话照常', async () => {

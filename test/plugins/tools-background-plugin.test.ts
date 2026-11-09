@@ -8,7 +8,7 @@ import {
   type ToolExecutionResult,
   tools,
 } from '../../packages/api-tools/src/index.js';
-import { type App, events, provide } from '../../packages/core/src/index.js';
+import { type App, events, provide, services } from '../../packages/core/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
@@ -16,7 +16,7 @@ import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-tools 的转后台接线：配置的两项上限、backgroundTasks 服务、会话删除与 app:stopping 两个事件、
-// 停用时落成 aborted 并写进插件数据、storage 晚于本插件上线时照样读回。
+// 停用时落成 aborted 并写进插件数据、停用之后不再接可转后台的调用、storage 晚于本插件上线时照样读回。
 // 执行器本身的规则见 tools-background.test.ts，重启读回见 test/integration/background-restart.test.ts。
 // ════════════════════════════════════════════════════════════
 
@@ -168,6 +168,36 @@ describe('plugin-tools 的转后台接线', () => {
       ['aborted', expect.objectContaining({ source: '工具注册表停用时还在跑' })],
       ['completed', undefined],
     ]);
+  });
+
+  // 收尾到撤回登记之间执行器仍对外可用：直接登记在执行器上的工具不随宿主的门面撤回，停用之后仍查得到，代表这段窗口
+  it('停用之后拿着旧执行器调可转后台的工具：不执行，回正在停用', async () => {
+    const w = await start();
+    const registry = w.app.bind({ services }).services.use.get(tools);
+    if (!registry) throw new Error('执行器未提供');
+    const ran: string[] = [];
+    registry.register(
+      {
+        definition: {
+          type: 'function',
+          function: { name: 'zz_kept', description: 'zz', parameters: { type: 'object', properties: {} } },
+        },
+        background: {},
+        handler: async () => {
+          ran.push('zz_kept');
+          return 'zz-done';
+        },
+      },
+      'zz-test',
+    );
+    await w.app.plugins.unload(toolsPlugin.name);
+    const result = await registry.execute(
+      'zz_kept',
+      {},
+      toolRequest({ sessionId: SESSION, platform: 'webui', userId: 'console', enabledGroups: [], inbound: {} }),
+    );
+    expect(JSON.parse(result.content)).toEqual({ error: expect.stringContaining('停用') });
+    expect(ran).toEqual([]);
   });
 
   it('storage 晚于 plugin-tools 上线时照样读回', async () => {

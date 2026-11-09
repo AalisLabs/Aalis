@@ -88,7 +88,12 @@ export default definePlugin({
       },
     });
 
-    const tasks = new BackgroundTasks({ logger: logger.use, events: events.use, limits: cfg.background });
+    const tasks = new BackgroundTasks({
+      logger: logger.use,
+      events: events.use,
+      limits: cfg.background,
+      signal: lifecycle.use.signal,
+    });
     events.use.on('session:deleted', sessionId => tasks.deleteSession(sessionId));
     events.use.on('app:stopping', () => tasks.shutdown());
     // 停接新活时：在跑的落成 aborted 并写盘，这时依赖的存储还在

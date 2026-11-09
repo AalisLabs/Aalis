@@ -8,6 +8,7 @@ export function makeToolRegistry(logger: Logger): ToolRegistry {
     logger,
     events: { emit: async () => {} },
     limits: DEFAULT_LIMITS,
+    signal: new AbortController().signal,
   });
   return new ToolRegistry(logger, tasks, () => []);
 }
