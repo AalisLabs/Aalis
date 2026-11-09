@@ -108,6 +108,7 @@ export default defineLocale<Source>()({
   halfActorDetail:
     "In the configuration file, write this task's actorPlatform and actorUserId as a pair, or delete both (to run as the owner); it takes effect once saved.",
   fromConfig: 'Task “{name}” comes from the configuration file; change it there',
+  disposed: 'The scheduler service has been closed, so task {name} was not accepted',
   jobSaved: 'Saved task {name}',
   notPersisted:
     'only effective for this run, not written to {uri}: it could not be read; see Needs attention for how to fix it',

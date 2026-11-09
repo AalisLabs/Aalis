@@ -142,11 +142,11 @@ export interface SchedulerService {
   pauseJob(name: string): boolean;
   resumeJob(name: string): boolean;
   triggerJob(name: string): Promise<boolean>;
-  /** 名字是配置文件里写了的、cron 或固定间隔无效时抛出原因，不收下 */
+  /** 名字是配置文件里写了的、cron 或固定间隔无效、本实例已关闭时抛出原因，不收下 */
   addJob(job: SchedulerJobConfig): void;
   /**
-   * upsert：已存在则先 remove 再 add；计划任务页的新建与编辑都经它。名字是配置文件里写了的、cron 或固定间隔无效时抛出原因，
-   * 原任务不变
+   * upsert：已存在则先 remove 再 add；计划任务页的新建与编辑都经它。名字是配置文件里写了的、cron 或固定间隔无效、本实例已关闭时
+   * 抛出原因，原任务不变
    */
   setJob(job: SchedulerJobConfig): void;
   removeJob(name: string): boolean;
@@ -913,6 +913,13 @@ async function run(caps: Caps): Promise<void> {
     }
   }
 
+  /**
+   * 清理段开始之后置位，新建与修改一律拒收：拿着旧服务对象的调用方此时再交来任务，会在本实例上挂清理不再撤的定时器与
+   * cron 订阅、照常触发，还按本实例的内存整表写盘，盖掉新实例的文件。删除、暂停与恢复不用拦：清理段清空了调度表，
+   * 它们找不到任务，不写盘
+   */
+  let disposed = false;
+
   const service: SchedulerService = {
     getJobs() {
       return [...runtimes.values()].map(rt => ({
@@ -971,6 +978,7 @@ async function run(caps: Caps): Promise<void> {
       return true;
     },
     addJob(job) {
+      if (disposed) throw new TextError(t('disposed', { name: job.name }));
       rejectConfigName(job.name);
       rejectInvalidSchedule(job);
       initJob(job);
@@ -979,6 +987,7 @@ async function run(caps: Caps): Promise<void> {
     },
     setJob(job) {
       // upsert：先 remove 再 add
+      if (disposed) throw new TextError(t('disposed', { name: job.name }));
       rejectConfigName(job.name);
       rejectInvalidSchedule(job);
       const existed = runtimes.get(job.name);
@@ -1276,12 +1285,15 @@ async function run(caps: Caps): Promise<void> {
 
   // ── 清理 ──
 
-  lifecycle.use.onDispose(() => {
+  lifecycle.use.onDispose(async () => {
+    disposed = true;
     for (const rt of runtimes.values()) {
       if (rt.timer) clearInterval(rt.timer);
       if (rt.cronDispose) rt.cronDispose();
     }
     runtimes.clear();
+    // 等排队中的写盘落定再结束拆卸：否则重启时新实例读到的文件还没有这次改动，app.stop() 返回后也仍有写在飞
+    await saveChain;
   });
 
   logger.use.info(`计划任务调度器已启动 (${config.jobs.length} 个任务)`);

@@ -101,6 +101,7 @@ const SOURCE = {
   halfActorDetail:
     '在配置文件里把这个任务的 actorPlatform 与 actorUserId 写成一对，或两项都删掉（以 owner 身份运行），保存后生效。',
   fromConfig: '任务 "{name}" 来自配置文件，要改去配置文件里改',
+  disposed: '计划任务服务已关闭，任务 {name} 没有收下',
   jobSaved: '已保存任务 {name}',
   notPersisted: '仅本次运行生效，未写入 {uri}：它读不出来，处理办法见「需要处理」里的提示',
 } as const;
