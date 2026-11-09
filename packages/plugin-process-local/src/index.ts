@@ -4,6 +4,7 @@
 
 import { type ChildProcess, spawn as nodeSpawn } from 'node:child_process';
 import { readFile as fsReadFile, stat as fsStat } from 'node:fs/promises';
+import type { Socket } from 'node:net';
 import { isAbsolute } from 'node:path';
 import type { ExecResult, ProcessService, SpawnHandle, SpawnOptions, TempDirHandle } from '@aalis/api-process';
 import { makeTempDirViaStorage, processService } from '@aalis/api-process';
@@ -33,6 +34,64 @@ export const ABORT_KILL_GRACE_MS = 2000;
 const GROUP_SWEEP_MS = 1000;
 
 const isWindows = process.platform === 'win32';
+
+/**
+ * 看门进程的脚本（POSIX）：从 stdin 一行一条收进程组的登记（+组号）与撤销（-组号）。宿主不论怎么退出（崩溃、被 SIGKILL、
+ * 未捕获异常），内核都会关掉这条管道；读到结尾，就照停机的规矩收掉仍登记的组：整组 SIGTERM，至多等
+ * ABORT_KILL_GRACE_MS 让它们自己退，还有成员的整组 SIGKILL。正常停机时各组已收完、撤销，读到结尾即退出。
+ * kill 不写 `--`：dash 的内建 kill 不认它。
+ */
+const WATCHDOG_SCRIPT = `
+groups=
+while IFS= read -r line; do
+  case $line in
+    +*) groups="$groups \${line#+}" ;;
+    -*) kept=; for g in $groups; do [ "$g" = "\${line#-}" ] || kept="$kept $g"; done; groups=$kept ;;
+  esac
+done
+for g in $groups; do kill -TERM -$g 2>/dev/null; done
+n=0
+while [ -n "$groups" ] && [ $n -lt ${ABORT_KILL_GRACE_MS / 100} ]; do
+  sleep 0.1
+  n=$((n + 1))
+  live=; for g in $groups; do kill -0 -$g 2>/dev/null && live="$live $g"; done; groups=$live
+done
+for g in $groups; do kill -KILL -$g 2>/dev/null; done
+`;
+
+/**
+ * 看门进程的 stdin：第一个进程组登记时才启动，模块级，与进程组登记表同寿，本插件被 bounce 后的新旧实例共用。卸载本插件后
+ * 再经热扫描装上时载入的是另一份模块，另行启动一个看门进程
+ */
+let watchdog: Socket | undefined;
+
+/**
+ * 告诉看门进程一行登记或撤销（POSIX）。看门进程自成进程组，终端的 Ctrl+C 与挂断不连带它；它与这条管道都不阻塞宿主退出。
+ * 启动失败时这一行作罢、不缓存，下一行再启动：调用方的子进程这时已启动、已登记，不能让错误从 spawn() 抛出去。描述符耗尽
+ * （EMFILE、ENFILE）时 Node 返回没有 stdin 的子进程、另发异步 'error'，EBADF 等错误码则同步抛出。异步 'error' 与
+ * 它没了之后再写的 EPIPE 都挂了监听器，不会崩宿主；没有它只少宿主意外退出这一层收尾。
+ */
+function tellWatchdog(line: string): void {
+  if (isWindows) return;
+  if (!watchdog) {
+    let child: ChildProcess;
+    try {
+      child = nodeSpawn('/bin/sh', ['-c', WATCHDOG_SCRIPT, 'aalis-process-watchdog'], {
+        stdio: ['pipe', 'ignore', 'ignore'],
+        detached: true,
+      });
+    } catch {
+      return;
+    }
+    child.on('error', () => {});
+    child.unref();
+    if (!child.stdin) return;
+    watchdog = child.stdin as Socket;
+    watchdog.on('error', () => {});
+    watchdog.unref();
+  }
+  watchdog.write(`${line}\n`);
+}
 
 /**
  * 对子进程所在的**整个进程组**发信号（POSIX）。子进程 spawn 时 detached，自身即进程组组长，
@@ -122,6 +181,7 @@ export class LocalProcessService implements ProcessService {
   /**
    * 存活进程组登记表（键 = 直接子进程 pid = pgid）。detached 后终端 Ctrl+C 不再直达子进程，改由 killAll
    * 在停机时统一收尸；`cmd &` 留下的孙进程在直接子进程退出后仍占着这个组，所以按组而非按子进程登记。
+   * 登记与撤销同步告诉看门进程（见 tellWatchdog），宿主意外退出时由它收掉；只在组空时撤销（子进程退出时或 sweep 里）。
    */
   private readonly groups = new Map<number, ChildProcess>();
   /** 直接子进程已退、组里还有成员时定时探（见 sweep），没有这样的组就停 */
@@ -135,7 +195,6 @@ export class LocalProcessService implements ProcessService {
    */
   async killAll(): Promise<void> {
     const entries = [...this.groups];
-    this.groups.clear();
     if (isWindows) {
       for (const [, child] of entries) killTree(child);
       return;
@@ -158,12 +217,17 @@ export class LocalProcessService implements ProcessService {
       for (const [pid, child] of this.groups) {
         if (child.exitCode === null && child.signalCode === null) continue;
         if (groupAlive(pid)) lingering = true;
-        else this.groups.delete(pid);
+        else this.unregister(pid);
       }
       if (lingering) return;
       clearInterval(this.sweeper);
       this.sweeper = undefined;
     }, GROUP_SWEEP_MS).unref();
+  }
+
+  private unregister(pid: number): void {
+    this.groups.delete(pid);
+    tellWatchdog(`-${pid}`);
   }
 
   spawn(cmd: string, args: readonly string[], opts: SpawnOptions = {}): SpawnHandle {
@@ -181,10 +245,11 @@ export class LocalProcessService implements ProcessService {
     if (child.pid !== undefined && opts.detached !== true) {
       const pid = child.pid;
       this.groups.set(pid, child);
+      tellWatchdog(`+${pid}`);
       // 直接子进程退了不等于组空：孙进程还在就留着，停机时一并收掉；组空了即撤登记（见 sweep）。pgid 被占用期间
       // 该 pid 不会被复用，负 pid 只会指向本插件建的这个组。
       child.on('exit', () => {
-        if (isWindows || !groupAlive(pid)) this.groups.delete(pid);
+        if (isWindows || !groupAlive(pid)) this.unregister(pid);
         else this.sweep();
       });
     }
