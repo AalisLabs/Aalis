@@ -18,7 +18,7 @@ export function needsFrames(bytes: Uint8Array): boolean {
 
 /**
  * 来源的字节：base64 data URL 解码，file:// 经 process 读，网址经 safeFetchBuffer 下载（20 MiB 上限，随 signal 停下），
- * 存储地址经 storage 读。别的形态与读不出的为 null：调用方按静图交给识别或规范化，取不到由它们报出
+ * 存储地址经 storage 读。别的形态与读不出的为 null：调用方按静图交给识别或规范化，取不到由它们报出；中止时抛中止原因
  */
 export async function readSourceBytes(data: string, signal?: AbortSignal): Promise<Uint8Array | null> {
   try {
@@ -29,6 +29,8 @@ export async function readSourceBytes(data: string, signal?: AbortSignal): Promi
     if (isStorageUri(data)) return (await getMediaRuntime().storage.readFile(data)) as Uint8Array;
     return null;
   } catch {
+    // 中止不是读不出：抛中止原因，调用方停下，不按读不出把来源原样交给识别
+    signal?.throwIfAborted();
     return null;
   }
 }

@@ -146,8 +146,8 @@ describe('analyze_image 可转后台', () => {
     expect(requests, '识图模型一次也没被调用').toHaveLength(0);
   });
 
-  it('网址来源：下载来源字节也随中止信号停下，不等满下载时限', async () => {
-    const { svc } = setup();
+  it('网址来源：下载来源字节也随中止信号停下，不等满下载时限，不退回整图识别', async () => {
+    const { requests, svc } = setup();
     const held: HttpRequest[] = [];
     const closed: string[] = [];
     // 上游一直不回：只记下请求与它何时被断开
@@ -165,6 +165,7 @@ describe('analyze_image 可转后台', () => {
       ac.abort();
       await vi.waitFor(() => expect(closed).toEqual(['/slow.png']), { timeout: 2000 });
       await rejected;
+      expect(requests, '识图模型一次也没被调用').toHaveLength(0);
     } finally {
       setNetworkPolicy({ blockPrivate: true });
       server.closeAllConnections();
