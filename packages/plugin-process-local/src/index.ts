@@ -23,7 +23,7 @@ const DEFAULT_MAX_BUFFER = 10 * 1024 * 1024;
 const CLOSE_GRACE_MS = 200;
 
 /**
- * 中止（SpawnOptions.signal）后从 SIGTERM 升级到整组 SIGKILL 的宽限（毫秒，仅 POSIX）。
+ * 中止（SpawnOptions.signal）与宿主停机时从 SIGTERM 升级到整组 SIGKILL 的宽限（毫秒，仅 POSIX）。
  * 加上 CLOSE_GRACE_MS 须明显短于 core 的停机宽限（默认 5000ms）：随 lifecycle.signal 中止的子进程
  * 即使忽略 SIGTERM，停用也能在宽限内落定。
  */
@@ -124,10 +124,23 @@ export class LocalProcessService implements ProcessService {
 
   constructor(private readonly storage: StorageService) {}
 
-  /** 宿主停机时把仍有成员的进程组整组杀掉，维持「Aalis 退出，工具子进程一起退出」。 */
-  killAll(): void {
-    for (const child of this.groups.values()) killTree(child);
+  /**
+   * 宿主停机时收掉仍有成员的进程组，维持「Aalis 退出，工具子进程一起退出」。与中止同一规矩：整组 SIGTERM，至多等
+   * ABORT_KILL_GRACE_MS 让它们自己收尾，还有成员的再整组 SIGKILL。Windows 没有优雅终止，立即结束整棵树。
+   */
+  async killAll(): Promise<void> {
+    const entries = [...this.groups];
     this.groups.clear();
+    if (isWindows) {
+      for (const [, child] of entries) killTree(child);
+      return;
+    }
+    for (const [, child] of entries) killGroup(child, 'SIGTERM');
+    const until = Date.now() + ABORT_KILL_GRACE_MS;
+    while (Date.now() < until && entries.some(([pid]) => groupAlive(pid))) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    for (const [pid, child] of entries) if (groupAlive(pid)) killTree(child);
   }
 
   spawn(cmd: string, args: readonly string[], opts: SpawnOptions = {}): SpawnHandle {
@@ -289,7 +302,7 @@ export default definePlugin({
   apply(caps) {
     const service = new LocalProcessService(caps.storage.use);
     caps.provide.use(processService, service);
-    // detached 让子进程脱离宿主进程组，终端 Ctrl+C 不再直达它们——停机时在此补杀。
+    // detached 让子进程脱离宿主进程组，终端 Ctrl+C 不再直达它们——停机时在此收掉，停机等到收完。
     // 挂 app:stopping 而非插件 dispose：本插件被 bounce 时，别的插件正在跑的子进程（ffmpeg 等）不该陪葬。
     caps.events.use.on('app:stopping', () => service.killAll());
     caps.logger.use.info('process-local 就绪');

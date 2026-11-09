@@ -3,14 +3,17 @@ import { describe, expect, it } from 'vitest';
 import { processService } from '../../packages/api-process/src/index.js';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
 import { App, services } from '../../packages/core/src/index.js';
-import processLocal, { LocalProcessService } from '../../packages/plugin-process-local/src/index.js';
+import processLocal, {
+  ABORT_KILL_GRACE_MS,
+  LocalProcessService,
+} from '../../packages/plugin-process-local/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 子进程生命周期：孙进程不再让 exec「安静地永不返回」。
 //   1) 孙进程扣着同一对 pipe → 'close' 永不来，wait() 靠 'exit' + 短宽限返回；
 //   2) 超时打的是整个进程组（detached 使子进程成为组长），孙进程同死；
-//   3) detached 后 Ctrl+C 不再直达子进程 → 停机（app:stopping）由 killAll 按进程组收尸；
-//      调用方显式 detached 的不登记。
+//   3) detached 后 Ctrl+C 不再直达子进程 → 停机（app:stopping）由 killAll 按进程组收尸：先整组 SIGTERM，
+//      宽限后还有成员的整组 SIGKILL；调用方显式 detached 的不登记。
 // 均为 POSIX 语义，非 POSIX 平台跳过。
 // ════════════════════════════════════════════════════════════
 
@@ -104,5 +107,27 @@ describe('process-local 子进程生命周期', () => {
     expect(alive(marker)).toBe(true);
     await app.stop();
     expect(await waitGone(marker, 1000)).toBe(true);
+  });
+
+  it.skipIf(!posix)('停机先整组 SIGTERM 让子进程收尾，忽略的宽限后整组 SIGKILL，停机等到收完', async () => {
+    const marker = mark('graceful');
+    const app = new App({ name: 'T', logLevel: 'error' });
+    await app.plugin(processLocal);
+    await app.plugins.idle();
+    const service = app.bind({ services }).services.use.get(processService);
+    if (!service) throw new Error('process 服务未注册');
+    const politeRun = service.spawn('bash', ['-c', "trap 'echo bye; exit 0' TERM; echo ready; sleep 30 & wait"], {});
+    const stubbornRun = service.spawn('bash', ['-c', `trap '' TERM; echo ready; exec -a ${marker} sleep 30`], {});
+    const polite = politeRun.wait();
+    const stubborn = stubbornRun.wait();
+    // 装好 trap 才打出 ready，等到它再停机：只按时间等的话，负载下 trap 还没装好 SIGTERM 就到了
+    await Promise.all([politeRun, stubbornRun].map(run => new Promise(ready => run.stdout?.once('data', ready))));
+    const started = Date.now();
+    await app.stop();
+    const elapsed = Date.now() - started;
+    expect((await polite).stdout).toBe('ready\nbye\n');
+    expect((await stubborn).signal).toBe('SIGKILL');
+    expect(elapsed).toBeGreaterThanOrEqual(ABORT_KILL_GRACE_MS);
+    expect(await waitGone(marker, 500)).toBe(true);
   });
 });
