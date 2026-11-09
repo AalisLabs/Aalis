@@ -335,6 +335,9 @@ function runBrowserTools(caps: Caps): void {
         // 单条 CDP 命令的时限（puppeteer 默认 180 秒）。正常操作里最长的单条命令是等选择器与导航，都受 defaultTimeout 约束；
         // 取它的两倍，让操作自己的超时先报，挂住的命令以此为上限。defaultTimeout 为 0（不设时限）时它也是 0，同样不设时限
         protocolTimeout: config.defaultTimeout * 2,
+        // 经管道连接：宿主不经停机退出（kill -9、内存耗尽、终端关闭）时 exit 钩子不跑，管道由系统关掉，浏览器随之退出；
+        // 经 WebSocket 连接时浏览器自成进程组，整组留下
+        pipe: true,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

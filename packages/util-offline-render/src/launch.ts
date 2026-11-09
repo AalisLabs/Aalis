@@ -54,6 +54,9 @@ export class Launcher {
       handleSIGINT: false,
       handleSIGTERM: false,
       handleSIGHUP: false,
+      // 经管道连接：宿主不经停机退出（kill -9、内存耗尽、终端关闭）时 exit 钩子不跑，管道由系统关掉，浏览器随之退出；
+      // 经 WebSocket 连接时浏览器自成进程组，整组留下
+      pipe: true,
     };
   }
 

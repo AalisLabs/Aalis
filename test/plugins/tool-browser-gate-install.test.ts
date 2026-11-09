@@ -14,6 +14,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 //   「请确保已安装 Chrome」的提示只跟在浏览器本身启动失败后面，闸的错误与 Chrome 装没装无关。
 // - 并发的首次调用共用同一次启动；启动途中插件被停用时，这一代浏览器由启动方自己关掉（不等关闭落定），调用报错。
 // - 浏览器崩溃后重启沿用同一道闸，不另起监听。
+// - 经管道连浏览器：宿主不经停机退出（kill -9、内存耗尽、终端关闭）时管道由系统关掉，浏览器随之退出，不整组留下。
 // - 只有起了闸（blockPrivate=true）时，browser_navigate 才给 ERR_SOCKS_CONNECTION_FAILED 附拦截说明。
 // - 浏览器先断开时，闸里还在解析或连接的上游随之销毁。
 // - 插件停用时，闸里已接通的连接随之断开，停用不等它们自己结束；闸的关闭不等浏览器关闭落定。
@@ -173,6 +174,18 @@ describe('网络闸起不来', () => {
           args: expect.arrayContaining([expect.stringMatching(/^--proxy-server=socks5:\/\/127\.0\.0\.1:\d+$/)]),
         }),
       ]);
+    } finally {
+      await app.stop();
+    }
+  });
+});
+
+describe('浏览器进程', () => {
+  it('经管道连接浏览器', async () => {
+    const { app, handlers } = await startBrowserTools();
+    try {
+      expect((await navigate(handlers)).error).toBeUndefined();
+      expect(fake.launch).toHaveBeenCalledWith(expect.objectContaining({ pipe: true }));
     } finally {
       await app.stop();
     }

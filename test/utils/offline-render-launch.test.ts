@@ -1,3 +1,5 @@
+import type { ChildProcess } from 'node:child_process';
+import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   OfflineRenderer,
@@ -11,6 +13,8 @@ import {
 //   再 process.exit(130)，截断宿主的优雅停机），浏览器由调用方的生命周期关。
 // - required：带沙箱起不来就抛 RenderUnavailableError，从不带 --no-sandbox 启动。
 // - preferred：带沙箱起不来时加 --no-sandbox 再起一次，同一实例只记一次 warn。
+// - 宿主这一侧的连接一断，浏览器随之退出：宿主不经停机退出（kill -9、内存耗尽、终端关闭的 SIGHUP）时 exit 钩子不跑，
+//   系统关掉宿主持有的全部句柄，浏览器不能整组留下。用例照此关掉与浏览器的连接和子进程的全部管道来模拟。
 // 「沙箱起不来」由外包的 launch 模拟：参数里没有 --no-sandbox 就抛错。
 // ════════════════════════════════════════════════════════════
 
@@ -18,6 +22,8 @@ const probe = vi.hoisted(() => ({
   /** 为真时，参数里没有 --no-sandbox 的启动一律失败 */
   failSandboxed: false,
   launches: [] as Array<{ args: string[]; options: Record<string, unknown> }>,
+  /** 每次启动的浏览器 */
+  browsers: [] as Array<{ process(): ChildProcess | null; disconnect(): Promise<void> }>,
 }));
 
 vi.mock(
@@ -32,10 +38,12 @@ vi.mock(
         throw new Error('Failed to launch the browser process! No usable sandbox!（模拟）');
       }
       // 测试保底：被测代码没给代理（变异时）就直连，不走本机的系统代理
-      return actual.launch({
+      const browser = await actual.launch({
         ...options,
         args: args.some(a => a.startsWith('--proxy-server=')) ? args : [...args, '--no-proxy-server'],
       });
+      probe.browsers.push(browser as (typeof probe.browsers)[number]);
+      return browser;
     };
     return { ...actual, default: { ...actual.default, launch }, launch };
   },
@@ -66,6 +74,11 @@ const renderers: OfflineRenderer[] = [];
 
 afterEach(async () => {
   for (const r of renderers.splice(0)) await r.dispose();
+  // 宿主一侧关掉后没退出的浏览器由这里收掉（主进程一退，辅助进程随之退出）
+  for (const b of probe.browsers.splice(0)) {
+    const chrome = b.process();
+    if (chrome && chrome.exitCode === null && chrome.signalCode === null) chrome.kill('SIGKILL');
+  }
   probe.failSandboxed = false;
   probe.launches.length = 0;
 });
@@ -81,6 +94,20 @@ describe('启动参数（真浏览器）', () => {
     expect(options.handleSIGINT).toBe(false);
     expect(options.handleSIGTERM).toBe(false);
     expect(options.handleSIGHUP).toBe(false);
+  }, 30_000);
+});
+
+describe('宿主不经停机退出（真浏览器）', () => {
+  it('宿主持有的连接与管道全部关掉，浏览器随之退出', async () => {
+    const { renderer } = makeRenderer('preferred');
+    await renderer.renderPng(req);
+    const chrome = probe.browsers[0].process();
+    if (!chrome) throw new Error('取不到浏览器进程');
+    const exited = once(chrome, 'exit').then(() => 'exited');
+    await probe.browsers[0].disconnect();
+    for (const stream of chrome.stdio) stream?.destroy();
+    const stillRunning = new Promise(r => setTimeout(r, 10_000)).then(() => 'still running');
+    expect(await Promise.race([exited, stillRunning])).toBe('exited');
   }, 30_000);
 });
 
