@@ -29,6 +29,9 @@ const CLOSE_GRACE_MS = 200;
  */
 export const ABORT_KILL_GRACE_MS = 2000;
 
+/** 直接子进程已退、组里还有成员的进程组，隔多久探一次组空没空（毫秒） */
+const GROUP_SWEEP_MS = 1000;
+
 const isWindows = process.platform === 'win32';
 
 /**
@@ -121,6 +124,8 @@ export class LocalProcessService implements ProcessService {
    * 在停机时统一收尸；`cmd &` 留下的孙进程在直接子进程退出后仍占着这个组，所以按组而非按子进程登记。
    */
   private readonly groups = new Map<number, ChildProcess>();
+  /** 直接子进程已退、组里还有成员时定时探（见 sweep），没有这样的组就停 */
+  private sweeper?: NodeJS.Timeout;
 
   constructor(private readonly storage: StorageService) {}
 
@@ -143,6 +148,24 @@ export class LocalProcessService implements ProcessService {
     for (const [pid, child] of entries) if (groupAlive(pid)) killTree(child);
   }
 
+  /**
+   * 直接子进程已退的组，定时探组空没空，空了就撤登记：组号要等组空才会被复用，空出来之后可能落到别的进程组上，
+   * 留在登记表里停机就会对它发信号
+   */
+  private sweep(): void {
+    this.sweeper ??= setInterval(() => {
+      let lingering = false;
+      for (const [pid, child] of this.groups) {
+        if (child.exitCode === null && child.signalCode === null) continue;
+        if (groupAlive(pid)) lingering = true;
+        else this.groups.delete(pid);
+      }
+      if (lingering) return;
+      clearInterval(this.sweeper);
+      this.sweeper = undefined;
+    }, GROUP_SWEEP_MS).unref();
+  }
+
   spawn(cmd: string, args: readonly string[], opts: SpawnOptions = {}): SpawnHandle {
     opts.signal?.throwIfAborted(); // 已中止：不创建子进程，同步抛出 signal.reason
     const stdioMode = opts.stdio ?? 'pipe';
@@ -158,10 +181,11 @@ export class LocalProcessService implements ProcessService {
     if (child.pid !== undefined && opts.detached !== true) {
       const pid = child.pid;
       this.groups.set(pid, child);
-      // 直接子进程退了不等于组空：孙进程还在就留到停机收尸。pgid 被占用期间该 pid 不会被复用，
-      // 负 pid 只会指向我们自己建的这个组。
+      // 直接子进程退了不等于组空：孙进程还在就留着，停机时一并收掉；组空了即撤登记（见 sweep）。pgid 被占用期间
+      // 该 pid 不会被复用，负 pid 只会指向本插件建的这个组。
       child.on('exit', () => {
         if (isWindows || !groupAlive(pid)) this.groups.delete(pid);
+        else this.sweep();
       });
     }
     if (opts.input != null && stdioMode === 'pipe') {

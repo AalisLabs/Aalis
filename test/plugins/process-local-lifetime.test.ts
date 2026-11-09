@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { processService } from '../../packages/api-process/src/index.js';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
 import { App, services } from '../../packages/core/src/index.js';
@@ -13,7 +13,8 @@ import processLocal, {
 //   1) 孙进程扣着同一对 pipe → 'close' 永不来，wait() 靠 'exit' + 短宽限返回；
 //   2) 超时打的是整个进程组（detached 使子进程成为组长），孙进程同死；
 //   3) detached 后 Ctrl+C 不再直达子进程 → 停机（app:stopping）由 killAll 按进程组收尸：先整组 SIGTERM，
-//      宽限后还有成员的整组 SIGKILL；调用方显式 detached 的不登记。
+//      宽限后还有成员的整组 SIGKILL；调用方显式 detached 的不登记；
+//   4) 直接子进程退出后组里的进程也都退了，即撤这个组的登记，停机不再对空出来、可能被复用的组号发信号。
 // 均为 POSIX 语义，非 POSIX 平台跳过。
 // ════════════════════════════════════════════════════════════
 
@@ -78,6 +79,28 @@ describe('process-local 子进程生命周期', () => {
     expect(alive(marker)).toBe(true); // 防空跑：孙进程确实还活着
     svc.killAll();
     expect(await waitGone(marker, 1000)).toBe(true);
+  });
+
+  it.skipIf(!posix)('孙进程后来也退了：组空即撤登记，停机不再对这个组号发信号（它可能已被别的进程复用）', async () => {
+    // 只假探测用的 setInterval：组空之后手动走一轮探测，不等真实的间隔
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const kill = vi.spyOn(process, 'kill');
+    try {
+      const svc = new LocalProcessService({} as unknown as StorageService);
+      // 孙进程要活过 wait() 在直接子进程退出后的关闭宽限（CLOSE_GRACE_MS），留足负载下的余量
+      const handle = svc.spawn('sh', ['-c', 'sleep 2 & echo hi'], {});
+      await handle.wait();
+      const group = -handle.pid!;
+      expect(() => process.kill(group, 0), '防空跑：直接子进程退出时组里还有 sleep').not.toThrow();
+      await vi.waitFor(() => expect(() => process.kill(group, 0)).toThrow(), { timeout: 5000 });
+      vi.runOnlyPendingTimers();
+      kill.mockClear();
+      await svc.killAll();
+      expect(kill.mock.calls.filter(([target]) => target === group)).toEqual([]);
+    } finally {
+      kill.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it.skipIf(!posix)('调用方显式 detached 的进程不登记：killAll 不动它', async () => {

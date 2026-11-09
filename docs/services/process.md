@@ -204,7 +204,7 @@ process 本身**没有内核级鉴权门**——风险控制落在**调用它的
 
 本地实现在 POSIX 下**对所有子进程都设 `detached`**，目的是让子进程自成进程组组长，超时、中止与 `kill()` 才能打到孙进程。
 
-`App.stop()` 先冻结激活，再发 `app:stopping`（知会，不驱动 drain/close），再执行关停计划。本地实现把补杀挂在 `events.use.on('app:stopping', () => service.killAll())` 上——**不是** `lifecycle.use.onDispose`：bounce 本插件时，别的插件正在跑的子进程（ffmpeg 等）不该陪葬。未显式 `detached: true` 的进程组在登记表里，停机知会时对仍有成员的组先整组 `SIGTERM`，宽限（`ABORT_KILL_GRACE_MS`）后还有成员的补 `SIGKILL`，停机等到收完，维持「Aalis 退出，工具子进程一起退出」；显式 `detached: true` 的 fire-and-forget 不登记。停机开始后新发起的管理动作一律返回 false。单独卸载本提供者时，正在用它的 required 下游先收尾再关；子进程仍只挂在被拆掉的那份实例上。
+`App.stop()` 先冻结激活，再发 `app:stopping`（知会，不驱动 drain/close），再执行关停计划。本地实现把补杀挂在 `events.use.on('app:stopping', () => service.killAll())` 上——**不是** `lifecycle.use.onDispose`：bounce 本插件时，别的插件正在跑的子进程（ffmpeg 等）不该陪葬。未显式 `detached: true` 的进程组在登记表里，停机知会时对仍有成员的组先整组 `SIGTERM`，宽限（`ABORT_KILL_GRACE_MS`）后还有成员的补 `SIGKILL`，停机等到收完，维持「Aalis 退出，工具子进程一起退出」；显式 `detached: true` 的 fire-and-forget 不登记。停机开始后新发起的管理动作一律返回 false。单独卸载本提供者时，正在用它的 required 下游先收尾再关；子进程仍只挂在被拆掉的那份实例上。直接子进程退出后组里的进程也都退了的，随即撤销登记：空出来的组号可能被别的进程复用，停机不再对它发信号。
 
 ---
 
