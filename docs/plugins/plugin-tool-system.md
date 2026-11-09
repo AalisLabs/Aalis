@@ -183,4 +183,4 @@ storage URI 规范化（`toStorageUri` / `resolveAgainstCwd` / `parseStorageUri`
 
 ## 指令
 
-- `/tools` — 列出本插件真正注册了的工具组（shell / file / system / http 里的；开关开着、却因缺 storage 或 process 跳过注册的不列）
+- `/tools` — 列出本插件开着的工具组（shell / file / system / http 里开关开着的）。storage、process 是可选依赖，开着的组不论它们在不在都登记，调用时打到那一刻选中的提供者：晚于本插件上线、中途换一家都接得上，换代不打断在跑的命令；调用那一刻它们不在，用到它们的工具报服务不可用

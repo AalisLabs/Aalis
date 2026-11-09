@@ -12,7 +12,7 @@ import { memoryStorage } from '../fixtures/memory-storage.js';
 import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // ════════════════════════════════════════════════════════════
-// /tools 列真正注册了的工具组：开关开着、却因缺服务跳过注册的组（shell 缺 process）不列，回复不带表情与勾。
+// /tools 列开着的工具组：缺 storage、process 的照列（调用时才报服务不可用），回复不带表情与勾。
 // ════════════════════════════════════════════════════════════
 
 const apps: App[] = [];
@@ -21,7 +21,7 @@ afterEach(async () => {
 });
 
 describe('/tools', () => {
-  it('shell 开着但没有 process 服务：回复里没有 shell，只列注册了的组', async () => {
+  it('shell 开着但没有 process 服务：照列 shell', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
@@ -39,6 +39,6 @@ describe('/tools', () => {
       session: { sessionId: 's', platform: 'webui', userId: 'u1', sessionType: 'private', raw: '/tools' },
       options: {},
     });
-    expect(String(toSource(out))).toBe(['机器交互工具：', '  file', '  system', '  http'].join('\n'));
+    expect(String(toSource(out))).toBe(['机器交互工具：', '  shell', '  file', '  system', '  http'].join('\n'));
   });
 });

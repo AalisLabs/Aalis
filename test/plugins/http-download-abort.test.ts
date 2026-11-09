@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { registerHttpTools } from '../../packages/plugin-tool-system/src/tools/http.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { fixedRef } from '../fixtures/service-ref.js';
 import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
@@ -45,7 +46,7 @@ function register() {
         registered[t.definition.function.name] = t;
       },
     }),
-    { defaultTimeout: 30_000, maxResponseSize: 1_048_576, storage: { writeFile } as never },
+    { defaultTimeout: 30_000, maxResponseSize: 1_048_576, storage: fixedRef({ writeFile } as never) },
   );
   return { download: registered.http_download, writeFile };
 }

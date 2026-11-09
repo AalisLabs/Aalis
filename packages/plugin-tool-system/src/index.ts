@@ -121,45 +121,38 @@ function registerSystemToolset(caps: Caps): void {
     description: 'Shell 命令执行、文件操作、系统信息查询、HTTP 请求等系统级工具',
   });
 
-  // 业务句柄每次调用打到当时选中的那一家，四个工具组共用一份即可
-  const storage = caps.storage.present ? caps.storage.use : undefined;
+  // storage、process 是 optional：不参与激活先后，可能晚于本插件上线，也可能中途换一家或下线。四组开着就登记，不跟着它们
+  // 登记与撤下（撤工具会中止这条登记上在跑的调用）：业务句柄每次调用打到当时选中的那一家，不在时调用报服务不可用；
+  // system、http 两组缺 storage 时照常可用，调用时现查
 
-  // 注册各工具组；/tools 列这里真正注册了的组（开关开着、缺服务而跳过的不算）
+  // 注册各工具组；/tools 列开着的组
   const registered: string[] = [];
   if (cfg.shell.enabled) {
-    if (storage && caps.process.present) {
-      registerShellTools(systemTools, {
-        logger: logger.use,
-        cwdUri,
-        storage,
-        proc: caps.process.use,
-        maxOutputSize: cfg.shell.maxOutputSize,
-      });
-      registered.push('shell');
-      logger.use.info('Shell 工具已启用');
-    } else {
-      logger.use.warn('Shell 工具需要 storage 与 process 服务，已跳过注册');
-    }
+    registerShellTools(systemTools, {
+      logger: logger.use,
+      cwdUri,
+      storage: caps.storage.use,
+      proc: caps.process.use,
+      maxOutputSize: cfg.shell.maxOutputSize,
+    });
+    registered.push('shell');
+    logger.use.info('Shell 工具已启用');
   }
 
   if (cfg.file.enabled) {
-    if (storage) {
-      registerFileTools(systemTools, { ...cfg.file, storage, cwdState });
-      registered.push('file');
-      logger.use.info('文件工具已启用');
-    } else {
-      logger.use.warn('文件工具需要 storage 服务，已跳过注册');
-    }
+    registerFileTools(systemTools, { ...cfg.file, storage: caps.storage.use, cwdState });
+    registered.push('file');
+    logger.use.info('文件工具已启用');
   }
 
   if (cfg.system.enabled) {
-    registerSystemTools(systemTools, { cwdState, storage });
+    registerSystemTools(systemTools, { cwdState, storage: caps.storage });
     registered.push('system');
     logger.use.info('系统工具已启用');
   }
 
   if (cfg.http.enabled) {
-    registerHttpTools(systemTools, { ...cfg.http, storage });
+    registerHttpTools(systemTools, { ...cfg.http, storage: caps.storage });
     registered.push('http');
     logger.use.info('HTTP 工具已启用');
   }

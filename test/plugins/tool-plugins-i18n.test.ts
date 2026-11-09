@@ -67,7 +67,7 @@ async function room(language: string) {
 
 const CASES = {
   en: {
-    tools: 'Machine interaction tools:\n  system\n  http',
+    tools: 'Machine interaction tools:\n  shell\n  file\n  system\n  http',
     clear: [
       "Cleared the to-do list of this session\nCleared this session's message history",
       'Cleared the to-do lists of all sessions (1 session)\nCleared all message history and archives',
@@ -76,7 +76,7 @@ const CASES = {
     browser: ['Page zz-page does not exist', 'Closed all pages'],
   },
   'zh-CN': {
-    tools: '机器交互工具：\n  system\n  http',
+    tools: '机器交互工具：\n  shell\n  file\n  system\n  http',
     clear: [
       '当前会话待办已清空\n当前会话消息历史已清空',
       '所有会话待办已清空（1 个会话）\n所有消息历史和归档已清空',

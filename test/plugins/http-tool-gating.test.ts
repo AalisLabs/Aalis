@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { registerHttpTools } from '../../packages/plugin-tool-system/src/tools/http.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // http_download 写工具必须挂闸（restricted + confirm），
@@ -15,7 +16,7 @@ function captureRegistered(): Record<string, Omit<RegisteredTool, 'pluginName'>>
       tools[t.definition.function.name] = t;
     },
   });
-  registerHttpTools(svc, { defaultTimeout: 30000, maxResponseSize: 1048576 });
+  registerHttpTools(svc, { defaultTimeout: 30000, maxResponseSize: 1048576, storage: ref() });
   return tools;
 }
 

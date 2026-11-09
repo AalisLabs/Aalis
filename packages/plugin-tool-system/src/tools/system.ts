@@ -17,13 +17,14 @@ import * as process from 'node:process';
 import type { StorageService } from '@aalis/api-storage';
 import { parseStorageUri, resolveAgainstCwd } from '@aalis/api-storage';
 import type { BoundTools } from '@aalis/api-tools';
+import type { ServiceSelection } from '@aalis/core';
 import { toSource } from '@aalis/schema-i18n';
 import type { CwdState } from './cwd-state.js';
 
 interface SystemConfig {
   cwdState: CwdState;
-  /** 用于 cwd 工具回显可用根清单与 cd 工具校验目标根存在性 */
-  storage?: StorageService;
+  /** storage 的选择层，调用时现查：cwd 工具回显可用根清单、cd 工具校验目标根存在性；不在时不列、不校验 */
+  storage: Pick<ServiceSelection<StorageService>, 'present' | 'use'>;
 }
 
 export function registerSystemTools(tools: BoundTools, config: SystemConfig): void {
@@ -207,16 +208,17 @@ export function registerSystemTools(tools: BoundTools, config: SystemConfig): vo
     },
     handler: async (_args, callCtx) => {
       const cwd = config.cwdState.get(callCtx.sessionId);
-      const roots =
-        config.storage?.listRoots().map(r => ({
-          name: r.name,
-          uri: `${r.name}:/`,
-          label: toSource(r.label),
-          kind: r.kind,
-          readable: r.readable,
-          writable: r.writable,
-          deletable: r.deletable,
-        })) ?? [];
+      const roots = config.storage.present
+        ? config.storage.use.listRoots().map(r => ({
+            name: r.name,
+            uri: `${r.name}:/`,
+            label: toSource(r.label),
+            kind: r.kind,
+            readable: r.readable,
+            writable: r.writable,
+            deletable: r.deletable,
+          }))
+        : [];
       return JSON.stringify({
         cwd,
         initialCwd: config.cwdState.getInitial(),
@@ -261,7 +263,7 @@ export function registerSystemTools(tools: BoundTools, config: SystemConfig): vo
         const nextRoot = parseStorageUri(next).root;
 
         // 校验目标根存在 + 可读（写/删权限是 file_write/file_delete 的事）
-        const roots = config.storage?.listRoots() ?? [];
+        const roots = config.storage.present ? config.storage.use.listRoots() : [];
         if (roots.length > 0) {
           const root = roots.find(r => r.name === nextRoot);
           if (!root) {

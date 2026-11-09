@@ -9,13 +9,15 @@
 import type { StorageService } from '@aalis/api-storage';
 import { parseUriRoot, resolveAgainstCwd } from '@aalis/api-storage';
 import { type BoundTools, wrapUntrustedContent } from '@aalis/api-tools';
+import type { ServiceSelection } from '@aalis/core';
 import { decodeUtf8Text } from '@aalis/util-file-signature';
 import { safeFetch } from '@aalis/util-network-guard';
 
 interface HttpConfig {
   defaultTimeout: number;
   maxResponseSize: number;
-  storage?: StorageService;
+  /** storage 的选择层，调用时现查：http_download 写到当时选中的那一家，不在时回错 */
+  storage: Pick<ServiceSelection<StorageService>, 'present' | 'use'>;
 }
 
 /** 流式读取响应体，累计超过 maxBytes 立即中止并抛错——防无 Content-Length 时全量缓冲撑爆内存。 */
@@ -225,9 +227,10 @@ export function registerHttpTools(tools: BoundTools, config: HttpConfig): void {
       const url = args.url as string;
       const savePath = args.savePath as string;
 
-      if (!config.storage) {
+      if (!config.storage.present) {
         return JSON.stringify({ error: 'HTTP 下载需要 storage 服务' });
       }
+      const storage = config.storage.use;
 
       try {
         const response = await safeFetch(url, { signal: callCtx.signal });
@@ -259,7 +262,7 @@ export function registerHttpTools(tools: BoundTools, config: HttpConfig): void {
         if (root !== 'workspace' && root !== 'tmp') {
           throw new Error(`http_download 仅允许写入 workspace:/ 或 tmp:/，不允许 ${root}:/（系统根受保护）`);
         }
-        await config.storage.writeFile(storageUri, buffer);
+        await storage.writeFile(storageUri, buffer);
 
         return JSON.stringify({
           path: storageUri,

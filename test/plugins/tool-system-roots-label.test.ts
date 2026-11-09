@@ -5,6 +5,7 @@ import type { CwdState } from '../../packages/plugin-tool-system/src/tools/cwd-s
 import { registerSystemTools } from '../../packages/plugin-tool-system/src/tools/system.js';
 import { defineTexts } from '../../packages/schema-i18n/src/index.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { fixedRef } from '../fixtures/service-ref.js';
 import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
@@ -37,7 +38,7 @@ describe('cwd 工具的存储根清单', () => {
     const cwdState = { get: () => 'workspace:/', getInitial: () => 'workspace:/' };
     registerSystemTools(
       stubBoundTools({ onRegister: tool => handlers.set(tool.definition.function.name, tool.handler) }),
-      { cwdState: cwdState as unknown as CwdState, storage: storage as StorageService },
+      { cwdState: cwdState as unknown as CwdState, storage: fixedRef(storage as StorageService) },
     );
     const cwd = handlers.get('cwd');
     if (!cwd) throw new Error('cwd 工具未登记');

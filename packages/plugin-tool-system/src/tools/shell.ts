@@ -16,7 +16,7 @@ interface ShellConfig {
   logger: Logger;
   cwdUri: string;
   proc: ProcessService;
-  storage?: StorageService;
+  storage: StorageService;
   maxOutputSize: number;
 }
 
@@ -38,7 +38,7 @@ function writeOutput(child: SpawnHandle, output: (text: string) => void): void {
 }
 
 async function resolveCwd(config: ShellConfig, cwdArg: unknown): Promise<{ uri: string; localPath: string }> {
-  if (!config.storage?.resolveLocalPath) {
+  if (!config.storage.resolveLocalPath) {
     throw new Error('Shell 工具需要支持 local-path 能力的 storage 服务');
   }
   const uri = resolveAgainstCwd(typeof cwdArg === 'string' ? cwdArg : undefined, config.cwdUri);

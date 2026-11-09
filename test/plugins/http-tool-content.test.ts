@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { registerHttpTools } from '../../packages/plugin-tool-system/src/tools/http.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { fixedRef } from '../fixtures/service-ref.js';
 import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
@@ -33,7 +34,7 @@ describe('http_request：正文按内容判、请求正文的两个参数', () =
         handlers[t.definition.function.name] = t.handler;
       },
     }),
-    { defaultTimeout: 30000, maxResponseSize: MAX, storage: { writeFile: async () => undefined } as never },
+    { defaultTimeout: 30000, maxResponseSize: MAX, storage: fixedRef({ writeFile: async () => undefined } as never) },
   );
   const call = async (name: string, args: Record<string, unknown>) =>
     JSON.parse((await handlers[name](args, toolContext({ sessionId: 's' }))) as string);

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { registerHttpTools } from '../../packages/plugin-tool-system/src/tools/http.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
+import { fixedRef } from '../fixtures/service-ref.js';
 import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
@@ -41,7 +42,7 @@ describe('http 工具：响应体流式限额', () => {
         handlers[t.definition.function.name] = t.handler;
       },
     }),
-    { defaultTimeout: 30000, maxResponseSize: MAX, storage: { writeFile } as never },
+    { defaultTimeout: 30000, maxResponseSize: MAX, storage: fixedRef({ writeFile } as never) },
   );
 
   beforeEach(() => {
