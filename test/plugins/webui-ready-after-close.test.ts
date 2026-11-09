@@ -34,7 +34,7 @@ describe('webui-server：等静置期间被关掉的实例醒来不再登记与�
   async function start() {
     const home = mkdtempSync(join(tmpdir(), 'aalis-webui-ready-'));
     cleanups.push(() => rmSync(home, { recursive: true, force: true }));
-    // 一份扫得到的前端：醒来的旧实例若照常登记，会撞上「已 dispose，忽略 provide」
+    // 一份扫得到的前端：醒来的旧实例若照常登记，会撞上「已关闭，忽略 provide」
     const client = join(home, 'packages', 'fake-client');
     mkdirSync(join(client, 'dist'), { recursive: true });
     writeFileSync(join(client, 'package.json'), JSON.stringify({ name: 'fake-client', aalis: { client: true } }));
@@ -79,7 +79,7 @@ describe('webui-server：等静置期间被关掉的实例醒来不再登记与�
     await app.plugins.idle();
     await waitListening(port);
     await sleep(50);
-    expect(logs.filter(m => m.includes('EADDRINUSE') || m.includes('已 dispose'))).toEqual([]);
+    expect(logs.filter(m => m.includes('EADDRINUSE') || m.includes('已关闭，忽略'))).toEqual([]);
 
     await app.plugins.disable(id);
     await app.plugins.idle();
@@ -93,6 +93,6 @@ describe('webui-server：等静置期间被关掉的实例醒来不再登记与�
     await app.plugins.idle();
     await sleep(50);
     expect(await answers(port)).toBe(false);
-    expect(logs.filter(m => m.includes('已 dispose'))).toEqual([]);
+    expect(logs.filter(m => m.includes('已关闭，忽略'))).toEqual([]);
   });
 });

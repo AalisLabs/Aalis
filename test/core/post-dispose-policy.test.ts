@@ -7,8 +7,8 @@ import { HubRegistry, hub } from '../helpers/hub.js';
 // post-dispose 注册政策：实际能力与窄激活记录的行为契约。
 // - 订阅类（events/provide/选择层 follow/资源口 registrar 归属表）：warn + no-op
 // - 构造类（host.create）：抛错
-// - onDispose 特例：warn 后仍就地执行（握着资源，no-op 即泄漏）
-// 本文件是该政策的全量行为锚：6 个入口逐一钉死，含幽灵副作用断言与活路径回归。
+// - 清理类（onDispose、onDrain、track）：warn 后仍就地执行（握着资源，no-op 即泄漏）
+// 本文件是该政策的全量行为锚：8 个入口逐一钉死，含幽灵副作用断言与活路径回归。
 // 归属表以测试枢纽 hub 为样本（hooks / contributions / tools 等契约包枢纽同一做法）。
 // ════════════════════════════════════════════════════════════
 
@@ -131,22 +131,10 @@ describe('构造类 post-dispose：抛错', () => {
   it('create：抛错且不残留孤儿子激活（此前会塞进 _children 永不排空）', async () => {
     const ctx = createActivationFixture();
     await ctx.activation.disposeAsync();
-    expect(() => bindActivationFixture(ctx.host, ctx.host.create('orphan'))).toThrowError(/无法创建插件激活 "orphan"/);
+    expect(() => bindActivationFixture(ctx.host, ctx.host.create('orphan'))).toThrowError(
+      /^激活 "[^"]+" 已关闭，无法创建插件激活 "orphan"/,
+    );
     expect(ctx.activation.children.size).toBe(0);
-  });
-});
-
-describe('onDispose 特例：warn 后仍就地执行（资源必须释放）', () => {
-  it('迟到的清理函数立即执行且 warn 点名', async () => {
-    const { make, lines } = makeWorld();
-    const ctx = make('p');
-    await ctx.activation.disposeAsync();
-    let released = false;
-    ctx.caps.lifecycle.use.onDispose(() => {
-      released = true;
-    }, 'late-client');
-    expect(released).toBe(true);
-    expect(lines.find(l => l.includes('onDispose("late-client") 将就地执行'))).toMatch(/^warn\|/);
   });
 });
 
@@ -191,7 +179,7 @@ describe('活路径回归：守卫对未 dispose 的 ctx 零影响', () => {
 });
 
 describe('拆卸进行中（activation 在飞窗口）：迟到的 onDispose', () => {
-  it('窗口内迟到的 onDispose 进链被等待，不报「将就地执行」', async () => {
+  it('窗口内迟到的 onDispose 进链被等待，不报「就地执行」', async () => {
     const { make, lines } = makeWorld();
     const ctx = make('p');
     let release!: () => void;
@@ -213,6 +201,51 @@ describe('拆卸进行中（activation 在飞窗口）：迟到的 onDispose', (
 
     // 设计内正确路径：被本次清理等到，且日志不得宣称相反事实
     expect(released).toBe(true);
-    expect(lines.find(l => l.includes('将就地执行'))).toBeUndefined();
+    expect(lines.find(l => l.includes('就地执行'))).toBeUndefined();
+  });
+});
+
+describe('清理类迟到登记一律告警并就地执行', () => {
+  it('onDispose、onDrain 与 track：链已取走后登记的就地执行，并各记一条告警点名', async () => {
+    const { make, lines } = makeWorld();
+    const holder = defineService<{ v: number }, { hold(off: () => void, label: string): () => void }>(
+      '__t:pd-holder',
+      port => ({ hold: (off, label) => port.track(off, label) }),
+    );
+    const owner = make('owner');
+    owner.caps.provide.use(holder, { v: 1 });
+    const ctx = make('p');
+    const bound = ctx.host.bind(ctx.activation, { holder }).holder;
+    await ctx.activation.disposeAsync();
+    const ran: string[] = [];
+    ctx.caps.lifecycle.use.onDispose(() => void ran.push('dispose'), 'late-dispose');
+    ctx.caps.lifecycle.use.onDrain(() => void ran.push('drain'), 'late-drain');
+    bound.use.hold(() => void ran.push('track'), 'late-track');
+    ctx.caps.lifecycle.use.onDispose(() => {
+      throw new Error('late boom');
+    }, 'late-boom');
+    expect(ran).toEqual(['dispose', 'drain', 'track']);
+    for (const label of ['late-dispose', 'late-drain', 'late-track']) {
+      expect(
+        lines.filter(l => l.includes(label)),
+        label,
+      ).toEqual([expect.stringMatching(new RegExp(`^warn\\|.*\\[${label}\\].*就地执行`))]);
+    }
+    expect(lines.find(l => l.includes('迟到登记的清理 [late-boom] 执行失败'))).toMatch(/^warn\|/);
+    await owner.activation.disposeAsync();
+  });
+
+  it('关闭后拒收的告警同一措辞：激活 "<id>" 已关闭，忽略 …', async () => {
+    const { make, lines } = makeWorld();
+    const dead = make('dead');
+    const { ref } = dead.host.bind(dead.activation, { ref: defineService('__t:pd-late-follow') });
+    await dead.activation.disposeAsync();
+    dead.caps.events.use.on('plugin:loaded', () => {});
+    dead.caps.provide.use(defineService('__t:pd-late-svc'), { v: 1 });
+    dead.hub.use.add('late', 'v');
+    ref.follow(() => {});
+    const refusals = lines.filter(l => l.includes('忽略'));
+    expect(refusals).toHaveLength(4);
+    for (const line of refusals) expect(line).toMatch(/^warn\|激活 "dead" 已关闭，忽略/);
   });
 });

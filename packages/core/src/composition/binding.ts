@@ -283,7 +283,7 @@ function createTarget<P, B>(
 
   const follow = (attach: Follower['attach'], overlap: boolean): (() => void) => {
     if (scope.resources.disposed) {
-      scope.logger.warn(`"${scope.id}" 已关闭，忽略对 ${name} 的跟随`);
+      scope.logger.warn(`激活 "${scope.id}" 已关闭，忽略对 ${name} 的跟随`);
       return () => {};
     }
     const follower: Follower = { attach, overlap, busy: false, attaching: false, cancelled: false };
@@ -378,7 +378,7 @@ function createTarget<P, B>(
         add(item: Item) {
           const key = options.key(item);
           if (scope.resources.disposed) {
-            scope.logger.warn(`"${scope.id}" 已关闭，忽略 ${name} 登记 "${key}"`);
+            scope.logger.warn(`激活 "${scope.id}" 已关闭，忽略 ${name} 登记 "${key}"`);
             return () => {};
           }
           const previous = entries.get(key);

@@ -499,7 +499,7 @@ describe('lifecycle.signal 的时机', () => {
     });
     const stopping = w.app.stop();
     expect(accepted, 'first 的 abort 监听器执行时 second 已冻结，登记被拒').toBe(false);
-    expect(w.at('warn')).toContain('激活 "second" 已 dispose，忽略 provide("zz-signal-late")');
+    expect(w.at('warn')).toContain('激活 "second" 已关闭，忽略 provide("zz-signal-late")');
     await within(stopping, 2000, 'stop');
   });
 });

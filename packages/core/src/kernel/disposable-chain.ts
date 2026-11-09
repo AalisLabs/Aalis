@@ -63,7 +63,8 @@ export class DisposableChain {
   }
 
   /**
-   * 追加一个清理函数。链已取走后追加会立刻执行；抛错与拒绝记 warn，异步返回值交给宿主（见 {@link Hold}）。
+   * 追加一个清理函数。链已取走后追加会立刻执行并记一条 warn（迟到的登记多半是登记方的时序问题，但握着资源，不能忽略）；
+   * 抛错与拒绝记 warn，异步返回值交给宿主（见 {@link Hold}）。
    * 登记方拿不到这个返回值：拒绝必须在这里接住，否则逃逸成宿主进程的 unhandledRejection。
    */
   push(fn: () => unknown, label?: string): void {
@@ -72,6 +73,7 @@ export class DisposableChain {
       return;
     }
     const who = describe(label);
+    this.#report(`DisposableChain: 已过了这一段，迟到登记的清理${who} 就地执行`);
     try {
       const ret = fn();
       if (isThenable(ret)) {
@@ -82,7 +84,7 @@ export class DisposableChain {
         this.#hold(work, `迟到登记的清理${who}`, false);
       }
     } catch (err) {
-      this.#report(`DisposableChain: post-dispose 执行失败${who}:`, err);
+      this.#report(`DisposableChain: 迟到登记的清理${who} 执行失败:`, err);
     }
   }
 

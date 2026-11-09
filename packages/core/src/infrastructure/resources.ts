@@ -218,9 +218,6 @@ export class Resources {
   }
 
   onDispose(fn: () => void | Promise<void>, label?: string): () => void {
-    if (this.disposables.disposed) {
-      this.#logger.warn(`Resources "${this.#id}" 已 dispose，onDispose${label ? `("${label}")` : ''} 将就地执行`);
-    }
     // 每次登记一个独立包装：同一个回调登记两次也能各自取消
     const entry = () => fn();
     this.disposables.push(entry, label);

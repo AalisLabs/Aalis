@@ -159,7 +159,7 @@ export function coreProviders(
     [descriptor, (identity: symbol) => view(caller(identity, descriptor.name))] as [AnyDescriptor, (i: symbol) => B];
   const accepts = (c: CoreCaller, operation: string): boolean => {
     if (!c.resources.disposed) return true;
-    c.logger.warn(`激活 "${c.id}" 已 dispose，忽略 ${operation}`);
+    c.logger.warn(`激活 "${c.id}" 已关闭，忽略 ${operation}`);
     return false;
   };
   const { events: bus, services: container } = runtime;

@@ -40,7 +40,7 @@ export class ActivationHost {
 
   /** 插件激活：一律挂在根激活名下 */
   create(id: string, config: Record<string, unknown> = {}): Activation {
-    if (this.root.resources.disposed) throw new Error(`激活 "${this.root.id}" 已 dispose，无法创建插件激活 "${id}"`);
+    if (this.root.resources.disposed) throw new Error(`激活 "${this.root.id}" 已关闭，无法创建插件激活 "${id}"`);
     const activation = this.#make(id, config, this.root.logger.child(id));
     this.root.children.add(activation);
     return activation;

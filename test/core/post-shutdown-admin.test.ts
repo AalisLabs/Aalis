@@ -344,7 +344,7 @@ describe('app:stopping 窗口', () => {
     expect(await stopWithin(app)).toBe('ok');
     expect(threw).toBe(false);
     expect(
-      warnings.some(x => x.includes('已 dispose') && x.includes('provide')),
+      warnings.some(x => x.includes('已关闭') && x.includes('provide')),
       warnings.join(' | '),
     ).toBe(true);
   });

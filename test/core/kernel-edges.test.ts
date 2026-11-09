@@ -79,7 +79,11 @@ describe('Resources 段收口等在飞撤回', () => {
     await life.disposeAsync(30);
 
     expect(order, '快的迟到项在超时前已落定').toEqual(['fast']);
-    expect(warnings).toEqual(['Resources "t": 等待 迟到登记的清理 [late-stuck] 超过 30ms，放弃等待']);
+    expect(warnings).toEqual([
+      'DisposableChain: 已过了这一段，迟到登记的清理 [late-fast] 就地执行',
+      'DisposableChain: 已过了这一段，迟到登记的清理 [late-stuck] 就地执行',
+      'Resources "t": 等待 迟到登记的清理 [late-stuck] 超过 30ms，放弃等待',
+    ]);
   });
 });
 
