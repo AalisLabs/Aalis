@@ -1,9 +1,9 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { processService } from '../../packages/api-process/src/index.js';
+import { type ExecResult, processService } from '../../packages/api-process/src/index.js';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
-import { App, services } from '../../packages/core/src/index.js';
+import { App, definePlugin, lifecycle, optional, services } from '../../packages/core/src/index.js';
 import processLocal, {
   ABORT_KILL_GRACE_MS,
   LocalProcessService,
@@ -13,8 +13,9 @@ import processLocal, {
 // 子进程生命周期：孙进程不再让 exec「安静地永不返回」。
 //   1) 孙进程扣着同一对 pipe → 'close' 永不来，wait() 靠 'exit' + 短宽限返回；
 //   2) 超时打的是整个进程组（detached 使子进程成为组长），孙进程同死；
-//   3) detached 后 Ctrl+C 不再直达子进程 → 停机（app:stopping）由 killAll 按进程组收尸：先整组 SIGTERM，
-//      宽限后还有成员的整组 SIGKILL；调用方显式 detached 的不登记；
+//   3) detached 后 Ctrl+C 不再直达子进程 → 停机时由 killAll 按进程组收尸：先整组 SIGTERM，宽限后还有成员的整组 SIGKILL；
+//      调用方显式 detached 的不登记。收在本插件自己的清理里：用 process 服务的插件先关完、先按自己的方式停下各自的子进程；
+//      本插件被 bounce 时不收，别的插件正在跑的子进程不陪葬；
 //   4) 直接子进程退出后组里的进程也都退了，即撤这个组的登记，停机不再对空出来、可能被复用的组号发信号；
 //   5) 宿主没走完停机就退出（kill -9 等）或 bounce 过本插件时，宿主进程退出后由看门进程照停机的规矩收掉仍登记的组。
 // 均为 POSIX 语义，非 POSIX 平台跳过。
@@ -38,6 +39,15 @@ const alive = (marker: string): boolean => {
 };
 
 const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms));
+
+const groupAlive = (group: number): boolean => {
+  try {
+    process.kill(-group, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 /** 轮询等待标记进程消失，最多 ms 毫秒 */
 const waitGone = async (marker: string, ms: number): Promise<boolean> => {
@@ -155,6 +165,61 @@ describe('process-local 子进程生命周期', () => {
     expect(elapsed).toBeGreaterThanOrEqual(ABORT_KILL_GRACE_MS);
     expect(await waitGone(marker, 500)).toBe(true);
   });
+
+  // 用 process 服务的插件（optional 也算，同 tool-system、trigger-laya）整个关完，本插件才收尾：它们先在自己的收尾里按自己的
+  // 方式停下子进程（这里是发退出命令、等它自己退出）。本插件先下手的话，执行器把停机时在跑的命令记成自己结束（退出码 -1，
+  // 后台任务落成 failed）而不是已中止，托管侧车的插件把侧车的退出当成意外退出
+  it.skipIf(!posix)(
+    '停机：用 process 服务的插件先在自己的收尾里按自己的方式停下子进程，本插件之后才收剩下的',
+    async () => {
+      const app = new App({ name: 'T', logLevel: 'error' });
+      let ended: Promise<ExecResult> | undefined;
+      const consumer = definePlugin({
+        name: 'zz-quit-consumer',
+        uses: { lifecycle, proc: optional(processService) },
+        apply({ lifecycle, proc }) {
+          const handle = proc.use.spawn('sh', ['-c', 'read line; exit 0']);
+          handle.stdin?.on('error', () => {});
+          const exited = handle.wait();
+          lifecycle.use.onDrain(async () => {
+            handle.stdin?.end('quit\n');
+            await exited;
+          });
+          ended = exited;
+        },
+      });
+      await app.plugin(processLocal);
+      await app.plugin(consumer);
+      await app.plugins.idle();
+      await app.stop();
+      expect(await ended).toMatchObject({ code: 0, signal: null });
+    },
+  );
+
+  it.skipIf(!posix)('本插件被 bounce：别的插件正在跑的子进程不随之结束', async () => {
+    const app = new App({ name: 'T', logLevel: 'error' });
+    let pid: number | undefined;
+    const consumer = definePlugin({
+      name: 'zz-spawn-consumer',
+      uses: { lifecycle, proc: optional(processService) },
+      apply({ lifecycle, proc }) {
+        pid = proc.use.spawn('sleep', ['30'], { stdio: 'ignore', signal: lifecycle.use.signal }).pid;
+      },
+    });
+    await app.plugin(processLocal);
+    await app.plugin(consumer);
+    await app.plugins.idle();
+    if (pid === undefined) throw new Error('子进程未能启动');
+    try {
+      await app.plugins.bounce(processLocal.name);
+      await app.plugins.idle();
+      // 收的话第一下就是 SIGTERM，sleep 立即退出
+      await sleep(300);
+      expect(groupAlive(pid)).toBe(true);
+    } finally {
+      await app.stop();
+    }
+  });
 });
 
 describe.skipIf(!posix)('process-local 宿主退出时收掉它启动的进程组', () => {
@@ -165,15 +230,6 @@ describe.skipIf(!posix)('process-local 宿主退出时收掉它启动的进程�
   afterEach(() => {
     for (const kill of leftovers.splice(0)) kill();
   });
-
-  const groupAlive = (group: number): boolean => {
-    try {
-      process.kill(-group, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  };
 
   /** 启动扮演宿主的进程，等它报出已启动进程组的组号 */
   async function startHost(mode: 'kill' | 'bounce') {

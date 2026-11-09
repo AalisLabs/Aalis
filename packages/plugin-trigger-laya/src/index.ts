@@ -315,14 +315,6 @@ function run(caps: Caps): void {
         return reconcile();
       };
     });
-    // 停机时 process-local 在 app:stopping 里强杀它拉起的全部子进程，早于本插件的清理：同步打上停止标记，
-    // 那一下就不会被当成意外退出（记 error、排重启），之后也不再拉起。子进程的退出回调要等下一轮事件循环，
-    // 只要两个监听器之间没有等 I/O 的监听器（目前其余的监听器都是同步的），就总在标记之后
-    caps.events.use.on('app:stopping', () => {
-      appReady = false;
-      void sidecar?.stop();
-      void reconcile();
-    });
   }
 
   /** 近期计入的带图消息（imagesPointerOnly）：图片是否都只有指针，最多 IMAGE_WINDOW 条，先进先出 */

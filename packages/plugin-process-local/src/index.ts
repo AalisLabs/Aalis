@@ -10,7 +10,7 @@ import type { ExecResult, ProcessService, SpawnHandle, SpawnOptions, TempDirHand
 import { makeTempDirViaStorage, processService } from '@aalis/api-process';
 import type { StorageService } from '@aalis/api-storage';
 import { storage } from '@aalis/api-storage';
-import { definePlugin, events, logger, optional, provide } from '@aalis/core';
+import { definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { t } from './texts.js';
 
 /** wait() 默认累计缓冲上限（stdout+stderr 合计）：10MB，足够正常输出，又防失控输出 OOM。 */
@@ -387,13 +387,21 @@ export default definePlugin({
   subsystem: 'system',
   provides: [processService],
   // storage 只被 makeTempDir 用到，缺席时其余方法照常可用：声明为可选，不拦激活。
-  uses: { provide, events, logger, storage: optional(storage) },
+  uses: { provide, events, lifecycle, logger, storage: optional(storage) },
   apply(caps) {
     const service = new LocalProcessService(caps.storage.use);
     caps.provide.use(processService, service);
-    // detached 让子进程脱离宿主进程组，终端 Ctrl+C 不再直达它们——停机时在此收掉，停机等到收完。
-    // 挂 app:stopping 而非插件 dispose：本插件被 bounce 时，别的插件正在跑的子进程（ffmpeg 等）不该陪葬。
-    caps.events.use.on('app:stopping', () => service.killAll());
+    // detached 让子进程脱离宿主进程组，终端 Ctrl+C 不再直达它们——停机时在本插件的清理里收掉，停机等到收完。
+    // 收在清理里：声明了 process 服务的插件（optional 也算）整个关完本插件才收尾（依赖成环时除外），它们先按自己的方式
+    // 停下各自的子进程（随中止信号停、发退出命令、等它写完），剩下的再收。只在停机时收：本插件被 bounce 时，别的插件正在跑的
+    // 子进程（ffmpeg 等）不该随之结束
+    let stopping = false;
+    caps.events.use.on('app:stopping', () => {
+      stopping = true;
+    });
+    caps.lifecycle.use.onDispose(async () => {
+      if (stopping) await service.killAll();
+    });
     caps.logger.use.info('process-local 就绪');
   },
 });

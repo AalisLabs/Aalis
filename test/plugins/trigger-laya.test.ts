@@ -17,7 +17,7 @@ import {
   sessionManager,
 } from '../../packages/api-session-manager/src/index.js';
 import { trigger } from '../../packages/api-trigger/src/index.js';
-import { App, events, type LogEntry, LogHub, provide, services } from '../../packages/core/src/index.js';
+import { App, type LogEntry, LogHub, provide, services } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import layaPlugin from '../../packages/plugin-trigger-laya/src/index.js';
@@ -227,8 +227,6 @@ interface SetupOptions {
   realArchive?: boolean;
   /** process 服务替身（托管侧车用） */
   process?: ProcessService;
-  /** 在 Laya 登记之前对宿主做的事（如先于它挂 app:stopping 监听器） */
-  beforeLaya?: (host: { events: { use: { on(event: 'app:stopping', fn: () => unknown): unknown } } }) => void;
 }
 
 async function setup(opts: SetupOptions = {}) {
@@ -238,7 +236,7 @@ async function setup(opts: SetupOptions = {}) {
   const app = new App({ name: 'T', logLevel: 'debug', logHub });
   booted.push(app);
   await registerHubs(app);
-  const host = app.bind({ provide, hooks, services, messageArchive, events });
+  const host = app.bind({ provide, hooks, services, messageArchive });
 
   // flow-control 替身：禁言表与 setMuted 调用（连同 platform：真实实现在会话还没有流控状态时，
   // 不带 platform 就什么都不做）
@@ -283,7 +281,6 @@ async function setup(opts: SetupOptions = {}) {
   if (opts.authority) host.provide.use(authority, opts.authority as never);
   if (opts.sessions) await app.plugins.register(sessionValuesPlugin(opts.sessions), {});
   if (opts.process) host.provide.use(processService, opts.process);
-  opts.beforeLaya?.(host);
   await app.plugins.register(layaPlugin, { endpoint: sidecar.url, ...opts.laya });
   await app.plugins.idle();
   // 激活闸：依赖缺席时插件停在 pending 而不报错，不核状态会让整组用例伪装成绿
@@ -1438,31 +1435,17 @@ describe('plugin-trigger-laya：托管侧车', () => {
     expect(byLevel(logs, 'error')).toEqual([]);
   });
 
-  it('停机：process 服务在 app:stopping 里先于本插件的清理强杀侧车，不当成意外退出（不记 error、不排重启）', async () => {
-    sidecar.health = DOWN;
-    const proc = fakeProcess();
-    const { app, host, logs } = await setup({
-      laya: { sidecarDir: DIR },
-      process: proc.service,
-      // 与 process-local 一样在 app:stopping 里强杀它拉起的子进程，监听器先于本插件登记
-      beforeLaya: h =>
-        h.events.use.on('app:stopping', () => {
-          for (const c of proc.children) c.kill('SIGKILL');
-        }),
-    });
-    // 本插件之后还有等 I/O 的停机工作：子进程的退出在这期间报告，早于本插件的清理
-    host.events.use.on('app:stopping', () => new Promise(r => setTimeout(r, 20)));
-    await app.start();
-    await vi.waitFor(() => expect(proc.children).toHaveLength(1));
+  it('正常停机：随本插件的拆卸先 SIGTERM 关掉侧车，记「已停掉」，不当成意外退出（不记 error、不排重启）', async () => {
+    const { app, logs, proc } = await managed();
     proc.children[0].ready();
     await vi.waitFor(() => expect(logged(logs, '[laya] 侧车就绪')).toBe(1));
 
     await app.stop();
-    expect(proc.children[0].signals[0]).toBe('SIGKILL');
+    expect(proc.children[0].signals).toEqual(['SIGTERM']);
+    expect(logged(logs, '[laya] 已停掉侧车')).toBe(1);
     expect(byLevel(logs, 'error')).toEqual([]);
     expect(logs.filter(e => e.message.includes('后重启'))).toEqual([]);
     expect(proc.children).toHaveLength(1);
-    expect(logged(logs, '[laya] 已停掉侧车')).toBe(1);
   });
 
   it('首次拉起前地址上已有侧车：不拉起、直接用它（不需要 process 服务），记 warn；诊断报 warn 并说明怎么改由本插件托管', async () => {
