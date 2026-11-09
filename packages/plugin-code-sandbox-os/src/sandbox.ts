@@ -25,7 +25,8 @@ function sbplQuote(p: string): string {
 /**
  * 生成 macOS Seatbelt (SBPL) profile：默认拒绝；放开 进程/读/常见系统调用；
  * 写仅限 fsWrite + /dev 标准设备；网络按 policy。信号只能发给同一沙箱里的进程（自己与自己启动的子孙），
- * 沙箱外同一用户的进程（包括宿主）杀不到。
+ * 沙箱外同一用户的进程（包括宿主）杀不到。POSIX 信号量按建它的进程放行：同一沙箱里建的可用（Python 的 multiprocessing
+ * 建锁靠它），沙箱外仍在运行的进程建的按名字也打不开；建它的进程已退出、名字没被删的不在此限。
  */
 export function buildSeatbeltProfile(policy: SandboxPolicy): string {
   const lines: string[] = [
@@ -37,6 +38,7 @@ export function buildSeatbeltProfile(policy: SandboxPolicy): string {
     '(allow sysctl-read)',
     '(allow mach-lookup)',
     '(allow ipc-posix-shm)',
+    '(allow ipc-posix-sem (semaphore-owner same-sandbox))',
     '(allow signal (target same-sandbox))',
     '(allow file-write-data (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr") (literal "/dev/dtracehelper") (literal "/dev/urandom"))',
   ];
