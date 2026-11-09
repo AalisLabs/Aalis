@@ -5,6 +5,7 @@ import type { ChatModelRequest, LLMModel } from '../../packages/api-llm/src/inde
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import type { Logger } from '../../packages/core/src/index.js';
 import { scanLLMProcessors } from '../../packages/plugin-media/src/llm-adapter.js';
+import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
 import { type MediaConfigResolved, MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import { registerMediaTools } from '../../packages/plugin-media/src/tools.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
@@ -16,6 +17,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 // ════════════════════════════════════════════════════════════
 // analyze_image（识图）声明可转后台：执行器给这次调用的中止信号经 media 服务一路传到识图的模型调用，中止时识图停住。
 // 识图模型是替身：一直不回，中止后以中止原因拒绝；不连任何模型服务。网址来源的下载也随这个信号停下（上游是本机桩）。
+// 动图抽帧用的 ffprobe 与 ffmpeg 也是替身，不起真实子进程。
 // ════════════════════════════════════════════════════════════
 
 const logger = { info: () => {}, debug: () => {}, warn: () => {}, error: () => {} } as unknown as Logger;
@@ -73,6 +75,29 @@ function setup() {
   return { analyze, requests, svc };
 }
 
+/**
+ * ffprobe 与 ffmpeg 的替身：hang 指定的那条一直不回，中止时按非零退出拒绝（与 process 服务停掉进程组后一样）；
+ * 另一条立即成功。记下每次调用的命令与收到的中止信号
+ */
+function frameTools(hang: 'ffprobe' | 'ffmpeg') {
+  const calls: Array<{ cmd: string; signal?: AbortSignal }> = [];
+  setMediaRuntime({
+    proc: {
+      makeTempDir: async () => ({ path: '/zz-frames', uri: 'tmp:/zz-frames', cleanup: async () => {} }),
+      execFile: (cmd: string, _args: readonly string[], opts: { signal?: AbortSignal } = {}) => {
+        calls.push({ cmd, signal: opts.signal });
+        if (cmd !== hang) return Promise.resolve({ code: 0, signal: null, stdout: '2', stderr: '' });
+        return new Promise((_, reject) => {
+          const stopped = () => reject(new Error(`execFile ${cmd} 退出码 null (signal SIGTERM)`));
+          opts.signal?.addEventListener('abort', stopped, { once: true });
+        });
+      },
+    } as never,
+    storage: { writeFile: async () => {} } as never,
+  });
+  return calls;
+}
+
 describe('analyze_image 可转后台', () => {
   it('声明可转后台（让出时限用执行器的默认）', () => {
     expect(setup().analyze.background).toEqual({});
@@ -101,6 +126,17 @@ describe('analyze_image 可转后台', () => {
     const pending = svc.describeImage(ANIMATED_GIF, { noCache: true, signal: ac.signal });
     await vi.waitFor(() => expect(requests).toHaveLength(1));
     expect(requests[0].signal).toBe(ac.signal);
+    ac.abort();
+    await expect(pending).rejects.toBeDefined();
+  });
+
+  it('动图抽帧：中止信号交给 ffprobe 与 ffmpeg，中止时抽帧随之停下', async () => {
+    const { svc } = setup();
+    const calls = frameTools('ffmpeg');
+    const ac = new AbortController();
+    const pending = svc.describeImage(ANIMATED_GIF, { noCache: true, signal: ac.signal });
+    await vi.waitFor(() => expect(calls.map(c => c.cmd)).toEqual(['ffprobe', 'ffmpeg']));
+    for (const { cmd, signal } of calls) expect(signal, cmd).toBe(ac.signal);
     ac.abort();
     await expect(pending).rejects.toBeDefined();
   });

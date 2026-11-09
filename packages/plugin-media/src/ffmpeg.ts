@@ -46,7 +46,7 @@ export function selectFrameIndices(totalFrames: number, maxFrames: number): numb
   return [...new Set(indices)].sort((a, b) => a - b);
 }
 
-export async function getFrameCount(filePath: string): Promise<number> {
+export async function getFrameCount(filePath: string, signal?: AbortSignal): Promise<number> {
   const { proc } = getMediaRuntime();
   try {
     const r = await proc.execFile(
@@ -63,7 +63,7 @@ export async function getFrameCount(filePath: string): Promise<number> {
         'csv=p=0',
         filePath,
       ],
-      { timeout: 30000 },
+      { timeout: 30000, signal },
     );
     const n = Number.parseInt(r.stdout.trim(), 10);
     return Number.isNaN(n) ? 0 : n;
@@ -73,7 +73,7 @@ export async function getFrameCount(filePath: string): Promise<number> {
 }
 
 /** 提取指定帧为 PNG，返回 data URI 数组。 */
-export async function extractFrames(filePath: string, frameIndices: number[]): Promise<string[]> {
+export async function extractFrames(filePath: string, frameIndices: number[], signal?: AbortSignal): Promise<string[]> {
   if (frameIndices.length === 0) return [];
   const { proc, storage } = getMediaRuntime();
   const tmp = await proc.makeTempDir('media-frames');
@@ -93,7 +93,7 @@ export async function extractFrames(filePath: string, frameIndices: number[]): P
         '-y',
         `${tmp.path}/frame_%04d.png`,
       ],
-      { timeout: 60000 },
+      { timeout: 60000, signal },
     );
     const results: string[] = [];
     for (let i = 1; i <= frameIndices.length; i++) {

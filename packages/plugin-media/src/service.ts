@@ -534,27 +534,30 @@ export class MediaServiceImpl implements MediaService {
     return report;
   }
 
-  /** 抽帧内核：本地动图/视频文件 → 均匀采样的关键帧 data URI（describe/describeImage/直通三处共用）。抽不出返回 []。 */
-  private async framesFromLocal(path: string, maxFrames: number): Promise<string[]> {
-    const totalFrames = await getFrameCount(path);
+  /**
+   * 抽帧内核：本地动图/视频文件 → 均匀采样的关键帧 data URI（describe/describeImage/直通三处共用）。抽不出返回 []。
+   * signal 交给 ffprobe 与 ffmpeg，调用中止时由 process 服务停掉它们，不等到各自的超时
+   */
+  private async framesFromLocal(path: string, maxFrames: number, signal?: AbortSignal): Promise<string[]> {
+    const totalFrames = await getFrameCount(path, signal);
     if (totalFrames <= 0) {
       this.logger.debug(`[frames] ffprobe 未数出帧（探测失败或非视频容器）: ${path}`);
       return [];
     }
-    const frames = await extractFrames(path, selectFrameIndices(totalFrames, maxFrames));
+    const frames = await extractFrames(path, selectFrameIndices(totalFrames, maxFrames), signal);
     this.logger.debug(`[frames] total=${totalFrames} → 采样 ${frames.length}/${maxFrames}`);
     return frames;
   }
 
   /** 已读到的动图或视频字节 → 关键帧：写进临时文件再抽；写不出、抽不出或抽帧出错时为 [] */
-  private async framesOf(bytes: Uint8Array, maxFrames: number): Promise<string[]> {
+  private async framesOf(bytes: Uint8Array, maxFrames: number, signal?: AbortSignal): Promise<string[]> {
     const local = await materializeBytes(bytes);
     if (!local) {
       this.logger.debug('[frames] 动图写不进临时文件，不抽帧');
       return [];
     }
     try {
-      return await this.framesFromLocal(local.path, maxFrames);
+      return await this.framesFromLocal(local.path, maxFrames, signal);
     } catch (err) {
       this.logger.warn(`[frames] 抽帧失败: ${(err as Error).message}`);
       return [];
@@ -753,7 +756,8 @@ export class MediaServiceImpl implements MediaService {
 
     // 有本地缓存路径时从它读，不再下载；按读到的字节判动图，抽不出帧的退回整图识别，与直通同一条规则
     const bytes = await readSourceBytes(opts.localPath ? `file://${opts.localPath}` : imageUrl, opts.signal);
-    const frames = bytes && needsFrames(bytes) ? await this.framesOf(bytes, this.cfg.animatedImage.maxFrames) : [];
+    const frames =
+      bytes && needsFrames(bytes) ? await this.framesOf(bytes, this.cfg.animatedImage.maxFrames, opts.signal) : [];
     let result = '';
 
     if (frames.length > 0) {
