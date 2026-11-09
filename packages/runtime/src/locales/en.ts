@@ -9,6 +9,10 @@ export default defineLocale<Source>()({
   saveRefused:
     'The {file} has external changes that have not taken effect yet; this save was refused so they are not overwritten ({path})',
   unsafePluginId: 'Invalid plugin id: {id}',
+  notMapping: 'The config of plugin {instance} must be a mapping, not null, an array or a scalar',
+  sectionNotMapping: '{at} in the config document is not a mapping (got {kind})',
+  sectionNotList: '{at} in the config document is not a list (got {kind})',
+  entryNotString: '{at} in the config document is not a string (got {kind})',
   noDefinition:
     'Plugin {instance} does not exist, and no definition of the same module is available to create it (the module must be registered and declare reusable)',
   plainSecret:

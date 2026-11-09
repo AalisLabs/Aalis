@@ -523,6 +523,22 @@ describe('startAalis 数据目录（真实子进程）', () => {
     }
   }, 30_000);
 
+  it('插件配置段写成数组：一行报错点名那一段后 exit 1，不带调用栈，文件不改；留空的段照常启动', async () => {
+    const dir = tempDir();
+    const text = 'name: e2e\nlogLevel: info\nplugins:\n  e2e-probe: [1, 2]\n';
+    writeFileSync(join(dir, 'aalis.config.yaml'), text);
+    const r = await run(dir, ['probe']);
+    expect(r.code, r.stderr).toBe(1);
+    expect(r.stderr).toMatch(/^\[aalis\] plugins\.e2e-probe in the config document is not a mapping \(got array\)$/m);
+    expect(r.stderr).not.toMatch(/^\s+at /m);
+    expect(readFileSync(join(dir, 'aalis.config.yaml'), 'utf8')).toBe(text);
+
+    const empty = tempDir();
+    writeFileSync(join(empty, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins:\n  e2e-probe:\n');
+    const ok = await run(empty, ['probe']);
+    expect(ok.code, ok.stderr).toBe(0);
+  }, 30_000);
+
   it('配置文件里手写的密钥：启动时移进 secrets.yaml（0600），插件拿到原值，配置文件里只剩引用', async () => {
     const dir = tempDir();
     writeFileSync(

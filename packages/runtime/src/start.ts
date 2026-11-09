@@ -6,6 +6,7 @@ import { hostLogs } from '@aalis/api-host-logs';
 import { hostPaths } from '@aalis/api-host-paths';
 import { pluginSource } from '@aalis/api-plugin-source';
 import { App, events, LogHub, type LogLevel, provide, services } from '@aalis/core';
+import { isTextError, resolveText } from '@aalis/schema-i18n';
 import { installBootstrapBuffer } from './bootstrap-buffer.js';
 import { createConfigStore, installHostConfig } from './config-store.js';
 import { type ConfigSyncOptions, installConfigHotReload, withPluginConfigSync } from './config-sync.js';
@@ -252,18 +253,24 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   bootstrap.dispose();
 
   // ── 组装 App：YAML 配置文档与密钥文件、按 loader 发现插件、用 spawn 重启 ──
-  // 配置或密钥文件读不进来（写坏了、读不了）是环境问题：一行报错退出，不带调用栈（消息不含文件内容）
+  // 配置或密钥文件读不进来（格式有误、读不了、插件配置段不是映射）是环境问题：一行报错退出，不带调用栈（消息不含文件内容）。
+  // 这时插件还没加载、没有读者语言，文字对象取英文
   const loadOrExit = <T>(load: () => T): T => {
     try {
       return load();
     } catch (err) {
-      console.error(`[aalis] ${err instanceof Error ? err.message : String(err)}`);
+      const message = isTextError(err)
+        ? resolveText(err.text, ['en'])
+        : err instanceof Error
+          ? err.message
+          : String(err);
+      console.error(`[aalis] ${message}`);
       process.exit(1);
     }
   };
   const { config, provider } = loadOrExit(() => createFsYamlConfigProvider(paths.config));
   const secrets = loadOrExit(() => createFsSecretsProvider(paths.secrets));
-  const store = createConfigStore(config, provider, secrets);
+  const store = loadOrExit(() => createConfigStore(config, provider, secrets));
   // core 的慢操作阈值：缺省（含 YAML 空键解出的 null）交给 core 默认；不是非负有限数的写法告警后同样交给默认。
   // 它与 logLevel 只在这里读一次，改了要重启：哪些核心键只在启动时读以 schema-config 的 CORE_RESTART_KEYS 为准，
   // 改成热生效或新加启动时才读的键，同步改那一份

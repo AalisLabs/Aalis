@@ -52,6 +52,7 @@ import {
   splitSecrets,
 } from './secrets.js';
 import { t } from './texts.js';
+import { describeNonMapping } from './yaml-file.js';
 
 /**
  * 配置提供者：负责持久化层。文档由宿主在构造前自己加载好传入，provider 不必提供 load()。
@@ -422,6 +423,7 @@ export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyn
     submitted: Record<string, unknown>,
   ): Promise<ApplyPluginConfigResult> => {
     assertSafePluginId(instanceId);
+    assertPluginSection(instanceId, submitted);
     const entry = app.plugins.getPlugin(instanceId);
     const definition = entry?.definition ?? definitionOf(app, instanceId);
     if (!definition) throw new TextError(t('noDefinition', { instance: instanceId }));
@@ -501,6 +503,7 @@ export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyn
       // 只收文档形态：查得到 schema 时，密钥字段上的明文（例如把 caps.config 原样写回）拒绝，不让原值进文档
       setPluginConfig: (instanceId, next) => {
         assertSafePluginId(instanceId);
+        assertPluginSection(instanceId, next);
         const schema = store.hasSecretStore ? definitionOf(app, instanceId)?.configSchema : undefined;
         const plain = plainSecretPaths(schema, next);
         if (plain.length > 0) throw new TextError(t('plainSecret', { instance: instanceId, paths: plain }));
@@ -608,6 +611,47 @@ function snapshot(doc: AalisConfig): AalisConfig {
   return cloneConfigObject(doc) as AalisConfig;
 }
 
+/**
+ * 文档里的插件配置：plugins 与其中每一段都须是映射。留空（null）读入即 {}，与整份文件为空同一规则；
+ * 数组、标量报错点名那一段——启动时拒启，热重载时搁置这次变更，不按 Object.entries 摊开写回文件
+ */
+function pluginSections(input: unknown): AalisConfig['plugins'] {
+  const plugins = cloneConfigObject(mappingAt(input, 'plugins'));
+  for (const [id, section] of Object.entries(plugins)) plugins[id] = mappingAt(section, `plugins.${id}`);
+  return plugins as AalisConfig['plugins'];
+}
+
+function mappingAt(value: unknown, at: string): Record<string, unknown> {
+  if (value === null || value === undefined) return {};
+  const kind = describeNonMapping(value);
+  if (kind) throw new TextError(t('sectionNotMapping', { at, kind }));
+  return value as Record<string, unknown>;
+}
+
+/**
+ * 文档里的停用名单：实例 id 的列表。留空读入即 []；不是列表、或列表里有不是字符串的，与插件段不是映射同一处置，报错点名。
+ * 照收的话写成字符串时按子串判停用，启停开关与写成映射时的读取抛 TypeError
+ */
+function disabledIds(input: unknown): string[] {
+  if (input === null || input === undefined) return [];
+  if (!Array.isArray(input)) {
+    throw new TextError(t('sectionNotList', { at: 'disabledPlugins', kind: describeNonMapping(input) ?? 'mapping' }));
+  }
+  for (const [i, id] of input.entries()) {
+    if (typeof id !== 'string') {
+      throw new TextError(
+        t('entryNotString', { at: `disabledPlugins[${i}]`, kind: describeNonMapping(id) ?? 'mapping' }),
+      );
+    }
+  }
+  return input;
+}
+
+/** host-config 写插件配置的入口与读入同一规则；写进文档的数组、标量、null 会让下次读入失败 */
+function assertPluginSection(instanceId: string, value: unknown): void {
+  if (describeNonMapping(value)) throw new TextError(t('notMapping', { instance: instanceId }));
+}
+
 /** 一个范围里的偏好：不给 `for` 是全局偏好，给了是那个插件实例的本插件偏好；还没有时为 undefined */
 function preferencesIn(doc: Readonly<AalisConfig>, scope?: PreferenceScope): Record<string, string> | undefined {
   if (scope?.for === undefined) return doc.servicePreferences;
@@ -651,8 +695,8 @@ function normalize(input: Partial<AalisConfig>): AalisConfig {
     name: (input.name as string) ?? (coreDefaults.name as string),
     logLevel: (input.logLevel as string) ?? (coreDefaults.logLevel as string),
     // 键与值都过闸：JSON 解出的 plugins.__proto__ / 插件配置里的 __proto__ 都不能当自有键留下
-    plugins: cloneConfigObject((input.plugins ?? {}) as Record<string, unknown>) as AalisConfig['plugins'],
-    disabledPlugins: (input.disabledPlugins as string[]) ?? [],
+    plugins: pluginSections(input.plugins),
+    disabledPlugins: disabledIds(input.disabledPlugins),
   };
   for (const [key, value] of Object.entries(input)) {
     if (key === 'name' || key === 'logLevel' || key === 'plugins' || key === 'disabledPlugins') continue;

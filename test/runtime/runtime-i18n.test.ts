@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { type CheckResult, type CheckSpec, type DoctorService, doctor } from '../../packages/api-doctor/src/index.js';
 import { ConfigSaveRefusedError, hostConfig, isConfigSaveRefused } from '../../packages/api-host-config/src/index.js';
 import { type App, definePlugin, provide, type Services } from '../../packages/core/src/index.js';
+import { createConfigStore } from '../../packages/runtime/src/config-store.js';
 import { createFsSecretsProvider, createFsYamlConfigProvider } from '../../packages/runtime/src/providers.js';
 import { tryDispatchSubcommand } from '../../packages/runtime/src/subcommand.js';
 import {
@@ -86,6 +87,51 @@ describe('配置文档的报错与诊断项', () => {
     expect(en).toBe(
       'Plugin nobody does not exist, and no definition of the same module is available to create it (the module must be registered and declare reusable)',
     );
+  });
+
+  it('写进文档的插件配置不是映射：英文读者看到英文，中文读者看到原文', () => {
+    const { app } = hostedApp({ plugins: { a: {} } });
+    apps.push(app);
+    let thrown: unknown;
+    try {
+      app.bind({ hostConfig }).hostConfig.use.setPluginConfig('a', [] as never);
+    } catch (err) {
+      thrown = err;
+    }
+    const { zh, en } = rendered(thrown);
+    expect(zh).toBe((thrown as Error).message);
+    expect(en).toBe('The config of plugin a must be a mapping, not null, an array or a scalar');
+  });
+
+  // 热重载时这条经文件层按原文记进日志，启动时宿主取英文打到终端
+  it('读入的插件段不是映射：英文读者看到英文，中文读者看到原文', () => {
+    let thrown: unknown;
+    try {
+      createConfigStore({ name: 'T', logLevel: 'error', plugins: { a: [1] } } as never);
+    } catch (err) {
+      thrown = err;
+    }
+    const { zh, en } = rendered(thrown);
+    expect(zh).toBe((thrown as Error).message);
+    expect(en).toBe('plugins.a in the config document is not a mapping (got array)');
+  });
+
+  it('读入的 disabledPlugins 不是字符串列表：英文读者看到英文，中文读者看到原文', () => {
+    const english: Array<[unknown, string]> = [
+      ['a', 'disabledPlugins in the config document is not a list (got string)'],
+      [['a', 2], 'disabledPlugins[1] in the config document is not a string (got number)'],
+    ];
+    for (const [disabledPlugins, expected] of english) {
+      let thrown: unknown;
+      try {
+        createConfigStore({ name: 'T', logLevel: 'error', plugins: {}, disabledPlugins } as never);
+      } catch (err) {
+        thrown = err;
+      }
+      const { zh, en } = rendered(thrown);
+      expect(zh).toBe((thrown as Error).message);
+      expect(en).toBe(expected);
+    }
   });
 
   it('诊断项 config.secrets 的说明按读者语言显示', async () => {

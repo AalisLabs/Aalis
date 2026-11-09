@@ -11,6 +11,10 @@ const SOURCE = {
   yamlPosition: '{code}（第 {line} 行第 {col} 列）',
   saveRefused: '{file}有尚未生效的外部修改，为免覆盖已拒绝本次保存（{path}）',
   unsafePluginId: '插件 id 不合法：{id}',
+  notMapping: '插件 {instance} 的配置须为映射，不能是 null、数组或标量',
+  sectionNotMapping: '配置文档里的 {at} 不是映射（得到 {kind}）',
+  sectionNotList: '配置文档里的 {at} 不是列表（得到 {kind}）',
+  entryNotString: '配置文档里的 {at} 不是字符串（得到 {kind}）',
   noDefinition: '插件 {instance} 不存在，也没有可用来新建它的同模块定义（模块须已登记且声明 reusable）',
   plainSecret:
     'setPluginConfig 只收文档形态：{instance} 的 {paths, list} 是密钥字段，不能写原值；改配置请用 applyPluginConfig',

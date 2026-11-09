@@ -71,7 +71,7 @@ export interface HostConfig {
    */
   getPluginConfig<T extends Record<string, unknown> = Record<string, unknown>>(instanceId: string): T;
   /**
-   * 只写文档、不改运行态。只收文档形态：宿主查得到实例的 schema 时，密钥字段上的非空明文（例如把 `caps.config`
+   * 只写文档、不改运行态。只收文档形态：config 须为纯对象（null、数组、标量抛错）；宿主查得到实例的 schema 时，密钥字段上的非空明文（例如把 `caps.config`
    * 原样写回）抛错，不让原值进文档。存的是 config 的复制品。改配置要连运行态一起生效用 {@link HostConfig.applyPluginConfig}
    */
   setPluginConfig(instanceId: string, config: Record<string, unknown>): void;
@@ -88,7 +88,7 @@ export interface HostConfig {
    * 受理后返回 `applied`：`reloaded` 为 false 表示解析出的配置与运行态相同、实例不在 error 态，没有重启（带标记的字段不进
    * 运行态，只改它们时不重启）；
    * `saveError` 是落盘失败（拒写用 {@link isConfigSaveRefused} 判定），此时改动已在运行态与文档里生效，只是没写进文件。
-   * 参数不合法时抛错：id 不合法，或实例没登记、也没有可用来新建它的同模块定义（模块须已登记且声明 reusable）。
+   * 参数不合法时抛错：id 不合法，submitted 不是纯对象（null、数组、标量），或实例没登记、也没有可用来新建它的同模块定义（模块须已登记且声明 reusable）。
    */
   applyPluginConfig(instanceId: string, submitted: Record<string, unknown>): Promise<ApplyPluginConfigResult>;
   /** 删掉实例的配置段，只改文档；落盘之后，不再被任何配置引用的密钥由宿主从密钥存储里一并删掉 */

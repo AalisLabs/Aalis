@@ -86,7 +86,7 @@ function parseYamlText(text: string, label: string, logger: Logger): unknown {
 }
 
 /** 值必须是纯映射：裸标量、数组会被下游按 Object.entries 摊开写回垃圾 */
-function describeNonMapping(v: unknown): string | null {
+export function describeNonMapping(v: unknown): string | null {
   if (v === null) return 'empty';
   if (Array.isArray(v)) return 'array';
   if (typeof v !== 'object') return typeof v;

@@ -644,3 +644,96 @@ describe('启动偏好与文档的边界', () => {
     ).toBe(1);
   });
 });
+
+describe('插件配置段须为映射', () => {
+  // 「没给配置」在文件里有三种写法：不写这一段、写 {}、留空（YAML 解析成 null）。留空与整份文件为空同一规则，读入时就是 {}。
+  // 数组、字符串、数字是写错了：读入时报错点名那一段（启动失败，热重载搁置这次变更），不悄悄改形或换成默认值写回文件。
+  // 写入文档的入口（setPluginConfig、applyPluginConfig）同一条规则，免得写进去的坏段让下次启动失败
+  const wrong: Array<[string, unknown, string]> = [
+    ['数组', [1, 2], 'array'],
+    ['字符串', 'ab', 'string'],
+    ['数字', 5, 'number'],
+  ];
+  const written: Array<[string, unknown]> = [
+    ['数组', [1, 2]],
+    ['字符串', 'ab'],
+    ['数字', 5],
+    ['null', null],
+  ];
+
+  it('留空的插件段与留空的 plugins 读入即 {}', () => {
+    const store = createConfigStore({ name: 'T', logLevel: 'error', plugins: { a: null } } as never);
+    expect(store.getAll().plugins).toEqual({ a: {} });
+    expect(store.getPluginConfig('a')).toEqual({});
+    expect(createConfigStore({ name: 'T', logLevel: 'error', plugins: null } as never).getAll().plugins).toEqual({});
+  });
+
+  it.each(wrong)('插件段是%s：读入时报错点名那一段', (_, section, kind) => {
+    expect(() => createConfigStore({ name: 'T', logLevel: 'error', plugins: { a: section } } as never)).toThrow(
+      `配置文档里的 plugins.a 不是映射（得到 ${kind}）`,
+    );
+  });
+
+  it('plugins 本身是数组：读入时报错', () => {
+    expect(() => createConfigStore({ name: 'T', logLevel: 'error', plugins: [] } as never)).toThrow(
+      '配置文档里的 plugins 不是映射（得到 array）',
+    );
+  });
+
+  it('热重载推来的插件段是数组：处理器拒收，文档不动', () => {
+    const { store, push } = watched({ name: 'T', logLevel: 'error', plugins: { a: { v: 1 } } });
+    expect(() => push({ name: 'T', logLevel: 'error', plugins: { a: [1, 2] } } as never)).toThrow('plugins.a');
+    expect(store.getAll().plugins).toEqual({ a: { v: 1 } });
+  });
+
+  it.each(written)('host-config 的 setPluginConfig 收到%s：抛错，文档不动', (_, section) => {
+    const w = track(hostedApp({ plugins: { a: { v: 1 } } }));
+    const doc = w.app.bind({ hostConfig }).hostConfig.use;
+    expect(() => doc.setPluginConfig('a', section as Record<string, unknown>)).toThrow(
+      '插件 a 的配置须为映射，不能是 null、数组或标量',
+    );
+    expect(w.store.getPluginConfig('a')).toEqual({ v: 1 });
+  });
+
+  it.each(written)('host-config 的 applyPluginConfig 收到%s：拒绝，运行态与文档都不动', async (_, section) => {
+    const w = track(hostedApp({ plugins: { a: { v: 1 } } }));
+    await registerFromDoc(w.app, w.store, definePlugin({ name: 'a', apply() {} }));
+    await w.app.plugins.idle();
+    const doc = w.app.bind({ hostConfig }).hostConfig.use;
+    await expect(doc.applyPluginConfig('a', section as Record<string, unknown>)).rejects.toThrow(
+      '插件 a 的配置须为映射，不能是 null、数组或标量',
+    );
+    expect(w.app.plugins.getPlugin('a')?.config).toEqual({ v: 1 });
+    expect(w.store.getPluginConfig('a')).toEqual({ v: 1 });
+  });
+});
+
+describe('disabledPlugins 须为字符串列表', () => {
+  // 停用名单是实例 id 的列表。留空（YAML 解析成 null）读入即 []；写成字符串、映射或列表里混了别的值是写错了，
+  // 与插件段不是映射同一处置：读入时报错点名（启动失败，热重载搁置这次变更）。照收的话，字符串按子串判停用
+  // （写 "@aalis/plugin-cli" 时 plugin-cli、cli 都算停用），启停开关与写成映射时的读取直接抛 TypeError
+  const doc = (disabledPlugins: unknown) => ({ name: 'T', logLevel: 'error', plugins: {}, disabledPlugins }) as never;
+
+  it('留空读入即 []，启停照常', () => {
+    const store = createConfigStore(doc(null));
+    expect(store.isPluginDisabled('a')).toBe(false);
+    store.setPluginEnabled('a', false);
+    expect(store.getAll().disabledPlugins).toEqual(['a']);
+  });
+
+  it.each([
+    ['字符串', '@aalis/plugin-cli', '配置文档里的 disabledPlugins 不是列表（得到 string）'],
+    ['映射', { a: 1 }, '配置文档里的 disabledPlugins 不是列表（得到 mapping）'],
+    ['混了数字的列表', ['a', 2], '配置文档里的 disabledPlugins[1] 不是字符串（得到 number）'],
+    ['有空项的列表', [null], '配置文档里的 disabledPlugins[0] 不是字符串（得到 empty）'],
+  ])('写成%s：读入时报错点名', (_, value, message) => {
+    expect(() => createConfigStore(doc(value))).toThrow(new Error(message));
+  });
+
+  it('热重载推来的 disabledPlugins 是字符串：处理器拒收，文档不动', () => {
+    const { store, push } = watched({ name: 'T', logLevel: 'error', plugins: {}, disabledPlugins: ['a'] });
+    expect(() => push(doc('a'))).toThrow('disabledPlugins');
+    expect(store.getAll().disabledPlugins).toEqual(['a']);
+    expect(store.isPluginDisabled('a')).toBe(true);
+  });
+});

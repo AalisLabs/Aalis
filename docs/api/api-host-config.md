@@ -72,6 +72,7 @@ type ApplyPluginConfigResult =
 - `set` 写一个顶层字段，只改文档。`plugins` 不能经它整块替换，宿主会抛错；改插件配置用 `applyPluginConfig` 或 `setPluginConfig`。
 - `getPluginConfig` 返回实例在文档里的配置，密钥字段上是引用、不是原值；插件要原值读自己的 `config`。
 - 读法（`get`、`getAll`、`getPluginConfig`、`getServicePreferences`）返回复制品，写方法存的也是入参的复制品：之后改这些对象都不影响文档，要改经写方法写回。
+- `setPluginConfig` 与 `applyPluginConfig` 收到的配置须是纯对象，`null`、数组、标量抛错，文档与运行态不动。
 - `setPluginConfig` 只写文档、不改运行态，只收文档形态：宿主有密钥存储、且查得到该实例的 schema 时，密钥字段上的非空明文（例如把 `config` 服务给的运行态原样写回）抛错，不让原值进文档。
 - `applyPluginConfig` 改一个实例的配置并让它生效，见下文[改插件配置](#改插件配置)。
 - 三个服务偏好方法的 `scope` 与 core 的 `services.prefer` 同形：给 `for`（插件实例 id）读写那个插件的本插件偏好（文档的 `pluginServicePreferences`），不给读写全局偏好（`servicePreferences`）。删掉一个插件的最后一条本插件偏好时，它那一段一并去掉。两种偏好的用法与什么时候不该设本插件偏好，见 [运行态与配置文档](../core/config.md#服务偏好)。
