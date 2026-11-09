@@ -310,11 +310,13 @@ function createTarget<P, B>(
     provider: forward(instance),
     follow: attach => follow(entry => attach(entry.instance as P), false),
     track: (off, label) => {
-      const dispose = scope.resources.track(() => {
-        owned.delete(dispose);
+      // 撤回链已取走时回调就地执行，此刻 dispose 还没赋值，也不必再记进 owned
+      let dispose: (() => void) | undefined;
+      dispose = scope.resources.track(() => {
+        if (dispose) owned.delete(dispose);
         return off();
       }, label ?? name);
-      owned.add(dispose);
+      if (!scope.resources.withdrawals.disposed) owned.add(dispose);
       return dispose;
     },
     registrar<Item>(options: {
