@@ -24,7 +24,7 @@ export default definePlugin({
   provides: [workflow],
   uses: {
     cronEngine,
-    storage: optional(storage),
+    storage,
     tools: optional(tools),
     webui: optional(webuiServer),
     authority: optional(authority),

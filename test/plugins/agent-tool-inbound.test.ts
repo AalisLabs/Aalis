@@ -5,9 +5,10 @@ import { agent as agentService } from '../../packages/api-agent/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatResponse } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
+import { storage } from '../../packages/api-storage/src/index.js';
 import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
 import { workflow } from '../../packages/api-workflow/src/index.js';
-import { App, services } from '../../packages/core/src/index.js';
+import { App, provide, services } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import { buildMcpServer } from '../../packages/plugin-mcp-server/src/index.js';
@@ -22,6 +23,7 @@ import {
   selfInitiatedActor,
 } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
@@ -155,7 +157,8 @@ describe('ToolCallContext.inbound：其他调用方不填写', () => {
     await registerHubs(app);
     await app.plugin(toolsPlugin, {});
     await app.plugin(cronEnginePlugin, {});
-    const host = app.bind({ tools, services });
+    const host = app.bind({ tools, services, provide });
+    host.provide.use(storage, memoryStorage(new Map()));
     let seen: ToolCallContext | undefined;
     host.tools.use.register({
       definition: probeDefinition,

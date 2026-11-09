@@ -31,7 +31,7 @@ export class RunStore {
   private definers: Record<string, UserIdentity & { sha256: string }> = {};
   private writeChain: Promise<void> = Promise.resolve();
   /**
-   * init 读失败且不是「文件不存在」（storage 不在场、读错误、解析失败、结构不对）：写的是整份快照，
+   * init 读失败且不是「文件不存在」（读错误、解析失败、结构不对）：写的是整份快照，
    * 此后一律拒写，否则第一次运行就用空的 once 记录覆盖文件，下次启动过期 once 全部重放。
    */
   private loadFailed = false;

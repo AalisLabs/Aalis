@@ -13,7 +13,7 @@ pnpm add @aalis/plugin-workflow
 `definePlugin` 默认导出：
 
 - provides：`workflow`
-- uses：`cronEngine`、`events`、`hooks`、`lifecycle`、`logger`、`config`、`provide`；可选 `storage`、`tools`、`webui`（`webui-server`）
+- uses：`cronEngine`、`storage`、`events`、`hooks`、`lifecycle`、`logger`、`config`、`provide`；可选 `tools`、`webui`（`webui-server`）
 
 ## 文档
 

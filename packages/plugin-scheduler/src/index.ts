@@ -276,8 +276,11 @@ const uses = {
   tools,
   // 共享 cron tick 与表达式校验
   cronEngine,
-  /** 动态任务的持久化出口；没有 storage 时任务只活在本次激活里（读写各自降级） */
-  storage: optional(storage),
+  /**
+   * 动态任务的持久化出口：激活时读回整表、增删改整表写回。required：读回要在它上线之后（optional 不参与激活先后），
+   * 它下线时随之停下、重新上线后重新读回
+   */
+  storage,
   /** 计划任务页的登记口；无 WebUI 时调度照常运行 */
   webui: optional(webuiServer),
   /** 认调用所在的会话是不是子会话（在子会话里建任务要写明目标）；没有会话管理就没有子会话 */
@@ -319,8 +322,8 @@ async function run(caps: Caps): Promise<void> {
 
   const persistUri = config.persistPath;
   /**
-   * 激活时那次读失败了、又不是「文件不存在」（storage 不在场、读错误、解析失败、结构不对）：写的是整表，
-   * 此后一律拒写，否则下一次增删改就把原有动态任务冲掉。只在激活时读一次，storage 迟到也不重读。
+   * 激活时那次读失败了、又不是「文件不存在」（读错误、解析失败、结构不对）：写的是整表，
+   * 此后一律拒写，否则下一次增删改就把原有动态任务冲掉。只在激活时读一次。
    */
   let loadFailed = false;
   /**
@@ -512,7 +515,7 @@ async function run(caps: Caps): Promise<void> {
   });
 
   async function loadDynamicJobs(): Promise<SchedulerJobConfig[]> {
-    /** 失败出在读文件这一步（存储插件不在、persistPath 的根名写错、文件读不了），文件内容未必有错 */
+    /** 失败出在读文件这一步（persistPath 的根名写错、文件读不了），文件内容未必有错 */
     let reading = true;
     try {
       let raw: string;

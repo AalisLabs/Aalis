@@ -363,8 +363,11 @@ function resolveUri(key: 'defsDir' | 'runsFile', input: string, fallback: string
 const uses = {
   /** cron / interval 触发器共享的整分钟 tick 与表达式解析 */
   cronEngine,
-  /** 定义（*.yaml）与运行历史的持久化出口 */
-  storage: optional(storage),
+  /**
+   * 定义（*.yaml）与运行历史的持久化出口：激活时读回。required：读回要在它上线之后（optional 不参与激活先后），
+   * 它下线时随之停下、重新上线后重新读回
+   */
+  storage,
   /** tool 节点的执行入口，兼 AI 工具面的登记口 */
   tools: optional(tools),
   /** 工作流页的登记口；无 WebUI 时引擎照常运行 */

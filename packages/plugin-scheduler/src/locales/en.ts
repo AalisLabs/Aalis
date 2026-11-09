@@ -97,7 +97,7 @@ export default defineLocale<Source>()({
   notArray: 'The persisted task file is not an array (got {got})',
   loadFailedTitle: 'The scheduled task file {uri} could not be read, so the tasks in it were not loaded',
   loadFailedReading:
-    'Make sure the local storage plugin is running, the root name in the persistPath setting is right and this file can be read, then reload this plugin. Until it is fixed, tasks created or changed only take effect for this run. Reason: {error}',
+    'Make sure the root name in the persistPath setting is right and this file can be read, then reload this plugin. Until it is fixed, tasks created or changed only take effect for this run. Reason: {error}',
   loadFailedContent:
     "Fix this file, then reload this plugin: its content must be an array of tasks; if you don't want the tasks in it, move it away and reload. Until it is fixed, tasks created or changed only take effect for this run. Reason: {error}",
   unscheduledTitle: 'Scheduled task “{name}” could not be scheduled and will not run',

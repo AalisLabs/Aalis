@@ -91,7 +91,7 @@ const SOURCE = {
   notArray: '持久化任务文件不是数组（得到 {got}）',
   loadFailedTitle: '计划任务文件 {uri} 读不出来，里面的任务没有加载',
   loadFailedReading:
-    '确认本地存储插件在运行、配置项 persistPath 的根名写对、这个文件能读取，然后重载本插件。修好之前新建与改动的任务只在本次运行生效。原因：{error}',
+    '确认配置项 persistPath 的根名写对、这个文件能读取，然后重载本插件。修好之前新建与改动的任务只在本次运行生效。原因：{error}',
   loadFailedContent:
     '修好这个文件后重载本插件：内容要是任务数组；不要里面的任务就把它移走再重载。修好之前新建与改动的任务只在本次运行生效。原因：{error}',
   unscheduledTitle: '计划任务「{name}」没有排上，不会运行',

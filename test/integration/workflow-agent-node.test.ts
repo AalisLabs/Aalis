@@ -3,9 +3,10 @@ import { agent } from '../../packages/api-agent/src/index.js';
 import { flowControl } from '../../packages/api-flow-control/src/index.js';
 import { gateway, INBOUND_PHASE } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
+import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { type WorkflowDef, workflow } from '../../packages/api-workflow/src/index.js';
-import { App, events } from '../../packages/core/src/index.js';
+import { App, events, provide } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
@@ -17,6 +18,7 @@ import { runDag } from '../../packages/plugin-workflow/src/engine.js';
 import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { StepModel, stepModelPlugin } from '../fixtures/step-llm.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 
@@ -113,6 +115,7 @@ describe('编排的 agent 节点经网关送达', () => {
 
   it('经 workflow_run 调起、agent 节点指向调用者所在的会话：立即失败，不送达', async () => {
     const s = await boot();
+    s.app.bind({ provide }).provide.use(storage, memoryStorage(new Map()));
     await s.app.plugin(cronEnginePlugin, {});
     await s.app.plugin(workflowPlugin, {});
     await s.app.plugins.idle();

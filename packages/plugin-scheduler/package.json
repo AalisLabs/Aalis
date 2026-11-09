@@ -55,11 +55,11 @@
         "lifecycle",
         "logger",
         "provide",
+        "storage",
         "tools"
       ],
       "optional": [
         "session-manager",
-        "storage",
         "webui-server"
       ],
       "provides": [

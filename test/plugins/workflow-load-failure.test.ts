@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { StorageService } from '../../packages/api-storage/src/index.js';
+import { type StorageService, storage as storageService } from '../../packages/api-storage/src/index.js';
 import { tools as toolsService } from '../../packages/api-tools/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { type WorkflowDef, type WorkflowService, workflow } from '../../packages/api-workflow/src/index.js';
@@ -16,6 +16,7 @@ import { RunStore } from '../../packages/plugin-workflow/src/persistence.js';
 import { resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 
@@ -336,6 +337,7 @@ describe('workflow 路径配置只接受 storage URI', () => {
     });
     app = new App({ name: 'T', logLevel: 'error', logHub });
     await registerHubs(app);
+    app.bind({ provide }).provide.use(storageService, memoryStorage(new Map()));
     await app.plugin(cronEnginePlugin, {});
     await app.plugin(workflowPlugin, { enableTools: false, [key]: value });
     await app.plugins.idle();

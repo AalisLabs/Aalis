@@ -123,7 +123,7 @@ export interface WorkflowRun {
 唯一一等实现 **`@aalis/plugin-workflow`**：
 - 注册：`provide.use(workflow, service)`（`packages/plugin-workflow/src/index.ts`）。
 - 模块拆分：`engine.ts`（DAG 拓扑调度 + 节点执行 + `{{...}}` 插值）、`triggers.ts`（`TriggerManager`，cron/interval/once/event 接线）、`loader.ts`（YAML 定义加载/持久化）、`persistence.ts`（`RunStore` 运行历史滚动写盘）、`index.ts`（服务装配 + AI 工具 + WebUI 页）。
-- 依赖（`package.json` `aalis.service` 与 `index.ts` 双源）：`required: ['config', 'cron-engine', 'events', 'hooks', 'lifecycle', 'logger', 'provide']`（周期型触发器全部委托 cron-engine，见 §6）；`optional: ['authority', 'storage', 'tools', 'webui-server']`（`authority` 用来判 owner，定运行身份，见 §6）。
+- 依赖（`package.json` `aalis.service` 与 `index.ts` 双源）：`required: ['config', 'cron-engine', 'events', 'hooks', 'lifecycle', 'logger', 'provide', 'storage']`（周期型触发器全部委托 cron-engine，见 §6；定义与运行历史在激活时从 storage 读回）；`optional: ['authority', 'gateway', 'tools', 'webui-server']`（`authority` 用来判 owner，定运行身份，见 §6）。
 
 ### 触发源（trigger:fired 的 emit 者）
 
@@ -167,15 +167,15 @@ DI 靠包清单 + 代码导出**双源**声明（见 [manifest-metadata](../conc
   "keywords": ["aalis", "aalis-plugin"],
   "aalis": {
     "service": {
-      "required": ["config", "cron-engine", "events", "hooks", "lifecycle", "logger", "provide"],
-      "optional": ["authority", "storage", "tools", "webui-server"],
+      "required": ["config", "cron-engine", "events", "hooks", "lifecycle", "logger", "provide", "storage"],
+      "optional": ["authority", "tools", "webui-server"],
       "provides": ["workflow"]
     }
   }
 }
 ```
 
-`src/index.ts` 入口是 `export default definePlugin({ name, subsystem: 'workflow', provides: [workflow], uses: { cronEngine, tools: optional(tools), storage: optional(storage), webui: optional(webuiServer), authority: optional(authority), events, hooks, lifecycle, logger, config, provide }, apply })`（`packages/plugin-workflow/src/index.ts`）。不要再写具名 `export const subsystem`。
+`src/index.ts` 入口是 `export default definePlugin({ name, subsystem: 'workflow', provides: [workflow], uses: { cronEngine, tools: optional(tools), storage, webui: optional(webuiServer), authority: optional(authority), events, hooks, gateway: optional(gateway), lifecycle, logger, config, provide }, apply })`（`packages/plugin-workflow/src/index.ts`）。不要再写具名 `export const subsystem`。
 
 ### 最小可编译骨架
 
@@ -196,7 +196,7 @@ export default definePlugin({
     provide,
     cronEngine,
     tools: optional(tools),
-    storage: optional(storage),
+    storage,
     webui: optional(webuiServer),
   },
   apply({ provide, cronEngine, tools, storage, webui }) {

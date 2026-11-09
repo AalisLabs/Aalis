@@ -613,7 +613,7 @@ describe('读不出来与没排上的提示', () => {
     );
   });
 
-  it('持久化任务文件读不到（根名写错、存储插件不在）：提示写去查 persistPath 与存储插件，不让修文件', async () => {
+  it('持久化任务文件读不到（根名写错）：提示写去查 persistPath，不让修文件', async () => {
     await withScheduler(
       async ({ pages }) => {
         expect(toSource(pages.notices())).toEqual([
@@ -623,7 +623,7 @@ describe('读不出来与没排上的提示', () => {
             level: 'error',
             title: '计划任务文件 dat:/scheduler-jobs.json 读不出来，里面的任务没有加载',
             detail:
-              '确认本地存储插件在运行、配置项 persistPath 的根名写对、这个文件能读取，然后重载本插件。' +
+              '确认配置项 persistPath 的根名写对、这个文件能读取，然后重载本插件。' +
               '修好之前新建与改动的任务只在本次运行生效。原因：未知存储根: dat（已注册根: data）',
           },
         ]);

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { tools as toolsService } from '../../packages/api-tools/src/index.js';
-import { type WorkflowDef, type WorkflowService, workflow } from '../../packages/api-workflow/src/index.js';
+import { type WorkflowService, workflow } from '../../packages/api-workflow/src/index.js';
 import { App, services } from '../../packages/core/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
@@ -13,13 +13,12 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
-// workflow 激活时依赖的 optional 服务不在场：
+// workflow 依赖的服务晚于本插件上线或中途下线：
+// - storage 是 required：它上线之前本插件不激活，下线时随之停下，重新上线后定义与运行历史按文件重新读回。
 // - 运行历史与 once 记录同文件整份重写。init 读失败（非「文件不存在」）曾只记 warn 按空状态跑，
 //   第一次运行就用 {runs:[新], onceFired:{}} 覆盖文件——下次启动所有过期 once 全部重放。
 // - AI 工具经 tools 登记口挂上：提供者晚上线时登记先记下、上线后补挂；曾用 tools.current
 //   判在场，tools 晚于 workflow 上线时工具永不出现。
-// - 删除定义时删文件在 storage 不在场时必然失败：只在内存里的定义没有文件会被重新载入，
-//   不得因此报错——否则 persist:false 的定义删不掉，触发器也停不下来。
 // 真 storage-local 多根（workspace 在前、data 在后），运行历史落在 data 根。
 // ════════════════════════════════════════════════════════════
 
@@ -27,7 +26,7 @@ const RUNS = 'workflow-runs.json';
 /** 被拒的写不会有任何可等的信号：给一次本地落盘足够的时间再读 */
 const settle = () => new Promise(r => setTimeout(r, 150));
 
-describe('workflow：optional 依赖晚于本插件上线', () => {
+describe('workflow：依赖晚于本插件上线或中途下线', () => {
   let base: string;
   let app: App;
 
@@ -86,9 +85,22 @@ describe('workflow：optional 依赖晚于本插件上线', () => {
     rmSync(base, { recursive: true, force: true });
   });
 
-  it('激活时 storage 不在场：随后上线再跑工作流，运行历史文件（含 once 记录）一字不动', async () => {
-    const seeded = JSON.stringify({ runs: [], onceFired: { 'zz-once': 1 } }, null, 2);
-    writeFileSync(runsFile(), seeded);
+  it('storage 晚于本插件上线：定义与运行历史照常读回，新的运行追加进去、once 记录保留', async () => {
+    mkdirSync(join(base, 'workspace', 'workflows'));
+    writeFileSync(
+      join(base, 'workspace', 'workflows', 'zz-saved.yaml'),
+      'id: zz-saved\ntrigger:\n  type: manual\nnodes:\n  - id: a\n    type: wait\n    seconds: 0\n',
+    );
+    const old = {
+      runId: 'zz-old-run',
+      workflowId: 'zz-old',
+      status: 'success',
+      triggerSource: 'manual',
+      startedAt: 1,
+      vars: {},
+      nodes: [],
+    };
+    writeFileSync(runsFile(), JSON.stringify({ runs: [old], onceFired: { 'zz-saved': 1 } }));
 
     await app.plugin(toolsPlugin, {});
     await app.plugin(cronEnginePlugin, {});
@@ -96,11 +108,18 @@ describe('workflow：optional 依赖晚于本插件上线', () => {
     await app.plugins.idle();
     await registerStorage();
     await app.plugins.idle();
+    expect(svcOf().getWorkflow('zz-saved'), '定义目录里的定义没有载入').toBeDefined();
 
     await runOnce();
-    await settle();
-
-    expect(readFileSync(runsFile(), 'utf-8'), 'init 读失败后整份重写，once 记录被冲掉').toBe(seeded);
+    await expect
+      .poll(() => {
+        const saved = JSON.parse(readFileSync(runsFile(), 'utf-8')) as {
+          runs: Array<{ workflowId: string }>;
+          onceFired: Record<string, number>;
+        };
+        return { runs: saved.runs.map(run => run.workflowId), onceFired: saved.onceFired };
+      })
+      .toEqual({ runs: ['zz-old', 'zz-manual'], onceFired: { 'zz-saved': 1 } });
   });
 
   it('运行历史文件损坏（解析失败）：跑工作流不覆盖原文件', async () => {
@@ -119,42 +138,23 @@ describe('workflow：optional 依赖晚于本插件上线', () => {
     expect(readFileSync(runsFile(), 'utf-8')).toBe(broken);
   });
 
-  it('storage 不在场：只在内存里的定义照常删除，不存在的 id 回 false', async () => {
-    await app.plugin(cronEnginePlugin, {});
-    await app.plugin(workflowPlugin, { enableTools: false });
-    await app.plugins.idle();
-    expect(app.plugins.getPlugin('@aalis/plugin-workflow')?.state).toBe('active');
-    const svc = svcOf();
-    await svc.defineWorkflow(
-      { id: 'zz-mem', trigger: { type: 'manual' }, nodes: [{ id: 'a', type: 'wait', seconds: 0 }] },
-      { persist: false },
-    );
-
-    expect(await svc.removeWorkflow('zz-mem')).toBe(true);
-    expect(svc.getWorkflow('zz-mem')).toBeUndefined();
-    expect(await svc.removeWorkflow('zz-missing')).toBe(false);
-  });
-
-  it('文件已删掉、同 id 改为只在内存里重建：storage 下线后照常删除', async () => {
+  it('storage 下线：本插件随之停下；重新上线后重新激活，存下的定义照常载入', async () => {
     await registerStorage();
     await app.plugin(cronEnginePlugin, {});
     await app.plugin(workflowPlugin, { enableTools: false });
     await app.plugins.idle();
-    const svc = svcOf();
-    const def: WorkflowDef = {
-      id: 'zz-mem',
-      trigger: { type: 'manual' },
-      nodes: [{ id: 'a', type: 'wait', seconds: 0 }],
-    };
-    await svc.defineWorkflow(def, { persist: true });
-    expect(await svc.removeWorkflow('zz-mem')).toBe(true);
-    await svc.defineWorkflow(def, { persist: false });
+    await svcOf().defineWorkflow(
+      { id: 'zz-kept', trigger: { type: 'manual' }, nodes: [{ id: 'a', type: 'wait', seconds: 0 }] },
+      { persist: true },
+    );
 
     await app.plugins.disable('@aalis/plugin-storage-local');
     await app.plugins.idle();
+    expect(app.plugins.getPlugin('@aalis/plugin-workflow')?.state).toBe('pending');
+    await app.plugins.enable('@aalis/plugin-storage-local');
+    await app.plugins.idle();
     expect(app.plugins.getPlugin('@aalis/plugin-workflow')?.state).toBe('active');
-    expect(await svc.removeWorkflow('zz-mem')).toBe(true);
-    expect(svc.getWorkflow('zz-mem')).toBeUndefined();
+    expect(svcOf().getWorkflow('zz-kept')).toBeDefined();
   });
 
   it('tools 晚于 workflow 上线：AI 工具随后出现', async () => {

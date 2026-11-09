@@ -30,6 +30,7 @@ import {
 } from '../../packages/schema-message/src/index.js';
 import { command, hanging, withCommands } from '../fixtures/clearing.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { sessionInfoOf } from '../fixtures/rooms.js';
 import { callTool, StepModel, stepModelPlugin } from '../fixtures/step-llm.js';
 import { deferred } from '../helpers/deferred.js';
@@ -706,6 +707,7 @@ describe('能停下一轮的', () => {
     const s = await boot({
       decide: (_r, n) => (n === 1 ? callTool('workflow_run', { id: 'zz-steer-wait' }) : { content: `回${n}` }),
       after: async app => {
+        app.bind({ provide }).provide.use(storage, memoryStorage(new Map()));
         await app.plugin(cronEnginePlugin, {});
         await app.plugin(workflowPlugin, {});
       },
