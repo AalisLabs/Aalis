@@ -31,7 +31,8 @@ class ServiceUnavailableError extends Error {
   }
 
   static missingIn(error: unknown, resources: Resources, required: readonly string[]): string | undefined {
-    const origin = error instanceof ServiceUnavailableError && #origin in error ? error.#origin : undefined;
+    // 只认私有字段：品牌检查不经代理的陷阱，读原型就抛错的对象也照常判定为不是
+    const origin = typeof error === 'object' && error !== null && #origin in error ? error.#origin : undefined;
     return origin?.resources === resources && required.includes(origin.name) ? origin.name : undefined;
   }
 }
