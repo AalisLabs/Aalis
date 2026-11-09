@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { validateDefinition } from '../../packages/core/src/composition/plugin-definition.js';
 import { DefaultLogger, definePlugin, type Logger, lifecycle } from '../../packages/core/src/index.js';
 import type { Activation } from '../../packages/core/src/orchestration/activation.js';
 import { activatePlugin, type PluginRecord } from '../../packages/core/src/orchestration/plugin-activation.js';
@@ -165,22 +166,23 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
     const acquire = deferred();
     let flushed = false;
 
+    const definition = definePlugin({
+      name: 'race-mod',
+      uses: { lifecycle },
+      async apply({ lifecycle }) {
+        await acquire.promise;
+        lifecycle.use.onDispose(async () => {
+          await sleep(0);
+          flushed = true;
+        });
+      },
+    });
     const entry: PluginRecord = {
-      definition: definePlugin({
-        name: 'race-mod',
-        uses: { lifecycle },
-        async apply({ lifecycle }) {
-          await acquire.promise;
-          lifecycle.use.onDispose(async () => {
-            await sleep(0);
-            flushed = true;
-          });
-        },
-      }),
+      definition,
+      spec: validateDefinition(definition),
       instanceId: 'race-mod',
       config: {},
       state: 'pending',
-      required: [],
     };
 
     const activating = activatePlugin(entry, {

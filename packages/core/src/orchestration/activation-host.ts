@@ -2,12 +2,11 @@ import { Activation } from './activation.js';
 import { createSelection } from '../composition/binding.js';
 import { coreProviders, provide } from '../composition/core-services.js';
 import { type BoundOf, isOptional, optionalNames, requiredNames, type Uses } from '../composition/descriptors.js';
-import type { PluginDefinition } from '../composition/plugin-definition.js';
 import type { ServiceRuntime } from '../composition/runtime.js';
 import type { Logger } from '../infrastructure/logger.js';
 import { Resources } from '../infrastructure/resources.js';
 
-/** 装配与挂载协调器。能力实现留在各描述符，资源清理留在 Resources。 */
+/** 激活的创建与装配。能力实现留在各描述符，资源清理留在 Resources。 */
 export class ActivationHost {
   readonly runtime: ServiceRuntime;
   readonly root: Activation;
@@ -98,10 +97,6 @@ export class ActivationHost {
   /** 该归属的激活已进关闭计划（容器里的条目都出自仍在册的激活：撤回先于除名） */
   closing(owner: symbol): boolean {
     return this.#owners.get(owner)!.resources.disposed;
-  }
-
-  mount(activation: Activation, definition: PluginDefinition): void | Promise<void> {
-    return definition.apply(this.bind(activation, definition.uses ?? {}));
   }
 }
 

@@ -13,8 +13,12 @@ import {
   retireBatch,
 } from './plugin-activation.js';
 import { topoSortByDeps } from './plugin-topology.js';
-import { isOptional, requiredNames, type Uses } from '../composition/descriptors.js';
-import { assertValidInstanceId, type PluginDefinition, validateDefinition } from '../composition/plugin-definition.js';
+import {
+  assertValidInstanceId,
+  type DefinitionSpec,
+  type PluginDefinition,
+  validateDefinition,
+} from '../composition/plugin-definition.js';
 import { cloneConfigObject } from '../infrastructure/config-values.js';
 import { type Logger, summarizeError } from '../infrastructure/logger.js';
 
@@ -189,9 +193,7 @@ export class PluginManager implements PluginManagerService {
    * 返回值与 items 逐项对应，口径同 {@link register}。
    */
   async registerAll(items: ReadonlyArray<PluginRegistration>): Promise<boolean[]> {
-    const admitted = items.map(({ definition, config, instanceId, disabled }) =>
-      this.#admit(definition, config ?? {}, instanceId, disabled === true),
-    );
+    const admitted = items.map(item => this.#admit(item));
     // 走统一 recompute：依赖满足则被拓扑正序激活，否则保持 pending。只登记了禁用条目时不必重算
     if (admitted.includes('pending')) await this.recompute();
     return admitted.map(state => state !== false);
@@ -200,60 +202,52 @@ export class PluginManager implements PluginManagerService {
   /**
    * 校验并登记一条（同步）。返回登记时的状态；被拒返回 false，拒因已记一笔（级别见 {@link PluginManagerService}）
    */
-  #admit(
-    definition: PluginDefinition,
-    config: Record<string, unknown>,
-    instanceId: string | undefined,
-    disabled: boolean,
-  ): 'pending' | 'disabled' | false {
-    // 手写的定义对象（没经 definePlugin）在这里补上同一道校验。失败不抛——六个管理动作统一 Promise<boolean>
+  #admit(item: PluginRegistration): 'pending' | 'disabled' | false {
+    // 先完成会执行外部代码的两步（读登记项与定义的字段、拷配置：getter 与 Proxy 陷阱都在这里），之后的检查与写入之间
+    // 不再有：外部代码重入登记同一 id 时，查重看得到它。两步失败都只让本条被拒，不抛——六个管理动作统一
+    // Promise<boolean>，registerAll 的其余条目照常登记。手写的定义对象（没经 definePlugin）在这里补上同一道校验
+    let own: PluginRegistration;
+    let spec: DefinitionSpec;
     try {
-      validateDefinition(definition);
-      if (instanceId !== undefined) assertValidInstanceId(instanceId);
+      // 逐项读而不是展开：原型链上的字段与 getter 照样读到，与解构同一口径，每项只读一次
+      own = { definition: item.definition, config: item.config, instanceId: item.instanceId, disabled: item.disabled };
+      spec = validateDefinition(own.definition);
+      if (own.instanceId !== undefined) assertValidInstanceId(own.instanceId);
     } catch (err) {
       this.#logger.error('插件定义校验失败，拒绝注册:', err);
       return false;
     }
-
-    const id = instanceId ?? definition.name;
+    const { definition, config, instanceId, disabled } = own;
+    const id = instanceId ?? spec.name;
+    // 环状引用、读取抛错的 getter 或 Proxy
+    let copy: Record<string, unknown>;
+    try {
+      copy = cloneConfigObject(config ?? {});
+    } catch (err) {
+      this.#logger.error(`插件 "${id}" 的配置无法拷贝，拒绝注册:`, err);
+      return false;
+    }
 
     if (this.#shuttingDown) return this.#refuse('register', id, '处于停机终态');
-
-    // 多实例检查：同一份定义非 reusable 时不允许重复注册
     if (this.#plugins.has(id)) {
       this.#logger.warn(`插件 "${id}" 已注册，跳过`);
       return false;
     }
     // 多实例的 id 须为「name:后缀」：宿主按 id 的前缀找回定义（parseInstanceId），别的形状还会占掉别的插件的 id
-    if (id !== definition.name) {
-      if (!definition.reusable) {
-        this.#logger.error(`插件 "${definition.name}" 未声明 reusable，不允许多实例注册 "${id}"`);
+    if (id !== spec.name) {
+      if (!spec.reusable) {
+        this.#logger.error(`插件 "${spec.name}" 未声明 reusable，不允许多实例注册 "${id}"`);
         return false;
       }
       const { moduleName, suffix } = parseInstanceId(id);
-      if (moduleName !== definition.name || !suffix) {
-        this.#logger.error(`插件 "${definition.name}" 的多实例 id 须为 "${definition.name}:<后缀>"，拒绝注册 "${id}"`);
+      if (moduleName !== spec.name || !suffix) {
+        this.#logger.error(`插件 "${spec.name}" 的多实例 id 须为 "${spec.name}:<后缀>"，拒绝注册 "${id}"`);
         return false;
       }
     }
+    const state = disabled === true ? 'disabled' : 'pending';
 
-    // 环状引用、读取抛错的 getter 或 Proxy 只让本条注册失败，不让 registerAll 整批拒绝
-    let copy: Record<string, unknown>;
-    try {
-      copy = cloneConfigObject(config);
-    } catch (err) {
-      this.#logger.error(`插件 "${id}" 的配置无法拷贝，拒绝注册:`, err);
-      return false;
-    }
-    const state = disabled ? 'disabled' : 'pending';
-
-    this.#plugins.set(id, {
-      definition,
-      instanceId: id,
-      config: copy,
-      state,
-      required: requiredNames(definition.uses ?? {}),
-    });
+    this.#plugins.set(id, { definition, spec, instanceId: id, config: copy, state });
     this.#order = undefined;
     this.#logger.info(state === 'disabled' ? `插件已注册(禁用): ${id}` : `插件已注册: ${id}`);
     return state;
@@ -365,7 +359,7 @@ export class PluginManager implements PluginManagerService {
       grew = false;
       for (const other of candidates) {
         if (!running(other) || !other.activation || batch.includes(other)) continue;
-        if (!other.required.some(name => this.#lost(name, leaving) || pinned?.(name, leaving, other))) continue;
+        if (!other.spec.required.some(name => this.#lost(name, leaving) || pinned?.(name, leaving, other))) continue;
         batch.push(other);
         leaving.add(other.activation.owner);
         grew = true;
@@ -423,24 +417,15 @@ export class PluginManager implements PluginManagerService {
   getStatus(): PluginStatusEntry[] {
     // 状态摘要只含内核事实。配置详情（config / configSchema）与展示元数据（subsystem / extends）
     // 由消费者经 getPlugin(instanceId) 从 entry.config / entry.definition 读取——core 状态契约不携带。
+    // 定义的各项取自登记时取定的那份；每次交出新的数组与对象，调用方改它们碰不到注册表
     return [...this.#plugins.values()].map(entry => ({
-      name: entry.definition.name,
+      name: entry.spec.name,
       instanceId: entry.instanceId,
-      displayName: entry.definition.displayName,
+      displayName: entry.spec.displayName,
       state: entry.state,
-      provides: entry.definition.provides?.map(descriptor => descriptor.name),
-      reusable: entry.definition.reusable,
-      uses: Object.entries<Uses[string]>(entry.definition.uses ?? {}).map(
-        ([key, use]): PluginStatusEntry['uses'][number] => {
-          const optional = isOptional(use);
-          const descriptor = optional ? use.optional : use;
-          return {
-            key,
-            service: descriptor.name,
-            kind: optional ? 'optional' : 'required',
-          };
-        },
-      ),
+      provides: entry.spec.provides?.slice(),
+      reusable: entry.spec.reusable,
+      uses: entry.spec.deps.map(dep => ({ ...dep })),
       error: errorOf(entry.failure),
       failure: entry.failure,
       slow: (entry.activation !== undefined && this.#background.has(entry.activation)) || undefined,
@@ -607,7 +592,7 @@ export class PluginManager implements PluginManagerService {
       if (retiring.length > 0) {
         const leaving = new Set(retiring.map(entry => entry.activation!.owner));
         const target = (entry: PluginRecord): PluginState => {
-          const unmet = entry.required.find(name => this.#lost(name, leaving))!;
+          const unmet = entry.spec.required.find(name => this.#lost(name, leaving))!;
           this.#logger.info(`依赖 "${unmet}" 不可用，停用插件: ${entry.instanceId}`);
           lastRoundFlips.add(entry.instanceId);
           // 本 flight 此刻没有在飞的激活：activating 即后台，它 apply 里拿到的已是旧实例，拆它记入重试预算
@@ -628,7 +613,7 @@ export class PluginManager implements PluginManagerService {
         if (!requiredSatisfied(entry, services)) continue;
         // 它为某个 required 服务选中的那一家已进关闭计划（如被管理动作接手、flight 已不再等的在飞激活）：激活到它
         // 上面拿到的是正在关闭的实例。等它关完、服务下线触发重算再判定
-        if (entry.required.some(name => this.#host.closing(services.ownerOf(name, entry.instanceId)!))) continue;
+        if (entry.spec.required.some(name => this.#host.closing(services.ownerOf(name, entry.instanceId)!))) continue;
         // 'retry'：required 缺失、预算未用尽，已回到 pending，下一轮重新观察依赖
         if ((await this.#activate(entry)) === 'retry' || (entry.state as PluginState) === 'active') {
           changed = true;

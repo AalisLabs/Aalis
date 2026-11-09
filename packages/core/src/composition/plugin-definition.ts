@@ -5,7 +5,15 @@
 // 调度器挂载时：写入这次激活的配置 → 按 uses 装配选择层 → 调 apply。
 // ============================================================
 
-import { assertOwnCopy, type BoundOf, type CheckedUses, isOptional, type ServiceDescriptor } from './descriptors.js';
+import {
+  assertOwnCopy,
+  type BoundOf,
+  type CheckedUses,
+  isOptional,
+  optional,
+  type ServiceDescriptor,
+  type Uses,
+} from './descriptors.js';
 import { isPlainConfigObject, isUnsafeConfigKey } from '../infrastructure/config-values.js';
 
 /**
@@ -83,33 +91,68 @@ function assertValidPluginName(name: unknown): asserts name is string {
   }
 }
 
-function isServiceDescriptor(value: unknown): boolean {
+function isServiceDescriptor(value: unknown): value is ServiceDescriptor<unknown, unknown> {
   return typeof (value as { bind?: unknown } | null)?.bind === 'function';
 }
 
-/** 校验一份定义：name 合法，uses 为纯对象且每一项都是描述符，apply 是函数，provides 元素都是描述符 */
-export function validateDefinition(definition: PluginDefinition): void {
-  assertValidPluginName(definition.name);
-  if (definition.uses !== undefined && !isPlainConfigObject(definition.uses)) {
-    throw new Error(`插件 "${definition.name}" 的 uses 必须是纯对象（不能是数组或原始值）`);
+/** 一项依赖：apply 里的键、服务名、是否 required */
+type Dep = { readonly key: string; readonly service: string; readonly kind: 'required' | 'optional' };
+
+/**
+ * 登记时取定的定义：core 用到的字段在校验时读一次，登记之后各处都读这一份，不回到定义对象上现读。
+ * 之后再改定义对象不生效；要换定义，卸载后重新登记。
+ */
+export interface DefinitionSpec {
+  readonly name: string;
+  readonly displayName: unknown;
+  readonly reusable: boolean | undefined;
+  readonly apply: PluginDefinition['apply'];
+  /** uses 的拷贝，optional 包装换成新的 */
+  readonly uses: Uses;
+  /** 依赖的键、服务名与是否 required（管理面的状态读它） */
+  readonly deps: readonly Dep[];
+  /** 参与激活闸的服务名 */
+  readonly required: readonly string[];
+  /** 声明提供的服务名；没有声明 provides 时为 undefined */
+  readonly provides: readonly string[] | undefined;
+}
+
+/**
+ * 校验一份定义并返回取定的那份：name 合法，uses 为纯对象且每一项都是描述符，apply 是函数，provides 元素都是描述符。
+ * 每个字段只读一次（getter 只执行一次），校验的与取定的是同一次读到的值
+ */
+export function validateDefinition(definition: PluginDefinition): DefinitionSpec {
+  const { name, displayName, reusable, apply, uses = {}, provides } = definition;
+  assertValidPluginName(name);
+  if (!isPlainConfigObject(uses)) {
+    throw new Error(`插件 "${name}" 的 uses 必须是纯对象（不能是数组或原始值）`);
   }
-  for (const [key, use] of Object.entries(definition.uses ?? {})) {
-    assertOwnCopy(use, `插件 "${definition.name}" 的 uses.${key} `);
-    const descriptor = isOptional(use) ? use.optional : use;
-    assertOwnCopy(descriptor, `插件 "${definition.name}" 的 uses.${key} `);
+  const copy: Uses = {};
+  const deps: Dep[] = [];
+  for (const [key, use] of Object.entries(uses)) {
+    assertOwnCopy(use, `插件 "${name}" 的 uses.${key} `);
+    const descriptor: unknown = isOptional(use) ? use.optional : use;
+    assertOwnCopy(descriptor, `插件 "${name}" 的 uses.${key} `);
     if (!isServiceDescriptor(descriptor)) {
-      throw new Error(`插件 "${definition.name}" 的 uses.${key} 不是服务描述符（应为 defineService 的结果）`);
+      throw new Error(`插件 "${name}" 的 uses.${key} 不是服务描述符（应为 defineService 的结果）`);
     }
+    const kind = descriptor === use ? 'required' : 'optional';
+    copy[key] = kind === 'optional' ? optional(descriptor) : descriptor;
+    deps.push({ key, service: descriptor.name, kind });
   }
-  if (typeof definition.apply !== 'function') {
-    throw new Error(`插件 "${definition.name}" 的 apply 必须是函数`);
+  if (typeof apply !== 'function') {
+    throw new Error(`插件 "${name}" 的 apply 必须是函数`);
   }
-  for (const item of definition.provides ?? []) {
-    assertOwnCopy(item, `插件 "${definition.name}" 的 provides 元素`);
+  const provided: string[] = [];
+  for (const item of provides ?? []) {
+    assertOwnCopy(item, `插件 "${name}" 的 provides 元素`);
     if (!isServiceDescriptor(item)) {
-      throw new Error(`插件 "${definition.name}" 的 provides 含有不是描述符的元素（${String(item)}）`);
+      throw new Error(`插件 "${name}" 的 provides 含有不是描述符的元素（${String(item)}）`);
     }
+    provided.push(item.name);
   }
+  const required = deps.filter(dep => dep.kind === 'required').map(dep => dep.service);
+  return { name, displayName, reusable, apply, uses: copy, deps, required, provides: provides && provided };
 }
 
 /**

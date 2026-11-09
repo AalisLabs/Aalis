@@ -22,9 +22,9 @@ import type { Logger } from '../infrastructure/logger.js';
 export function topoSortByDeps(entries: PluginRecord[], logger: Logger): PluginRecord[] {
   const providersOf = new Map<string, string[]>();
   for (const e of entries) {
-    for (const descriptor of e.definition.provides ?? []) {
-      const ids = providersOf.get(descriptor.name) ?? [];
-      if (!ids.includes(e.instanceId)) providersOf.set(descriptor.name, [...ids, e.instanceId]);
+    for (const service of e.spec.provides ?? []) {
+      const ids = providersOf.get(service) ?? [];
+      if (!ids.includes(e.instanceId)) providersOf.set(service, [...ids, e.instanceId]);
     }
   }
   const inDegree = new Map<string, number>();
@@ -36,7 +36,7 @@ export function topoSortByDeps(entries: PluginRecord[], logger: Logger): PluginR
   }
   const edges: Array<[providerId: string, dependent: string, hard: boolean]> = [];
   for (const e of entries) {
-    for (const service of e.required) {
+    for (const service of e.spec.required) {
       for (const [i, providerId] of (providersOf.get(service) ?? []).entries()) {
         if (providerId !== e.instanceId) edges.push([providerId, e.instanceId, i === 0]);
       }

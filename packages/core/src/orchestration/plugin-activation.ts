@@ -18,13 +18,16 @@ import type { Activation } from './activation.js';
 import type { ActivationHost } from './activation-host.js';
 import { closeActivations } from './close-plan.js';
 import { missingRequiredService } from '../composition/binding.js';
+import type { DefinitionSpec } from '../composition/plugin-definition.js';
 import { type Logger, summarizeError } from '../infrastructure/logger.js';
 
-/** 注册表内部的记录：公开的 {@link PluginEntry} 加上依赖表、这次激活与重试余额（不进公开类型） */
-/** 注册表里的记录：失败只存一份 failure，error 在投影时现算 */
+/**
+ * 注册表里的记录：公开的 {@link PluginEntry} 加上登记时取定的定义、这次激活与重试余额（不进公开类型）。
+ * 失败只存一份 failure，error 在投影时现算
+ */
 export interface PluginRecord extends Omit<PluginEntry, 'error'> {
-  /** 参与激活闸的依赖服务名（uses 里未包 optional 的） */
-  required: string[];
+  /** 登记时取定的定义：core 只读它，不回到 definition 上现读 */
+  readonly spec: DefinitionSpec;
   activation?: Activation;
   /** 初始化期 required 缺失的自动重试余额，跨重算累计；未取额时为 undefined（见 PluginManager 的 spendRetry） */
   retriesLeft?: number;
@@ -106,7 +109,7 @@ export async function retireBatch(
  * 上下线不改变目标态：业务句柄每次访问解析当前那一家，有状态的接线经 follow 跟随提供者换人，不靠重启插件。
  */
 export function requiredSatisfied(entry: PluginRecord, services: ServiceContainer): boolean {
-  return entry.required.every(name => services.get(name) !== undefined);
+  return entry.spec.required.every(name => services.get(name) !== undefined);
 }
 
 /**
@@ -130,7 +133,9 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
 
   try {
     // 登记后再 await，让拆卸路径能先等 apply 落定（见 Resources.trackInitialization）
-    const applying = Promise.resolve(host.mount(activation, entry.definition));
+    // 按取定的 uses 装配；this 仍是定义对象
+    const caps = host.bind(activation, entry.spec.uses);
+    const applying = Promise.resolve(Reflect.apply(entry.spec.apply, entry.definition, [caps]));
     activation.resources.trackInitialization(applying);
     await applying;
 
@@ -150,7 +155,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     }
 
     // 按归属核对：本次激活以任何逻辑身份登记的条目都算它的，别的激活登记的同 id 条目不算
-    const provides = entry.definition.provides?.map(descriptor => descriptor.name) ?? [];
+    const provides = entry.spec.provides ?? [];
     const registered = services.namesOf(activation.owner);
     const missing = provides.filter(name => !registered.includes(name));
     if (missing.length > 0) {
@@ -185,7 +190,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
       logger.debug(`插件 "${entry.instanceId}" 激活中止且已被管理操作接管（现态 ${entry.state}）:`, err);
       return;
     }
-    const missing = missingRequiredService(err, activation.resources, entry.required);
+    const missing = missingRequiredService(err, activation.resources, entry.spec.required);
     if (missing !== undefined) {
       entry.failure = undefined;
       const target = deps.spendRetry(entry, missing);

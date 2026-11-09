@@ -119,6 +119,8 @@ PluginManager 只有一个状态变更入口：服务上下线、注册、启停
 
 注册并尝试激活。`config` 原样生效（core 不合并默认值、不读配置文档）；`options.disabled` 为 `true` 时以禁用态登记、不激活。手写的定义对象（没经 `definePlugin`）在这里补上同一道校验。缺 / 空 / 非法 `name`、`uses` 非描述符、非法 `instanceId`（空、危险键），以及定义里有另一份 `@aalis/core` 造的描述符或 `optional` 包装，各记一笔 error 并返回 false。配置无法拷贝（环状引用、读取抛错的 getter 或 Proxy）时同样记 error 并返回 false，不登记；`registerAll` 的其余条目照常登记。停机中立即返回 false，不登记。
 
+定义在登记时取定：core 用到的字段（`name`、`displayName`、`reusable`、`uses`、`provides`、`apply`）当场各读一次，之后的激活、排序与状态都读这一份；登记后再改定义对象不生效，要换定义先卸载再重新登记。读字段与拷配置都在查重之前完成，其中的 getter 或 Proxy 重入登记同一 id 时，重入的那次先登记，外层这次按重名被拒。
+
 ### `unload(instanceId)`
 
 正常运行中拆掉激活并从注册表移除；撞上在途卸载时 join 它，返回时该实例已离开注册表。并发首个 unload 完成后同 id 可能已重新注册，删除带恒等卫，不会按名盲删新 entry。停机中立即返回 false，不改条目，也不加入额外拆卸；等待完整停机用 `app.stop()`。
