@@ -181,6 +181,29 @@ describe('AppOptions.logger 注入（Logger 接口化）', () => {
     expect(hubEntries).toEqual([]);
     await app.stop();
   });
+
+  it.each([
+    ['漏写 return 返回 undefined', () => undefined],
+    ['只有部分日志方法（有 debug、info，缺 warn、error）', () => ({ debug() {}, info() {} })],
+  ])('child 派生出的不是日志器（%s）：按派生失败处理，沿用上一层，日志不丢', async (_, child) => {
+    const { App, definePlugin, logger } = await import('../../packages/core/src/index.js');
+    const lines: string[] = [];
+    const root: import('../../packages/core/src/index.js').Logger = {
+      debug: m => lines.push(`debug|${m}`),
+      info: m => lines.push(`info|${m}`),
+      warn: m => lines.push(`warn|${m}`),
+      error: m => lines.push(`error|${m}`),
+      child: child as never,
+    };
+    const app = new App({ name: 'NoChild', logger: root });
+    await app.plugin(
+      definePlugin({ name: 'p', uses: { logger }, apply: ({ logger }) => logger.use.error('插件自己的错误') }),
+    );
+    await app.plugins.idle();
+    expect(lines).toContain('info|插件已注册: p');
+    expect(lines).toContain('error|插件自己的错误');
+    await app.stop();
+  });
 });
 
 describe('附加参数渲染（core 记错误一律把错误对象作附加参数，靠这里带出 stack）', () => {

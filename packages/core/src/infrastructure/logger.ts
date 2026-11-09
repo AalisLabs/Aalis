@@ -19,6 +19,7 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
   warn: 2,
   error: 3,
 };
+const LEVELS = Object.keys(LEVEL_PRIORITY) as LogLevel[];
 
 /**
  * 日志中枢：纯 pub-sub 通道。
@@ -84,7 +85,8 @@ export interface Logger {
 export type LogWriter = Pick<Logger, LogLevel>;
 
 /**
- * 不抛的 Logger：各方法经 reportQuietly 转发，child 派生的同样包一层；派生失败时沿用这一层（少一级作用域）。
+ * 不抛的 Logger：各方法经 reportQuietly 转发，child 派生的同样包一层；派生失败时沿用这一层（少一级作用域）。派生出的不是
+ * 日志器（缺日志方法，如漏写 return 的适配器返回 undefined）也算失败：否则它的每条日志都在转发时抛错、被静默吞掉。
  * @internal
  */
 export function quietLogger(inner: Logger): Logger {
@@ -99,10 +101,12 @@ export function quietLogger(inner: Logger): Logger {
     error: forward('error'),
     child: scope => {
       try {
-        return quietLogger(inner.child(scope));
+        const child = inner.child(scope);
+        if (LEVELS.every(level => typeof child?.[level] === 'function')) return quietLogger(child);
       } catch {
-        return quiet;
+        // 派生抛错：沿用这一层
       }
+      return quiet;
     },
   };
   return quiet;

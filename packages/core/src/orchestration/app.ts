@@ -55,7 +55,7 @@ export interface AppOptions {
    * 注入后 core 不再写 LogHub 管线——runtime 的 console/file/webui sink
    * 监听的是 LogHub，是否对接由注入方自理。缺省 = DefaultLogger（写入 logHub）。要按 App 固定日志时间戳，
    * 注入 `new DefaultLogger('aalis', level, hub, now)`。
-   * 注入的与缺省的都由 App 包一层再用：日志方法抛错或返回被拒的 Promise 不传进 core 与插件，`child` 派生失败时沿用上一层，`app.logger` 也是包过的这层。
+   * 注入的与缺省的都由 App 包一层再用：日志方法抛错或返回被拒的 Promise 不传进 core 与插件，`child` 派生失败（抛错，或派生出的不是日志器）时沿用上一层，`app.logger` 也是包过的这层。
    * 插件管理器（作用域 `plugins`）的日志推迟一个微任务交给它，彼此先后不变：日志回调里发起的管理动作或 `stop()` 看到的是改完之后的状态；插件自己的日志不推迟。
    */
   logger?: Logger;
