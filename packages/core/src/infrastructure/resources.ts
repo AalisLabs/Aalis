@@ -169,18 +169,26 @@ export class Resources {
     return settled;
   }
 
+  /**
+   * 段收口：等在飞记录落定，期间新记的一并等。整次收口共用一个 timeoutMs 的时限：落定时又记进新工作的（清理里再登记、
+   * 关不掉的定时器一直往里登记）不会让收口一轮接一轮永不结束；到点没落定的放弃等待并记 warn，仍由 lingering 看到；
+   * 到点之后不再追新记的工作，等待的循环随之结束。没有未落定的工作时直接返回，不设时限、不设定时器
+   */
   async #settle(timeoutMs?: number): Promise<void> {
-    for (;;) {
-      const batch = [...this.#inflight].filter(([work]) => !this.#abandoned.has(work));
-      if (batch.length === 0) return;
-      await awaitWithTimeout(Promise.all(batch.map(([work]) => work)), timeoutMs, limit => {
-        for (const [work, what] of batch) {
-          if (!this.#inflight.has(work)) continue;
-          this.#abandoned.add(work);
-          this.#logger.warn(`Resources "${this.#id}": 等待 ${what} 超过 ${limit}ms，放弃等待`);
-        }
-      });
-    }
+    const unsettled = () => [...this.#inflight.keys()].filter(work => !this.#abandoned.has(work));
+    let batch = unsettled();
+    if (batch.length === 0) return;
+    let expired = false;
+    const settling = (async () => {
+      for (; batch.length > 0 && !expired; batch = unsettled()) await Promise.all(batch);
+    })();
+    await awaitWithTimeout(settling, timeoutMs, limit => {
+      expired = true;
+      for (const work of unsettled()) {
+        this.#abandoned.add(work);
+        this.#logger.warn(`Resources "${this.#id}": 等待 ${this.#inflight.get(work)} 超过 ${limit}ms，放弃等待`);
+      }
+    });
   }
 
   /** 一次性撤回；异步部分与 follow / registrar 一样只进在飞记录，在段收口等一次（手动开始的也纳入这次激活的关闭） */
