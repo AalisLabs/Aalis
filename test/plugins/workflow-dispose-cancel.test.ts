@@ -26,6 +26,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 // bounce 时会盖掉新实例的运行历史与 once 记录。
 // 既然拆卸要等，取消就得打断阻塞中的节点：一小时的 wait、等不来回复的 agent 节点会让旧实例超过宽限、
 // 滞留不退，同一 id 的新实例要等它落定才起，插件在整段等待里都不可用。
+// 触发器关掉之后再调到旧实例的定义不得重新挂上：没人再撤它，卸载后旧实例照样按时触发。
 // 驱动面全部走公开面：真 fs storage + 真 tools + app.plugins.unload / bounce（生产卸载与重启路径）。
 // ════════════════════════════════════════════════════════════
 
@@ -170,6 +171,58 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
     expect(status?.state).toBe('active');
     expect(recorded('zz-block')?.status).toBe('cancelled');
     expect((await runPromise).status).toBe('cancelled');
+  });
+
+  it('拆卸等在飞 run 时定义的工作流不挂触发器：卸载之后旧实例不再触发', async () => {
+    let entered!: () => void;
+    const blocked = new Promise<void>(r => {
+      entered = r;
+    });
+    let aborted!: () => void;
+    const disposing = new Promise<void>(r => {
+      aborted = r;
+    });
+    let release!: () => void;
+    const svc = await boot([
+      // 收到中止后不立即返回：拆卸停在等它收尾的那一段
+      tool('zz_hold', (_args, ctx) => {
+        entered();
+        return new Promise(resolve =>
+          ctx.signal?.addEventListener('abort', () => {
+            release = () => resolve('released');
+            aborted();
+          }),
+        );
+      }),
+      tool('zz_count', async () => 'counted'),
+    ]);
+    await svc.defineWorkflow(
+      { id: 'zz-hold', trigger: { type: 'manual' }, nodes: [{ id: 'a', type: 'tool', tool: 'zz_hold' }] },
+      { persist: false },
+    );
+    const held = svc.runWorkflow('zz-hold');
+    await blocked;
+
+    const unloading = app.plugins.unload(WORKFLOW);
+    await disposing;
+    await svc.defineWorkflow(
+      {
+        id: 'zz-late',
+        // 已过期的 once 挂上的话排 0ms，下一轮定时器就触发
+        trigger: { type: 'once', runAt: new Date(Date.now() - 1000).toISOString() },
+        nodes: [{ id: 'a', type: 'tool', tool: 'zz_count' }],
+      },
+      { persist: false },
+    );
+    release();
+    await unloading;
+    await held;
+    // 比它晚排的定时器到点时它若挂上了就已触发；触发时同步记下这次运行，旧服务对象的运行列表里查得到
+    await new Promise(r => setTimeout(r, 0));
+
+    expect(svc.listRuns(undefined, 'zz-late'), '卸载后旧实例按触发器跑了工作流').toEqual([]);
+    const saved = JSON.parse(readFileSync(join(base, 'state', 'workflow-runs.json'), 'utf-8'));
+    expect(saved.onceFired, '卸载后旧实例写了 once 记录').toEqual({});
   });
 
   it('cancelRun 打断阻塞中的 wait 节点：run 当即记 cancelled，节点记失败', async () => {

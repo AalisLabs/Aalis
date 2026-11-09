@@ -33,11 +33,15 @@ function manager() {
       return () => {};
     },
   };
-  const triggers = new TriggerManager({ cronEngine: ref(), events: events as never, logger }, () => {}, {
-    onceLedgerReadable: () => true,
-    onceFiredAt: () => undefined,
-    markOnceFired() {},
-  });
+  const triggers = new TriggerManager(
+    { cronEngine: ref(), events: events as never, logger, signal: new AbortController().signal },
+    () => {},
+    {
+      onceLedgerReadable: () => true,
+      onceFiredAt: () => undefined,
+      markOnceFired() {},
+    },
+  );
   return { triggers, subscribed, warnings };
 }
 

@@ -83,12 +83,18 @@ export interface TriggerCaps {
   cronEngine: ServiceSelection<CronEngine>;
   events: Events;
   logger: Logger;
+  /**
+   * 本次激活的中止信号：收尾开始时断开，此后不再挂新的触发器。拆卸之后仍可能调到旧实例的定义（拿着旧服务对象的调用方、
+   * define 里 await 保存期间被拆卸的），那时再挂的触发器没人撤，卸载后照样按时触发
+   */
+  signal: AbortSignal;
 }
 
 export class TriggerManager {
   private cronEngine: ServiceSelection<CronEngine>;
   private events: Events;
   private logger: Logger;
+  private signal: AbortSignal;
   private fire: FireFn;
   private once: OnceLedger;
 
@@ -100,14 +106,15 @@ export class TriggerManager {
     this.cronEngine = caps.cronEngine;
     this.events = caps.events;
     this.logger = caps.logger;
+    this.signal = caps.signal;
     this.fire = fire;
     this.once = once;
   }
 
-  /** 注册一个 workflow 的触发器；幂等，重复注册先 unregister */
+  /** 注册一个 workflow 的触发器；幂等，重复注册先 unregister。收尾开始之后不再注册 */
   register(def: WorkflowDef): void {
     this.unregister(def.id);
-    if (def.enabled === false) return;
+    if (this.signal.aborted || def.enabled === false) return;
     const t = def.trigger;
     switch (t.type) {
       case 'cron': {

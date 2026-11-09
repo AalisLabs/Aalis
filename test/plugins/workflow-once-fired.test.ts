@@ -216,6 +216,7 @@ function onceManager(fired: string[], ledger: Map<string, number>): TriggerManag
     cronEngine: ref(),
     events: { on: unusable('事件总线'), emit: unusable('事件总线') },
     logger: noopLogger,
+    signal: new AbortController().signal,
   };
   return new TriggerManager(
     caps,

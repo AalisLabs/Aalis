@@ -425,7 +425,7 @@ async function run(caps: Caps): Promise<void> {
 
   // ── 触发管理器：内部 cron/interval/event 监听 ──
   const triggers = new TriggerManager(
-    { cronEngine: caps.cronEngine, events: events.use, logger },
+    { cronEngine: caps.cronEngine, events: events.use, logger, signal: lifecycle.use.signal },
     (workflowId, source, payload) => {
       // 异步触发，不阻塞触发源；event 触发的 payload（{args}）作为 vars 注入，{{vars.X}} 才读得到
       runAsDefiner(workflowId, payload ?? {}, source).catch(err => {
