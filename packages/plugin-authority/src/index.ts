@@ -204,17 +204,22 @@ async function run(caps: Caps): Promise<void> {
     return () => svc.setExecutionGuard(undefined);
   });
 
-  // 落盘走 onDispose 而非 app:stopping：后者只在全局停机触发一次，覆盖不了
+  // 落盘走拆卸而非 app:stopping：后者只在全局停机触发一次，覆盖不了
   // bounce / unload / disable / 依赖降级级联这些拆卸路径，热重载即丢等级数据。
+  // 写盘是交给 storage 的依赖交接，在收尾里等完：storage 的提供者经 optional 依赖又用到本插件时两者成环，
+  // 关停先放行环内的收尾，本插件清理时 storage 可能已撤下。收尾之后、撤回之前指令与权限页动作照常可用，
+  // 这时排上的写在清理里再等一次。
   //
   // 必须 async 并 await flushed()：save() 只是把写挂到 saveChain 上就同步返回，
-  // 而清理链只在回调返回 thenable 时才等待——回调返回 void 时整条拆卸链一个环节都不等
+  // 而拆卸只在回调返回 thenable 时才等待——回调返回 void 时整条拆卸链一个环节都不等
   // 这次写，CLI 子命令退出与 bounce 都会静默丢掉封禁/等级。
   // flushed() 无条件 await：dirty 已为 false 时 save() 会早退，要等的是先前挂上去的那次写。
-  lifecycle.use.onDispose(async () => {
+  const flush = async (): Promise<void> => {
     manager.save();
     await manager.flushed();
-  });
+  };
+  lifecycle.use.onDrain(flush);
+  lifecycle.use.onDispose(flush);
 
   // ===== 权限指令 =====
 

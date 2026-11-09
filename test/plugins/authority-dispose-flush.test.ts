@@ -1,14 +1,15 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { approvals } from '../../packages/api-approval/src/index.js';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { type StorageRootInfo, type StorageService, storage } from '../../packages/api-storage/src/index.js';
-import { type App, type Logger, provide } from '../../packages/core/src/index.js';
+import { type App, definePlugin, type Logger, lifecycle, optional, provide } from '../../packages/core/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { mkConfig, silentLogger } from '../fixtures/authority.js';
 
 // users.json 落盘：save() 只把写挂到 saveChain 上就同步返回。拆卸路径必须 await flushed()，
-// 否则 CLI 子命令退出与 bounce 会丢掉封禁/等级。plugin-authority 在 lifecycle.onDispose 里
+// 否则 CLI 子命令退出与 bounce 会丢掉封禁/等级。plugin-authority 在 lifecycle.onDrain 里
 // 先 save() 再 await flushed()，停机才能等到在飞写入。
 
 /** 慢写 storage：不等待就一定观察得到（否则可能碰巧写完） */
@@ -173,7 +174,7 @@ describe('authority 落盘必须可被拆卸路径等待', () => {
     expect(JSON.parse(payloads.at(-1) ?? '{}').users['onebot:alice'].level, '链停在拒绝后不再真正写盘').toBe(-6);
   });
 
-  it('装配真实 plugin-authority 后 app.stop 等到 onDispose 落盘', async () => {
+  it('装配真实 plugin-authority 后 app.stop 等到收尾里的落盘', async () => {
     const done = { written: false } as { written: boolean; uri?: string };
     const { app } = hostedApp();
     apps.push(app);
@@ -190,7 +191,71 @@ describe('authority 落盘必须可被拆卸路径等待', () => {
     expect(done.written, 'save() 同步返回，此刻写还在飞').toBe(false);
 
     await app.stop();
-    expect(done.written, '停机必须跑到插件 onDispose 的 flushed()，等到在飞写入').toBe(true);
+    expect(done.written, '停机必须跑到插件收尾里的 flushed()，等到在飞写入').toBe(true);
     expect(done.uri).toBe('data:/users.json');
+  });
+
+  // storage 的提供者经 optional 依赖又用到 authority（如 storage-local → doctor → commands → authority）时两者成环，
+  // 关停只先放行双方收尾，后登记的 storage 可能先关完、撤下服务，authority 清理时它已不在
+  it('storage 提供者与 authority 经 optional 依赖成环且先关：停机时等级表照样写进 storage', async () => {
+    const payloads: string[] = [];
+    const store = {
+      listRoots: () => [DATA_ROOT],
+      async readFile() {
+        throw new Error('不存在');
+      },
+      async writeFile(_uri: string, data: string) {
+        payloads.push(data);
+      },
+    } as unknown as StorageService;
+    const storagePlugin = definePlugin({
+      name: 'test-storage',
+      provides: [storage],
+      uses: { provide, authority: optional(authority) },
+      apply(caps) {
+        caps.provide.use(storage, store);
+      },
+    });
+    const { app } = hostedApp();
+    apps.push(app);
+    const host = app.bind({ authority: optional(authority) });
+    await app.plugin(authorityPlugin, {});
+    await app.plugin(storagePlugin, {});
+    await app.plugins.idle();
+    await new Promise(resolve => setTimeout(resolve, 0)); // 首次读取落定，之后的改动才写盘
+    host.authority.use.setUserLevel({ platform: 'onebot', userId: 'alice' }, -5);
+
+    await app.stop();
+    expect(JSON.parse(payloads.at(-1) ?? '{}').users?.['onebot:alice']?.level, '封禁没写进 storage').toBe(-5);
+  });
+
+  // 收尾之后、撤回之前登记还在（指令、权限页动作照常可用），这时的改动排上写链；清理要再等一次，
+  // 否则停机返回时写还在飞，bounce 时新实例可能先读到旧文件
+  it('收尾之后才排上的写：清理时照样等它落定', async () => {
+    const done = { written: false } as { written: boolean; uri?: string };
+    const { app } = hostedApp();
+    apps.push(app);
+    app.bind({ provide }).provide.use(storage, pluginSlowStorage(done));
+    // 与 authority 经 optional 依赖成环且先登记：环内先都收尾，authority 后登记先收尾，这里的收尾落在它收尾之后、关闭之前
+    await app.plugin(
+      definePlugin({
+        name: 'zz-late-change',
+        provides: [approvals],
+        uses: { provide, lifecycle, authority: optional(authority) },
+        apply(caps) {
+          caps.provide.use(approvals, {} as never);
+          caps.lifecycle.use.onDrain(() => {
+            caps.authority.use.setUserLevel({ platform: 'onebot', userId: 'alice' }, -5);
+            caps.authority.use.save();
+          });
+        },
+      }),
+    );
+    await app.plugin(authorityPlugin, {});
+    await app.plugins.idle();
+    await new Promise(resolve => setTimeout(resolve, 0)); // 首次读取落定，之后的改动才写盘
+
+    await app.stop();
+    expect(done.written, '停机返回时收尾之后排上的写还在飞').toBe(true);
   });
 });
