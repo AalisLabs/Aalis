@@ -101,9 +101,13 @@ type Extraction = { text: string } | { unreadable: string; retry?: true };
 
 /**
  * 按内容认定的格式名与提取结果，PDF 与 DOCX 要解析才知道，给解析的做法。格式名即会话面板与工具输出里的「类型」：PDF、DOCX、
- * OLE（旧版 doc、xls、ppt），UTF-8 文本，认得出的媒体格式（PNG、MP3…）。附件报的 MIME 与扩展名是别人写的标签，不看
+ * OLE（旧版 doc、xls、ppt），UTF-8 文本，认得出的媒体格式（PNG、MP3…）。附件报的 MIME 与扩展名是别人写的标签，不看。
+ * parse 的 signal 交给解析里发出的请求（DOCX 内嵌图片的识图），中止时抛中止原因
  */
-type Content = { format: string } & ({ extraction: Extraction } | { parse(): Promise<Extraction> });
+type Content = { format: string } & (
+  | { extraction: Extraction }
+  | { parse(signal: AbortSignal | undefined): Promise<Extraction> }
+);
 
 /** 取附件字节的结果：字节，超过大小上限（知道多大时带上），或读不出的原因 */
 type Source = { bytes: Buffer } | { tooLarge: number | undefined } | { unreadable: string };
@@ -410,7 +414,7 @@ async function run(caps: Caps): Promise<void> {
   function detectFormat(data: Buffer): Content {
     const doc = detectDocumentFormat(data);
     if (doc === 'PDF') return { format: doc, parse: () => extractPdf(data) };
-    if (doc === 'DOCX') return { format: doc, parse: () => extractDocx(data) };
+    if (doc === 'DOCX') return { format: doc, parse: signal => extractDocx(data, signal) };
     if (doc === 'OLE') {
       return { format: doc, extraction: { unreadable: '旧版 Office 文档（.doc/.xls/.ppt），请另存为新格式后重传' } };
     }
@@ -428,8 +432,15 @@ async function run(caps: Caps): Promise<void> {
   const cacheable = (extraction: Extraction): boolean =>
     'text' in extraction ? extraction.text.length <= autoInlineLimit : !extraction.retry;
 
-  /** 已存下的文件的提取结果：有缓存用缓存，没有的按判过的格式提取（没给时读出来判），能缓存的写进元信息 */
-  async function extractionOf(entry: FileEntry, detected?: Content): Promise<Extraction> {
+  /**
+   * 已存下的文件的提取结果：有缓存用缓存，没有的按判过的格式提取（没给时读出来判），能缓存的写进元信息。signal 交给提取，中止
+   * 时抛中止原因，不缓存
+   */
+  async function extractionOf(
+    entry: FileEntry,
+    detected: Content | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<Extraction> {
     if (entry.extraction) return entry.extraction;
     let content = detected;
     if (!content) {
@@ -441,7 +452,7 @@ async function run(caps: Caps): Promise<void> {
         return { unreadable: `文件读取失败：${errorText(err)}`, retry: true };
       }
     }
-    const extraction = 'extraction' in content ? content.extraction : await content.parse();
+    const extraction = 'extraction' in content ? content.extraction : await content.parse(signal);
     if (cacheable(extraction)) {
       entry.extraction = extraction;
       await storage
@@ -465,15 +476,16 @@ async function run(caps: Caps): Promise<void> {
     }
   }
 
-  /** 正文与内嵌图片的描述；两样都没有的读不出 */
-  async function extractDocx(buffer: Buffer): Promise<Extraction> {
+  /** 正文与内嵌图片的描述；两样都没有的读不出。识图随 signal 中止时抛中止原因，不按解析失败报 */
+  async function extractDocx(buffer: Buffer, signal: AbortSignal | undefined): Promise<Extraction> {
     try {
       const mammoth = await import('mammoth');
       const result = await mammoth.extractRawText({ buffer });
-      const images = await describeDocxImages(mammoth, buffer);
+      const images = await describeDocxImages(mammoth, buffer, signal);
       if (!result.value.trim() && !images) return { unreadable: 'DOCX 里没有文字' };
       return { text: result.value + images };
     } catch (err) {
+      signal?.throwIfAborted();
       logger.use.warn('DOCX 解析失败:', err);
       return { unreadable: `DOCX 解析失败：${errorText(err)}`, retry: true };
     }
@@ -483,7 +495,11 @@ async function run(caps: Caps): Promise<void> {
    * 提取 DOCX 内嵌图片并用 media 服务识别，返回追加到正文末尾的图片小节（无图/无 media 返回空串）。
    * 第二遍 convertToHtml 仅用于触发图片回调收集 data URI，HTML 输出丢弃；正文仍由 extractRawText 提供。
    */
-  async function describeDocxImages(mammoth: typeof import('mammoth'), buffer: Buffer): Promise<string> {
+  async function describeDocxImages(
+    mammoth: typeof import('mammoth'),
+    buffer: Buffer,
+    signal: AbortSignal | undefined,
+  ): Promise<string> {
     if (!recognizeDocImages || maxDocImages <= 0) return '';
     const mediaService = media.present ? media.use : undefined;
     if (!mediaService?.describeImage) return '';
@@ -518,13 +534,15 @@ async function run(caps: Caps): Promise<void> {
     // 并发 3 + 整体 30s 预算：避免多图 DOCX 在上传预处理阶段长时间阻塞首个回复。
     const descriptions = await recognizeImages(
       uris,
-      uri => mediaService.describeImage(uri, { detailLevel: 'detailed' }),
+      uri => mediaService.describeImage(uri, { detailLevel: 'detailed', signal }),
       {
         maxImages: maxDocImages,
         concurrency: 3,
         timeoutMs: 30_000,
       },
     );
+    // 中止时 recognizeImages 回的是缺了描述的部分结果：抛中止原因，这份正文不缓存
+    signal?.throwIfAborted();
     if (descriptions.length === 0) {
       logger.use.warn(`DOCX 内嵌 ${uris.length} 张图片但识别结果为空（vision 不可用 / 配额耗尽 / 超时？）`);
     }
@@ -719,7 +737,7 @@ async function run(caps: Caps): Promise<void> {
           `找不到文件 (ID: ${fileId})：上传的文件按保留天数与总量清理，已清理的请用户重新上传；用 ${TOOL_LIST} 看现有文件`,
         );
       }
-      const extraction = await extractionOf(entry);
+      const extraction = await extractionOf(entry, undefined, callCtx.signal);
       if ('unreadable' in extraction) throw new Error(`读不出 ${entry.name} 的内容：${extraction.unreadable}`);
       const text = truncateChars(
         extraction.text,
@@ -811,7 +829,8 @@ async function run(caps: Caps): Promise<void> {
     }
     const inline = inlinesIn(msg.sessionId);
     /** 描述用的提取结果：内联的会话当场提取，不内联的只取缓存（只看字节就有的存下时已缓存），不解析 */
-    const known = (entry: FileEntry, content?: Content) => (inline ? extractionOf(entry, content) : entry.extraction);
+    const known = (entry: FileEntry, content?: Content) =>
+      inline ? extractionOf(entry, content, lifecycle.use.signal) : entry.extraction;
     // 本插件写的描述先按下标记下，结尾写进那一刻的 _attachmentDescriptions，只动自己负责的位：
     // 媒体识别可能与本预处理器并发（触发判定启动的识别，放行时不等它跑完），开头取的快照里
     // 没有其间写好的图片描述，整表写回会把它冲掉

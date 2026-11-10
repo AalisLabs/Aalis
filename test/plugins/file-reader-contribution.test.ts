@@ -1129,6 +1129,40 @@ describe('plugin-file-reader: 受众里有别人的会话不内联', () => {
     }
   });
 
+  it('读的时候给内嵌图识图途中中止：交给识图的信号随之断开，这次读按中止收尾，正文不缓存，下次读照常识别', async () => {
+    let hang = true;
+    const signals: Array<AbortSignal | undefined> = [];
+    const describeImage = async (_uri: string, opts?: { signal?: AbortSignal }) => {
+      signals.push(opts?.signal);
+      if (!hang) return '一张照片';
+      return new Promise<string>((_, reject) =>
+        opts?.signal?.addEventListener('abort', () => reject(opts.signal?.reason), { once: true }),
+      );
+    };
+    const fx = await setup({}, { sessions: ROOMS, owners: OWNERS, media: { describeImage } });
+    try {
+      const toolService = await fx.tools();
+      const { id } = await fx.upload(GROUP, 'pic.docx', minimalDocx(['正文'], { 'image1.png': JPEG_HEAD }), DOCX_MIME);
+      const ac = new AbortController();
+      const reading = toolService.execute(
+        'read_uploaded_file',
+        { fileId: id },
+        toolRequest({ sessionId: GROUP, signal: ac.signal }),
+      );
+      await expect.poll(() => signals.length).toBe(1);
+      ac.abort();
+      expect(signals[0]?.aborted).toBe(true);
+      const stopped = (await reading).content;
+      expect(stopped).not.toContain('--- 内容 ---');
+      expect(stopped, '中止不按解析失败报').not.toContain('解析失败');
+      hang = false;
+      const again = await toolService.execute('read_uploaded_file', { fileId: id }, toolRequest({ sessionId: GROUP }));
+      expect(again.content).toContain('[图片1: 一张照片]');
+    } finally {
+      await fx.dispose();
+    }
+  });
+
   it('群里上传只看字节就知道读不出的（旧版 Office、认不出的格式）：描述写读不出与原因，格式照记；读的时候同样报出原因', async () => {
     const fx = await setup({}, { sessions: ROOMS, owners: OWNERS });
     try {
