@@ -44,8 +44,8 @@ interface SidecarOptions {
    * 侧车、中间没有别的进程（plugin-process-local 如此）
    */
   parentPid: number;
-  /** 侧车地址上是否已有侧车在答 /health */
-  probe(): Promise<boolean>;
+  /** 侧车地址上是否已有侧车在答 /health；signal 中止时探测随之停下 */
+  probe(signal: AbortSignal): Promise<boolean>;
   log: { info(msg: string): void; warn(msg: string): void; debug(msg: string): void };
   /**
    * 意外退出（含没能拉起、启动超时被杀）；reason 含退出码的含义、标准错误的最后一行与重启时间。
@@ -131,9 +131,9 @@ export function superviseSidecar(o: SidecarOptions): Sidecar {
   let restarts = 0;
   let backoff = BACKOFF_BASE_MS;
 
-  /** 首次拉起：地址上已有侧车（系统服务、手动启动的）就不拉起，再拉一个只会绑定端口失败 */
+  /** 首次启动：地址上已有侧车（系统服务、手动启动的）就不启动，再启动一个只会绑定端口失败。探测随停止中止 */
   async function boot(): Promise<void> {
-    const taken = await o.probe();
+    const taken = await o.probe(stopping.signal);
     if (stopping.signal.aborted) return;
     if (taken) {
       state = { kind: 'external' };

@@ -75,7 +75,8 @@ interface Harness {
   exits: Array<[reason: string, newRound: boolean]>;
   /** 退出原因（文字对象） */
   reasons: TextRef[];
-  probe: { taken: boolean; calls: number };
+  /** signal 是最近一次探测收到的中止信号 */
+  probe: { taken: boolean; calls: number; signal?: AbortSignal };
   /** 拉起时给出的 process 服务；置为 undefined 模拟缺席 */
   current: { process: ProcessService | undefined };
 }
@@ -102,8 +103,9 @@ function start(opts: { taken?: boolean; process?: ProcessService | null } = {}):
     dir: DIR,
     port: 17878,
     parentPid: 999,
-    probe: async () => {
+    probe: async signal => {
       h.probe.calls++;
+      h.probe.signal = signal;
       return h.probe.taken;
     },
     log: {
@@ -133,6 +135,13 @@ afterEach(() => {
 });
 
 describe('托管侧车：拉起与就绪', () => {
+  it('首次启动侧车进程前探地址的请求接停止：停掉侧车时交给探测的信号随之中止', async () => {
+    const h = start();
+    expect(h.probe.signal?.aborted).toBe(false);
+    await h.sc.stop();
+    expect(h.probe.signal?.aborted).toBe(true);
+  });
+
   it('按侧车目录的布局拉起：venv 的 python 以 -I 运行、模型取 models/current、端口与父进程 pid 作参数，工作目录是侧车目录', async () => {
     const h = start();
     expect(h.children, '先探地址，探完才拉起').toHaveLength(0);

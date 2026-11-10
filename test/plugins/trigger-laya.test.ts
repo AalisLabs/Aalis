@@ -76,6 +76,8 @@ interface Sidecar {
   health: Reply;
   /** GET /health 被请求的次数 */
   healthCalls: number;
+  /** 没应答完就断开了的请求数 */
+  dropped: number;
 }
 
 const servers: Server[] = [];
@@ -100,8 +102,12 @@ async function startSidecar(): Promise<Sidecar> {
     reply: () => score(1),
     health: { status: 200, body: { ok: true, version: 'v-test' } },
     healthCalls: 0,
+    dropped: 0,
   };
   const server = createServer((req, res) => {
+    res.on('close', () => {
+      if (!res.writableEnded) state.dropped++;
+    });
     const chunks: Buffer[] = [];
     req.on('data', (c: Buffer) => chunks.push(c));
     req.on('end', () => {
@@ -1201,6 +1207,32 @@ describe('plugin-trigger-laya：诊断项', () => {
         'configuration file',
     );
     expect((await diagnose()).message).toBe(INACTIVE.replace('规则（计数/评分）', '规则判定'));
+  });
+});
+
+describe('plugin-trigger-laya：随停用中止', () => {
+  it('判定请求途中停用：到侧车的请求随之断开，不计失败，这条按后备判定（点名的放行）', async () => {
+    sidecar.reply = () => 'hang';
+    const { app, send, logs } = await setup({ laya: { timeoutMs: 30_000 } });
+    const pending = send(groupMsg(`${AT}在吗`));
+    await expect.poll(() => sidecar.requests.length).toBe(1);
+    await app.plugins.disable(layaPlugin.name);
+    await expect.poll(() => sidecar.dropped).toBe(1);
+    expect((await pending).reached).toBe(true);
+    expect(logs.filter(e => e.message.includes('侧车请求失败'))).toEqual([]);
+  });
+
+  it('诊断项探 /health 途中停用：请求随之断开，检查以中止原因抛出，不报连不上', async () => {
+    sidecar.health = 'hang';
+    const { app, diagnose } = await setup({ laya: { timeoutMs: 30_000 } });
+    const failure = diagnose().then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    await expect.poll(() => sidecar.healthCalls).toBe(1);
+    await app.plugins.disable(layaPlugin.name);
+    await expect.poll(() => sidecar.dropped).toBe(1);
+    expect(await failure).toMatchObject({ name: 'AbortError' });
   });
 });
 

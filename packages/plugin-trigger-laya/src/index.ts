@@ -288,7 +288,7 @@ function run(caps: Caps): void {
               dir: managed.dir,
               port: managed.port,
               parentPid: process.pid,
-              probe: async () => !('error' in (await probe())),
+              probe: async signal => !('error' in (await probe(signal))),
               log: logger.use,
               onExit: (reason, newRound) => {
                 // 失败计数属于退出了的那个进程，作废；新一轮故障（就绪后稳定运行过才退出）另记一条 error
@@ -413,7 +413,7 @@ function run(caps: Caps): void {
     // 确实要发请求才记：在此之前兜底与超限的判定不参与自检
     selfCheck.record(message, cur);
 
-    // 发请求并读完响应体，整体落在同一个超时窗口内（只限响应头的话，迟迟不发体的对端会绕过超时）
+    // 发请求并读完响应体，整体落在同一个超时窗口内（只限响应头的话，迟迟不发体的对端会绕过超时）；本插件停用、停机时同样停下
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
     let status: number;
@@ -423,11 +423,13 @@ function run(caps: Caps): void {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body,
-        signal: controller.signal,
+        signal: AbortSignal.any([controller.signal, caps.lifecycle.use.signal]),
       });
       status = res.status;
       text = await res.text();
     } catch (err) {
+      // 停用、停机时中止不是侧车的故障：不计失败
+      if (caps.lifecycle.use.signal.aborted) return fallback('已中止');
       fail(controller.signal.aborted ? t('timeout', { ms: cfg.timeoutMs }) : textOf(err));
       return fallback('侧车请求失败');
     } finally {
@@ -526,10 +528,12 @@ function run(caps: Caps): void {
 
   // ----- 诊断：侧车状态 -----
 
-  /** 探一次侧车的 /health，超时同单次请求 */
-  async function probe(): Promise<{ version: string } | { error: string }> {
+  /** 探一次侧车的 /health，超时同单次请求；signal 中止时随之停下（这时的 error 是中止原因） */
+  async function probe(signal: AbortSignal): Promise<{ version: string } | { error: string }> {
     try {
-      const res = await fetch(`${cfg.endpoint}/health`, { signal: AbortSignal.timeout(cfg.timeoutMs) });
+      const res = await fetch(`${cfg.endpoint}/health`, {
+        signal: AbortSignal.any([AbortSignal.timeout(cfg.timeoutMs), signal]),
+      });
       const text = await res.text();
       if (!res.ok) return { error: `HTTP ${res.status}${errorCode(text)}` };
       return { version: str((JSON.parse(text) as { version?: unknown }).version) ?? '?' };
@@ -571,7 +575,9 @@ function run(caps: Caps): void {
           notes.push(t('starting', { seconds: Math.round((now - state.since) / 1000) }));
         }
       } else {
-        const health = await probe();
+        const health = await probe(caps.lifecycle.use.signal);
+        // 停用、停机时中止不是连不上：抛中止原因
+        caps.lifecycle.use.signal.throwIfAborted();
         if ('error' in health) problems.push(t('unreachable', { error: health.error }));
         else online = t(state?.kind === 'ready' ? 'onlineManaged' : 'online', { version: health.version });
         if (state?.kind === 'external') notes.push(t('external'));
