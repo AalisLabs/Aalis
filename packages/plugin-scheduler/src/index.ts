@@ -803,25 +803,20 @@ async function run(caps: Caps): Promise<void> {
     if (jobCfg.runAt && jobCfg.enabled) {
       const targetMs = Date.parse(jobCfg.runAt);
       if (Number.isFinite(targetMs)) {
-        const delay = targetMs - Date.now();
-        if (delay <= 0) {
-          // 已过期（含停机时错过的）：立即执行一次
-          setImmediate(() => fireOneShot(rt));
-        } else {
-          // 远期 runAt 分段重排：delay 超过 2^31-1ms 会溢出成立即触发。每段最多排到上限，
-          // 段末未到点就续排下一段，到点才执行
-          const arm = (wait: number): void => {
-            rt.timer = setTimeout(() => {
-              const remain = targetMs - Date.now();
-              if (remain > 0) {
-                arm(Math.min(remain, MAX_TIMEOUT_MS));
-                return;
-              }
-              fireOneShot(rt);
-            }, wait) as unknown as ReturnType<typeof setInterval>;
-          };
-          arm(Math.min(delay, MAX_TIMEOUT_MS));
-        }
+        // 远期 runAt 分段重排：delay 超过 2^31-1ms 会溢出成立即触发。每段最多排到上限，段末未到点就续排下一段，到点才执行。
+        // 已过期的（含停机时错过的）排 0ms，下一轮定时器就执行：与未到点的同记在 rt.timer，清理段一并撤掉，激活后紧接着
+        // 重载时不会在拆卸之后的旧实例上再执行一次
+        const arm = (wait: number): void => {
+          rt.timer = setTimeout(() => {
+            const remain = targetMs - Date.now();
+            if (remain > 0) {
+              arm(Math.min(remain, MAX_TIMEOUT_MS));
+              return;
+            }
+            fireOneShot(rt);
+          }, wait) as unknown as ReturnType<typeof setInterval>;
+        };
+        arm(Math.max(0, Math.min(targetMs - Date.now(), MAX_TIMEOUT_MS)));
       } else {
         logger.use.warn(`任务 ${jobCfg.name} 的 runAt 无法解析: ${jobCfg.runAt}`);
       }

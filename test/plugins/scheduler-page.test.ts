@@ -560,9 +560,8 @@ describe('存量持久化任务', () => {
   it('已过期的 runAt 暂停时不立刻补跑：过期分支与未到点分支同一判据', async () => {
     await withScheduler(
       async ({ jobs }) => {
-        // 过期分支走 setImmediate，让出两轮宏任务等它跑完
-        await new Promise(r => setImmediate(r));
-        await new Promise(r => setImmediate(r));
+        // 过期的排 0ms 定时器：等一个更晚的定时器，它已跑过
+        await new Promise(r => setTimeout(r, 20));
         const job = jobs().find(j => j.name === 'due-paused');
         expect(job?.paused, '带 cron 的任务可以暂停，暂停态应保留').toBe(true);
         expect(job?.runCount, '过期分支没看 paused，暂停的任务启动即被补跑一次').toBe(0);

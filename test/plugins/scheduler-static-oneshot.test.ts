@@ -25,11 +25,8 @@ const cronEngineStub = {
 
 const oneShot = (runAt: string) => ({ name: 'once', runAt, content: 'x', sessionId: 'internal', platform: 'internal' });
 
-/** 过期分支经 setImmediate 执行：激活落定后再让出两轮，该执行的都已执行 */
-const settle = async () => {
-  await new Promise(r => setImmediate(r));
-  await new Promise(r => setImmediate(r));
-};
+/** 过期的一次性任务排 0ms 定时器：激活落定后等一个更晚的定时器，该执行的都已执行 */
+const settle = () => new Promise(r => setTimeout(r, 20));
 
 let app: App | undefined;
 afterEach(async () => {
@@ -37,8 +34,8 @@ afterEach(async () => {
   app = undefined;
 });
 
-/** 起一个实例：storage 是 mem（换实例时文件留着），配置里放 jobs；返回执行过的任务名（按次） */
-async function start(mem: ReturnType<typeof memoryStorage>, jobs: unknown[]) {
+/** 启动一个实例：storage 是 mem（换实例时文件留着），配置里放 jobs；返回执行过的任务名（按次）。激活落定即返回 */
+async function boot(mem: ReturnType<typeof memoryStorage>, jobs: unknown[]) {
   app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide, events });
   host.provide.use(cronEngine, cronEngineStub as never);
@@ -60,8 +57,14 @@ async function start(mem: ReturnType<typeof memoryStorage>, jobs: unknown[]) {
   await app.plugins.register(toolsPlugin, {});
   await app.plugins.register(schedulerPlugin, { jobs });
   await app.plugins.idle();
-  await settle();
   return { app, started };
+}
+
+/** 同 boot，等到过期的一次性任务执行过再返回 */
+async function start(mem: ReturnType<typeof memoryStorage>, jobs: unknown[]) {
+  const booted = await boot(mem, jobs);
+  await settle();
+  return booted;
 }
 
 describe('scheduler 配置里的一次性任务', () => {
@@ -72,13 +75,14 @@ describe('scheduler 配置里的一次性任务', () => {
     expect(JSON.parse(mem.files.get(JOBS) ?? 'null')).toEqual({ jobs: [], onceFired: { once: PAST } });
   });
 
-  it('执行过的重载本插件后不再执行', async () => {
-    const { app, started } = await start(memoryStorage(), [oneShot(PAST)]);
-    expect(started).toEqual(['once']);
+  it('激活后紧接着重载本插件：过期的只执行一次，旧实例拆卸之后不再执行', async () => {
+    const mem = memoryStorage();
+    const { app, started } = await boot(mem, [oneShot(PAST)]);
     await app.plugins.bounce(schedulerPlugin.name);
     await app.plugins.idle();
     await settle();
     expect(started).toEqual(['once']);
+    expect(JSON.parse(mem.files.get(JOBS) ?? 'null')).toEqual({ jobs: [], onceFired: { once: PAST } });
   });
 
   it('执行过的 storage 重启后不再执行', async () => {
