@@ -8,7 +8,6 @@ import { pluginSource } from '@aalis/api-plugin-source';
 import { App, DefaultLogger, events, LogHub, type LogLevel, provide, services } from '@aalis/core';
 import { CORE_CONFIG_SCHEMA, CORE_RESTART_KEYS, readFieldValue, type SchemaField } from '@aalis/schema-config';
 import { isTextError, resolveText } from '@aalis/schema-i18n';
-import { installBootstrapBuffer } from './bootstrap-buffer.js';
 import { createConfigStore, installHostConfig } from './config-store.js';
 import { type ConfigSyncOptions, installConfigHotReload, withPluginConfigSync } from './config-sync.js';
 import { type ConsoleSinkHandle, installConsoleSink } from './console-sink.js';
@@ -215,8 +214,7 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
     process.on('exit', () => lock.release());
   }
 
-  // ── 最早期：任何日志之前先装 bootstrap buffer，再装 terminal / console sink ──
-  const bootstrap = installBootstrapBuffer();
+  // ── 最早期：任何日志之前先装 terminal / console sink ──
   if (terminalRestore) installTerminalStateRestorer();
   const subcommandMode = subcommands.length > 0;
   // console sink 在 App 之前装：此时尚无事件总线（根绑定），sink 处于「无条件写」状态以打印早期启动日志，
@@ -248,10 +246,8 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   process.on('uncaughtException', err => void exitWithFatalLog('Uncaught exception', err));
   process.on('unhandledRejection', reason => void exitWithFatalLog('Unhandled promise rejection', reason));
 
-  // ── file logger（async）+ 释放 bootstrap buffer ──
+  // ── file logger（async）──
   if (fileLogTarget) fileLogger = await setupFileLogger(fileLogTarget);
-  // sink 全部装好；bootstrap buffer 完成使命，解除订阅并释放内存。
-  bootstrap.dispose();
 
   // ── 组装 App：YAML 配置文档与密钥文件、按 loader 发现插件、用 spawn 重启 ──
   // 配置或密钥文件读不进来（格式有误、读不了、插件配置段不是映射）是环境问题：一行报错退出，不带调用栈（消息不含文件内容）。

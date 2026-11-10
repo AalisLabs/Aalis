@@ -2,7 +2,6 @@ import type { Events } from '@aalis/core';
 import { LogHub } from '@aalis/core';
 import type { LogEntry, LogLevel } from '@aalis/schema-log';
 import chalk from 'chalk';
-import { getBootstrapBuffer } from './bootstrap-buffer.js';
 
 /**
  * 运行时层注入的事件——`@aalis/core` 不感知"终端归属"这件事，
@@ -94,7 +93,7 @@ export interface ConsoleSinkHandle {
 }
 
 /**
- * 安装 console sink：先冲洗启动前缓冲的日志，然后订阅后续 LogEntry。
+ * 安装 console sink：订阅 LogEntry，按需染色写到 stdout（或 stderr）。
  *
  * 与 CLI/TUI 等"独占终端 UI"的协调通过事件 `terminal:claimed/released` 完成，
  * sink 自己根据事件决定是否写 stdout——UI 不直接干预 sink。
@@ -114,9 +113,6 @@ export function installConsoleSink(
     if (LEVEL_PRIORITY[entry.level] < minPriority) return;
     log(formatEntry(entry));
   };
-
-  // 冲洗启动期 bootstrap buffer
-  for (const entry of getBootstrapBuffer().snapshot()) write(entry);
 
   let paused = false;
   const off = hub.onEntry(entry => {

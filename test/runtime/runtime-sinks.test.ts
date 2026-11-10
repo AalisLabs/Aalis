@@ -1,20 +1,32 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DefaultLogger } from '@aalis/core';
+import { DefaultLogger, LogHub } from '@aalis/core';
 import { parseLogLine } from '@aalis/schema-log';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import {
-  __resetBootstrapBufferForTests,
-  getBootstrapBuffer,
-  installBootstrapBuffer,
-} from '../../packages/runtime/src/bootstrap-buffer.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installConsoleSink } from '../../packages/runtime/src/console-sink.js';
 import { appendCrashLog, setupFileLogger } from '../../packages/runtime/src/file-logger.js';
 
 /**
  * runtime/console-sink + file-logger 集成测试
  */
+
+// 文件日志装载时清空 latest.log 的那次写入：hold 给了就等它再写，started 在开始写时兑现；不给照常写
+const truncate = vi.hoisted(() => ({
+  hold: undefined as Promise<void> | undefined,
+  started: undefined as (() => void) | undefined,
+}));
+vi.mock('node:fs/promises', async importOriginal => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...fs,
+    writeFile: async (...args: Parameters<typeof fs.writeFile>) => {
+      truncate.started?.();
+      await truncate.hold;
+      return fs.writeFile(...args);
+    },
+  };
+});
 
 describe('runtime console-sink', () => {
   let originalLog: typeof console.log;
@@ -66,60 +78,6 @@ describe('runtime console-sink', () => {
     new DefaultLogger('after-dispose').info('should-not-appear');
     expect(captured.some(line => line.includes('should-not-appear'))).toBe(false);
   });
-
-  it('启动前缓冲会被冲洗（依赖 bootstrap-buffer）', () => {
-    installBootstrapBuffer();
-    try {
-      new DefaultLogger('preboot').info('msg-before-sink');
-      const handle = installConsoleSink();
-      try {
-        expect(captured.some(line => line.includes('msg-before-sink'))).toBe(true);
-      } finally {
-        handle.dispose();
-      }
-    } finally {
-      __resetBootstrapBufferForTests();
-    }
-  });
-});
-
-describe('runtime bootstrap-buffer', () => {
-  afterEach(() => {
-    __resetBootstrapBufferForTests();
-  });
-
-  it('snapshot 多次可重复读取，互相独立副本', () => {
-    const handle = installBootstrapBuffer();
-    new DefaultLogger('boot').info('first');
-    const s1 = handle.snapshot();
-    new DefaultLogger('boot').info('second');
-    const s2 = handle.snapshot();
-    expect(s1.map(e => e.message)).toEqual(['first']);
-    expect(s2.map(e => e.message)).toEqual(['first', 'second']);
-    // s1 与 s2 是不同数组（副本语义）
-    expect(s1).not.toBe(s2);
-  });
-
-  it('dispose 后不再收集新条目', () => {
-    const handle = installBootstrapBuffer();
-    new DefaultLogger('boot').info('before-dispose');
-    handle.dispose();
-    new DefaultLogger('boot').info('after-dispose');
-    // dispose 后 snapshot 已清空
-    expect(handle.snapshot()).toEqual([]);
-  });
-
-  it('未安装时 getBootstrapBuffer 返回空 stub（不抛错）', () => {
-    const stub = getBootstrapBuffer();
-    expect(stub.snapshot()).toEqual([]);
-    expect(() => stub.dispose()).not.toThrow();
-  });
-
-  it('重复 install 返回同一实例（幂等）', () => {
-    const a = installBootstrapBuffer();
-    const b = installBootstrapBuffer();
-    expect(a).toBe(b);
-  });
 });
 
 describe('runtime file-logger', () => {
@@ -152,6 +110,49 @@ describe('runtime file-logger', () => {
       );
     } finally {
       await handle.dispose();
+    }
+  });
+
+  it('清空文件还没写完时到的条目照样写进文件，排在清空之后', async () => {
+    writeFileSync(logFile, 'prev-run\n');
+    let release!: () => void;
+    truncate.hold = new Promise<void>(r => {
+      release = r;
+    });
+    const started = new Promise<void>(r => {
+      truncate.started = r;
+    });
+    try {
+      const setup = setupFileLogger(logFile);
+      await started;
+      new DefaultLogger('flog').info('while-truncating');
+      release();
+      const handle = await setup;
+      await handle.dispose();
+      expect(readEntries(logFile).map(e => e.message)).toEqual(['while-truncating']);
+    } finally {
+      truncate.hold = undefined;
+      truncate.started = undefined;
+    }
+  });
+
+  it('清空文件写不成：装载以拒绝传出，订阅随之撤回', async () => {
+    const offs: Array<ReturnType<typeof vi.fn>> = [];
+    const onEntry = LogHub.default.onEntry.bind(LogHub.default);
+    const spy = vi.spyOn(LogHub.default, 'onEntry').mockImplementation(listener => {
+      const off = vi.fn(onEntry(listener));
+      offs.push(off);
+      return off;
+    });
+    truncate.hold = Promise.reject(new Error('写不进'));
+    truncate.hold.catch(() => {});
+    try {
+      await expect(setupFileLogger(logFile)).rejects.toThrow('写不进');
+      expect(offs).toHaveLength(1);
+      expect(offs[0]).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+      truncate.hold = undefined;
     }
   });
 

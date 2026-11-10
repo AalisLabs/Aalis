@@ -2,7 +2,6 @@ import { appendFile, mkdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, extname } from 'node:path';
 import { DefaultLogger, LogHub } from '@aalis/core';
 import { formatLogLine } from '@aalis/schema-log';
-import { getBootstrapBuffer } from './bootstrap-buffer.js';
 import { assertAbsolute } from './data-dir.js';
 
 const RUNTIME_SCOPE = 'aalis:runtime';
@@ -61,14 +60,12 @@ async function rotateLogs(logFile: string): Promise<void> {
 }
 
 /**
- * 装文件日志：先把上一轮的日志改名保留（见 rotateLogs），再把启动期日志写入新的 logFile，之后实时追加。
+ * 装文件日志：先把上一轮的日志改名保留（见 rotateLogs），再清空 logFile，之后实时追加。
  * 轮转失败不拦启动：照旧覆盖写 logFile，并记一条告警写明原因。不接在原内容后面写：一个文件只装一轮，
- * seq 从 0 起随文件位置单调递增，webui 的历史分页与 CLI 的启动恢复都以此为前提。
+ * seq 从 0 起随文件位置单调递增，webui 的历史分页与 CLI 的启动恢复都以此为前提。清空写不成时以拒绝传出、不留订阅。
  */
 export async function setupFileLogger(logFile: string): Promise<FileLoggerHandle> {
   assertAbsolute('Log file path', logFile);
-  let queue: Promise<void> = Promise.resolve();
-
   await mkdir(dirname(logFile), { recursive: true });
   let rotateError: string | undefined;
   try {
@@ -76,14 +73,17 @@ export async function setupFileLogger(logFile: string): Promise<FileLoggerHandle
   } catch (err) {
     rotateError = err instanceof Error ? err.message : String(err);
   }
-  const hub = LogHub.default;
-  // 启动期 entries 由 bootstrap-buffer 持有；作为文件初始内容写入。
-  const initial = getBootstrapBuffer().snapshot().map(formatLogLine).join('');
-  await writeFile(logFile, initial);
-
-  const off = hub.onEntry(entry => {
+  // 清空是队列里的第一次写入，紧接着订阅：此后到的条目都排在清空之后写，等清空的这段时间里也不丢
+  let queue: Promise<void> = writeFile(logFile, '');
+  const off = LogHub.default.onEntry(entry => {
     queue = queue.then(() => appendFile(logFile, formatLogLine(entry))).catch(() => {});
   });
+  try {
+    await queue;
+  } catch (err) {
+    off();
+    throw err;
+  }
   // 订阅之后再记：告警经 LogHub 同时进控制台与本文件。
   if (rotateError !== undefined) {
     new DefaultLogger(RUNTIME_SCOPE).warn(`上一轮的日志没能改名保留（${rotateError}），本轮已覆盖写入 ${logFile}`);

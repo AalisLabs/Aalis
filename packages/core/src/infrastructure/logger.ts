@@ -26,7 +26,7 @@ const LEVELS = Object.keys(LEVEL_PRIORITY) as LogLevel[];
  *
  * 设计原则：
  * - **零 I/O 知识**：LogHub 不感知 stdout / 文件 / TTY / 染色等任何渲染细节
- * - **零状态**：不持有任何 buffer。启动期日志暂存由 runtime 的 bootstrap-buffer 负责
+ * - **零状态**：不持有任何 buffer，订阅之前推送的条目不补发
  * - **写一次，多处订阅**：`push` 同步广播给开始分发时已订阅的 `onEntry` 订阅者，与事件总线同一规则：分发途中新订阅的
  *   不收这一条，途中退订的跳过；每次订阅一条，同一函数订阅两次各收一份、各自退订。单个订阅者抛错（含返回被拒的
  *   Promise）不影响其余订阅者，也不让日志调用抛出。订阅者本身就是日志的去处，它的失败无处可报，就此丢弃（见 reportQuietly）

@@ -4,8 +4,7 @@ import { describe, expect, it } from 'vitest';
 /**
  * LogHub 行为：纯 pub-sub 通道，无 stdout 知识、无 buffer。
  *
- * stdout 输出由 runtime/console-sink.ts 通过订阅 onEntry 实现；
- * 启动期日志的暂存由 runtime/bootstrap-buffer.ts 单独负责（见对应测试）。
+ * stdout 输出由 runtime/console-sink.ts 通过订阅 onEntry 实现。
  */
 
 describe('LogHub 纯 pub-sub', () => {

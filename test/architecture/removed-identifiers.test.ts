@@ -383,6 +383,8 @@ const REMOVED: Array<[string, string]> = [
   ['initHome', 'runtime 初始化家目录的函数，改名 initDataDir'],
   ['isHomeInitialized', 'runtime 的初始化判据，改名 isDataDirInitialized'],
   ['aalis.home', 'MongoDB 记忆库归属记录的命名空间，改为 aalis.data'],
+  ['installBootstrapBuffer', 'runtime 的启动期日志缓冲：日志输出装好之前它从没收到过条目'],
+  ['getBootstrapBuffer', 'runtime 的启动期日志缓冲：日志输出装好之前它从没收到过条目'],
 ];
 
 /**

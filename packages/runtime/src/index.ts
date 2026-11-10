@@ -12,7 +12,6 @@
 //   - startAalis：组装以上 + 宿主件为实例并启动（带 options 开关，默认独立部署）
 //   - install*/setup*/tryDispatchSubcommand：宿主件，供高级 opt-in 组装
 
-export { getBootstrapBuffer, installBootstrapBuffer } from './bootstrap-buffer.js';
 export {
   type ConfigProvider,
   type ConfigStore,
