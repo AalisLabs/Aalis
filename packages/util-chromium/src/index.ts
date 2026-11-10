@@ -8,7 +8,7 @@
 //   产出截图或逐帧定格。引擎与封网设计见 engine.ts 头注释。
 // ============================================================
 
-export type { Browser } from 'puppeteer';
+export type { Browser, BrowserContext, Page } from 'puppeteer';
 export type { AnimationOptions, FramesResult } from './animation.js';
 export {
   OfflineRenderer,

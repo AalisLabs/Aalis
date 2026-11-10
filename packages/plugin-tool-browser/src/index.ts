@@ -20,9 +20,11 @@ import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { TextError } from '@aalis/schema-i18n';
 import {
   type Browser,
+  type BrowserContext,
   bundledChromePath,
   ChromiumLaunchError,
   launchChromium,
+  type Page,
   puppeteerCliPath,
 } from '@aalis/util-chromium';
 import {
@@ -44,8 +46,7 @@ import { t } from './texts.js';
 // ──────────── 类型 ────────────
 
 interface PageSlot {
-  // biome-ignore lint/suspicious/noExplicitAny: puppeteer Page 类型动态导入，避免在顶层 import puppeteer 增加启动负担
-  page: any; // puppeteer Page
+  page: Page;
   /** 打开它的根会话，见 ownerOf；页面开在这个会话的浏览器上下文里 */
   owner: string;
   url: string;
@@ -164,18 +165,15 @@ function runBrowserTools(caps: Caps): void {
   const proc = caps.proc.use;
   const storage = caps.storage.use;
 
-  // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser 类型动态导入
-  let browser: any = null;
-  // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser 类型动态导入
-  let launching: Promise<any> | null = null;
+  let browser: Browser | null = null;
+  let launching: Promise<Browser> | null = null;
   let gate: NetworkGate | null = null;
   const pages = new Map<string, PageSlot>();
   /**
    * 各根会话的浏览器上下文：登录态（cookie、localStorage、缓存）归它，它的页面都开在里面。按需建，同一会话并发的首次开页
    * 共用同一次创建；浏览器重启时随页面表一起清掉，在新的浏览器上重建
    */
-  // biome-ignore lint/suspicious/noExplicitAny: puppeteer BrowserContext 类型动态导入
-  const contexts = new Map<string, Promise<any>>();
+  const contexts = new Map<string, Promise<BrowserContext>>();
   /** 正在开的页面与它所属的根会话：开好之前这个会话被删了（见 session:deleted），不登记 */
   const opening = new Set<{ owner: string; deleted: boolean }>();
 
@@ -195,8 +193,7 @@ function runBrowserTools(caps: Caps): void {
   }
 
   /** 这个根会话的浏览器上下文，没有就建；建不成的不留，下次调用重建 */
-  // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser / BrowserContext 类型动态导入
-  function contextOf(b: any, owner: string): Promise<any> {
+  function contextOf(b: Browser, owner: string): Promise<BrowserContext> {
     const held = contexts.get(owner);
     if (held) return held;
     const created = b.createBrowserContext();
@@ -293,8 +290,7 @@ function runBrowserTools(caps: Caps): void {
     logger.info('Chrome 下载完成');
   }
 
-  // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser 类型动态导入
-  function ensureBrowser(): Promise<any> {
+  function ensureBrowser(): Promise<Browser> {
     // 只判句柄非空不够：Chromium 崩溃/被杀后句柄常驻，所有 browser_* 会永久失效到插件 bounce
     if (browser?.connected) return Promise.resolve(browser);
     // 单飞：并发的调用共用同一次启动，不各起一个 Chromium（后赋值的会盖掉前一个，前一个就没人关了）
@@ -304,8 +300,7 @@ function runBrowserTools(caps: Caps): void {
     return launching;
   }
 
-  // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser 类型动态导入
-  async function launchBrowser(): Promise<any> {
+  async function launchBrowser(): Promise<Browser> {
     // 停用后才到的调用不再起闸与浏览器：onDispose 已经收过尾，这时起的东西没人关
     if (lifecycle.use.signal.aborted) throw new Error('浏览器工具已停用');
     // 重新启动时页面表与各会话的上下文一起清，否则列出的是已经不存在的死页面，开页也会落到旧浏览器的上下文上
@@ -389,8 +384,7 @@ function runBrowserTools(caps: Caps): void {
    * 关掉这一代浏览器，不等关闭落定（浏览器进程本身卡住时，puppeteer 在 protocolTimeout 后强杀进程），
    * 页面表一起清，下次调用重新启动。挂着的 CDP 调用随连接断开失败，它们持有的锁随之释放
    */
-  // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser 类型动态导入
-  function retireBrowser(instance: any, reason: string): void {
+  function retireBrowser(instance: Browser, reason: string): void {
     // 已不是当前这一代（崩溃后已重启、已被关掉）：它的页面已不在表里，关闭也不归这里
     if (browser !== instance) return;
     browser = null;
@@ -696,7 +690,7 @@ function runBrowserTools(caps: Caps): void {
       const slot = ownPage(args.pageId, callCtx.sessionId);
       if (!slot) return JSON.stringify({ error: '页面不存在' });
       try {
-        const buffer: Buffer | null = await withScreenshotTimeout(
+        const buffer = await withScreenshotTimeout(
           slot,
           (async () => {
             await slot.page.bringToFront(); // 同 browser_click：按选择器截图同样先等元素进入视口
