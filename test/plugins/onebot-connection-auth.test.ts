@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { App, type Logger, provide } from '@aalis/core';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { processService } from '../../packages/api-process/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import onebot from '../../packages/plugin-adapter-onebot/src/index.js';
@@ -147,8 +147,14 @@ describe('onebot 连接鉴权', () => {
   });
 
   it('握手被拒的响应体一直不结束：只记开头一段，立即断开，不等连接超时', async () => {
+    let gone!: () => void;
+    const clientGone = new Promise<void>(resolve => {
+      gone = resolve;
+    });
     const w = await world(url => [{ url }], {
       upgrade: socket => {
+        socket.once('end', gone);
+        socket.once('close', gone);
         const chunk = 'x'.repeat(64 * 1024);
         socket.write(
           `HTTP/1.1 401 Unauthorized\r\nTransfer-Encoding: chunked\r\n\r\n${chunk.length.toString(16)}\r\n${chunk}\r\n`,
@@ -156,7 +162,8 @@ describe('onebot 连接鉴权', () => {
       },
     });
     await until(() => w.lines.some(line => line.startsWith('OneBot 连接断开')), '读到上限后断开');
-    await new Promise(resolve => setTimeout(resolve, 200)); // 等响应流随断开关上
+    // 客户端关掉套接字之后服务端才读得到断开，客户端的响应流随套接字关闭同一拍关上：到这里它已关过
+    await clientGone;
     const bodies = w.lines.filter(line => line.startsWith('OneBot unexpected-response body: '));
     expect(bodies, '读到上限与随后的关闭只记一次').toHaveLength(1);
     expect(bodies[0].length).toBeLessThan(5000);
@@ -170,7 +177,50 @@ describe('onebot 连接鉴权', () => {
       },
     });
     await until(() => w.lines.some(line => line.startsWith('OneBot 连接断开')), '读到一半断开后断开');
-    expect(w.lines.some(line => line.startsWith('OneBot unexpected-response body: '))).toBe(true);
+    expect(w.lines.filter(line => line.startsWith('OneBot unexpected-response body: '))).toEqual([
+      'OneBot unexpected-response body: half',
+    ]);
+  });
+
+  // 连接超时由 15 秒的定时器断开：只假 setTimeout，在握手请求到了服务端之后推进，网络 I/O 照常
+  describe('连接超时', () => {
+    const timeout = async (upgrade: (socket: Duplex) => void) => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      cleanups.push(() => void vi.useRealTimers());
+      let arrived = false;
+      const w = await world(url => [{ url }], {
+        upgrade: socket => {
+          arrived = true;
+          upgrade(socket);
+        },
+      });
+      await until(() => arrived, '握手请求到了服务端');
+      return w;
+    };
+
+    it('服务端一直不回握手：记下连接超时，不多记一条自己断开引出的连接错误', async () => {
+      const w = await timeout(() => {});
+      await vi.advanceTimersByTimeAsync(15_000);
+      await until(() => w.lines.some(line => line.startsWith('OneBot 连接断开')), '超时后断开');
+      expect(w.lines.filter(line => line.startsWith('OneBot 连接超时'))).toHaveLength(1);
+      expect(w.lines.filter(line => line.startsWith('OneBot 连接错误'))).toEqual([]);
+    });
+
+    it('握手被拒、响应体没到上限又不结束：连接超时断开时记下读到的部分', async () => {
+      const w = await timeout(socket => {
+        socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Length: 100\r\n\r\ntoken invalid');
+      });
+      await until(() => w.lines.some(line => line.includes('status=401')), '读到握手被拒');
+      await vi.advanceTimersByTimeAsync(15_000);
+      await until(
+        () => w.lines.some(line => line.startsWith('OneBot unexpected-response body: ')),
+        '超时断开后记下响应体',
+      );
+      expect(w.lines.filter(line => line.startsWith('OneBot unexpected-response body: '))).toEqual([
+        'OneBot unexpected-response body: token invalid',
+      ]);
+      expect(w.lines.filter(line => line.startsWith('OneBot 连接错误'))).toEqual([]);
+    });
   });
 
   it('没有数字返回码的帧不当成失败回执（如事件里带 status: failed）', async () => {

@@ -1428,18 +1428,23 @@ function runAdapter(caps: Caps): void {
     const ws = new WebSocket(state.config.url, { headers });
     state.ws = ws;
 
+    // 握手被拒、连接超时时先记下原因再自己断开：断开引出的 error（WebSocket was closed before the connection was
+    // established）不是新的错，不再记
+    let reported = false;
+
     // 握手被拒（服务器回了非 101，如鉴权不过的 401）：记下状态码、响应头与响应体后立即断开重连。挂了这个监听时 ws 不自己
     // 中断握手、也不触发 error，不断开就要干等连接超时。响应体只留开头一段：地址指错到别的服务时它可能很大、一直不结束；
-    // 读完、读到上限、读到一半断开都在这时断开
-    let rejected = false;
+    // 读完、读到上限、读到一半断开都在这时断开。没到上限又不结束的由连接超时断开，随后响应流关上时照样记下读到的部分
     ws.on('unexpected-response', (_req, res) => {
-      rejected = true;
+      reported = true;
       logger.use.warn(`OneBot unexpected-response: status=${res.statusCode}, headers=${JSON.stringify(res.headers)}`);
       let body = '';
+      let logged = false;
       const finish = () => {
-        if (ws.readyState !== WebSocket.CONNECTING) return;
+        if (logged) return;
+        logged = true;
         logger.use.warn(`OneBot unexpected-response body: ${body}`);
-        ws.terminate();
+        if (ws.readyState === WebSocket.CONNECTING) ws.terminate();
       };
       res.setEncoding('utf8');
       res.on('data', (chunk: string) => {
@@ -1457,6 +1462,7 @@ function runAdapter(caps: Caps): void {
         logger.use.warn(
           `OneBot 连接超时 (${CONNECT_TIMEOUT / 1000}s): ${state.config.url}, readyState=${ws.readyState}`,
         );
+        reported = true;
         ws.terminate();
       }
     }, CONNECT_TIMEOUT);
@@ -1561,8 +1567,7 @@ function runAdapter(caps: Caps): void {
 
     ws.on('error', err => {
       clearTimeout(connectTimer);
-      // 握手被拒后上面自己 terminate 引出的这条不是新的错，原因已经记过
-      if (rejected) return;
+      if (reported) return;
       logger.use.warn(
         `OneBot 连接错误: ${err.message}, code=${(err as NodeJS.ErrnoException).code}, readyState=${ws.readyState}`,
       );
