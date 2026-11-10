@@ -1048,6 +1048,8 @@ class SessionManager implements SessionManagerService {
         temperature: 0.3,
         // 标题生成无需推理，用模型最浅的思考档：避免 reasoning 占满 token 预算导致 content 为空
         think: lightestThinking(model),
+        // 本插件自己发起的：停用、停机时随之停下
+        signal: this.caps.lifecycle.use.signal,
       });
       title = truncateChars((resp.content || '').trim(), 50);
       if (!title) {
@@ -1056,6 +1058,8 @@ class SessionManager implements SessionManagerService {
         );
       }
     } catch (err) {
+      // 中止不是生成失败：不告警，也不拿用户消息兜底写标题
+      if (this.caps.lifecycle.use.signal.aborted) return undefined;
       this.caps.logger.use.warn(`自动生成标题失败 [${sessionId}]:`, err);
     }
 

@@ -1,4 +1,4 @@
-import { events, provide } from '@aalis/core';
+import { events, LogHub, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { llm } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
@@ -12,11 +12,20 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 // 自动标题只给带创建来源的根会话（WebUI 新建的、终端建的）生成，按会话字段判，不按入口平台：
 // IM 房间、按 id 建档的会话与子会话不生成，owner 从 WebUI 往房间插话也不拿来给房间起名。
 
-type Chat = (req: { messages: { role: string; content: string }[] }) => Promise<{ content: string }>;
+type Chat = (req: {
+  messages: { role: string; content: string }[];
+  signal?: AbortSignal;
+}) => Promise<{ content: string }>;
 
-/** language 给出时装上 i18n，全局层的语言（它的插件配置）设成它 */
-async function setup(chat: Chat = async () => ({ content: '装修预算' }), language?: string[]) {
-  const { app } = hostedApp(language ? { plugins: { [i18nPlugin.name]: { language } } } : {});
+/** language 给出时装上 i18n，全局层的语言（它的插件配置）设成它；hub 给出时日志按 warn 级写进它 */
+async function setup(chat: Chat = async () => ({ content: '装修预算' }), language?: string[], hub?: LogHub) {
+  const { app } = hostedApp(
+    {
+      ...(language ? { plugins: { [i18nPlugin.name]: { language } } } : {}),
+      ...(hub ? { logLevel: 'warn' } : {}),
+    },
+    hub ? { logHub: hub } : {},
+  );
   await registerHubs(app);
   const host = app.bind({ provide, events, sessionManager });
   host.provide.use(memory, fakeMemory() as never);
@@ -149,5 +158,42 @@ describe('标题的语言与截断', () => {
 
     expect(fromModel).toBe('y'.repeat(49));
     expect(fallback).toBe('x'.repeat(19));
+  });
+});
+
+describe('标题生成随停用中止', () => {
+  it('模型调用途中停用：交给它的中止信号随之断开，不告警、不拿用户消息兜底写标题', async () => {
+    const signals: Array<AbortSignal | undefined> = [];
+    const hub = new LogHub();
+    const warns: string[] = [];
+    hub.onEntry(entry => {
+      if (entry.level === 'warn') warns.push(entry.message);
+    });
+    const { app, host, sm } = await setup(
+      req =>
+        new Promise((_, reject) => {
+          signals.push(req.signal);
+          req.signal?.addEventListener('abort', () => reject(req.signal?.reason), { once: true });
+        }),
+      undefined,
+      hub,
+    );
+    const titled: string[] = [];
+    host.events.use.on('session:updated', session => {
+      if (session.title) titled.push(session.title);
+    });
+    const session = await sm.createSession({ name: '<新会话>' }, { createdFrom: 'webui' });
+    await host.events.use.emit('inbound:message', {
+      content: '帮我算下装修预算',
+      sessionId: session.id,
+      platform: 'webui',
+    });
+    await expect.poll(() => signals.length).toBe(1);
+    await app.plugins.disable(sessionManagerPlugin.name);
+    expect(signals[0]?.aborted).toBe(true);
+    await new Promise(r => setTimeout(r, 30));
+    await app.stop();
+    expect(titled).toEqual([]);
+    expect(warns.filter(message => message.includes('标题'))).toEqual([]);
   });
 });
