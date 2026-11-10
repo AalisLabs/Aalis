@@ -12,7 +12,7 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
-// 动态任务整表落盘：激活时那次读若不是「文件不存在」而是别的失败（文件损坏、内容不是数组），
+// 动态任务整表落盘：激活时那次读若不是「文件不存在」而是别的失败（文件损坏、结构不对），
 // 曾经一律当成空表，之后第一次增删改把整表写回，原有动态任务全丢。
 // storage 是 required：晚于本插件上线时等它上线再激活，原有动态任务照常读回。
 // 契约：只有文件不存在算全新；其它失败本次运行拒写，原文件一字不动。
@@ -79,7 +79,7 @@ describe('scheduler 动态任务：加载失败后拒绝整表回写', () => {
   });
 
   it('storage 晚于本插件上线：原有动态任务照常读回，addJob 与它们一并落盘', async () => {
-    writeFileSync(join(base, jobsFile), JSON.stringify([job('zz-old-1'), job('zz-old-2')], null, 2));
+    writeFileSync(join(base, jobsFile), JSON.stringify({ jobs: [job('zz-old-1'), job('zz-old-2')], onceFired: {} }));
 
     await registerScheduler();
     await registerStorage();
@@ -94,7 +94,7 @@ describe('scheduler 动态任务：加载失败后拒绝整表回写', () => {
     svcOf().addJob(job('zz-new'));
 
     await expect
-      .poll(() => (JSON.parse(readJobs()) as Array<{ name: string }>).map(j => j.name).sort())
+      .poll(() => (JSON.parse(readJobs()).jobs as Array<{ name: string }>).map(j => j.name).sort())
       .toEqual(['zz-new', 'zz-old-1', 'zz-old-2']);
   });
 
@@ -111,11 +111,13 @@ describe('scheduler 动态任务：加载失败后拒绝整表回写', () => {
   });
 
   it.each([
-    '{}',
+    '[{"name":"zz-old-1"}]',
     'null',
-    '{"jobs":[{"name":"zz-old-1"}]}',
     '"x"',
-  ])('合法 JSON 但不是数组（%s）：addJob 不覆盖原文件', async seeded => {
+    '{"jobs":[{"name":"zz-old-1"}]}',
+    '{"jobs":{},"onceFired":{}}',
+    '{"jobs":[],"onceFired":{"zz-once":1}}',
+  ])('合法 JSON 但结构不对（%s）：addJob 不覆盖原文件', async seeded => {
     writeFileSync(join(base, jobsFile), seeded);
 
     await registerStorage();
@@ -134,7 +136,7 @@ describe('scheduler 动态任务：加载失败后拒绝整表回写', () => {
     await expect
       .poll(() => {
         try {
-          return (JSON.parse(readJobs()) as Array<{ name: string }>).map(j => j.name);
+          return (JSON.parse(readJobs()).jobs as Array<{ name: string }>).map(j => j.name);
         } catch {
           return [];
         }
@@ -171,14 +173,14 @@ describe('scheduler 动态任务：加载失败后拒绝整表回写', () => {
   });
 
   it('任务文件正常：读回后 addJob 与原有任务一并落盘', async () => {
-    writeFileSync(join(base, jobsFile), JSON.stringify([job('zz-old-1')]));
+    writeFileSync(join(base, jobsFile), JSON.stringify({ jobs: [job('zz-old-1')], onceFired: {} }));
 
     await registerStorage();
     await registerScheduler();
     svcOf().addJob(job('zz-new'));
 
     await expect
-      .poll(() => (JSON.parse(readJobs()) as Array<{ name: string }>).map(j => j.name).sort())
+      .poll(() => (JSON.parse(readJobs()).jobs as Array<{ name: string }>).map(j => j.name).sort())
       .toEqual(['zz-new', 'zz-old-1']);
   });
 });

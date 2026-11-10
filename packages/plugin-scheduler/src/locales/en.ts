@@ -34,7 +34,7 @@ export default defineLocale<Source>()({
     'Time zone for evaluating cron, such as Asia/Shanghai or Europe/London. Left empty = the local time zone of the process. Only applies to cron tasks.',
   persistPathLabel: 'Dynamic task storage path',
   persistPathDescription:
-    'Tasks created by the AI or in the WebUI are persisted to this storage URI and loaded again after a restart.',
+    'Tasks created by the AI or in the WebUI, and the run records of one-off tasks in the config, are stored here (a storage URI) and loaded again after a restart.',
   badPersistPath:
     'persistPath="{value}" is not a storage URI: write it as <root>:/<path> (such as data:/scheduler-jobs.json), or delete the key to use the default',
   fieldCronDescription:
@@ -94,12 +94,13 @@ export default defineLocale<Source>()({
   statusReady: 'Ready',
   jobSucceeded: 'Succeeded',
   jobFailed: 'Failed: {error}',
-  notArray: 'The persisted task file is not an array (got {got})',
+  badShape:
+    'The persisted task file has the wrong structure: it must be an object whose jobs is an array of tasks and whose onceFired maps task names to run times',
   loadFailedTitle: 'The scheduled task file {uri} could not be read, so the tasks in it were not loaded',
   loadFailedReading:
-    'Make sure the root name in the persistPath setting is right and this file can be read, then reload this plugin. Until it is fixed, tasks created or changed only take effect for this run. Reason: {error}',
+    'Make sure the root name in the persistPath setting is right and this file can be read, then reload this plugin. Until it is fixed, tasks created or changed only take effect for this run, and one-off tasks in the config do not run. Reason: {error}',
   loadFailedContent:
-    "Fix this file, then reload this plugin: its content must be an array of tasks; if you don't want the tasks in it, move it away and reload. Until it is fixed, tasks created or changed only take effect for this run. Reason: {error}",
+    "Fix this file, then reload this plugin; if you don't want the tasks and run records in it, move it away and reload, and one-off tasks in the config whose time has passed will run once more. Until it is fixed, tasks created or changed only take effect for this run, and one-off tasks in the config do not run. Reason: {error}",
   unscheduledTitle: 'Scheduled task “{name}” could not be scheduled and will not run',
   unscheduledInConfig:
     "Fix this task's scheduling method or timeZone in the configuration file; it takes effect once saved. Reason: {error}",

@@ -45,7 +45,7 @@ interface Harness {
 async function withScheduler(
   fn: (h: Harness) => Promise<void>,
   options: {
-    /** 预置到持久化文件里的「存量」内容（JSON 序列化后写入；不是数组即读不懂的坏文件） */
+    /** 预置到持久化文件里的「存量」内容（JSON 序列化后写入；结构不对即读不懂的坏文件） */
     persisted?: unknown;
     /** 配置文件里的静态任务 */
     jobs?: unknown[];
@@ -445,17 +445,20 @@ describe('激活中的页面', () => {
     const app = new App({ name: 'T', logLevel: 'warn' });
     const host = app.bind(uses);
     const store = memoryStorage({
-      'data:/scheduler-jobs.json': JSON.stringify([
-        {
-          name: 'saved',
-          interval: 60,
-          sessionId: 'internal',
-          platform: 'internal',
-          actorPlatform: 'webui',
-          actorUserId: 'console',
-          content: 'x',
-        },
-      ]),
+      'data:/scheduler-jobs.json': JSON.stringify({
+        jobs: [
+          {
+            name: 'saved',
+            interval: 60,
+            sessionId: 'internal',
+            platform: 'internal',
+            actorPlatform: 'webui',
+            actorUserId: 'console',
+            content: 'x',
+          },
+        ],
+        onceFired: {},
+      }),
     });
     let reading!: () => void;
     const started = new Promise<void>(resolve => {
@@ -508,19 +511,22 @@ describe('存量持久化任务', () => {
         ).toHaveLength(1);
       },
       {
-        persisted: [
-          {
-            name: 'stale',
-            runAt: new Date(Date.now() + 3_600_000).toISOString(),
-            paused: true,
-            enabled: true,
-            sessionId: 'internal',
-            platform: 'internal',
-            actorPlatform: 'webui',
-            actorUserId: 'console',
-            content: 'x',
-          },
-        ],
+        persisted: {
+          jobs: [
+            {
+              name: 'stale',
+              runAt: new Date(Date.now() + 3_600_000).toISOString(),
+              paused: true,
+              enabled: true,
+              sessionId: 'internal',
+              platform: 'internal',
+              actorPlatform: 'webui',
+              actorUserId: 'console',
+              content: 'x',
+            },
+          ],
+          onceFired: {},
+        },
       },
     );
   });
@@ -531,19 +537,22 @@ describe('存量持久化任务', () => {
         expect(jobs().find(j => j.name === 'stale-cron')?.paused, '周期任务的暂停是有效语义，不该被清掉').toBe(true);
       },
       {
-        persisted: [
-          {
-            name: 'stale-cron',
-            interval: 60,
-            paused: true,
-            enabled: true,
-            sessionId: 'internal',
-            platform: 'internal',
-            actorPlatform: 'webui',
-            actorUserId: 'console',
-            content: 'x',
-          },
-        ],
+        persisted: {
+          jobs: [
+            {
+              name: 'stale-cron',
+              interval: 60,
+              paused: true,
+              enabled: true,
+              sessionId: 'internal',
+              platform: 'internal',
+              actorPlatform: 'webui',
+              actorUserId: 'console',
+              content: 'x',
+            },
+          ],
+          onceFired: {},
+        },
       },
     );
   });
@@ -559,20 +568,23 @@ describe('存量持久化任务', () => {
         expect(job?.runCount, '过期分支没看 paused，暂停的任务启动即被补跑一次').toBe(0);
       },
       {
-        persisted: [
-          {
-            name: 'due-paused',
-            cron: '0 0 * * *',
-            runAt: new Date(Date.now() - 3_600_000).toISOString(),
-            paused: true,
-            enabled: true,
-            sessionId: 'internal',
-            platform: 'internal',
-            actorPlatform: 'webui',
-            actorUserId: 'console',
-            content: 'x',
-          },
-        ],
+        persisted: {
+          jobs: [
+            {
+              name: 'due-paused',
+              cron: '0 0 * * *',
+              runAt: new Date(Date.now() - 3_600_000).toISOString(),
+              paused: true,
+              enabled: true,
+              sessionId: 'internal',
+              platform: 'internal',
+              actorPlatform: 'webui',
+              actorUserId: 'console',
+              content: 'x',
+            },
+          ],
+          onceFired: {},
+        },
       },
     );
   });
@@ -604,12 +616,13 @@ describe('读不出来与没排上的提示', () => {
             level: 'error',
             title: '计划任务文件 data:/scheduler-jobs.json 读不出来，里面的任务没有加载',
             detail:
-              '修好这个文件后重载本插件：内容要是任务数组；不要里面的任务就把它移走再重载。' +
-              '修好之前新建与改动的任务只在本次运行生效。原因：持久化任务文件不是数组（得到 object）',
+              '修好这个文件后重载本插件；不要里面的任务与执行记录就把它移走再重载，配置里过了时间的一次性任务会再执行一次。' +
+              '修好之前新建与改动的任务只在本次运行生效，配置里的一次性任务不运行。' +
+              '原因：持久化任务文件的结构不对：要是对象，jobs 是任务数组，onceFired 是任务名到运行时间的对象',
           },
         ]);
       },
-      { persisted: { jobs: [] } },
+      { persisted: [] },
     );
   });
 
@@ -624,7 +637,7 @@ describe('读不出来与没排上的提示', () => {
             title: '计划任务文件 dat:/scheduler-jobs.json 读不出来，里面的任务没有加载',
             detail:
               '确认配置项 persistPath 的根名写对、这个文件能读取，然后重载本插件。' +
-              '修好之前新建与改动的任务只在本次运行生效。原因：未知存储根: dat（已注册根: data）',
+              '修好之前新建与改动的任务只在本次运行生效，配置里的一次性任务不运行。原因：未知存储根: dat（已注册根: data）',
           },
         ]);
       },
@@ -655,7 +668,7 @@ describe('读不出来与没排上的提示', () => {
         await pages.act('scheduler', 'removeJob', { rowKey: 'worse' });
         expect(pages.notices()).toEqual([]);
       },
-      { persisted: [stored('bad', 'every five minutes'), stored('worse', 'nope')] },
+      { persisted: { jobs: [stored('bad', 'every five minutes'), stored('worse', 'nope')], onceFired: {} } },
     );
   });
 
@@ -782,9 +795,9 @@ describe('固定间隔的上下限', () => {
         expect(toSource(await create({ ...base, interval: 1 }))).toEqual(refused(500, tooShort));
         expect(await createByTool({ name: 'tiny', interval: 0.001, content: 'x' })).toEqual({ error: tooShort });
         expect(await createByTool({ name: 'tiny', cron: '@every 4s', content: 'x' })).toEqual({ error: tooShort });
-        expect(JSON.parse(files.get('data:/scheduler-jobs.json') ?? '[]').map((j: { name: string }) => j.name)).toEqual(
-          ['stored'],
-        );
+        expect(
+          JSON.parse(files.get('data:/scheduler-jobs.json') ?? '{"jobs":[]}').jobs.map((j: { name: string }) => j.name),
+        ).toEqual(['stored']);
         expect(toSource(pages.notices()).map(n => [n.id, n.detail])).toEqual([
           ['unscheduled:static', `在配置文件里改正这个任务的调度方式或 timeZone，保存后生效。原因：${tooShort}`],
           ['unscheduled:static-every', `在配置文件里改正这个任务的调度方式或 timeZone，保存后生效。原因：${tooShort}`],
@@ -806,9 +819,12 @@ describe('固定间隔的上下限', () => {
           { ...task, name: 'static', interval: 0.001 },
           { ...task, name: 'static-every', cron: '@every 1s' },
         ],
-        persisted: [
-          { ...task, name: 'stored', interval: 1, enabled: true, actorPlatform: 'webui', actorUserId: 'console' },
-        ],
+        persisted: {
+          jobs: [
+            { ...task, name: 'stored', interval: 1, enabled: true, actorPlatform: 'webui', actorUserId: 'console' },
+          ],
+          onceFired: {},
+        },
       },
     );
   });
@@ -850,9 +866,12 @@ describe('固定间隔的上下限', () => {
           { ...task, name: 'static', interval: MONTH },
           { ...task, name: 'static-every', cron: '@every 720h' },
         ],
-        persisted: [
-          { ...task, name: 'stored', interval: MONTH, enabled: true, actorPlatform: 'webui', actorUserId: 'console' },
-        ],
+        persisted: {
+          jobs: [
+            { ...task, name: 'stored', interval: MONTH, enabled: true, actorPlatform: 'webui', actorUserId: 'console' },
+          ],
+          onceFired: {},
+        },
       },
     );
   });

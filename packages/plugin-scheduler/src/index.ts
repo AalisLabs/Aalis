@@ -74,7 +74,7 @@ interface SchedulerJobConfig {
 
 interface SchedulerConfig {
   jobs: SchedulerJobConfig[];
-  /** 动态任务持久化文件路径 */
+  /** 持久化文件路径：动态任务与配置里一次性任务的执行记录 */
   persistPath: string;
 }
 
@@ -319,11 +319,13 @@ async function run(caps: Caps): Promise<void> {
   const dynamicJobs = new Map<string, SchedulerJobConfig>();
 
   // ── 持久化读写 （经 storage 抽象，默认 data:/scheduler-jobs.json） ──
+  // 文件形状：{ jobs: [动态任务], onceFired: { <配置里一次性任务的名字>: <执行过的那次 runAt 原文> } }
 
   const persistUri = config.persistPath;
   /**
-   * 激活时那次读失败了、又不是「文件不存在」（读错误、解析失败、结构不对）：写的是整表，
-   * 此后一律拒写，否则下一次增删改就把原有动态任务冲掉。只在激活时读一次。
+   * 激活时那次读失败了、又不是「文件不存在」（读错误、解析失败、结构不对）：写的是整份，
+   * 此后一律拒写，否则下一次增删改就把原有动态任务与执行记录冲掉；配置里的一次性任务执行过没有也无从判断，
+   * 本次运行不安排。只在激活时读一次。
    */
   let loadFailed = false;
   /**
@@ -334,6 +336,11 @@ async function run(caps: Caps): Promise<void> {
 
   // 先读完持久化任务再登记页面：登记之后到服务就绪之间不再有等待，页面一出现取数与动作就可用
   const persisted = await loadDynamicJobs();
+  /**
+   * 配置里一次性任务的执行记录：任务名 → 执行过的那次 runAt 原文。到点先记下再执行，记过的之后激活不再执行；
+   * 配置里改了 runAt 与记录对不上，算新的一次
+   */
+  const onceFired = persisted.onceFired;
 
   // ── 计划任务页：动作是本次激活的闭包，直接操作本插件自己的调度表；登记随激活撤回 ──
 
@@ -514,7 +521,7 @@ async function run(caps: Caps): Promise<void> {
     ],
   });
 
-  async function loadDynamicJobs(): Promise<SchedulerJobConfig[]> {
+  async function loadDynamicJobs(): Promise<{ jobs: SchedulerJobConfig[]; onceFired: Map<string, string> }> {
     /** 失败出在读文件这一步（persistPath 的根名写错、文件读不了），文件内容未必有错 */
     let reading = true;
     try {
@@ -523,16 +530,23 @@ async function run(caps: Caps): Promise<void> {
         raw = (await storage.use.readFile(persistUri, 'utf-8')) as string;
       } catch (err) {
         // 只有「文件不存在」算全新；「未知存储根」等其它失败不能当成空表
-        if (isStorageNotFound(err)) return [];
+        if (isStorageNotFound(err)) return { jobs: [], onceFired: new Map() };
         throw err;
       }
       reading = false;
       const data = JSON.parse(raw);
-      if (!Array.isArray(data)) {
-        throw new TextError(t('notArray', { got: data === null ? 'null' : typeof data }));
+      // 执行记录有一条不是运行时间也算读不懂：当成没有记录就会把执行过的一次性任务再执行一次
+      if (
+        !isRecord(data) ||
+        !Array.isArray(data.jobs) ||
+        !isRecord(data.onceFired) ||
+        !Object.values(data.onceFired).every(at => typeof at === 'string')
+      ) {
+        throw new TextError(t('badShape'));
       }
+      const onceFired = new Map(Object.entries(data.onceFired as Record<string, string>));
       // biome-ignore lint/suspicious/noExplicitAny: 从 JSON 文件反序列化的原始字段，手动校验转型
-      return data.map((j: any) => {
+      const jobs = data.jobs.map((j: any) => {
         const hasActor =
           typeof j.actorPlatform === 'string' &&
           j.actorPlatform.trim().length > 0 &&
@@ -561,6 +575,7 @@ async function run(caps: Caps): Promise<void> {
           paused: j.paused === true,
         };
       });
+      return { jobs, onceFired };
     } catch (err) {
       loadFailed = true;
       logger.use.warn(`加载持久化任务失败，本次运行不再写入该文件: ${err}`);
@@ -571,7 +586,7 @@ async function run(caps: Caps): Promise<void> {
         title: t('loadFailedTitle', { uri: persistUri }),
         detail: t(reading ? 'loadFailedReading' : 'loadFailedContent', { error: textOf(err) }),
       });
-      return [];
+      return { jobs: [], onceFired: new Map() };
     }
   }
 
@@ -588,7 +603,7 @@ async function run(caps: Caps): Promise<void> {
       return;
     }
     const jobs = [...dynamicJobs.values()];
-    const payload = JSON.stringify(jobs, null, 2);
+    const payload = JSON.stringify({ jobs, onceFired: Object.fromEntries(onceFired) }, null, 2);
     saveChain = saveChain
       .then(() => storage.use.writeFile(persistUri, payload))
       .then(
@@ -784,18 +799,14 @@ async function run(caps: Caps): Promise<void> {
       }
     }
 
-    // 一次性任务：到点用 setTimeout 触发一次，执行完 disable 并持久化
+    // 一次性任务：到点用 setTimeout 执行一次（见 fireOneShot）；配置里执行过的停用后载入，不到这里
     if (jobCfg.runAt && jobCfg.enabled) {
       const targetMs = Date.parse(jobCfg.runAt);
       if (Number.isFinite(targetMs)) {
         const delay = targetMs - Date.now();
         if (delay <= 0) {
-          // 已过期：立即执行一次，然后 disable（与下面未到点分支同一判据，暂停态不执行）
-          setImmediate(() => {
-            if (!rt.paused) {
-              executeJob(rt).finally(() => disableOneShot(rt));
-            }
-          });
+          // 已过期（含停机时错过的）：立即执行一次
+          setImmediate(() => fireOneShot(rt));
         } else {
           // 远期 runAt 分段重排：delay 超过 2^31-1ms 会溢出成立即触发。每段最多排到上限，
           // 段末未到点就续排下一段，到点才执行
@@ -806,9 +817,7 @@ async function run(caps: Caps): Promise<void> {
                 arm(Math.min(remain, MAX_TIMEOUT_MS));
                 return;
               }
-              if (!rt.paused) {
-                executeJob(rt).finally(() => disableOneShot(rt));
-              }
+              fireOneShot(rt);
             }, wait) as unknown as ReturnType<typeof setInterval>;
           };
           arm(Math.min(delay, MAX_TIMEOUT_MS));
@@ -828,6 +837,20 @@ async function run(caps: Caps): Promise<void> {
           ? `(runAt: ${jobCfg.runAt})`
           : '(no schedule)';
     logger.use.info(`任务已注册: ${jobCfg.name} ${scheduleHint}`);
+  }
+
+  /**
+   * 一次性任务到点（过期分支与未到点分支同一判据，暂停态不执行）：配置里的先记下「任务名 + runAt」、排进写盘，再执行。
+   * 执行途中重载本插件或停机，拆卸等这次写盘落定，之后激活见到记录不再执行
+   */
+  function fireOneShot(rt: JobRuntime): void {
+    if (rt.paused) return;
+    const { name, runAt } = rt.config;
+    if (configJobNames.has(name) && runAt) {
+      onceFired.set(name, runAt);
+      saveDynamicJobs();
+    }
+    executeJob(rt).finally(() => disableOneShot(rt));
   }
 
   /** 一次性任务执行完后的清理：动态任务直接删除；静态 yaml 任务仅标记 enabled=false */
@@ -874,19 +897,28 @@ async function run(caps: Caps): Promise<void> {
       );
       continue;
     }
-    initJob(p && u ? job : { ...job, actorPlatform: 'webui', actorUserId: 'console' });
+    const resolved = p && u ? job : { ...job, actorPlatform: 'webui', actorUserId: 'console' };
+    // 一次性任务按「任务名 + runAt」认：记录对得上的执行过了，与本次运行里执行完的一样停用；记录读不出时无从判断执行过没有，
+    // 本次运行不安排。改了 runAt 的对不上记录，算新的一次
+    const settled = !!job.runAt && job.enabled && (loadFailed || onceFired.get(job.name) === job.runAt);
+    if (settled && loadFailed) {
+      logger.use.warn(`一次性任务 "${job.name}" 执行过没有无从判断（持久化文件读不出），本次运行不安排`);
+    } else if (settled) {
+      logger.use.info(`一次性任务 "${job.name}"（runAt: ${job.runAt}）已执行过，不再执行`);
+    }
+    initJob(settled ? { ...resolved, enabled: false } : resolved);
   }
 
   // 持久化的动态任务：配置文件里写了的名字归配置文件，那一条没载入也不让同名的动态任务顶上来；
   // 文件里重名的只认第一条
-  for (const job of persisted) {
+  for (const job of persisted.jobs) {
     if (!configJobNames.has(job.name) && !runtimes.has(job.name)) {
       dynamicJobs.set(job.name, job);
       initJob(job);
     }
   }
-  if (persisted.length > 0) {
-    logger.use.info(`已加载 ${persisted.length} 个持久化任务`);
+  if (persisted.jobs.length > 0) {
+    logger.use.info(`已加载 ${persisted.jobs.length} 个持久化任务`);
   }
 
   // ── 注册 scheduler 服务 ──
@@ -1303,6 +1335,9 @@ async function run(caps: Caps): Promise<void> {
 }
 
 // ──────────── 辅助函数 ────────────
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 export function resolveConfig(cfg: ConfigOf<typeof configSchema>): SchedulerConfig {
   return {

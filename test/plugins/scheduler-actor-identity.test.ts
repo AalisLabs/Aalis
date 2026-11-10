@@ -128,9 +128,10 @@ describe('scheduler 代理身份不得由缺省推断出 owner', () => {
     // 这是第三条腿，且它**独立承重**：`saveDynamicJobs` 的 JSON.stringify 会直接丢掉
     // undefined 键，所以「AI 以匿名身份建的任务」在盘上与「升级前没有 actor 字段的老任务」
     // 完全同形。只堵触发路径不够——重启一次洞就重新打开。
-    const persisted = JSON.stringify([
-      { name: 'j', interval: 3600, content: 'x', sessionId: 'internal', platform: 'internal', enabled: true },
-    ]);
+    const persisted = JSON.stringify({
+      jobs: [{ name: 'j', interval: 3600, content: 'x', sessionId: 'internal', platform: 'internal', enabled: true }],
+      onceFired: {},
+    });
     const { actor, emitted } = await actorOfTriggeredJob({ jobs: [] }, undefined, 'j', {
       'data:/scheduler-jobs.json': persisted,
     });
@@ -199,9 +200,12 @@ describe('静态任务的执行身份只写一半：不载入，提示去改配�
   });
 
   it('持久化里同名的动态任务也不载入', async () => {
-    const persisted = JSON.stringify([
-      { name: 'half', interval: 3600, content: 'y', sessionId: 'internal', platform: 'internal', enabled: true },
-    ]);
+    const persisted = JSON.stringify({
+      jobs: [
+        { name: 'half', interval: 3600, content: 'y', sessionId: 'internal', platform: 'internal', enabled: true },
+      ],
+      onceFired: {},
+    });
     const { app, svc } = await start({ 'data:/scheduler-jobs.json': persisted });
     try {
       expect(svc?.getJobs().map(job => job.name)).toEqual(['ok']);

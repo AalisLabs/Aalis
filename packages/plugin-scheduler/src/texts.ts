@@ -33,7 +33,7 @@ const SOURCE = {
   timeZoneDescription:
     'cron 求值所用时区，如 Asia/Shanghai、Europe/London。留空 = 进程本地时区。仅对 cron 类任务生效。',
   persistPathLabel: '动态任务存储路径',
-  persistPathDescription: '通过 AI 或 WebUI 创建的任务会持久化到此 storage URI，重启后自动加载。',
+  persistPathDescription: 'AI 或 WebUI 创建的任务与配置里一次性任务的执行记录存在这里（storage URI），重启后自动加载。',
   badPersistPath:
     'persistPath="{value}" 不是 storage URI，请写成 <根名>:/<路径>（如 data:/scheduler-jobs.json），或删掉该键使用默认值',
   fieldCronDescription:
@@ -88,12 +88,12 @@ const SOURCE = {
   statusReady: '就绪',
   jobSucceeded: '成功',
   jobFailed: '失败：{error}',
-  notArray: '持久化任务文件不是数组（得到 {got}）',
+  badShape: '持久化任务文件的结构不对：要是对象，jobs 是任务数组，onceFired 是任务名到运行时间的对象',
   loadFailedTitle: '计划任务文件 {uri} 读不出来，里面的任务没有加载',
   loadFailedReading:
-    '确认配置项 persistPath 的根名写对、这个文件能读取，然后重载本插件。修好之前新建与改动的任务只在本次运行生效。原因：{error}',
+    '确认配置项 persistPath 的根名写对、这个文件能读取，然后重载本插件。修好之前新建与改动的任务只在本次运行生效，配置里的一次性任务不运行。原因：{error}',
   loadFailedContent:
-    '修好这个文件后重载本插件：内容要是任务数组；不要里面的任务就把它移走再重载。修好之前新建与改动的任务只在本次运行生效。原因：{error}',
+    '修好这个文件后重载本插件；不要里面的任务与执行记录就把它移走再重载，配置里过了时间的一次性任务会再执行一次。修好之前新建与改动的任务只在本次运行生效，配置里的一次性任务不运行。原因：{error}',
   unscheduledTitle: '计划任务「{name}」没有排上，不会运行',
   unscheduledInConfig: '在配置文件里改正这个任务的调度方式或 timeZone，保存后生效。原因：{error}',
   unscheduledOnPage: '在计划任务页编辑这个任务，改正它的调度方式后保存。原因：{error}',
