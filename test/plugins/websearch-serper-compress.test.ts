@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type ChatModelRequest, llm } from '../../packages/api-llm/src/index.js';
-import { tools, wrapUntrustedContent } from '../../packages/api-tools/src/index.js';
+import { type ToolCallContext, tools, wrapUntrustedContent } from '../../packages/api-tools/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
 import serper from '../../packages/plugin-websearch-serper/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 网页搜索的结果压缩：输出上限只防失控，模型在上限处停下（模型插件报 finishReason 'length'）时末尾标出截断，不重试；
@@ -47,12 +48,10 @@ async function setup({
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide });
-  const handlers = new Map<string, (args: Record<string, unknown>) => Promise<string>>();
+  type Handler = (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string>;
+  const handlers = new Map<string, Handler>();
   host.provide.use(tools, {
-    register(tool: {
-      definition: { function: { name: string } };
-      handler: (args: Record<string, unknown>) => Promise<string>;
-    }) {
+    register(tool: { definition: { function: { name: string } }; handler: Handler }) {
       handlers.set(tool.definition.function.name, tool.handler);
       return () => {};
     },
@@ -68,7 +67,7 @@ async function setup({
     host.provide.use(llm, { id: 'chat', contextLength: 8192, capabilities: ['chat'], chat } as never);
   await app.plugin(serper, { apiKey: '<密钥>', enableCompression: true });
   await app.plugins.idle();
-  return { search: () => handlers.get('web_search')!({ query }), requests };
+  return { search: () => handlers.get('web_search')!({ query }, toolContext({ sessionId: 's' })), requests };
 }
 
 describe('网页搜索的结果压缩：上限只防失控，截断处标出，结果照样标为不可信', () => {

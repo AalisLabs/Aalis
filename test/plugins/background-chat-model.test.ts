@@ -6,7 +6,7 @@ import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import { compression, memory } from '../../packages/api-memory/src/index.js';
 import type { ProcessService } from '../../packages/api-process/src/index.js';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
-import { tools, wrapUntrustedContent } from '../../packages/api-tools/src/index.js';
+import { type ToolCallContext, tools, wrapUntrustedContent } from '../../packages/api-tools/src/index.js';
 import {
   App,
   definePlugin,
@@ -27,6 +27,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { fakeSummaryLLM } from '../fixtures/memory-summary.js';
 import { fixedRef } from '../fixtures/service-ref.js';
 import { recordingLogger } from '../fixtures/session-settings.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 后台功能的模型：记忆摘要、QQ 转发摘要、用户画像的事实提取、网页搜索的结果压缩都不另设模型字段，一律按 llm 服务给本插件挑的
@@ -260,12 +261,10 @@ describe('网页搜索的结果压缩', () => {
       ),
     );
     const { app, noModel } = await recordingApp();
-    const handlers = new Map<string, (args: Record<string, unknown>) => Promise<string>>();
+    type Handler = (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string>;
+    const handlers = new Map<string, Handler>();
     app.bind({ provide }).provide.use(tools, {
-      register(tool: {
-        definition: { function: { name: string } };
-        handler: (args: Record<string, unknown>) => Promise<string>;
-      }) {
+      register(tool: { definition: { function: { name: string } }; handler: Handler }) {
         handlers.set(tool.definition.function.name, tool.handler);
         return () => {};
       },
@@ -273,7 +272,7 @@ describe('网页搜索的结果压缩', () => {
     } as never);
     await app.plugin(serper, { apiKey: '<密钥>', enableCompression: true });
     await app.plugins.idle();
-    const search = () => handlers.get('web_search')!({ query: '<关键词>' });
+    const search = () => handlers.get('web_search')!({ query: '<关键词>' }, toolContext({ sessionId: 's' }));
 
     expect(await search()).toContain('<标题>');
     await search();

@@ -1,6 +1,6 @@
 import { chatModelPicker, llm } from '@aalis/api-llm';
 import { tools, wrapUntrustedContent } from '@aalis/api-tools';
-import { type BoundOf, config, definePlugin, defineService, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, defineService, lifecycle, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 import { t } from './texts.js';
@@ -153,7 +153,14 @@ interface SerperResponse {
   };
 }
 
-async function serperSearch(query: string, apiKey: string, numResults: number): Promise<SerperResponse> {
+/** signal 是调用方的中止信号，与 15 秒超时谁先到按谁停；中止时以中止原因拒绝 */
+async function serperSearch(
+  query: string,
+  apiKey: string,
+  numResults: number,
+  signal: AbortSignal | undefined,
+): Promise<SerperResponse> {
+  const timeout = AbortSignal.timeout(15_000);
   const response = await fetch('https://google.serper.dev/search', {
     method: 'POST',
     headers: {
@@ -164,7 +171,7 @@ async function serperSearch(query: string, apiKey: string, numResults: number): 
       q: query,
       num: numResults,
     }),
-    signal: AbortSignal.timeout(15_000),
+    signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
   });
 
   if (!response.ok) {
@@ -212,7 +219,7 @@ function toStandardResults(data: SerperResponse): WebSearchResult[] {
 
 // ===== 插件入口 =====
 
-const uses = { tools: optional(tools), logger, config, provide, llm: optional(llm) };
+const uses = { tools: optional(tools), logger, config, lifecycle, provide, llm: optional(llm) };
 type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
@@ -227,7 +234,7 @@ export default definePlugin({
   },
 });
 
-function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
+function registerSerper({ tools, logger, config, lifecycle, provide, llm }: Caps): void {
   const cfg = parseConfig(configSchema, config.use, logger.use);
 
   const limiter = new RateLimiter(cfg);
@@ -242,9 +249,10 @@ function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
   /**
    * 使用 LLM 压缩搜索结果；没有能对话的模型时返回原始结果。模型取 llm 服务给本插件挑的能对话的那一个（见 chatModelPicker）。
    * 输出上限只防失控；模型在上限处停下时末尾标出截断。压缩模型读的是网页原文，它的输出同样不可信：由这里包上标记，不靠提示词让
-   * 模型自己加；截断说明接在正文末尾，在标记之内（标记没有闭合）
+   * 模型自己加；截断说明接在正文末尾，在标记之内（标记没有闭合）。signal 是这次工具调用的，中止时抛中止原因，不按压缩失败
+   * 退回原始结果
    */
-  async function compressResults(query: string, rawResults: string): Promise<string> {
+  async function compressResults(query: string, rawResults: string, signal: AbortSignal | undefined): Promise<string> {
     const entry = pickChatModel();
     if (!entry) return rawResults;
 
@@ -258,6 +266,7 @@ function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
       const response = await entry.use.chat({
         messages,
         maxTokens: 2048,
+        signal,
       });
       const text = response.content?.trim();
       if (!text) return rawResults;
@@ -266,6 +275,7 @@ function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
         '网络搜索结果',
       );
     } catch (err) {
+      signal?.throwIfAborted();
       const msg = err instanceof Error ? err.message : String(err);
       logger.use.warn(`搜索结果压缩失败，返回原始结果: ${msg}`);
       return rawResults;
@@ -279,12 +289,12 @@ function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
       `${cfg.enableCompression ? ', 压缩: 已启用' : ''})`,
   );
 
-  // 注册为 web-search 服务，供其他插件消费
+  // 注册为 web-search 服务，供其他插件消费。契约不带中止信号：搜索接本插件这次激活的，停用、停机时随之停下
   const serperService: WebSearchService = {
     providerName: 'serper',
     async search(request: WebSearchRequest): Promise<WebSearchResponse> {
       const num = Math.min(10, Math.max(1, request.numResults ?? cfg.defaultNumResults));
-      const data = await serperSearch(request.query, cfg.apiKey, num);
+      const data = await serperSearch(request.query, cfg.apiKey, num, lifecycle.use.signal);
       return {
         query: request.query,
         results: toStandardResults(data),
@@ -336,7 +346,7 @@ function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, callCtx) => {
       const query = args.query as string;
       const numResults = Math.min(10, Math.max(1, (args.numResults as number) ?? cfg.defaultNumResults));
 
@@ -353,18 +363,20 @@ function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
       limiter.acquire();
       try {
         logger.use.debug(`执行搜索: "${query}" (${numResults} 条结果)`);
-        const data = await serperSearch(query, cfg.apiKey, numResults);
+        const data = await serperSearch(query, cfg.apiKey, numResults, callCtx.signal);
         let result = formatSearchResults(data);
 
         // 压缩整合
         if (cfg.enableCompression) {
           logger.use.debug(`压缩搜索结果 (原始长度: ${result.length})`);
-          result = await compressResults(query, result);
+          result = await compressResults(query, result, callCtx.signal);
           logger.use.debug(`压缩完成 (压缩后长度: ${result.length})`);
         }
 
         return result;
       } catch (err) {
+        // 回合中止不是搜索失败：抛中止原因
+        callCtx.signal?.throwIfAborted();
         const message = err instanceof Error ? err.message : String(err);
         logger.use.error(`搜索失败: ${message}`);
         return JSON.stringify({ error: `搜索失败: ${message}` });
@@ -398,19 +410,20 @@ function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, callCtx) => {
       const query = args.query as string;
       const numResults = Math.min(10, Math.max(1, (args.numResults as number) ?? cfg.defaultNumResults));
       const rejectReason = limiter.check();
       if (rejectReason) return JSON.stringify({ error: `图片搜索被限流: ${rejectReason}` });
       limiter.acquire();
       try {
+        // 与 serperSearch 对齐：挂起期间限流槽不释放，几次就把图片+网页搜索一起锁死；回合中止时同样停下
+        const timeout = AbortSignal.timeout(15_000);
         const res = await fetch('https://google.serper.dev/images', {
           method: 'POST',
           headers: { 'X-API-KEY': cfg.apiKey, 'Content-Type': 'application/json' },
           body: JSON.stringify({ q: query, num: numResults }),
-          // 与 serperSearch 对齐：挂起期间限流槽不释放，几次就把图片+网页搜索一起锁死
-          signal: AbortSignal.timeout(15_000),
+          signal: callCtx.signal ? AbortSignal.any([timeout, callCtx.signal]) : timeout,
         });
         if (!res.ok) return JSON.stringify({ error: `Serper images API 错误 ${res.status}` });
         const data = (await res.json()) as { images?: Array<Record<string, unknown>> };
@@ -430,6 +443,7 @@ function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
           images: wrapUntrustedContent(JSON.stringify(images), '图片搜索结果'),
         });
       } catch (err) {
+        callCtx.signal?.throwIfAborted();
         return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
       } finally {
         limiter.release();
