@@ -11,6 +11,8 @@ import { toolContext } from '../fixtures/tool-call.js';
 // ════════════════════════════════════════════════════════════
 // 自带的 Chrome 没装、又没配 executablePath：启动浏览器之前经 process 服务跑 puppeteer 包里的命令行下载它。
 // - 跑的脚本就是 puppeteer 的 package.json 里 bin 指的那个文件。
+// - 下载接插件这次激活的中止信号：停用时由 process 服务停掉它，不等满 5 分钟的下载时限；在途的调用与启动期间停用一样报
+//   「浏览器工具已停用」，不当成启动失败。
 // - 输出不写进宿主的终端（按缺省的管道收），全文进调试日志；失败的报错带上 stderr 的结尾：命令行失败时先打一整屏用法，
 //   报错在最后。
 // puppeteer 换成替身（按 util-chromium 的依赖路径 mock），不启动真浏览器；process 服务换成替身，不真下载。
@@ -110,6 +112,26 @@ describe('自动下载自带的 Chrome', () => {
     expect(realpathSync(args[0])).toBe(realpathSync(join(PUPPETEER, bin)));
     expect(result.error).toBeUndefined();
     expect(fake.launch).toHaveBeenCalledTimes(1);
+  });
+
+  it('下载途中停用：交给下载的中止信号随之断开，停用不等下载完成，调用报「浏览器工具已停用」', async () => {
+    // 替身：一直不回，中止时按终止信号落定（与 process 服务停掉进程组后一样）
+    const proc = fakeProcess(
+      opts =>
+        new Promise(resolve => {
+          const stopped = { stdout: '', stderr: '', code: null, signal: 'SIGTERM' as const };
+          opts?.signal?.addEventListener('abort', () => resolve(stopped), { once: true });
+        }),
+    );
+    const { app, errors, navigate } = await start(proc.service, 500);
+    const pending = navigate();
+    await vi.waitFor(() => expect(proc.spawn).toHaveBeenCalledTimes(1));
+    await app.plugins.disable(browserPlugin.name);
+    expect(proc.spawn.mock.calls[0][2]?.signal?.aborted).toBe(true);
+    expect(app.plugins.getStatus().find(entry => entry.instanceId === browserPlugin.name)?.lingering).toBeUndefined();
+    expect((await pending).error).toBe('浏览器工具已停用');
+    expect(errors).toEqual([]);
+    expect(fake.launch).not.toHaveBeenCalled();
   });
 
   it('输出按管道收、不写进宿主的终端，全文进调试日志；下载失败时报错带上 stderr 的结尾', async () => {

@@ -278,9 +278,12 @@ function runBrowserTools(caps: Caps): void {
 
     logger.info('Chrome 未安装，正在自动下载...');
     // 走 ProcessService，避免直接 import node:child_process。输出按管道收，不写进宿主的终端（全屏界面会被写花），全文进
-    // 调试日志；失败的报错带上 stderr 的结尾
+    // 调试日志；失败的报错带上 stderr 的结尾。停用时由 process 服务停掉下载
     const result = await proc
-      .spawn(process.execPath, [puppeteerCliPath(), 'browsers', 'install', 'chrome'], { timeout: 300_000 })
+      .spawn(process.execPath, [puppeteerCliPath(), 'browsers', 'install', 'chrome'], {
+        timeout: 300_000,
+        signal: lifecycle.use.signal,
+      })
       .wait();
     logger.debug(`下载 Chrome 的输出:\n${result.stdout}${result.stderr}`);
     if (result.code !== 0) {
@@ -346,6 +349,8 @@ function runBrowserTools(caps: Caps): void {
         sandbox: config.sandbox,
       });
     } catch (err) {
+      // 下载 Chrome 途中插件被停用（下载随之中止）：与启动期间停用同一口径，不当成启动失败
+      if (lifecycle.use.signal.aborted) throw new Error('浏览器工具已停用');
       const msg = err instanceof Error ? err.message : String(err);
       logger.error(`启动浏览器失败: ${msg}`);
       // 只在带沙箱时 Chromium 本身起不来才提沙箱：准备 Chrome、加载 puppeteer 失败与沙箱无关
