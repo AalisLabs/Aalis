@@ -160,6 +160,8 @@ interface Fixture {
   ): Promise<{ id: string; desc: string; message: IncomingMessage }>;
   /** 经 preprocessor 处理一个任意来源的文件附件，返回附件描述与处理过的入站消息 */
   attach(sessionId: string, attachment: MessageAttachment): Promise<{ desc: string; message: IncomingMessage }>;
+  /** 把一条入站消息交给 preprocessor，next 是它处理完交给的下一步 */
+  preprocess(message: IncomingMessage, next: () => Promise<void>): Promise<void>;
   /** 装上真工具服务（上线晚于 file-reader，登记在上线后补挂），放行执行闸 */
   tools(): Promise<ToolService>;
   /** 重新装载插件（用于「重启后按磁盘恢复索引」这类用例） */
@@ -220,6 +222,11 @@ async function setup(
   };
   await load();
 
+  const preprocess = async (message: IncomingMessage, next: () => Promise<void>): Promise<void> => {
+    if (!preprocessor) throw new Error('插件未注册 preprocessor');
+    await preprocessor(message, next);
+  };
+
   return {
     app,
     store,
@@ -227,7 +234,6 @@ async function setup(
     serviceNames: () => host.services.use.names(),
     emitSessionDeleted: sessionId => host.events.use.emit('session:deleted', sessionId),
     async upload(sessionId: string, name: string, content: string | Buffer, mimeType = 'text/plain') {
-      if (!preprocessor) throw new Error('插件未注册 preprocessor');
       const buffer = typeof content === 'string' ? Buffer.from(content, 'utf-8') : content;
       const msg: IncomingMessage = {
         content: '看看这个',
@@ -242,16 +248,16 @@ async function setup(
           },
         ],
       };
-      await preprocessor(msg, async () => undefined);
+      await preprocess(msg, async () => undefined);
       const desc = msg._attachmentDescriptions?.[0] ?? '';
       return { id: await computeFileId(sessionId, buffer), desc, message: msg };
     },
     async attach(sessionId: string, attachment: MessageAttachment) {
-      if (!preprocessor) throw new Error('插件未注册 preprocessor');
       const msg: IncomingMessage = { content: '看看这个', sessionId, platform: 'test', attachments: [attachment] };
-      await preprocessor(msg, async () => undefined);
+      await preprocess(msg, async () => undefined);
       return { desc: msg._attachmentDescriptions?.[0] ?? '', message: msg };
     },
+    preprocess,
     async tools() {
       await app.plugin(toolsPlugin, {});
       await app.plugins.idle();
@@ -1249,6 +1255,48 @@ describe('plugin-file-reader: 存储地址与网址的文件附件', () => {
         });
         expect(desc, path).toContain('[文件: big.txt - 超过大小限制');
       }
+    } finally {
+      await fx.dispose();
+      setNetworkPolicy({ blockPrivate: true });
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+
+  it('网址的下载途中停用：到上游的请求随之断开，不写处理失败，后面的附件不再处理，消息照常往下交', async () => {
+    const seen = { requested: false, closed: false };
+    const server = createServer(req => {
+      seen.requested = true;
+      req.on('close', () => {
+        seen.closed = true;
+      });
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    setNetworkPolicy({ blockPrivate: false }); // 只为连本机的上游桩；结束时复原
+    const fx = await setup();
+    try {
+      const { port } = server.address() as AddressInfo;
+      const later = `data:text/plain;base64,${Buffer.from('hi').toString('base64')}`;
+      const message: IncomingMessage = {
+        content: '看看这个',
+        sessionId: 's-q',
+        platform: 'test',
+        attachments: [
+          { kind: 'file', data: `http://127.0.0.1:${port}/notes.txt`, name: 'notes.txt' },
+          { kind: 'file', data: later, name: 'later.txt' },
+        ],
+      };
+      let passed = false;
+      const pending = fx.preprocess(message, async () => {
+        passed = true;
+      });
+      await expect.poll(() => seen.requested).toBe(true);
+      await fx.app.plugins.disable(fileReaderPlugin.name);
+      await expect.poll(() => seen.closed).toBe(true);
+      await pending;
+      expect(passed).toBe(true);
+      expect(message._attachmentDescriptions ?? []).toEqual([]);
+      expect(message.attachments?.[1]?.data).toBe(later);
     } finally {
       await fx.dispose();
       setNetworkPolicy({ blockPrivate: true });

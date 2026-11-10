@@ -368,9 +368,13 @@ async function run(caps: Caps): Promise<void> {
     return { unreadable: data ? '附件来源不是存储地址、网址或 base64 的 data URL' : '来源没有给出文件地址' };
   }
 
-  /** 下载网址的文件：声明的长度超过上限的不读，响应体流式累计超过上限即停，不缓冲整个响应 */
+  /**
+   * 下载网址的文件：声明的长度超过上限的不读，响应体流式累计超过上限即停，不缓冲整个响应。预处理器的契约不带中止信号：
+   * 下载接本插件这次激活的，与超时谁先到按谁停
+   */
   async function download(url: string): Promise<Source> {
-    const response = await safeFetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+    const timeout = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
+    const response = await safeFetch(url, { signal: AbortSignal.any([timeout, lifecycle.use.signal]) });
     if (!response.ok) {
       await response.body?.cancel();
       throw new Error(`下载失败：HTTP ${response.status}`);
@@ -850,6 +854,8 @@ async function run(caps: Caps): Promise<void> {
           ...(address ? { ref: address } : {}),
         };
       } catch (err) {
+        // 停用、停机时中止不是处理失败：不写描述、不告警，后面的附件不再处理，已写的描述照写，消息照常往下交
+        if (lifecycle.use.signal.aborted) break;
         const errMsg = errorText(err);
         logger.use.warn(`文件处理失败 (${fileName}):`, errMsg);
         own.set(i, `[文件: ${fileName} - 处理失败：${errMsg}]`);
