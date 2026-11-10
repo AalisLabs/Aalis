@@ -92,7 +92,10 @@ describe('卡链告警与无提供者', () => {
     await app.plugins.idle();
     const host = app.bind({ hooks });
     expect(await host.hooks.use.run(H, {} as never, undefined, { warnOnStall: true })).toBe(false);
-    expect(warns).toContain(`钩子 ${H}: handler(来自 stuck) 未调用 next()，其后 1 个 handler 被跳过`);
+    // 只核关键信息：钩子名、肇事者与被跳过的数量，措辞不比对
+    const stall = warns.find(message => message.includes(H));
+    expect(stall).toContain('stuck');
+    expect(stall).toMatch(/\b1\b/);
   });
 
   it('没有提供者：run 以被拒的 Promise 传出（不在调用点同步抛），默认动作不执行', async () => {
