@@ -170,13 +170,11 @@ function registerImageSender(caps: Caps): void {
             results.push({ index, url: trimmed, ok: false, error: 'url 必须是 http/https' });
             continue;
           }
+          // 时限交给识图：到时下载与识图随之停下
+          const deadline = AbortSignal.timeout(PREVIEW_TIMEOUT_MS);
+          const signal = callCtx.signal ? AbortSignal.any([callCtx.signal, deadline]) : deadline;
           try {
-            const desc = await Promise.race([
-              service.describeImage(trimmed, { hint, detailLevel: 'casual', signal: callCtx.signal }),
-              new Promise<string>((_resolve, reject) =>
-                setTimeout(() => reject(new Error('vision 超时')), PREVIEW_TIMEOUT_MS),
-              ),
-            ]);
+            const desc = await service.describeImage(trimmed, { hint, detailLevel: 'casual', signal });
             const description = (desc ?? '').trim();
             results.push(
               description
@@ -184,7 +182,10 @@ function registerImageSender(caps: Caps): void {
                 : { index, url: trimmed, ok: false, error: 'vision 返回空' },
             );
           } catch (err) {
-            results.push({ index, url: trimmed, ok: false, error: err instanceof Error ? err.message : String(err) });
+            // 这次调用被中止：后面的图不再识别，也不把一串中止的错误当结果交回；只是到点的照旧记超时、接着下一张
+            callCtx.signal?.throwIfAborted();
+            const error = deadline.aborted ? 'vision 超时' : err instanceof Error ? err.message : String(err);
+            results.push({ index, url: trimmed, ok: false, error });
           }
         }
 
