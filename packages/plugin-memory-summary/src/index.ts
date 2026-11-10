@@ -513,6 +513,8 @@ async function run(caps: Caps): Promise<void> {
       think: lightestThinking(model),
       sessionId,
       purpose: '摘要',
+      // 后台与手动压缩都是本插件自己发起的：停用、停机时随之停下
+      signal: lifecycle.use.signal,
     };
     let text = '';
     let finishReason: ChatResponse['finishReason'];
@@ -529,6 +531,8 @@ async function run(caps: Caps): Promise<void> {
         finishReason = response.finishReason;
       }
     } catch (err) {
+      // 中止不是模型失败：抛中止原因
+      lifecycle.use.signal.throwIfAborted();
       // 半截流式输出一并丢弃：provider 超时或断流可能发生在吐出部分内容之后，截断的文本入库会成为之后所有增量摘要的基底
       throw new TextError(t('modelFailed', { error: textOf(err) }), { cause: err });
     }
@@ -734,7 +738,9 @@ async function run(caps: Caps): Promise<void> {
       failures.delete(sessionId);
       report('done');
     } catch (err) {
-      if (!(err instanceof NoChatModel)) logger.use.warn(`压缩没有压成: session=${sessionId}`, err);
+      if (!(err instanceof NoChatModel) && !lifecycle.use.signal.aborted) {
+        logger.use.warn(`压缩没有压成: session=${sessionId}`, err);
+      }
       if (started) report('error');
       throw err;
     } finally {

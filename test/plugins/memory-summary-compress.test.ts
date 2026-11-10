@@ -61,6 +61,36 @@ function gatedLLM() {
   return { ...llm, release };
 }
 
+describe('plugin-memory-summary: 压缩随停用中止', () => {
+  it('摘要模型调用途中停用：交给它的中止信号随之断开，压缩以中止原因拒绝，不告警没压成', async () => {
+    const llm = fakeSummaryLLM({
+      reply: request =>
+        new Promise<string>((_, reject) =>
+          request.signal?.addEventListener('abort', () => reject(request.signal?.reason), { once: true }),
+        ),
+    });
+    const warns: string[] = [];
+    const logger = {
+      debug() {},
+      info() {},
+      warn: (...args: unknown[]) => void warns.push(args.map(String).join(' ')),
+      error() {},
+      child: () => logger,
+    };
+    const { app, memory, compression } = await setup({}, llm.model, logger as never);
+    await seed(memory, 's', 3);
+    const failure = compression.compress('s', { reason: 'manual' }).then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    await vi.waitFor(() => expect(llm.requests).toHaveLength(1));
+    await app.plugins.disable('@aalis/plugin-memory-summary');
+    expect(llm.requests[0].signal?.aborted).toBe(true);
+    expect(await failure).toMatchObject({ name: 'AbortError' });
+    expect(warns.filter(line => line.includes('没有压成'))).toEqual([]);
+  });
+});
+
 describe('plugin-memory-summary: 手动压缩', () => {
   it('历史只有 3 条：照常报进度，三条全部进摘要，活跃历史只剩分隔标记', async () => {
     const llm = fakeSummaryLLM();
