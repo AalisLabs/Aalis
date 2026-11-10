@@ -10,8 +10,8 @@ import {
 } from '../../packages/core/src/index.js';
 import { deferred } from '../helpers/deferred.js';
 
-// 停机后六个管理动作一律 false，不再更改状态或配置。
-// app:stopping 时停机已冻结，清理由已有计划负责，管理动作不得抢关提供者。
+// app:stopping 时停机已冻结，清理由已有计划负责，管理动作不得抢关提供者。停机中、停机后六个管理动作一律回 false、
+// 不改状态与配置，由 shutdown-regressions.test.ts 按各条目状态与两个阶段守。
 
 const apps: App[] = [];
 afterEach(async () => {
@@ -43,39 +43,11 @@ function capturingApp(opts?: { disposeTimeoutMs?: number }): { app: App; warning
   return { app, warnings };
 }
 
-async function idleSettles(app: App): Promise<void> {
-  const settled = await Promise.race([
-    app.plugins.idle().then(() => true),
-    new Promise<boolean>(r => setTimeout(() => r(false), 200)),
-  ]);
-  expect(settled, 'idle() 必须落定').toBe(true);
-}
-
-function noActivating(app: App): void {
-  expect(
-    app.plugins
-      .getStatus()
-      .filter(s => s.state === 'activating')
-      .map(s => s.instanceId),
-    '注册表不得残留 activating',
-  ).toEqual([]);
-}
-
 async function stopWithin(app: App, ms = 2000): Promise<'ok' | 'hung'> {
   return Promise.race([
     app.stop().then(() => 'ok' as const),
     new Promise<'hung'>(r => setTimeout(() => r('hung'), ms)),
   ]);
-}
-
-async function stoppedWithDisposed(name: string): Promise<{ app: App; warnings: string[] }> {
-  const { app, warnings } = capturingApp();
-  await app.plugin(definePlugin({ name, apply() {} }));
-  await app.plugins.idle();
-  expect(app.plugins.getPlugin(name)?.state).toBe('active');
-  await app.stop();
-  expect(app.plugins.getPlugin(name)?.state).toBe('disposed');
-  return { app, warnings };
 }
 
 async function storeAndWriter(
@@ -124,94 +96,6 @@ async function storeAndWriter(
   expect(app.plugins.getPlugin('writer')?.state).toBe('active');
   return { saved, log, store };
 }
-
-describe('停机后管理动作', () => {
-  it('register 新定义：不抛、返回 false、注册表无该 id、记 debug', async () => {
-    const { app, warnings } = await stoppedWithDisposed('p');
-    warnings.length = 0;
-    const log: string[] = [];
-    let threw: string | false = false;
-    let ok: boolean | undefined;
-    try {
-      ok = await app.plugins.register(
-        definePlugin({
-          name: 'after-stop',
-          apply() {
-            log.push('after-stop.apply');
-          },
-        }),
-      );
-    } catch (err) {
-      threw = err instanceof Error ? err.message : String(err);
-    }
-    await idleSettles(app);
-    noActivating(app);
-    expect({ ok, threw, apply: log, state: app.plugins.getPlugin('after-stop')?.state }).toEqual({
-      ok: false,
-      threw: false,
-      apply: [],
-      state: undefined,
-    });
-    expect(
-      warnings.some(x => x.startsWith('debug:') && x.includes('after-stop') && x.includes('停机')),
-      warnings.join(' | '),
-    ).toBe(true);
-  });
-
-  it('enable 已 disposed：不抛、返回 false，仍为 disposed', async () => {
-    const { app } = await stoppedWithDisposed('x');
-    let threw: string | false = false;
-    let ok: boolean | undefined;
-    try {
-      ok = await app.plugins.enable('x');
-    } catch (err) {
-      threw = err instanceof Error ? err.message : String(err);
-    }
-    await idleSettles(app);
-    noActivating(app);
-    expect({ ok, threw, state: app.plugins.getPlugin('x')?.state }).toEqual({
-      ok: false,
-      threw: false,
-      state: 'disposed',
-    });
-  });
-
-  it('updateConfig 已 disposed：不抛、返回 false，仍为 disposed', async () => {
-    const { app } = await stoppedWithDisposed('x');
-    let threw: string | false = false;
-    let ok: boolean | undefined;
-    try {
-      ok = await app.plugins.updateConfig('x', { v: 1 });
-    } catch (err) {
-      threw = err instanceof Error ? err.message : String(err);
-    }
-    await idleSettles(app);
-    noActivating(app);
-    expect({ ok, threw, state: app.plugins.getPlugin('x')?.state }).toEqual({
-      ok: false,
-      threw: false,
-      state: 'disposed',
-    });
-  });
-
-  it('bounce 已 disposed：不抛、返回 false，仍为 disposed', async () => {
-    const { app } = await stoppedWithDisposed('x');
-    let threw: string | false = false;
-    let ok: boolean | undefined;
-    try {
-      ok = await app.plugins.bounce('x');
-    } catch (err) {
-      threw = err instanceof Error ? err.message : String(err);
-    }
-    await idleSettles(app);
-    noActivating(app);
-    expect({ ok, threw, state: app.plugins.getPlugin('x')?.state }).toEqual({
-      ok: false,
-      threw: false,
-      state: 'disposed',
-    });
-  });
-});
 
 describe('app:stopping 窗口', () => {
   it('监听器里 await disable 提供者：消费者 onDrain 仍能 require', async () => {
