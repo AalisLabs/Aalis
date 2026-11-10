@@ -87,7 +87,7 @@ export interface ForwardExpanderDeps<TState> {
   forwardCfg: ForwardConfig;
   /** 单附件落盘字节上限（与入站附件缓存同源） */
   attachmentMaxBytes: number;
-  /** 本插件这次激活的中止信号：停用、停机时转发内媒体的下载与转码随之停下 */
+  /** 本插件这次激活的中止信号：停用、停机时转发内媒体的下载、转码、识别与摘要的模型调用随之停下 */
   signal: AbortSignal;
   /** 调用 OneBot action 的回调（已绑定到具体的连接状态） */
   sendAction: (state: TState, action: string, params: Record<string, unknown>) => Promise<unknown>;
@@ -343,6 +343,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
         temperature: 0.3,
         think: lightestThinking(model),
         maxTokens: Math.max(2048, forwardCfg.summaryMaxChars * 3),
+        signal,
       });
       const out = (resp.content ?? '').trim();
       if (!out) {
@@ -359,6 +360,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
         },
       );
     } catch (err) {
+      signal.throwIfAborted();
       logger.warn(`forward 摘要生成失败: ${err}`);
       return null;
     }
@@ -408,9 +410,9 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
 
     const recognize = createConcurrencyLimited(
       async (input: { kind: ForwardMediaTask['kind']; src: string }): Promise<string | undefined> => {
-        if (input.kind === 'image') return await mediaSvc.describeImage(input.src);
-        if (input.kind === 'audio') return await mediaSvc.transcribe({ kind: 'audio', data: input.src });
-        return (await mediaSvc.describeVideo(input.src)) || undefined;
+        if (input.kind === 'image') return await mediaSvc.describeImage(input.src, { signal });
+        if (input.kind === 'audio') return await mediaSvc.transcribe({ kind: 'audio', data: input.src }, { signal });
+        return (await mediaSvc.describeVideo(input.src, { signal })) || undefined;
       },
       concurrency,
     );
@@ -498,6 +500,8 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
             maxNodesPerLevel: forwardCfg.maxNodesPerLevel,
             imageRecognitionEnabled: forwardCfg.imageRecognition,
           });
+          // 途中停用时识别不到的媒体已写成占位：半截的展开不当结果交出，也不进缓存
+          signal.throwIfAborted();
 
           if (fetchFailure !== undefined) {
             const reason = escapeMarkup(fetchFailure instanceof Error ? fetchFailure.message : String(fetchFailure));
@@ -523,6 +527,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
 
           return forwardedChat(expanded, summary);
         } catch (err) {
+          signal.throwIfAborted();
           logger.warn(`forward 展开失败 id=${id}: ${err}`);
           return { id, content: `<forward id="${id}">[合并转发消息：展开过程出错]</forward>` };
         }
