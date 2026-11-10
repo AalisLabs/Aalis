@@ -16,9 +16,6 @@ import {
 import { cloneConfigObject, ownConfigObject } from '../infrastructure/config-values.js';
 import { deferredLogger, type Logger, type LogWriter, summarizeError } from '../infrastructure/logger.js';
 
-export type { PluginEntry, PluginState };
-export { parseInstanceId };
-
 /** 一条登记：定义、实例配置（原样生效）、实例 id、是否以禁用态登记。字段含义同 `app.plugin` 的参数 */
 export interface PluginRegistration {
   definition: PluginDefinition;

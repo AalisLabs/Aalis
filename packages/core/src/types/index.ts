@@ -15,3 +15,5 @@ export type { AppService, PluginManagerService, PluginStatusEntry } from './app.
 export type { AalisEvents } from './events.js';
 // core 自己的失败的 code
 export type { CoreFailureCode } from './failure.js';
+// 插件注册表词汇
+export { type PluginEntry, type PluginState, parseInstanceId } from './plugin.js';

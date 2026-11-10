@@ -6,12 +6,15 @@
 // ============================================================
 
 // ----- 通用数据契约 + 扩展点 -----
-export type {
-  AalisEvents,
-  AppService,
-  CoreFailureCode,
-  PluginManagerService,
-  PluginStatusEntry,
+export {
+  type AalisEvents,
+  type AppService,
+  type CoreFailureCode,
+  type PluginEntry,
+  type PluginManagerService,
+  type PluginState,
+  type PluginStatusEntry,
+  parseInstanceId,
 } from './types/index.js';
 
 // ----- 原语的数据契约（注册表本身不外露，登记一律经描述符与资源口） -----
@@ -20,12 +23,7 @@ export type { SelectionBasis, ServiceInfo, ServiceView } from './primitives/serv
 // ----- 编排层：应用骨架与插件管理 -----
 export { App, type AppOptions, createApp } from './orchestration/app.js';
 export { appService, pluginsService } from './orchestration/host-services.js';
-export {
-  type PluginEntry,
-  type PluginRegistration,
-  type PluginState,
-  parseInstanceId,
-} from './orchestration/plugin.js';
+export type { PluginRegistration } from './orchestration/plugin.js';
 // 宿主 SPI：重启策略
 export type { RestartStrategy } from './orchestration/providers.js';
 
