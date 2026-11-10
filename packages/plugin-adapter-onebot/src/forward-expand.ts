@@ -87,6 +87,8 @@ export interface ForwardExpanderDeps<TState> {
   forwardCfg: ForwardConfig;
   /** 单附件落盘字节上限（与入站附件缓存同源） */
   attachmentMaxBytes: number;
+  /** 本插件这次激活的中止信号：停用、停机时转发内媒体的下载与转码随之停下 */
+  signal: AbortSignal;
   /** 调用 OneBot action 的回调（已绑定到具体的连接状态） */
   sendAction: (state: TState, action: string, params: Record<string, unknown>) => Promise<unknown>;
 }
@@ -175,8 +177,19 @@ export function createConcurrencyLimited<TArg, TRet>(
  * 内存缓存 1h TTL；持久化由 memory metadata 兜底（如果实现支持）。
  */
 export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>): ForwardExpander<TState> {
-  const { logger, memory, media, llm, i18n, storage, processService, sendAction, forwardCfg, attachmentMaxBytes } =
-    deps;
+  const {
+    logger,
+    memory,
+    media,
+    llm,
+    i18n,
+    storage,
+    processService,
+    sendAction,
+    forwardCfg,
+    attachmentMaxBytes,
+    signal,
+  } = deps;
   const forwardCache = new Map<string, { entry: ForwardEntry; expiresAt: number }>();
   /** 上次回收过期持久化条目的时刻。0 = 本次启动还没扫过，首条消息即扫一次。 */
   let lastSweepAt = 0;
@@ -382,6 +395,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
           sessionId,
           attachmentMaxBytes,
           logger,
+          signal,
         );
         // 落盘成功即登记「原始 URL → 落盘 ref」描述缓存别名：识别阶段按落盘 ref 写入的
         // 描述，此后经原始 URL（引用消息手里只有它）也查得到。

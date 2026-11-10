@@ -93,11 +93,23 @@ describe('绘图产物 → OneBot WebSocket 前的出站编码链路', () => {
 
     // 3. adapter 出站两步：落盘改写 → 物化成内联的消息段（与 index.ts 出站监听同一套调用）
     const proc = app.bind({ processService }).processService.use;
-    const local = await cacheOneAttachment(files, proc, 'image', att?.data ?? '', session, 10 * 1024 * 1024, {
-      warn: () => {},
-    });
+    const local = await cacheOneAttachment(
+      files,
+      proc,
+      'image',
+      att?.data ?? '',
+      session,
+      10 * 1024 * 1024,
+      { warn: () => {} },
+      new AbortController().signal,
+    );
     expect(local).toMatch(/^data:\/images\/onebot_t_group_7\/onebot\//);
-    const { segments } = await materializeAttachments([{ kind: 'image', data: local ?? '' }], files, logger);
+    const { segments } = await materializeAttachments(
+      [{ kind: 'image', data: local ?? '' }],
+      files,
+      new AbortController().signal,
+      logger,
+    );
     expect(segments.map(s => s.type)).toEqual(['image']);
     const file = String(segments[0]?.data.url);
     expect(file.startsWith('base64://'), `出站消息段形态不符: ${file.slice(0, 120)}`).toBe(true);

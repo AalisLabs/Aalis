@@ -66,6 +66,7 @@ describe('合并转发摘要的提示词', () => {
       processService: fixedRef<ProcessService>(undefined),
       forwardCfg: CFG,
       attachmentMaxBytes: 1024,
+      signal: new AbortController().signal,
       sendAction: async () => ({ messages: [node('甲', 'hello'), node('乙', 'hi')] }),
     });
 

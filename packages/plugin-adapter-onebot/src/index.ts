@@ -1013,6 +1013,7 @@ function runAdapter(caps: Caps): void {
     processService: caps.processService,
     forwardCfg,
     attachmentMaxBytes,
+    signal: lifecycle.use.signal,
     sendAction,
   });
   const { getOrLoadForward, fetchForward, expandForwards } = forwardExpander;
@@ -1742,6 +1743,7 @@ function runAdapter(caps: Caps): void {
               sessionId,
               attachmentMaxBytes,
               logger.use,
+              lifecycle.use.signal,
             );
             if (landed && att.kind !== 'audio') {
               rememberLandedAlias(media.present ? media.use : undefined, att.kind, att.url, landed);
@@ -2399,7 +2401,16 @@ function runAdapter(caps: Caps): void {
         // 同时最多 MEDIA_FETCH_CONCURRENCY 个，按附件的先后排队
         const cache = createConcurrencyLimited(
           (att: MessageAttachment) =>
-            cacheOneAttachment(storage, proc, att.kind, att.data, msg.sessionId, attachmentMaxBytes, logger.use),
+            cacheOneAttachment(
+              storage,
+              proc,
+              att.kind,
+              att.data,
+              msg.sessionId,
+              attachmentMaxBytes,
+              logger.use,
+              lifecycle.use.signal,
+            ),
           MEDIA_FETCH_CONCURRENCY,
         );
         await Promise.all(
@@ -2418,14 +2429,14 @@ function runAdapter(caps: Caps): void {
             }
           }),
         );
-        const materialized = await materializeAttachments(attachments, storage, logger.use);
+        const materialized = await materializeAttachments(attachments, storage, lifecycle.use.signal, logger.use);
         attachmentPieces = materialized.segments.map(segment => ({ text: '', segments: [segment] }));
         inlineAttachments = materialized.inlineAttachments;
         uploads.push(...materialized.uploads);
         errors.push(...materialized.errors);
       }
       // 她回复里的媒体段在后台按先后下载，正文逐条等、等到一条发一条：前面的文字不等后面的下载
-      const inlined = reply ? inlineMarkupMedia(reply.pieces, storage, logger.use) : undefined;
+      const inlined = reply ? inlineMarkupMedia(reply.pieces, storage, lifecycle.use.signal, logger.use) : undefined;
       const pieces = inlined?.pieces ?? plain;
 
       // 正文按 markup 发；附件物化出的消息段接在后面各自单独成一条，不拼成标记、不经正文媒体段的那道过滤。逐条发，一条没发成

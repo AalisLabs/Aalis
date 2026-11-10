@@ -75,6 +75,7 @@ describe('forward-expand: clearAll', () => {
       processService: fixedRef<ProcessService>(undefined),
       forwardCfg: CFG,
       attachmentMaxBytes: 1024,
+      signal: new AbortController().signal,
       sendAction: async () => null,
     });
     // 读回持久化条目会回填内存缓存
@@ -108,6 +109,7 @@ describe('forward-expand: 条目记下收到它的会话', () => {
       processService: fixedRef<ProcessService>(undefined),
       forwardCfg,
       attachmentMaxBytes: 1024,
+      signal: new AbortController().signal,
       sendAction,
     });
 

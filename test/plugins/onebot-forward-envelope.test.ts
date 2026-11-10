@@ -133,6 +133,7 @@ async function expand(
     processService: fixedRef<ProcessService>(undefined),
     forwardCfg: { ...CFG, ...cfg },
     attachmentMaxBytes: 1024,
+    signal: new AbortController().signal,
     sendAction: async () => reply,
   });
   const id = `F-${finishReason}`;

@@ -50,6 +50,7 @@ function setup(fetch: (params: Record<string, unknown>) => Promise<unknown> = as
     processService: absentRef(),
     forwardCfg: { ...CFG, ...cfg },
     attachmentMaxBytes: 1024 * 1024,
+    signal: new AbortController().signal,
     sendAction: async (_state, _action, sent) => {
       params.push(sent);
       return fetch(sent);

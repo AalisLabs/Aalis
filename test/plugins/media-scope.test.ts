@@ -451,7 +451,16 @@ describe('真实写入方产出的路径判据都接受', () => {
       ['video', dataUri('video/mp4', MP4)],
       ['file', dataUri('application/pdf', new TextEncoder().encode('%PDF-placeholder'))],
     ] as const) {
-      const ref = await cacheOneAttachment(storage, proc as never, kind, data, sessionId, 1 << 20, { warn: () => {} });
+      const ref = await cacheOneAttachment(
+        storage,
+        proc as never,
+        kind,
+        data,
+        sessionId,
+        1 << 20,
+        { warn: () => {} },
+        new AbortController().signal,
+      );
       if (!ref) throw new Error(`${kind} 没有落盘`);
       refs.push(ref);
     }

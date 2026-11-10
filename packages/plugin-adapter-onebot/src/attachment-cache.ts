@@ -7,6 +7,7 @@
 // 设计要点：
 // - cacheAttachmentBuffer 只接受 Buffer；cacheOneAttachment 负责下载与音频的 ffmpeg 转码；
 //   get_record 由调用方负责
+// - 下载与转码接调用方给的中止信号（本插件这次激活的）：停用、停机时随之停下，不等各自的时限
 // - 单文件 size cap 由调用方传入，超限直接返回 null
 // - 文件名用 sha256(buffer) 前 16 字符做内容寻址，自然去重（api-media 的命名约定）
 // - 返回落盘的存储地址，写进附件引用
@@ -74,13 +75,14 @@ export async function readBodyCapped(res: Response, maxBytes: number): Promise<B
 }
 
 /**
- * 从 URL / data: URI / file:// / storage URI 取到 Buffer。失败返回 null。
+ * 从 URL / data: URI / file:// / storage URI 取到 Buffer。失败返回 null；中止时抛中止原因。
  */
 async function loadAttachmentBuffer(
   storage: StorageService,
   proc: ProcessService,
   source: string,
-  maxBytes = Number.POSITIVE_INFINITY,
+  maxBytes: number,
+  signal: AbortSignal,
 ): Promise<Buffer<ArrayBuffer> | null> {
   try {
     // 存储地址只来自出站附件（本机插件发出的，如 send_attachment）。storage URI 优先：data:/ 也是 storage
@@ -101,7 +103,7 @@ async function loadAttachmentBuffer(
       return Buffer.from(m[1], 'base64');
     }
     if (isWebUrl(source)) {
-      const res = await safeFetch(source, { signal: AbortSignal.timeout(30000) });
+      const res = await safeFetch(source, { signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]) });
       if (!res.ok) return null;
       return readBodyCapped(res, maxBytes);
     }
@@ -111,12 +113,14 @@ async function loadAttachmentBuffer(
     const raw = await proc.readExternalFile(source, Number.isFinite(maxBytes) ? maxBytes : undefined);
     return Buffer.from(raw);
   } catch {
+    // 中止不是取不到：抛中止原因，调用方停下
+    signal.throwIfAborted();
     return null;
   }
 }
 
 /**
- * 把单个附件下载（必要时转码）后落盘，返回落盘的存储地址。失败返回 null。
+ * 把单个附件下载（必要时转码）后落盘，返回落盘的存储地址。失败返回 null；signal 中止时抛中止原因。
  * - audio：先 ffmpeg → 16kHz mono WAV，再以 .wav 入库（用户期望转码后存储，
  *   方便后续 LLM 反复分析；同时避免下游每次重转码）。
  * - 其他 kind：原样落盘，扩展名取文件头判定的格式（@aalis/util-file-signature），认不出的落 .bin，不按 kind 猜。
@@ -129,8 +133,9 @@ export async function cacheOneAttachment(
   sessionId: string,
   maxBytes: number,
   logger: { warn: (msg: string) => void },
+  signal: AbortSignal,
 ): Promise<string | null> {
-  const buf = await loadAttachmentBuffer(storage, proc, source, maxBytes);
+  const buf = await loadAttachmentBuffer(storage, proc, source, maxBytes, signal);
   if (!buf) return null;
   const format = detectMediaFormat(buf.subarray(0, FILE_HEAD_BYTES));
   const ext = format?.ext ?? 'bin';
@@ -142,7 +147,7 @@ export async function cacheOneAttachment(
       logger.warn(`OneBot 音频为 SILK 格式（ffmpeg 不支持），跳过转码保留原 URL (size=${buf.byteLength}B)`);
       return null;
     }
-    const wav = await transcodeAudioBufferToWav(proc, storage, buf);
+    const wav = await transcodeAudioBufferToWav(proc, storage, buf, signal);
     if (!wav) {
       logger.warn(`OneBot 音频转 WAV 失败 (in=${ext}, size=${buf.byteLength}B)，保留原 URL`);
       return null;
@@ -154,13 +159,14 @@ export async function cacheOneAttachment(
 
 /**
  * 用 ffmpeg 把任意可解码音频 Buffer 转为 16kHz mono PCM WAV。
- * 失败（典型：SILK，ffmpeg 不含 silk 解码器）返回 null。
+ * 失败（典型：SILK，ffmpeg 不含 silk 解码器）返回 null；中止时由 process 服务停掉 ffmpeg，抛中止原因。
  * 输入的临时文件一律叫 in.bin：ffmpeg 按内容探测格式，扩展名不参与。
  */
 async function transcodeAudioBufferToWav(
   proc: ProcessService,
   storage: StorageService,
   input: Buffer<ArrayBuffer>,
+  signal: AbortSignal,
 ): Promise<Buffer<ArrayBuffer> | null> {
   const tmp = await proc.makeTempDir('onebot-audio');
   try {
@@ -172,12 +178,14 @@ async function transcodeAudioBufferToWav(
     await proc.execFile(
       'ffmpeg',
       ['-i', inPath, '-vn', '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1', '-y', outPath],
-      { timeout: 60000 },
+      { timeout: 60000, signal },
     );
     const raw = (await storage.readFile(outUri)) as Uint8Array;
     const out = Buffer.from(raw);
     return out.byteLength >= 256 ? out : null;
   } catch {
+    // 中止不是转不了：抛中止原因，不按转码失败告警
+    signal.throwIfAborted();
     return null;
   } finally {
     await tmp.cleanup();

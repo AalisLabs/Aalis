@@ -328,6 +328,7 @@ function makeHarness(overrides: Partial<ForwardConfig> = {}, opts: { brokenDownl
     processService: fixedRef(opts.brokenDownload ? undefined : (proc as unknown as ProcessService)),
     forwardCfg,
     attachmentMaxBytes: 20 * 1024 * 1024,
+    signal: new AbortController().signal,
     sendAction: async (_state, action) => {
       if (action !== 'get_forward_msg') throw new Error(`意外 action: ${action}`);
       return { messages: HARNESS_NODES };

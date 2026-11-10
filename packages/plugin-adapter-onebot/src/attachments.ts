@@ -24,6 +24,7 @@
 //
 // 她回复正文里的媒体标记只发网址的，同样经 safeFetch 下载后内联（inlineMarkupMedia），不交给 daemon 去拉；其余地址的去掉。
 // 一条回复里的媒体（正文的媒体段与 plugin-image-sender 把存储地址的标记转成的附件）合计有上限（capReplyMedia）。
+// 下载接调用方给的中止信号（本插件这次激活的）：停用、停机时随之停下，不等 30 秒的时限。
 // ============================================================
 
 import { Buffer } from 'node:buffer';
@@ -91,6 +92,7 @@ interface OneBotFile {
 async function attachmentToOneBotFile(
   att: MessageAttachment,
   storage: StorageService,
+  signal: AbortSignal,
   logger?: Logger,
 ): Promise<OneBotFile> {
   const data = att.data;
@@ -118,7 +120,7 @@ async function attachmentToOneBotFile(
   if (isWebUrl(data)) {
     logger?.debug?.(`OneBot 下载远程附件: ${data.slice(0, 120)}`);
     // 与入站缓存同一上限：慢源不能把发送这条消息的回合拖住几分钟。
-    const res = await safeFetch(data, { signal: AbortSignal.timeout(30_000) });
+    const res = await safeFetch(data, { signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]) });
     if (!res.ok) throw new Error(`download failed (${res.status}): ${data}`);
     // 流式限额读取：不先全量 arrayBuffer 再判大小（避免无 Content-Length 时撑爆内存，与入站对称）。
     const capped = await readBodyCapped(res, MAX_INLINE_BYTES);
@@ -191,6 +193,7 @@ interface OneBotOutgoingAttachments {
 export async function materializeAttachments(
   attachments: MessageAttachment[],
   storage: StorageService,
+  signal: AbortSignal,
   logger?: Logger,
 ): Promise<OneBotOutgoingAttachments> {
   const segments: ParsedSegment[] = [];
@@ -199,7 +202,7 @@ export async function materializeAttachments(
   const errors: unknown[] = [];
   for (const att of attachments) {
     try {
-      const { file, uploadExt } = await attachmentToOneBotFile(att, storage, logger);
+      const { file, uploadExt } = await attachmentToOneBotFile(att, storage, signal, logger);
       if (att.kind !== 'file' && uploadExt === undefined) {
         segments.push({ type: att.kind, data: { url: file } });
         inlineAttachments.push(att);
@@ -256,11 +259,12 @@ export function capReplyMedia(
 export function inlineMarkupMedia(
   pieces: OutgoingPiece[],
   storage: StorageService,
+  signal: AbortSignal,
   logger?: Logger,
 ): { pieces: Promise<OutgoingPiece | undefined>[]; errors: Promise<unknown[]> } {
   const errors: unknown[] = [];
   const download = createConcurrencyLimited(
-    (att: MessageAttachment) => attachmentToOneBotFile(att, storage, logger),
+    (att: MessageAttachment) => attachmentToOneBotFile(att, storage, signal, logger),
     MEDIA_FETCH_CONCURRENCY,
   );
   /** 一个媒体段换成的段：网址的换成内联后的，发不出的为 undefined */

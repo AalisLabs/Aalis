@@ -60,6 +60,7 @@ describe('cacheOneAttachment SILK 短路', () => {
       'onebot:t:group:1',
       1024 * 1024,
       { warn: (m: string) => warns.push(m) },
+      new AbortController().signal,
     );
     expect(out).toBeNull();
     expect(warns.some(w => w.includes('SILK'))).toBe(true);
@@ -90,6 +91,7 @@ describe('cacheOneAttachment 语音转码', () => {
       'onebot:t:group:1',
       1024 * 1024,
       { warn: () => {} },
+      new AbortController().signal,
     );
     expect(out?.endsWith('.wav')).toBe(true);
     expect(written[0]).toBe('tmp:/t/in.bin');
@@ -118,6 +120,7 @@ describe('cacheOneAttachment 大小闸覆盖全部来源', () => {
       'onebot:t:group:1',
       1024 * 1024,
       { warn: () => {} },
+      new AbortController().signal,
     );
     expect(out).toBeNull();
     expect(readCalled, '超限文件被整份读进内存 = 白吃一次峰值，正是这条要挡的').toBe(false);
@@ -137,6 +140,7 @@ describe('cacheOneAttachment 大小闸覆盖全部来源', () => {
       'onebot:t:group:1',
       1024 * 1024,
       { warn: () => {} },
+      new AbortController().signal,
     );
     expect(out, '正常大小不该被误拒').not.toBeNull();
   });
@@ -157,6 +161,7 @@ describe('cacheOneAttachment 大小闸覆盖全部来源', () => {
       'onebot:t:group:1',
       1024 * 1024,
       { warn: () => {} },
+      new AbortController().signal,
     );
     expect(out).toBeNull();
     expect(seen, '不透传上限的话，实现侧无从预检，只能整份读完再判').toEqual([1024 * 1024]);
@@ -188,8 +193,62 @@ describe('cacheOneAttachment 落盘扩展名', () => {
       'onebot:t:group:1',
       1024 * 1024,
       { warn: () => {} },
+      new AbortController().signal,
     );
     expect(out?.endsWith(ext)).toBe(true);
     expect(written).toEqual([out]);
+  });
+});
+
+// ── 中止：下载与转码途中中止时抛中止原因，不按取不到、转不了处理 ──
+
+describe('cacheOneAttachment 中止', () => {
+  it('读取途中中止、随后读取出错：抛中止原因，不当成取不到', async () => {
+    const ac = new AbortController();
+    const pending = cacheOneAttachment(
+      { writeFile: async () => {} } as never,
+      {
+        readExternalFile: async () => {
+          ac.abort(new Error('zz-停用'));
+          throw new Error('读到一半断了');
+        },
+      } as never,
+      'file',
+      '/zz-napcat/cache/a.bin',
+      'onebot:t:group:1',
+      1024 * 1024,
+      { warn: () => {} },
+      ac.signal,
+    );
+    await expect(pending).rejects.toThrow('zz-停用');
+  });
+
+  it('转码途中中止：抛中止原因，不记「转 WAV 失败」', async () => {
+    const mp3 = Buffer.concat([Buffer.from('ID3'), Buffer.from([4, 0, 0, 0, 0, 0, 0]), Buffer.alloc(16)]);
+    const ac = new AbortController();
+    const warns: string[] = [];
+    let transcoding = false;
+    const pending = cacheOneAttachment(
+      { writeFile: async () => {} } as never,
+      {
+        makeTempDir: async () => ({ uri: 'tmp:/t', path: '/zz-tmp/t', cleanup: async () => {} }),
+        execFile: (_cmd: string, _args: string[], opts: { signal?: AbortSignal }) =>
+          new Promise((_, reject) => {
+            transcoding = true;
+            const stopped = new Error('execFile ffmpeg 退出码 null (signal SIGTERM)');
+            opts.signal?.addEventListener('abort', () => reject(stopped), { once: true });
+          }),
+      } as never,
+      'audio',
+      `data:audio/mpeg;base64,${mp3.toString('base64')}`,
+      'onebot:t:group:1',
+      1024 * 1024,
+      { warn: (m: string) => warns.push(m) },
+      ac.signal,
+    );
+    await expect.poll(() => transcoding).toBe(true);
+    ac.abort(new Error('zz-停用'));
+    await expect(pending).rejects.toThrow('zz-停用');
+    expect(warns).toEqual([]);
   });
 });

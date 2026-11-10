@@ -186,6 +186,7 @@ describe('QQ 转发摘要', () => {
       processService: fixedRef<ProcessService>(undefined),
       forwardCfg: CFG,
       attachmentMaxBytes: 1024,
+      signal: new AbortController().signal,
       sendAction: async () => ({ messages: [node('hello')] }),
     });
     const expand = async (id: string) =>

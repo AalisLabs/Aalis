@@ -102,6 +102,7 @@ describe('合并转发媒体落盘按 URI 路由（真实 storage-local 多根�
       processService: fixedRef({} as ProcessService),
       forwardCfg: CFG,
       attachmentMaxBytes: 1024 * 1024,
+      signal: new AbortController().signal,
       sendAction: async () => ({
         messages: [
           {
