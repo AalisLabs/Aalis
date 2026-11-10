@@ -100,6 +100,30 @@ describe('插件失败', () => {
     expect(app.plugins.getPlugin('broken')!.failure).toBeUndefined();
     expect(app.plugins.getPlugin('broken')!.error).toBeUndefined();
   });
+
+  it('bounce 清掉上一次的失败：required 依赖此刻不在、转回 pending 时不留旧的失败原因', async () => {
+    const app = world();
+    const dep = defineService<object>('t:failure-dep');
+    const off = app.bind({ provide }).provide.use(dep, {});
+    await app.plugin(
+      definePlugin({
+        name: 'flaky',
+        uses: { dep },
+        apply() {
+          throw new Error('激活失败');
+        },
+      }),
+    );
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('flaky')!.state).toBe('error');
+    off();
+    await app.plugins.bounce('flaky');
+    await app.plugins.idle();
+    const entry = app.plugins.getPlugin('flaky')!;
+    expect(entry.state).toBe('pending');
+    expect(entry.failure).toBeUndefined();
+    expect(entry.error).toBeUndefined();
+  });
 });
 
 describe('core 自己的失败带 code', () => {

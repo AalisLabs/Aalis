@@ -56,22 +56,13 @@ export class PluginManager implements PluginManagerService {
   readonly #deps: ActivationDeps;
   /** recompute 单飞标志：true 表示一次 recompute（含排队补跑）正在进行 */
   #reloading = false;
-  /**
-   * 手动 dispose 段计数器：disable / unload / bounce 在「dispose 旧
-   * 激活 → 改 entry.state」这段不可分割的状态变更期间 +1。期间 dispose 引起的
-   * 服务变更所触发的 recompute 会被**排队**（而非立即跑——那会看到
-   * 半成品状态，比如把正在禁用的插件重新激活），由这些方法收尾的 recompute 统一消化。
-   *
-   * 用计数器而非布尔：dispose hook 内可能同步级联调用 disable/unload（级联
-   * 禁用），嵌套时内层的 finally 若复位布尔会过早解除外层的挂起态——计数器确保
-   * 只有最外层退出（归零）才解除。
-   */
+  /** 管理动作挂起段的层数（见 {@link #manage}） */
   #suspendDepth = 0;
   get #suspended(): boolean {
     return this.#suspendDepth > 0;
   }
   /**
-   * 有被推迟的重算：在飞 recompute 或手动 dispose 段期间到来的请求合并成一次。
+   * 有被推迟的重算：在飞 recompute 或挂起段期间到来的请求合并成一次。
    * 目标态只看容器里此刻有没有服务，合并不丢信息。消费前先摘下，执行期间的新请求另起一次。
    */
   #queued = false;
@@ -103,7 +94,7 @@ export class PluginManager implements PluginManagerService {
   #idleWaiters: Array<() => void> = [];
 
   /**
-   * 等待插件状态机静置：无在飞 recompute、无排队请求、无手动 dispose 段。
+   * 等待插件状态机静置：无在飞 recompute、无排队请求、无挂起段。
    *
    * register/unload/enable/disable 等变更 API 在已有 flight 在飞时会**排队并
    * 立即返回**（单飞早退是刻意设计，join 在飞 promise 会在 apply/onDispose 内
@@ -273,24 +264,32 @@ export class PluginManager implements PluginManagerService {
       return true;
     }
 
-    // dispose 段守卫（与 disable 对齐）：dispose 触发的反应式 recompute
-    // 排队到收尾的 recompute，避免在 entry 半卸载态下重算。
-    this.#suspendDepth++;
-    try {
-      // delete 必须留在拆卸**之后**：注册表是 register 与宿主热扫描的查重闸
-      // （plugins.has(id)），提前摘除会让同 id 在旧激活 排空期间重新注册，
-      // 新旧实例同 instanceId 并存——同名服务重复 provide、偏好按 contextId 二义。
-      await this.#retire(entry, 'disposed');
+    // delete 必须留在拆卸**之后**：注册表是 register 与宿主热扫描的查重闸
+    // （plugins.has(id)），提前摘除会让同 id 在旧激活 排空期间重新注册，
+    // 新旧实例同 instanceId 并存——同名服务重复 provide、偏好按 contextId 二义。
+    return this.#manage(entry, 'disposed', () => {
       if (this.#plugins.get(instanceId) === entry) {
         this.#plugins.delete(instanceId);
         this.#order = undefined;
       }
       this.#logger.info(`插件已卸载: ${instanceId}`);
+    });
+  }
+
+  /**
+   * 管理动作（unload / disable / bounce）的拆卸段：拆完调 done，退出挂起段后重算一次，消化期间排队的重算与级联（依赖被拆
+   * 插件所提供服务的下游转 pending）。挂起段期间拆卸引起的服务变更不立即重算：那会看到半成品状态，比如把正在禁用的插件
+   * 重新激活。按层数计而非布尔：拆卸等待期间别的管理动作（含清理回调里级联发起的）可以进出各自的挂起段，内层退出时若复位
+   * 布尔会过早解除外层的挂起，只有最外层退出（归零）才解除
+   */
+  async #manage(entry: PluginRecord, target: PluginState, done?: () => void): Promise<true> {
+    this.#suspendDepth++;
+    try {
+      await this.#retire(entry, target);
+      done?.();
     } finally {
       this.#suspendDepth--;
     }
-
-    // 级联重算：依赖被卸载插件所提供服务的下游需要转 pending
     await this.recompute();
     return true;
   }
@@ -390,18 +389,8 @@ export class PluginManager implements PluginManagerService {
     if (!entry) return false;
     if (entry.state === 'disabled') return true; // 已经禁用
 
-    // dispose 段守卫：期间反应式 recompute 排队到收尾的 recompute
-    this.#suspendDepth++;
-    try {
-      entry.failure = undefined;
-      await this.#retire(entry, 'disabled');
-      this.#logger.info(`插件已禁用: ${instanceId}`);
-    } finally {
-      this.#suspendDepth--;
-    }
-
-    await this.recompute();
-    return true;
+    entry.failure = undefined;
+    return this.#manage(entry, 'disabled', () => this.#logger.info(`插件已禁用: ${instanceId}`));
   }
 
   /**
@@ -468,18 +457,9 @@ export class PluginManager implements PluginManagerService {
       return false;
     }
 
-    // dispose 段守卫（与 disable / unload 对齐）：dispose 触发的反应式
-    // recompute 不能在 entry 尚未转 pending 时跑——会把半 bounce 态误判。
-    this.#suspendDepth++;
-    try {
-      entry.failure = undefined;
-      entry.retriesLeft = undefined;
-      await this.#retire(entry, 'pending');
-    } finally {
-      this.#suspendDepth--;
-    }
-    await this.recompute();
-    return true;
+    entry.failure = undefined;
+    entry.retriesLeft = undefined;
+    return this.#manage(entry, 'pending');
   }
 
   // 多实例机制是 register 带 instanceId + reusable 校验；配置键 `name:suffix` 的自动登记在宿主。
@@ -521,8 +501,8 @@ export class PluginManager implements PluginManagerService {
     }
     this.#queued = true;
 
-    // 单飞 + 排队（修 lost wakeup）：在飞期间/手动 dispose 段的请求合并排队，
-    // 由在飞 run 收尾时补跑或 dispose 段收尾的 recompute 消化。注意这里必须
+    // 单飞 + 排队（修 lost wakeup）：在飞期间/挂起段的请求合并排队，
+    // 由在飞 run 收尾时补跑或挂起段收尾的 recompute 消化。注意这里必须
     // 立即返回而不能把在飞 promise 交还调用方——若调用方恰在某插件 apply()
     // 内同步调用（在飞 run 正 await 它），等待在飞 promise 会自我死锁。
     if (this.#reloading || this.#suspended) {

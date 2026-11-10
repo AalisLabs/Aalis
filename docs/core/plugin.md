@@ -84,7 +84,7 @@ register(definition, config?, instanceId?, { disabled? })
 
 PluginManager 只有一个状态变更入口：服务上下线、注册、启停、bounce、配置更新都汇入 `recompute()`。停机不经它，由停机计划拆卸。
 
-在飞 recompute 或手动 dispose 段期间到来的请求合并成一次，管理动作收尾时再调一次 `recompute()`。重算的目标态只看容器里此刻有没有服务，别的计划正关着的提供者不算在。
+在飞 recompute 或管理动作的挂起段（unload、disable、bounce 拆卸期间）里到来的请求合并成一次，管理动作收尾时再调一次 `recompute()`。重算的目标态只看容器里此刻有没有服务，别的计划正关着的提供者不算在。
 
 每轮：
 
@@ -95,7 +95,7 @@ PluginManager 只有一个状态变更入口：服务上下线、注册、启停
 
 `disabled` / `disposed` / `error` 是显式态，recompute 不动它们；active / pending 条目按 required 依赖此刻是否都有提供者定目标态：不满足 → `pending`，满足 → `active`。optional 依赖的上下线不改变目标态：业务句柄每次访问都重新解析到当前选中的那一家，有状态的接线经 `follow` 跟随提供者换人，不靠重启插件。
 
-`App.stop()` 单飞：先 `beginShutdown()`（置停机态、丢弃排队的重算并冻计划，此后的重算请求直接跳过）再 `idle()`（仍等待已在飞的重算和手动 dispose 段），然后发 `app:stopping`，最后 `stopAll()` 执行 drain / close。从 `beginShutdown()` 起，新发起的六个管理动作一律立即返回 false，不改变条目状态或配置，也不加入额外拆卸；清理由已有停机计划负责。每次 `stop()` 都返回完整停机的同一 Promise；`app:stopping` 监听器与清理回调不能 await 或返回它，以免等待自身。
+`App.stop()` 单飞：先 `beginShutdown()`（置停机态、丢弃排队的重算并冻计划，此后的重算请求直接跳过）再 `idle()`（仍等待已在飞的重算和挂起段），然后发 `app:stopping`，最后 `stopAll()` 执行 drain / close。从 `beginShutdown()` 起，新发起的六个管理动作一律立即返回 false，不改变条目状态或配置，也不加入额外拆卸；清理由已有停机计划负责。每次 `stop()` 都返回完整停机的同一 Promise；`app:stopping` 监听器与清理回调不能 await 或返回它，以免等待自身。
 
 停机时全部 active 插件与宿主的根激活进同一张关停计划（无依赖关系时后注册的先关）。每个激活 drain 后 close；边规则见 [插件定义与能力](context.md)。单插件 `unload` / `disable` / `bounce` 与整机停机同一套交接保证：正在用它所提供服务的 required 下游（传递闭包）并入同一批，先收尾、先关，提供者之后；判据是下游此刻选中的那一家属于要走的激活，空档里不切到后备。下游之后转 pending，`bounce` 时随提供者按拓扑序重新激活。这项保证覆盖动作发起时处于 `active` 或仍在初始化（在飞或后台）的 required 下游；仍在初始化的下游被 abort，按上文的宽限处理，不响应 abort 的旧实例停下之前不会重新激活。仍在 `pending` 的下游不会在提供者关闭期间开始激活（见上文 Phase B）。并发的管理动作、停机之间谁等谁见 [插件定义与能力](context.md)。
 
@@ -111,7 +111,7 @@ PluginManager 只有一个状态变更入口：服务上下线、注册、启停
 
 管理动作只改运行态（实例配置、禁用态），不写配置文档。要跨重启保留，调用方在动作成功后经 host-config 写文档并 `save()`，见 [运行态与配置文档](config.md)。
 
-`idle()` 等待状态机静置（无在飞 recompute、无排队、无手动 dispose 段）。变更 API 在已有 flight 在飞时排队并立即返回。不等转入后台的激活：它落定后另触发一次重算，之后调用的 `idle()` 会等这次重算。后台激活落定失败时的回滚不在重算之内，`idle()` 不等它完成（状态已先写好）。**不得在插件 `apply` / `onDispose` 内调用**——flight 正等着你返回，互等死锁。
+`idle()` 等待状态机静置（无在飞 recompute、无排队、无挂起段）。变更 API 在已有 flight 在飞时排队并立即返回。不等转入后台的激活：它落定后另触发一次重算，之后调用的 `idle()` 会等这次重算。后台激活落定失败时的回滚不在重算之内，`idle()` 不等它完成（状态已先写好）。**不得在插件 `apply` / `onDispose` 内调用**——flight 正等着你返回，互等死锁。
 
 插件的 `apply` 与关闭回调（`onDrain` / `onDispose`）不能等待针对自身或自身用到的任何提供者（required、optional 或经 `follow` 跟随）的 `bounce` / `updateConfig` / `disable` / `unload`：这些动作的拆卸可能要等本插件的这些回调返回，回调又在等动作完成。例如在 `apply` 中 `await` 对 required 提供者的 `bounce`：这个动作要把正在用该服务的本插件并入同一批拆掉，拆卸要等 `apply` 返回；在 `onDrain` 里 `await` 卸载 optional 提供者也一样，那份计划要等本插件关完。两者至多互等到宽限（`disposeTimeoutMs`）到期（为 0 时一直等下去），本插件的旧实例停下之前不会重新激活（见上文）。
 
