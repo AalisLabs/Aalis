@@ -152,7 +152,7 @@ function registerImageSender(caps: Caps): void {
           },
         },
       },
-      handler: async args => {
+      handler: async (args, callCtx) => {
         const urls = Array.isArray(args.urls) ? (args.urls as unknown[]).map(String) : [];
         const hint = (args.hint as string) || undefined;
         if (urls.length === 0) return JSON.stringify({ error: 'urls 不能为空' });
@@ -172,7 +172,7 @@ function registerImageSender(caps: Caps): void {
           }
           try {
             const desc = await Promise.race([
-              service.describeImage(trimmed, { hint, detailLevel: 'casual' }),
+              service.describeImage(trimmed, { hint, detailLevel: 'casual', signal: callCtx.signal }),
               new Promise<string>((_resolve, reject) =>
                 setTimeout(() => reject(new Error('vision 超时')), PREVIEW_TIMEOUT_MS),
               ),

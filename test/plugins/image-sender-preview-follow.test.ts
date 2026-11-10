@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { media } from '../../packages/api-media/src/index.js';
-import { tools } from '../../packages/api-tools/src/index.js';
+import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
+import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // preview_image 随 media 在场注册：识别全靠 media，media 缺席时这个工具只会返回
@@ -49,5 +50,42 @@ describe('preview_image 跟随 media 在场', () => {
     await tick();
     expect(registered.has('preview_image'), 'media 下线后应撤回 preview_image').toBe(false);
     expect(registered.has('send_attachment')).toBe(true);
+  });
+});
+
+describe('preview_image 的识图接这次调用的中止信号', () => {
+  it('识图途中回合中止：交给识图的信号随之断开', async () => {
+    const app = new App({ name: 'T', logLevel: 'error' });
+    try {
+      const host = app.bind({ provide });
+      const handlers = new Map<string, RegisteredTool['handler']>();
+      host.provide.use(tools, {
+        register: (t: Omit<RegisteredTool, 'pluginName'>) => {
+          handlers.set(t.definition.function.name, t.handler);
+          return () => {};
+        },
+        registerGroup: () => () => {},
+      } as never);
+      const signals: Array<AbortSignal | undefined> = [];
+      host.provide.use(media, {
+        describeImage: (_url: string, opts?: { signal?: AbortSignal }) => {
+          signals.push(opts?.signal);
+          return new Promise<string>((_, reject) =>
+            opts?.signal?.addEventListener('abort', () => reject(opts.signal?.reason), { once: true }),
+          );
+        },
+      } as never);
+      await app.plugins.register(imageSenderPlugin, {});
+      await app.plugins.idle();
+      const preview = handlers.get('preview_image');
+      if (!preview) throw new Error('preview_image 没有登记');
+      const ac = new AbortController();
+      void preview({ urls: ['https://example.invalid/a.png'] }, toolContext({ sessionId: 's', signal: ac.signal }));
+      await expect.poll(() => signals.length).toBe(1);
+      ac.abort();
+      expect(signals[0]?.aborted).toBe(true);
+    } finally {
+      await app.stop();
+    }
   });
 });
