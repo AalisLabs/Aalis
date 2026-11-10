@@ -254,6 +254,23 @@ describe('App.restart', () => {
     expect(order).toEqual(['restarting', 'strategy', 'stopping', 'disposed']);
     expect(log.messages('info')).toContain('已停止');
   });
+
+  it.each([
+    [
+      '同步抛错',
+      () => {
+        throw new Error('策略坏了');
+      },
+    ],
+    ['返回被拒的 Promise', () => Promise.reject(new Error('策略坏了'))],
+  ])('策略的 restart %s：记 error「restart 失败」并附上原因，不外泄成未处理拒绝', async (_, restart) => {
+    const log = recordingLogger();
+    const app = track(new App({ ...base(), logger: log, restartStrategy: { restart } }));
+    app.restart();
+    await new Promise<void>(r => setTimeout(r, 0));
+    const failed = log.records.find(r => r.level === 'error' && r.message === 'restart 失败:');
+    expect((failed?.args[0] as Error | undefined)?.message).toBe('策略坏了');
+  });
 });
 
 describe('启动与停机、重启互斥', () => {
