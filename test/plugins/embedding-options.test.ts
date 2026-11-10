@@ -114,6 +114,13 @@ describe('向量化提供者的 baseUrl 带查询串或片段：读配置时报�
 describe('向量化提供者取模型列表随停用中止', () => {
   it.each([
     { name: 'embedding-ollama', plugin: embeddingOllama, path: '/api/tags', extra: { retries: 0 }, suffix: '' },
+    {
+      name: 'embedding-openai',
+      plugin: embeddingOpenai,
+      path: '/v1/models',
+      extra: { apiKey: 'zz-placeholder-key' },
+      suffix: '/v1',
+    },
   ])('$name：取模型列表途中停用，到上游的请求随之断开', async ({ name, plugin, path, extra, suffix }) => {
     const seen = { requested: false, closed: false };
     const server = createServer((req, res) => {

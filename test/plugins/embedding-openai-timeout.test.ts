@@ -141,4 +141,32 @@ describe('plugin-embedding-openai: 请求自带超时', () => {
     await expect(svc.embed('normal request after abort')).resolves.toEqual([0.1, 0.2]);
     expect(fake.requests).toBe(2);
   });
+
+  it('调用方没给信号，embed 途中停用插件：在飞请求随之关闭，以中止原因拒绝', async () => {
+    const fake = await startControlled();
+    servers.push(fake.server);
+    const app = new App({ name: 'T', logLevel: 'error' });
+    apps.push(app);
+    const host = app.bind({ services });
+    await app.plugins.register(embeddingOpenai, {
+      apiKey: 'sk-test-placeholder',
+      baseUrl: fake.baseUrl,
+      model: 'text-embedding-3-small',
+      timeoutMs: 30_000,
+    });
+    await app.plugins.idle();
+    const svc = host.services.use.get(embedding)!;
+
+    fake.mode = 'hang';
+    fake.requests = 0;
+    fake.aborted = 0;
+    const failure = svc.embed('provider goes away').then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    await waitFor(() => fake.requests === 1);
+    await app.plugins.disable(embeddingOpenai.name);
+    await waitFor(() => fake.aborted > 0);
+    expect(await failure).toMatchObject({ name: 'AbortError' });
+  });
 });

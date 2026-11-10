@@ -47,7 +47,17 @@ class OpenAIEmbeddingService implements EmbeddingService {
   private apiKey: string;
   private timeoutMs: number;
 
-  constructor(baseUrl: string, model: string, apiKey: string, timeoutMs = 30000) {
+  /**
+   * activation 是本插件这次激活的中止信号：embed 把它与调用方的合起来；取模型列表的调用方（可选项来源、webui-server 合并各
+   * 提供者的取值）都不带信号，只用它。停用、重启、停机时请求随之停下
+   */
+  constructor(
+    baseUrl: string,
+    model: string,
+    apiKey: string,
+    timeoutMs: number,
+    private readonly activation: AbortSignal,
+  ) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.model = model;
     this.modelId = `openai:${model}`;
@@ -56,8 +66,9 @@ class OpenAIEmbeddingService implements EmbeddingService {
   }
 
   async embed(text: string, options?: EmbeddingRequestOptions): Promise<number[]> {
-    options?.signal?.throwIfAborted();
-    const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
+    // 调用方的中止信号与本插件这次激活的合起来：调用方没中止、本插件停用或重启时请求同样停下
+    const signal = options?.signal ? AbortSignal.any([options.signal, this.activation]) : this.activation;
+    signal.throwIfAborted();
     const res = await fetch(`${this.baseUrl}/embeddings`, {
       method: 'POST',
       headers: {
@@ -65,10 +76,10 @@ class OpenAIEmbeddingService implements EmbeddingService {
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({ model: this.model, input: text }),
-      // 没有 signal 的话这次请求永不自行了结：apply 的启动探测 await 它，卡住的 apply 要等到慢激活阈值
+      // 没有超时的话这次请求永不自行了结：apply 的启动探测 await 它，卡住的 apply 要等到慢激活阈值
       // 才转入后台、其间排在它后面的插件都在等，此后也一直停在激活中；索引路径上则是 memory-vector 的
       // 一个并发槽被无限期占用。
-      signal: options?.signal ? AbortSignal.any([timeoutSignal, options.signal]) : timeoutSignal,
+      signal: AbortSignal.any([AbortSignal.timeout(this.timeoutMs), signal]),
     });
     if (!res.ok) {
       throw new Error(`OpenAI embedding 请求失败: ${res.status} ${res.statusText}`);
@@ -77,12 +88,12 @@ class OpenAIEmbeddingService implements EmbeddingService {
     return data.data[0].embedding;
   }
 
-  /** 这个端点的全部模型：本插件的可选项来源 embedding-openai 用它 */
+  /** 这个端点的全部模型：本插件的可选项来源 embedding-openai 用它。取不到（含停用时中止）为空列表 */
   async listModels(): Promise<string[]> {
     try {
       const res = await fetch(`${this.baseUrl}/models`, {
         headers: { Authorization: `Bearer ${this.apiKey}` },
-        signal: AbortSignal.timeout(this.timeoutMs),
+        signal: AbortSignal.any([AbortSignal.timeout(this.timeoutMs), this.activation]),
       });
       if (!res.ok) return [];
       const data = (await res.json()) as { data: { id: string }[] };
@@ -113,7 +124,7 @@ export default definePlugin({
     if (/[?#]/.test(cfg.baseUrl)) {
       throw configError(t('baseUrlQuery'));
     }
-    const service = new OpenAIEmbeddingService(cfg.baseUrl, cfg.model, cfg.apiKey, cfg.timeoutMs);
+    const service = new OpenAIEmbeddingService(cfg.baseUrl, cfg.model, cfg.apiKey, cfg.timeoutMs, lifecycle.use.signal);
 
     // 启动时检查连通性（失败不阻塞，只警告）；停用或停机时中止
     try {
