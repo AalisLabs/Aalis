@@ -131,7 +131,6 @@ const opts = {
   ...(mode === 'default-loader' ? {} : { pluginLoader }),
   ...(mode === 'no-app-dir' ? {} : { appDir: process.env.AALIS_E2E_APP_DIR ?? process.cwd() }),
   consoleSink: false,
-  terminalRestore: false,
   ...(mode === 'daemon' || mode === 'tty' ? { argv: [] } : {}),
 } as StartAalisOptions;
 const app = await startAalis(opts);

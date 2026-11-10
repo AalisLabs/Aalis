@@ -16,7 +16,6 @@ import {
   warnLikelyPluginMissingKeyword,
 } from './node-modules-loader.js';
 import type { PluginDescriptor, PluginLoader } from './plugin-discovery.js';
-import { disarmTerminalStateRestorer } from './terminal.js';
 import { t } from './texts.js';
 import { openYamlFile } from './yaml-file.js';
 
@@ -347,9 +346,6 @@ export function createProcessRespawnStrategy(opts: RespawnOptions): RestartStrat
       });
 
       if (outcome !== 'died') {
-        // 终端已归子进程所有（它的 ready 发生在 TUI 进备用屏之后），父进程退出时不得再写它，
-        // 否则复原序列会把新实例的 TUI 踢出备用屏。见 disarmTerminalStateRestorer 的注释。
-        disarmTerminalStateRestorer();
         try {
           child.disconnect();
         } catch {

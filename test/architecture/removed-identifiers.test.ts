@@ -385,6 +385,9 @@ const REMOVED: Array<[string, string]> = [
   ['aalis.home', 'MongoDB 记忆库归属记录的命名空间，改为 aalis.data'],
   ['installBootstrapBuffer', 'runtime 的启动期日志缓冲：日志输出装好之前它从没收到过条目'],
   ['getBootstrapBuffer', 'runtime 的启动期日志缓冲：日志输出装好之前它从没收到过条目'],
+  ['installTerminalStateRestorer', 'runtime 退出时的终端复原：改终端模式的插件自己复原'],
+  ['disarmTerminalStateRestorer', 'runtime 退出时的终端复原：改终端模式的插件自己复原'],
+  ['terminalRestore', 'startAalis 的终端复原开关：改终端模式的插件自己复原'],
 ];
 
 /**

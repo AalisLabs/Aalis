@@ -6,12 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createProcessRespawnStrategy,
   createServiceRestartStrategy,
+  READY_MESSAGE,
   type RestartRollback,
   SERVICE_RESTART_EXIT_CODE,
 } from '../../packages/runtime/src/providers.js';
 
 // ════════════════════════════════════════════════════════════
-// 进程重启策略的两条判据，此前只有源码文本测试（按文本切分支查 disarm），行为零覆盖：
+// 进程重启策略的判据：
+// - 新进程报就绪即放手退出，退出前不碰终端（它已归新进程）；
 // - 等 ready 超时按成功处理：不发 ready 的旧 runtime 必须仍能重启，不得因超时触发回滚；
 // - 回滚的依赖重装必须看退出码：非 0 与信号终止（null）都不得宣告「已回滚」并拉起旧版进程。
 // 子进程由 spawn 替身按脚本队列逐个出队（下一拍触发），process.exit 抛哨兵中止执行——
@@ -98,6 +100,21 @@ describe('createProcessRespawnStrategy', () => {
     // 实例锁的交接令牌交给新进程：它凭这个接手旧实例的锁
     expect(spawned.handoffs).toEqual(['token']);
     expect(readFileSync(file, 'utf-8')).toBe('NEW');
+  });
+
+  // 新进程的终端界面在报就绪之前已进备用屏：父进程放手退出时再往终端写复原序列，会把它踢出备用屏
+  it('新进程报就绪：放手 exit(0)，退出前不往终端写东西，也不留退出时才跑的钩子', async () => {
+    spawned.scripts.push(child => child.emit('message', { type: READY_MESSAGE }));
+    const exitHooks = process.listeners('exit').length;
+    const writes: string[] = [];
+    vi.spyOn(process.stdout, 'write').mockImplementation(chunk => {
+      writes.push(String(chunk));
+      return true;
+    });
+    await expect(restart({ reason: 't', restore: [] })).rejects.toMatchObject({ code: 0 });
+    expect(spawned.calls).toBe(1);
+    expect(writes).toEqual([]);
+    expect(process.listeners('exit')).toHaveLength(exitHooks);
   });
 
   it.each([1, null])('回滚重装退出码为 %s：报依赖重装失败并 exit(1)，不拉起旧版进程', async code => {

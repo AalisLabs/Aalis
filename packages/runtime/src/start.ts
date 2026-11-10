@@ -32,7 +32,6 @@ import {
   READY_MESSAGE,
 } from './providers.js';
 import { tryDispatchSubcommand } from './subcommand.js';
-import { installTerminalStateRestorer } from './terminal.js';
 
 // ============================================================
 // startAalis —— Node 宿主一行启动（独立部署与 monorepo 自托管共用）
@@ -54,7 +53,7 @@ import { installTerminalStateRestorer } from './terminal.js';
 // 子命令进程是与守护进程零通信的一次性实例，因此不装文件日志（会把守护进程正在写的 latest.log 轮转走）、
 // 不注入重启策略（`restart` 会 spawn 出 argv 仍带 restart 的 detached 子进程，无限连环——实测）。
 //
-// 宿主的「I/O 那一层」（日志 sink / 终端复原 / 子命令分发）全在本包，core 只产生 LogEntry。
+// 宿主的「I/O 那一层」（日志 sink / 子命令分发）全在本包，core 只产生 LogEntry。终端模式由改它的插件自己复原。
 
 const APP_DIR_EXAMPLE = 'startAalis({ appDir: dirname(fileURLToPath(import.meta.url)) })';
 
@@ -79,8 +78,6 @@ export interface StartAalisOptions {
    * 子命令模式一律不写文件日志。
    */
   fileLog?: boolean;
-  /** 退出时复原终端 raw-mode/alt-screen，默认 true */
-  terminalRestore?: boolean;
   /**
    * 命令行参数，默认 `process.argv.slice(2)`。开头的宿主参数先取走：`--data <目录>`、`--profile <名>`、
    * `--init`（初始化数据目录后退出）、`--service`（由服务管理器拉起：实例锁被占时以 0 退出，重启交给服务管理器）。余下的非空即子命令模式：命中执行后退出，未命中报错退出（exit 2），不进守护进程。
@@ -127,7 +124,7 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
     );
     process.exit(2);
   }
-  const { consoleSink = true, fileLog = true, terminalRestore = true } = opts;
+  const { consoleSink = true, fileLog = true } = opts;
 
   // ── 数据目录：在任何日志与文件写入之前定下来 ──
   // 命令行与环境变量里写的相对路径按启动时的 cwd 解析一次：那是用户在 shell 里的意图。
@@ -214,8 +211,7 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
     process.on('exit', () => lock.release());
   }
 
-  // ── 最早期：任何日志之前先装 terminal / console sink ──
-  if (terminalRestore) installTerminalStateRestorer();
+  // ── 最早期：任何日志之前先装 console sink ──
   const subcommandMode = subcommands.length > 0;
   // console sink 在 App 之前装：此时尚无事件总线（根绑定），sink 处于「无条件写」状态以打印早期启动日志，
   // 待 App 起来再 bindEvents 接管 terminal:claimed/released。子命令模式日志走 stderr，stdout 只留命令结果。
