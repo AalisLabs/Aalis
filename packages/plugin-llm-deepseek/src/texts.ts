@@ -55,6 +55,7 @@ const SOURCE = {
     '能思考的模型（v4、reasoner 等，或单模型能力覆盖里写了 thinking 的）在请求没指定档位时用这一档，会话设置的「深度思考」压过它。自动：开启思考，强度由 DeepSeek 按场景在高与最高之间选。不能思考的模型一律按关发。',
   requestTimeout: 'DeepSeek 请求超时：{seconds} 秒内没有收到新的生成内容，可在配置里调大 timeout',
   pluginClosed: 'DeepSeek 插件已停用或重载，这次请求没有发出',
+  pluginStopped: 'DeepSeek 插件已停用或重载，这次请求中途停下',
   unreachable: 'DeepSeek 连不上服务：检查 baseUrl 与网络，详情见日志',
   notJson: 'DeepSeek 应答不是 JSON ({status})；详情见日志',
   discoveryNotJson: '响应不是 JSON: {excerpt}',

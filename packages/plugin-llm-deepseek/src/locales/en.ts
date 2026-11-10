@@ -57,6 +57,7 @@ export default defineLocale<Source>()({
     'The level used by models that can think (v4, reasoner and so on, or those with thinking in the per-model capability overrides) when a request names no level; the session setting “Thinking” takes precedence. Auto: thinking on, with DeepSeek choosing between High and Max by context. Models that cannot think are always sent with Off.',
   requestTimeout: 'DeepSeek request timed out: no new output within {seconds} s; you can raise timeout in the config',
   pluginClosed: 'The DeepSeek plugin was disabled or reloaded; this request was not sent',
+  pluginStopped: 'The DeepSeek plugin was disabled or reloaded; this request was stopped midway',
   unreachable: 'DeepSeek cannot reach the service: check baseUrl and the network; see the logs for details',
   notJson: 'The DeepSeek response is not JSON ({status}); see the logs for details',
   discoveryNotJson: 'the response is not JSON: {excerpt}',

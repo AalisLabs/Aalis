@@ -21,7 +21,7 @@ import llmOpenai from '../../packages/plugin-llm-openai/src/index.js';
 // - 不流式的请求只有整份回复一段：timeout 内没读完就中止，回复体一点点到也一样（含 Ollama 带音频的请求）。
 // - 时限只有 timeout 一个：Node 自带的 fetch 等响应头与读响应体默认各有 300 秒时限，生成请求带自己的连接池、不设这两个时限，
 //   timeout 为 0 或大于 300 秒时照样只按停顿计。用例把全局的这两个时限换成 BASE_LIMIT 毫秒来代表它。连接池在插件停用时关闭，
-//   之后旧句柄发的请求报插件已停用或重载。
+//   之后旧句柄发的请求报插件已停用或重载；停用时在飞的请求（调用方没中止）随之中止，报插件已停用或重载、请求中途停下。
 // - timeout 为 0 不限，不设停顿计时。流读到一半时调用方中止，按调用方的原因抛出（调用前就已中止的见 llm-chat-error-message）。
 // 时限取 1 秒、每段间隔 50 毫秒：用例不必真等两分钟，事件循环卡顿不到 0.95 秒也不会误判超时。
 // ════════════════════════════════════════════════════════════
@@ -496,18 +496,22 @@ describe('生成请求的连接池', () => {
     for (const call of wire.wholeCalls) expect(messageOf(await errorOf(handle.chat(call.request)))).toBe(stopped);
   });
 
-  it.each(wires)('$name / 停用时还有请求在飞：之后旧句柄再发的请求同样报插件已停用或重载', async wire => {
-    const { app, handle, state } = await start(wire, LONG);
-    let arrived = false;
+  it.each(
+    wires,
+  )('$name / 停用时请求在飞、调用方没中止：在飞的请求随之中止，报插件中途停下，不记请求失败', async wire => {
+    const { app, handle, state, warns } = await start(wire, LONG);
+    let arrived = 0;
     state.reply = () => {
-      arrived = true;
+      arrived++;
     };
-    void read(streamOf(handle, ASK));
-    await vi.waitFor(() => expect(arrived).toBe(true));
-    await app.stop();
+    const streaming = read(streamOf(handle, ASK));
+    const whole = wire.wholeCalls.map(call => errorOf(handle.chat(call.request)));
+    await vi.waitFor(() => expect(arrived).toBe(1 + wire.wholeCalls.length));
+    await app.plugins.disable(wire.plugin.name);
+    const stopped = `${wire.provider} 插件已停用或重载，这次请求中途停下`;
 
-    expect(messageOf((await read(streamOf(handle, ASK))).error)).toBe(
-      `${wire.provider} 插件已停用或重载，这次请求没有发出`,
-    );
+    expect(messageOf((await streaming).error)).toBe(stopped);
+    for (const err of await Promise.all(whole)) expect(messageOf(err)).toBe(stopped);
+    expect(warns.filter(message => message.includes('请求失败'))).toEqual([]);
   });
 });

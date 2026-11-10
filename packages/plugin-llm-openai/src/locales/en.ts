@@ -55,6 +55,7 @@ export default defineLocale<Source>()({
     'Models that can think (the o series and gpt-5 series in the built-in table, except gpt-5-chat, or those with thinking in the per-model capability overrides) offer thinking levels in this format. The field is only sent when a request names a level; otherwise nothing is sent and the endpoint uses its own default. An endpoint that does not recognize the chosen field rejects requests that name a level; then switch to the other format, or remove thinking for that model in the per-model capability overrides.',
   requestTimeout: 'LLM request timed out: no new output within {seconds} s; you can raise timeout in the config',
   pluginClosed: 'The LLM plugin was disabled or reloaded; this request was not sent',
+  pluginStopped: 'The LLM plugin was disabled or reloaded; this request was stopped midway',
   unreachable: 'LLM cannot reach the service: check baseUrl and the network; see the logs for details',
   notJson: 'The LLM response is not JSON ({status}); see the logs for details',
   discoveryNotJson: 'the response is not JSON: {excerpt}',

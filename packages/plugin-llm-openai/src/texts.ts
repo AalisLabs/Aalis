@@ -54,6 +54,7 @@ const SOURCE = {
     '能思考的模型（内置表里的 o 系列与 gpt-5 系列，gpt-5-chat 除外，或单模型能力覆盖里写了 thinking 的）按这种写法提供深度思考的档位。请求指定了档位才发对应字段，没指定时不发、按端点自己的默认。端点不认所选字段时会拒收指定了档位的请求，这时换一种写法，或在单模型能力覆盖里去掉这个模型的 thinking。',
   requestTimeout: 'LLM 请求超时：{seconds} 秒内没有收到新的生成内容，可在配置里调大 timeout',
   pluginClosed: 'LLM 插件已停用或重载，这次请求没有发出',
+  pluginStopped: 'LLM 插件已停用或重载，这次请求中途停下',
   unreachable: 'LLM 连不上服务：检查 baseUrl 与网络，详情见日志',
   notJson: 'LLM 应答不是 JSON ({status})；详情见日志',
   discoveryNotJson: '响应不是 JSON: {excerpt}',

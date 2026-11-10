@@ -48,6 +48,7 @@ const SOURCE = {
     '报告了思考能力的模型（或单模型能力覆盖里写了 thinking 的）在请求没指定档位时用这一档，会话设置的「深度思考」压过它。没有思考能力的模型不发 think 参数。',
   requestTimeout: 'Ollama 请求超时：{seconds} 秒内没有收到新的生成内容，可在配置里调大 timeout',
   pluginClosed: 'Ollama 插件已停用或重载，这次请求没有发出',
+  pluginStopped: 'Ollama 插件已停用或重载，这次请求中途停下',
   unreachable: 'Ollama 连不上服务：检查 baseUrl 与网络，详情见日志',
   notJson: 'Ollama 应答不是 JSON ({status})；详情见日志',
   discoveryNotJson: '响应不是 JSON: {excerpt}',

@@ -50,6 +50,7 @@ export default defineLocale<Source>()({
     'The level used by models that report the thinking capability (or have thinking in the per-model capability overrides) when a request names no level; the session setting “Thinking” takes precedence. Models without the thinking capability are not sent the think parameter.',
   requestTimeout: 'Ollama request timed out: no new output within {seconds} s; you can raise timeout in the config',
   pluginClosed: 'The Ollama plugin was disabled or reloaded; this request was not sent',
+  pluginStopped: 'The Ollama plugin was disabled or reloaded; this request was stopped midway',
   unreachable: 'Ollama cannot reach the service: check baseUrl and the network; see the logs for details',
   notJson: 'The Ollama response is not JSON ({status}); see the logs for details',
   discoveryNotJson: 'the response is not JSON: {excerpt}',

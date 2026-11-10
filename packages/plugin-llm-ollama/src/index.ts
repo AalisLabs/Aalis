@@ -35,7 +35,7 @@ import type { Message, ToolCall } from '@aalis/schema-message';
 import { prepareLLMMessages, toLLMRole } from '@aalis/schema-message';
 import { safeFetch } from '@aalis/util-network-guard';
 import { truncateChars } from '@aalis/util-text-normalize';
-import { Agent, errors } from 'undici';
+import { Agent } from 'undici';
 import { t } from './texts.js';
 
 // ===== 插件元数据 =====
@@ -351,7 +351,12 @@ class OllamaClient {
    */
   private readonly dispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
 
-  constructor(config: OllamaConfig, logger: Logger, proc: ProcessService | null) {
+  constructor(
+    config: OllamaConfig,
+    logger: Logger,
+    proc: ProcessService | null,
+    private readonly activation: AbortSignal,
+  ) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     // schema 中 timeout 单位为「秒」，存储为毫秒；0 或负数不限，超过定时器上限按上限计，报错里的秒数是生效的值（见 idleTimeout）
     this.timeout = Math.min(config.timeout * 1000, IDLE_TIMEOUT_MAX_MS);
@@ -363,7 +368,10 @@ class OllamaClient {
     this.proc = proc;
   }
 
-  /** 停用时关掉生成请求的连接池，之后的请求被拒（报插件已停用或重载）。不等在飞的请求读完：它们是调用方的，等它们会让重载卡到回复写完 */
+  /**
+   * 停用时关掉生成请求的连接池。在飞的请求不用等：它们的信号合着本插件这次激活的（见 signalOf），停用开始时已经中止；
+   * 停用之后发来的请求由入口的 refuseIfClosed 拒绝（报插件已停用或重载）
+   */
   close(): void {
     void this.dispatcher.close();
   }
@@ -374,22 +382,34 @@ class OllamaClient {
     return new TextError(httpErrorMessage('Ollama', status, body));
   }
 
+  /** 本插件已停用或重载（停用之后还拿着旧句柄发来的请求）：不发，报插件已停用或重载、这次请求没有发出 */
+  private refuseIfClosed(): void {
+    if (this.activation.aborted) throw new TextError(t('pluginClosed'));
+  }
+
+  /** 这次请求的中止信号：调用方的与本插件这次激活的合起来，调用方没中止、本插件停用或重载时请求同样停下 */
+  private signalOf(request: ChatModelRequest): AbortSignal {
+    return request.signal ? AbortSignal.any([request.signal, this.activation]) : this.activation;
+  }
+
+  /** 这次请求已中止时抛出：调用方中止的抛它的中止原因，本插件停用或重载的报中途停下 */
+  private throwIfAborted(request: ChatModelRequest): void {
+    request.signal?.throwIfAborted();
+    if (this.activation.aborted) throw new TextError(t('pluginStopped'));
+  }
+
   /**
-   * 对话请求没拿到完整应答（fetch 或读响应体时抛出）：原始错误连同原因记 warn，超时、连不上与连接池已关闭（插件停用或重载）
-   * 各换成一句说明，其它错误原样返回。调用方经 request.signal 中止时原样返回、不记日志，agent 按中止收尾
+   * 对话请求没拿到完整应答（fetch 或读响应体时抛出）：原始错误连同原因记 warn，超时与连不上各换成一句说明，其它错误原样
+   * 返回。调用方经 request.signal 中止时原样返回、不记日志，agent 按中止收尾；本插件停用或重载时中止的报中途停下，不记日志
    */
   private requestError(err: unknown, request: ChatModelRequest, startedAt: number): unknown {
     if (request.signal?.aborted) return err;
+    if (this.activation.aborted) return new TextError(t('pluginStopped'));
     this.logger.warn(`Ollama 请求失败 (耗时 ${Date.now() - startedAt}ms): ${toSource(describeError(err))}`);
     if (err instanceof DOMException && err.name === 'TimeoutError') {
       return new TextError(t('requestTimeout', { seconds: this.timeout / 1000 }));
     }
-    if (err instanceof TypeError && err.message === 'fetch failed') {
-      if (err.cause instanceof errors.ClientClosedError || err.cause instanceof errors.ClientDestroyedError) {
-        return new TextError(t('pluginClosed'));
-      }
-      return new TextError(t('unreachable'));
-    }
+    if (err instanceof TypeError && err.message === 'fetch failed') return new TextError(t('unreachable'));
     return err;
   }
 
@@ -471,11 +491,7 @@ class OllamaClient {
     level: string | undefined,
     stream: boolean,
   ): Promise<{ body: Record<string, unknown>; messages: OllamaMessage[]; tools?: OllamaTool[] }> {
-    const messages = await Promise.all(
-      prepareLLMMessages(request.messages).map(m =>
-        this.toOllamaMessage(m, request.requireImages === true, request.signal),
-      ),
-    );
+    const messages = await Promise.all(prepareLLMMessages(request.messages).map(m => this.toOllamaMessage(m, request)));
     const tools = request.tools?.map(t => this.toOllamaTool(t));
 
     const body: Record<string, unknown> = {
@@ -500,6 +516,7 @@ class OllamaClient {
   }
 
   async chat(model: string, request: ChatModelRequest, level: string | undefined): Promise<ChatResponse> {
+    this.refuseIfClosed();
     // 包含音频输入 → 改走 OpenAI 兼容的 /v1/chat/completions（/api/chat 不支持 audios）
     if (request.messages.some(m => m.audios && m.audios.length > 0)) {
       return this.chatOpenAIWithAudio(model, request, level);
@@ -518,7 +535,7 @@ class OllamaClient {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-        signal: idleTimeout(this.timeout, request.signal).signal,
+        signal: idleTimeout(this.timeout, this.signalOf(request)).signal,
         dispatcher: this.dispatcher,
       } as RequestInit);
       text = await response.text();
@@ -564,6 +581,7 @@ class OllamaClient {
     request: ChatModelRequest,
     level: string | undefined,
   ): AsyncIterable<ChatStreamChunk> {
+    this.refuseIfClosed();
     // 包含音频输入 → 回退为非流式（OpenAI compat 路径不支持 SSE 交互）后以单 chunk 交付。
     if (request.messages.some(m => m.audios && m.audios.length > 0)) {
       const r = await this.chatOpenAIWithAudio(model, request, level);
@@ -581,7 +599,7 @@ class OllamaClient {
     this.logger.debug(`流式请求 Ollama${level ? ` (思考 ${level})` : ''}: ${body.model}, ${messages.length} 条消息`);
 
     // 交出一段期间不计时：调用方处理一段的时间不算停顿
-    const timer = idleTimeout(this.timeout, request.signal);
+    const timer = idleTimeout(this.timeout, this.signalOf(request));
     for await (const chunk of this.readStream(body, request, timer, level === undefined)) {
       timer.pause();
       yield chunk;
@@ -804,9 +822,9 @@ class OllamaClient {
    * 支持 data URI、HTTP(S) URL、纯 base64、文件路径。返回 null 表示图片无法获取。
    * 所有返回都会去除空白字符（Ollama 校验时不容忍 base64 内的换行/空格，
    * 否则会返回 `illegal base64 data at input byte N` 错误）。
-   * 网址的下载随 signal（这次模型调用的）停下，中止时抛中止原因。
+   * 网址的下载随这次请求的中止信号（见 signalOf）停下，中止时按 throwIfAborted 抛出。
    */
-  private async resolveImage(img: string, signal: AbortSignal | undefined): Promise<string | null> {
+  private async resolveImage(img: string, request: ChatModelRequest): Promise<string | null> {
     const sanitize = (b64: string) => b64.replace(/[\s\r\n]+/g, '');
     const trimmed = img.trim();
 
@@ -818,8 +836,9 @@ class OllamaClient {
     // 附件缓存侧有 maxBytes 上限，但缓存失败回退原 URL 时会走到这里，此前这一侧不限量）
     if (/^https?:\/\//i.test(trimmed)) {
       try {
-        const timeout = AbortSignal.timeout(30000);
-        const res = await safeFetch(trimmed, { signal: signal ? AbortSignal.any([timeout, signal]) : timeout });
+        const res = await safeFetch(trimmed, {
+          signal: AbortSignal.any([AbortSignal.timeout(30000), this.signalOf(request)]),
+        });
         if (!res.ok) {
           this.logger.warn(`下载图片失败 (${res.status}): ${trimmed}`);
           return null;
@@ -831,8 +850,8 @@ class OllamaClient {
         }
         return buf.toString('base64');
       } catch (err) {
-        // 中止不是图片取不到：抛中止原因，这次调用随之停下
-        signal?.throwIfAborted();
+        // 中止不是图片取不到：这次调用随之停下
+        this.throwIfAborted(request);
         this.logger.warn(`下载图片异常: ${trimmed}`, err);
         return null;
       }
@@ -862,15 +881,11 @@ class OllamaClient {
    * 而调用方拿到非空内容便记成识别成功——失败被伪装成幻觉，比报错难查得多。
    * 为假时（顺手带图）保持宽松，warn 后按剩余的继续，不打断这一轮。
    */
-  private async resolveImages(
-    images: string[],
-    requireImages: boolean,
-    signal: AbortSignal | undefined,
-  ): Promise<string[]> {
-    const resolved = await Promise.all(images.map(img => this.resolveImage(img, signal)));
+  private async resolveImages(images: string[], request: ChatModelRequest): Promise<string[]> {
+    const resolved = await Promise.all(images.map(img => this.resolveImage(img, request)));
     const valid = resolved.filter((r): r is string => r !== null);
     if (valid.length === images.length) return valid;
-    if (valid.length === 0 && requireImages) {
+    if (valid.length === 0 && request.requireImages === true) {
       throw new TextError(t('imagesUnavailable', { count: images.length }));
     }
     this.logger.warn(`图片获取失败 ${images.length - valid.length}/${images.length} 张，按剩余的继续`);
@@ -882,11 +897,7 @@ class OllamaClient {
    * Ollama 的图片通过 images 字段传递 base64 数据（或 URL）
    * 工具调用结果通过 role: tool 传递
    */
-  private async toOllamaMessage(
-    msg: Message,
-    requireImages: boolean,
-    signal: AbortSignal | undefined,
-  ): Promise<OllamaMessage> {
+  private async toOllamaMessage(msg: Message, request: ChatModelRequest): Promise<OllamaMessage> {
     // 调用方已经 prepareLLMMessages 处理过：role 已是 WellKnownRole，自定义 role / kind
     // 对应的前缀已拼接进 content。这里只需透传。
     const ollamaMsg: OllamaMessage = {
@@ -901,7 +912,7 @@ class OllamaClient {
 
     // 多模态：Ollama 支持 images 字段（base64 或文件路径）
     if (msg.images && msg.images.length > 0 && msg.role === 'user') {
-      const valid = await this.resolveImages(msg.images, requireImages, signal);
+      const valid = await this.resolveImages(msg.images, request);
       if (valid.length > 0) ollamaMsg.images = valid;
     }
 
@@ -947,7 +958,7 @@ class OllamaClient {
         // Modality order：Ollama 官方 best practice 要求 image/audio content
         // 必须在 text 之前。
         if (m.images && m.images.length > 0 && m.role === 'user') {
-          for (const b64 of await this.resolveImages(m.images, request.requireImages === true, request.signal)) {
+          for (const b64 of await this.resolveImages(m.images, request)) {
             blocks.push({ type: 'image_url', image_url: { url: `data:image/png;base64,${b64}` } });
           }
         }
@@ -1005,7 +1016,7 @@ class OllamaClient {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-        signal: idleTimeout(this.timeout, request.signal).signal,
+        signal: idleTimeout(this.timeout, this.signalOf(request)).signal,
         dispatcher: this.dispatcher,
       } as RequestInit);
       respText = await resp.text();
@@ -1293,7 +1304,7 @@ async function start({ config, logger, lifecycle, provide, events, proc }: Caps)
     throw missingConfigError('customModels', t('customModelsRequired'));
   }
 
-  const client = new OllamaClient(cfg, logger.use, proc.use);
+  const client = new OllamaClient(cfg, logger.use, proc.use, lifecycle.use.signal);
   lifecycle.use.onDispose(() => client.close(), '关闭生成请求的连接池');
   const baseLabel = `Ollama (${cfg.baseUrl.replace(/^https?:\/\//, '')})`;
 

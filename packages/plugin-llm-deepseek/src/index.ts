@@ -24,7 +24,7 @@ import { TextError, type TextRef, textClauses, textOf, toSource } from '@aalis/s
 import type { Message, ToolCall } from '@aalis/schema-message';
 import { DIRECTIVE_KINDS, prepareLLMMessages, toLLMRole } from '@aalis/schema-message';
 import { stripLeakedSpecialTokens, truncateChars } from '@aalis/util-text-normalize';
-import { Agent, errors } from 'undici';
+import { Agent } from 'undici';
 import { t } from './texts.js';
 
 // ===== 错误解析 =====
@@ -318,7 +318,11 @@ class DeepSeekClient {
    */
   private readonly dispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
 
-  constructor(config: DeepSeekConfig, logger: Logger) {
+  constructor(
+    config: DeepSeekConfig,
+    logger: Logger,
+    private readonly activation: AbortSignal,
+  ) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl.replace(/\/+$/, '');
     // schema 中 timeout 单位为「秒」，存储为毫秒；0 或负数不限，超过定时器上限按上限计，报错里的秒数是生效的值（见 idleTimeout）
@@ -330,7 +334,10 @@ class DeepSeekClient {
     this.logger = logger;
   }
 
-  /** 停用时关掉生成请求的连接池，之后的请求被拒（报插件已停用或重载）。不等在飞的请求读完：它们是调用方的，等它们会让重载卡到回复写完 */
+  /**
+   * 停用时关掉生成请求的连接池。在飞的请求不用等：它们的信号合着本插件这次激活的（见 signalOf），停用开始时已经中止；
+   * 停用之后发来的请求由入口的 refuseIfClosed 拒绝（报插件已停用或重载）
+   */
   close(): void {
     void this.dispatcher.close();
   }
@@ -341,22 +348,28 @@ class DeepSeekClient {
     return new TextError(httpErrorMessage('DeepSeek', status, body));
   }
 
+  /** 本插件已停用或重载（停用之后还拿着旧句柄发来的请求）：不发，报插件已停用或重载、这次请求没有发出 */
+  private refuseIfClosed(): void {
+    if (this.activation.aborted) throw new TextError(t('pluginClosed'));
+  }
+
+  /** 这次请求的中止信号：调用方的与本插件这次激活的合起来，调用方没中止、本插件停用或重载时请求同样停下 */
+  private signalOf(request: ChatModelRequest): AbortSignal {
+    return request.signal ? AbortSignal.any([request.signal, this.activation]) : this.activation;
+  }
+
   /**
-   * 对话请求没拿到完整应答（fetch 或读响应体时抛出）：原始错误连同原因记 warn，超时、连不上与连接池已关闭（插件停用或重载）
-   * 各换成一句说明，其它错误原样返回。调用方经 request.signal 中止时原样返回、不记日志，agent 按中止收尾
+   * 对话请求没拿到完整应答（fetch 或读响应体时抛出）：原始错误连同原因记 warn，超时与连不上各换成一句说明，其它错误原样
+   * 返回。调用方经 request.signal 中止时原样返回、不记日志，agent 按中止收尾；本插件停用或重载时中止的报中途停下，不记日志
    */
   private requestError(err: unknown, request: ChatModelRequest, startedAt: number): unknown {
     if (request.signal?.aborted) return err;
+    if (this.activation.aborted) return new TextError(t('pluginStopped'));
     this.logger.warn(`DeepSeek 请求失败 (耗时 ${Date.now() - startedAt}ms): ${toSource(describeError(err))}`);
     if (err instanceof DOMException && err.name === 'TimeoutError') {
       return new TextError(t('requestTimeout', { seconds: this.timeout / 1000 }));
     }
-    if (err instanceof TypeError && err.message === 'fetch failed') {
-      if (err.cause instanceof errors.ClientClosedError || err.cause instanceof errors.ClientDestroyedError) {
-        return new TextError(t('pluginClosed'));
-      }
-      return new TextError(t('unreachable'));
-    }
+    if (err instanceof TypeError && err.message === 'fetch failed') return new TextError(t('unreachable'));
     return err;
   }
 
@@ -446,6 +459,7 @@ class DeepSeekClient {
   }
 
   async chat(model: string, request: ChatModelRequest, level: string | undefined): Promise<ChatResponse> {
+    this.refuseIfClosed();
     const { body, messages, tools } = this.buildRequestBody(model, request, level, false);
 
     this.logger.debug(
@@ -463,7 +477,7 @@ class DeepSeekClient {
           Authorization: `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify(body),
-        signal: idleTimeout(this.timeout, request.signal).signal,
+        signal: idleTimeout(this.timeout, this.signalOf(request)).signal,
         dispatcher: this.dispatcher,
       } as RequestInit);
       text = await response.text();
@@ -528,12 +542,13 @@ class DeepSeekClient {
     request: ChatModelRequest,
     level: string | undefined,
   ): AsyncIterable<ChatStreamChunk> {
+    this.refuseIfClosed();
     const { body, messages } = this.buildRequestBody(model, request, level, true);
 
     this.logger.debug(`流式请求 DeepSeek (思考 ${level ?? 'off'}): ${body.model}, ${messages.length} 条消息`);
 
     // 交出一段期间不计时：调用方处理一段的时间不算停顿
-    const timer = idleTimeout(this.timeout, request.signal);
+    const timer = idleTimeout(this.timeout, this.signalOf(request));
     for await (const chunk of this.readStream(model, body, request, timer)) {
       timer.pause();
       yield chunk;
@@ -962,7 +977,7 @@ async function registerModels({ config, logger, lifecycle, provide, events }: Ca
     throw missingConfigError('customModels', t('customModelsRequired'));
   }
 
-  const client = new DeepSeekClient(cfg, logger.use);
+  const client = new DeepSeekClient(cfg, logger.use, lifecycle.use.signal);
   lifecycle.use.onDispose(() => client.close(), '关闭生成请求的连接池');
 
   // 探测远端 + 合并自定义模型。停用或停机时中止探测（中止即抛出）；发现失败按未发现远端模型继续，customModels
