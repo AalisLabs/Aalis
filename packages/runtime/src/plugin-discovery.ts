@@ -18,7 +18,7 @@ import { describeDangling } from './secrets.js';
  * （fs loader 用绝对路径，URL loader 用 URL，内存 loader 用 module 别名）。
  */
 export interface PluginDescriptor {
-  /** 插件名，与定义的 `name` 一致；按它跳过已注册者 */
+  /** 条目名，通常是包名，可与定义的 `name` 不同；热扫描按它认出已从这个条目登记过的包，告警时也用它点名 */
   name: string;
   /** 给 loader 自己用的不透明定位串 */
   source: string;
@@ -93,12 +93,17 @@ export function createPluginDiscovery(
   /** 经本驱动交给 core 的定义 → 导出它的包（描述符名）：插件名已登记时据此说出是哪个包占下的 */
   const packageOf = new WeakMap<PluginDefinition, string>();
 
+  /** 以 name 登记的主实例是从哪个包加载的，没登记或不是经本驱动登记的为 undefined；热扫描据此认出已加载的包 */
+  const loadedFrom = (name: string): string | undefined => {
+    const registered = app.plugins.getPlugin(name)?.definition;
+    return registered ? packageOf.get(registered) : undefined;
+  };
+
   /**
    * 导入一批描述符并备好各自的登记项；单个失败（含 id 撞上危险键、文档拒取）只记该条，不拖累其余。
    * 插件名是登记的身份：名字已登记或已被同一批里先发现的包占下时，后来的包跳过，占下它的是别的包就告警点名两个包。
    * 跳过要在 prepare 与备登记项之前：留给 core 去拒收为时已晚——后来者的 schema 已同步进先到者的配置段
    * （裁掉先到者的字段并落盘），配置里的后缀实例也按后来者的定义登记。
-   * 包名与插件名不同的包，热扫描按包名查不到它已登记，会再导入一次：占下名字的就是它自己，照样跳过，不算冲突
    */
   async function importAll(descriptors: PluginDescriptor[], fresh: boolean) {
     const loaded: PluginRegistration[] = [];
@@ -116,6 +121,7 @@ export function createPluginDiscovery(
         definePlugin(definition);
         const registered = app.plugins.getPlugin(definition.name)?.definition;
         const holder = claimed.get(definition.name) ?? (registered ? packageOf.get(registered) : undefined);
+        // 占下名字的就是这个包自己（并发的另一次热扫描已登记了它，或它在发现结果里出现了两次）：不算冲突
         if (holder === desc.name) continue;
         if (holder !== undefined) {
           log.warn(`包 "${desc.name}" 与 "${holder}" 声明了同一个插件名 "${definition.name}"，只加载 "${holder}"`);
@@ -182,7 +188,10 @@ export function createPluginDiscovery(
     },
 
     async rescan() {
-      const fresh = (await loader.discover()).filter(desc => !app.plugins.getPlugin(desc.name));
+      const discovered = await loader.discover();
+      // 按包认已加载的（包名与插件名可以不同）：从这个包登记的定义此刻是主实例就不再导入；主实例卸载了的照旧导入登记
+      const held = new Set(app.plugins.getStatus().map(status => loadedFrom(status.name)));
+      const fresh = discovered.filter(desc => !held.has(desc.name));
       const { loaded } = await importAll(fresh, true);
       const known = new Map(loaded.map(item => [item.definition.name, item.definition]));
       const results = await app.pluginAll([...loaded, ...configuredInstances(known)]);
@@ -199,9 +208,6 @@ export function createPluginDiscovery(
     },
 
     // 与 importAll 判「插件名已被哪个包占下」读同一份记录（packageOf）
-    loadedFrom(name) {
-      const registered = app.plugins.getPlugin(name)?.definition;
-      return registered ? packageOf.get(registered) : undefined;
-    },
+    loadedFrom,
   };
 }

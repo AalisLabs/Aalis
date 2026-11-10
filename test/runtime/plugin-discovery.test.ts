@@ -562,7 +562,7 @@ describe('两个包声明了同一个插件名', () => {
     ]);
   });
 
-  it('热扫描：包名与插件名不同的包会被再导入一次，占下这个名字的就是它自己，不告警，后缀实例仍用已登记的定义', async () => {
+  it('热扫描：包名与插件名不同的包已从这个包登记，不再导入，不告警，后缀实例用已登记的定义', async () => {
     const { logger, warnings } = recording();
     const w = world({}, logger);
     let version = 0;
@@ -580,9 +580,48 @@ describe('两个包声明了同一个插件名', () => {
     w.store.setPluginConfig('zz-alias:2', {});
     expect(await discovery.rescan()).toEqual([]);
     await w.app.plugins.idle();
+    expect(version, '热扫描没有再导入').toBe(1);
     expect(w.app.plugins.getPlugin('zz-alias:2')?.state).toBe('active');
     expect(ran).toEqual([1, 1]);
     expect(warnings).toEqual([]);
+  });
+
+  it('两次热扫描并发：后一次导入时前一次已从同一个包登记，不算冲突，不告警', async () => {
+    const { logger, warnings } = recording();
+    const w = world({}, logger);
+    let release!: () => void;
+    const late = new Promise<void>(r => {
+      release = r;
+    });
+    let imports = 0;
+    const discovery = w.discovery({
+      async discover() {
+        return [{ name: '@zz/twice', source: 'mem' }];
+      },
+      async load() {
+        if (++imports === 2) await late;
+        return definePlugin({ name: 'zz-twice', apply() {} });
+      },
+    });
+    const first = discovery.rescan();
+    const second = discovery.rescan();
+    expect(await first).toEqual(['zz-twice']);
+    release();
+    expect(await second).toEqual([]);
+    expect(imports).toBe(2);
+    expect(warnings).toEqual([]);
+  });
+
+  it('热扫描：从这个包登记的主实例卸载后（后缀实例还在册），照旧重新导入登记', async () => {
+    const w = world({ plugins: { 'zz-alias:2': {} } });
+    const discovery = w.discovery(
+      packages(new Map([['@zz/alias', definePlugin({ name: 'zz-alias', reusable: true, apply() {} })]])),
+    );
+    await discovery.loadAll();
+    await w.app.plugins.unload('zz-alias');
+    expect(w.app.plugins.getPlugin('zz-alias:2')?.state).toBe('active');
+    expect(await discovery.rescan()).toEqual(['zz-alias']);
+    expect(discovery.loadedFrom('zz-alias')).toBe('@zz/alias');
   });
 
   it('热扫描：包声明的插件名已由宿主直接登记，跳过它并告警，后缀实例用已登记的定义', async () => {
