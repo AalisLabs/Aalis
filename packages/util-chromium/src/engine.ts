@@ -256,10 +256,12 @@ export class OfflineRenderer {
     if (next) next();
   }
 
+  /** 每次渲染结束时重设空闲计时；到点时还有渲染在跑就不关，等它结束再重新计时 */
   private touchIdle(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     if (this.idleShutdownMs <= 0) return;
     this.idleTimer = setTimeout(() => {
+      if (this.active > 0) return;
       const b = this.browser;
       this.browser = null;
       if (b) {
