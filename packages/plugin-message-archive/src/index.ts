@@ -199,9 +199,10 @@ function createArchiveService(
     const mem = memory.use;
     if (!mem.updateMessageContent || !media.present) return;
     const service = media.use;
-    // 补描述是本插件自己发起的：识图接本插件这次激活的信号，停用、停机时随之停下（describeVideo 的契约不带信号）
+    // 补描述是本插件自己发起的：识别接本插件这次激活的信号，停用、停机时随之停下
+    const { signal } = lifecycle.use;
     const described =
-      kind === 'image' ? service.describeImage(url, { signal: lifecycle.use.signal }) : service.describeVideo(url);
+      kind === 'image' ? service.describeImage(url, { signal }) : service.describeVideo(url, { signal });
     const desc = (await withTimeout(described, DESCRIBE_TIMEOUT_MS[kind])).trim();
     if (!desc) return;
     const before = outboundMediaMessage(kind, url, { source: 'agent' }).content;

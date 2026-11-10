@@ -76,9 +76,9 @@ async function setup(opts: SetupOptions = {}) {
         described.push(url);
         return describe(url, opts?.signal);
       },
-      describeVideo: async (url: string) => {
+      describeVideo: async (url: string, opts?: { signal?: AbortSignal }) => {
         described.push(url);
-        return describe(url);
+        return describe(url, opts?.signal);
       },
     } as never);
   }
@@ -213,7 +213,10 @@ describe('IM 房间的出站在送达之后记进历史', () => {
     expect(after[0].timestamp).toBe(first.timestamp);
   });
 
-  it('识图途中存档停用：交给识图的中止信号随之断开，不记补不上描述的 warn', async () => {
+  it.each([
+    ['图片', 'image', 'https://example.invalid/cat.png'],
+    ['视频', 'video', 'https://example.invalid/cat.mp4'],
+  ] as const)('识别%s途中存档停用：交给识别的中止信号随之断开，不记补不上描述的 warn', async (_label, kind, url) => {
     const signals: Array<AbortSignal | undefined> = [];
     const { app, host, history, warns } = await setup({
       describe: (_url, signal) =>
@@ -222,13 +225,12 @@ describe('IM 房间的出站在送达之后记进历史', () => {
           signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
         }),
     });
-    const url = 'https://example.invalid/cat.png';
     await host.events.use.emit('outbound:message', {
       sessionId: ROOM,
       platform: 'onebot',
       content: '',
       source: 'agent',
-      attachments: [{ kind: 'image', data: url, ref: url }],
+      attachments: [{ kind, data: url, ref: url }],
     });
     await vi.waitFor(async () => expect(await history(ROOM)).toHaveLength(1));
     await vi.waitFor(() => expect(signals).toHaveLength(1));
