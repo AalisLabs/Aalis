@@ -784,6 +784,78 @@ describe('plugin-user-relation: extractor 随停用中止', () => {
   });
 });
 
+describe('plugin-user-relation: 淘汰前的整理随停用中止', () => {
+  it('整理的模型调用途中停机：交给它的中止信号随之断开，不记整理失败，也不接着淘汰', async () => {
+    const hub = new LogHub();
+    const warns: string[] = [];
+    hub.onEntry(entry => {
+      if (entry.level === 'warn') warns.push(entry.message);
+    });
+    const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+    const host = bindHost(app);
+    await app.plugins.register(memoryInMemory, {});
+    await app.plugins.idle();
+    const mem = app.bind({ services }).services.use.get(memory)!;
+    const store = new RelationStore(mem);
+    const service = new RelationService(store, undefined, undefined, host.lifecycle.use.signal);
+    // 两个同名实体：超出实体配额，整理的严格等价段拿它们去问模型
+    for (let i = 0; i < 2; i++) {
+      await store.upsertEntity({
+        id: `zz-entity-${i}`,
+        entityKind: 'work',
+        name: '三角洲行动',
+        aliases: [],
+        firstSeenAt: 1,
+        lastReinforcedAt: 1,
+        lastMentionedAt: 1,
+        mentionCount: 1,
+        weight: 0.5,
+        evidence: [],
+      });
+    }
+    const consolidateCalls: ChatModelRequest[] = [];
+    const chat = (req: ChatModelRequest) => {
+      if (!String(req.messages[0]?.content).includes('实体消歧')) {
+        return Promise.resolve({
+          content: JSON.stringify({ persons: [{ platform: 'onebot', userId: 'u1', displayName: '甲' }] }),
+        });
+      }
+      return new Promise<ChatResponse>((_, reject) => {
+        consolidateCalls.push(req);
+        req.signal?.addEventListener('abort', () => reject(req.signal?.reason), { once: true });
+      });
+    };
+    host.provide.use(llm, { id: 'fake-extractor', contextLength: 8000, capabilities: ['chat'], chat } as never, {
+      entryId: 'fake/extractor',
+    });
+    new RelationExtractor(host, service, {
+      ...EXTRACTOR_DEFAULTS,
+      triggerEveryNMessages: 1,
+      readWindowSize: 10,
+      mode: 'incremental',
+      senderNeighborhoodEdgeLimit: 0,
+      disableThinking: true,
+      debug: false,
+      evictionEnabled: true,
+      maxEntities: 1,
+      evictHysteresisPct: 0,
+      consolidateAfterEviction: true,
+      consolidateAutoLink: true,
+      consolidateLLMModelRef: {},
+    }).start();
+    await mem.saveMessage('sess-stop', mkUserMsg('m1', 'u1', '今晚打三角洲行动', '甲'));
+    await host.events.use.emit('inbound:message:archived', {
+      sessionId: 'sess-stop',
+      incoming: { userId: 'u1', platform: 'onebot' } as IncomingMessage,
+    } as never);
+    await vi.waitFor(() => expect(consolidateCalls).toHaveLength(1));
+    await app.stop();
+    expect(consolidateCalls[0].signal?.aborted).toBe(true);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(warns).toEqual([]);
+  });
+});
+
 describe('plugin-user-relation: extractor 只算真人的话（有账号且不带来源，与用户档案同一判据）', () => {
   const PARENT = 'onebot:10000:group:20001';
   const SUB = 'subtask-1';

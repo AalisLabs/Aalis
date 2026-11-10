@@ -1112,6 +1112,8 @@ export class RelationExtractor {
               );
             }
           } catch (err) {
+            // 停用、停机时中止：整理停在当前这一步，不告警，也不接着淘汰（交给提取入口按中止收尾）
+            if (this.caps.lifecycle.use.signal.aborted) throw err;
             this.caps.logger.use.warn(`[user-relation] 淘汰前 consolidate 失败: ${(err as Error).message}`);
           }
         }

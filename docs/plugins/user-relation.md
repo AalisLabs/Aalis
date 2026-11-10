@@ -137,6 +137,8 @@ $$
 
 **没有定时调度**。无 setInterval / cron / scheduler 注册。
 
+整理里的模型调用（别名、事件核验，层级与父实体推断，摘要重写）与实体、事件的向量化接本插件这次激活的中止信号：停用、停机时停在当前这一步、抛中止原因，之前做完的写入留着；写图都在这一步的模型调用或向量化之后，每一步要么做完要么没做。淘汰前的整理被中止时不告警，也不接着淘汰。
+
 主要工作：
 1. **遗留边整理**（计入 `eventEdgesNormalized`）：同一 (person, event) 按吸收规则折叠；同一 (person, entity) 只保留最强 role；同一 (event, entity) 只保留强度最高的关系（part-of > related > about），其余边的 evidence 并入保留边后删除
 2. **实体层级推断**（`entityHierarchyCandidates` / `entityHierarchyEdgesCreated`）：实体 A 的规范名是 B 的真子串（A 至少 3 个字符，且两者之间尚无 entity-entity 边）时，A 记为 B 的父实体候选。配置了 `consolidationModel` 时经 `inferEntityHierarchy` 核验后建 `part-of` 边（不受 `autoLink` 限制）；未配置时只统计候选

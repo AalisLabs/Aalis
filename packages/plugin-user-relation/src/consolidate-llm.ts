@@ -4,6 +4,7 @@
  *  (B) 合并后摘要重写：合并完成后用大上下文模型重写 canonical 实体的 summary
  *
  * 这两步都是「可选」：仅当 consolidationModel 已配置时启用，否则保持原算法行为。
+ * 各函数的 signal 交给模型调用：中止时抛中止原因，不按调用失败回保守结果。
  */
 
 import { LLMCapabilities, type LLMModel, lightestThinking, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
@@ -113,6 +114,7 @@ export async function verifyAliasPair(
   a: EntityNode,
   b: EntityNode,
   disableThinking = true,
+  signal?: AbortSignal,
   context?: AliasPairContext,
 ): Promise<AliasPairResult> {
   const prompt = [
@@ -175,6 +177,7 @@ export async function verifyAliasPair(
       messages: prompt,
       temperature: 0,
       think: disableThinking ? lightestThinking(model) : undefined,
+      signal,
     });
     const raw = typeof resp.content === 'string' ? resp.content : JSON.stringify(resp.content);
     const parsed = tryParseJson(raw) as { verdict?: unknown; reason?: unknown; parent?: unknown } | undefined;
@@ -191,6 +194,7 @@ export async function verifyAliasPair(
     if (parsed.verdict === 'different') return { isSame: false, reason };
     return { isSame: false, reason: `LLM verdict 字段非法："${String(parsed.verdict)}"` };
   } catch (err) {
+    signal?.throwIfAborted();
     return { isSame: false, reason: `LLM 调用失败: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
@@ -220,6 +224,7 @@ export async function verifyEventPair(
   a: EventNode,
   b: EventNode,
   disableThinking = true,
+  signal?: AbortSignal,
   context?: EventPairContext,
 ): Promise<{ isSame: boolean; reason: string }> {
   const prompt = [
@@ -269,12 +274,14 @@ export async function verifyEventPair(
       messages: prompt,
       temperature: 0,
       think: disableThinking ? lightestThinking(model) : undefined,
+      signal,
     });
     const raw = typeof resp.content === 'string' ? resp.content : JSON.stringify(resp.content);
     const parsed = tryParseJson(raw) as { isSame?: unknown; reason?: unknown } | undefined;
     if (!parsed || typeof parsed.isSame !== 'boolean') return { isSame: false, reason: 'LLM 输出无法解析' };
     return { isSame: parsed.isSame, reason: typeof parsed.reason === 'string' ? parsed.reason : '' };
   } catch (err) {
+    signal?.throwIfAborted();
     return { isSame: false, reason: `LLM 调用失败: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
@@ -293,6 +300,7 @@ export async function rewriteEntitySummary(
     relatedPersons: Array<Pick<PersonNode, 'displayName'>>;
   },
   disableThinking = true,
+  signal?: AbortSignal,
 ): Promise<string | undefined> {
   const prompt = [
     {
@@ -326,6 +334,7 @@ export async function rewriteEntitySummary(
       messages: prompt,
       temperature: 0.2,
       think: disableThinking ? lightestThinking(model) : undefined,
+      signal,
     });
     const raw = typeof resp.content === 'string' ? resp.content : JSON.stringify(resp.content);
     const cleaned = raw
@@ -335,6 +344,7 @@ export async function rewriteEntitySummary(
       .trim();
     return cleaned || undefined;
   } catch (err) {
+    signal?.throwIfAborted();
     logger?.warn(`[user-relation] consolidate 摘要重写失败: ${err instanceof Error ? err.message : String(err)}`);
     return undefined;
   }
@@ -351,6 +361,7 @@ export async function inferEntityHierarchy(
   model: LLMModel,
   candidates: Array<{ parent: EntityNode; child: EntityNode }>,
   disableThinking = true,
+  signal?: AbortSignal,
 ): Promise<Array<{ parentId: string; childId: string; confirmed: boolean; reason: string }>> {
   if (candidates.length === 0) return [];
   const candidateLines = candidates.map(
@@ -376,6 +387,7 @@ export async function inferEntityHierarchy(
       messages: prompt,
       temperature: 0,
       think: disableThinking ? lightestThinking(model) : undefined,
+      signal,
     });
     const raw = typeof resp.content === 'string' ? resp.content : JSON.stringify(resp.content);
     const parsed = tryParseJson(raw) as Array<{ index?: number; isPartOf?: unknown; reason?: unknown }> | undefined;
@@ -401,6 +413,7 @@ export async function inferEntityHierarchy(
       };
     });
   } catch (err) {
+    signal?.throwIfAborted();
     logger?.warn(
       `[user-relation] inferEntityHierarchy LLM 调用失败: ${err instanceof Error ? err.message : String(err)}`,
     );
@@ -427,6 +440,7 @@ export async function inferMissingParent(
   model: LLMModel,
   candidate: { parentName: string; kind: string; siblings: EntityNode[] },
   disableThinking = true,
+  signal?: AbortSignal,
 ): Promise<{ accept: boolean; suggestedName?: string; reason: string }> {
   const siblingLines = candidate.siblings.map(s => `- ${s.name}${s.summary ? `（${s.summary.slice(0, 40)}）` : ''}`);
   const prompt = [
@@ -456,6 +470,7 @@ export async function inferMissingParent(
       messages: prompt,
       temperature: 0,
       think: disableThinking ? lightestThinking(model) : undefined,
+      signal,
     });
     const raw = typeof resp.content === 'string' ? resp.content : JSON.stringify(resp.content);
     const parsed = tryParseJson(raw) as { accept?: unknown; suggestedName?: unknown; reason?: unknown } | undefined;
@@ -470,6 +485,7 @@ export async function inferMissingParent(
       reason: typeof parsed.reason === 'string' ? parsed.reason : '',
     };
   } catch (err) {
+    signal?.throwIfAborted();
     logger?.warn(
       `[user-relation] inferMissingParent LLM 调用失败: ${err instanceof Error ? err.message : String(err)}`,
     );

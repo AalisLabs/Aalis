@@ -105,6 +105,11 @@ export class RelationService {
     private readonly logger?: Logger,
     /** 相似度召回用；省略或提供者缺席时 consolidate 自动降级为纯文本路径 */
     private readonly embedding?: ServiceSelection<EmbeddingService>,
+    /**
+     * 本插件这次激活的中止信号：整理（consolidate 与事件查重）里的模型调用与向量化接它，停用、停机时停在当前这一步、抛中止
+     * 原因，之前做完的写入留着。写图都在这一步的网络调用之后，中间没有别的中止点，每一步的写入要么做完要么没做
+     */
+    private readonly signal?: AbortSignal,
   ) {}
 
   /** 写 audit 日志；有 logger 走 logger.warn，否则 fallback console.warn（主要照顾单元测试）。 */
@@ -2374,7 +2379,7 @@ export class RelationService {
             );
             continue;
           }
-          const v = await verifyAliasPair(llmModel, a, b, llmDisableThinking);
+          const v = await verifyAliasPair(llmModel, a, b, llmDisableThinking, this.signal);
           if (!v.isSame) {
             llmRejected++;
             if (v.hierarchy) {
@@ -2514,7 +2519,7 @@ export class RelationService {
           return null;
         }
         try {
-          const vec = await embedding.embed(text);
+          const vec = await embedding.embed(text, { signal: this.signal });
           if (!Array.isArray(vec) || vec.length === 0) {
             embedCache.set(en.id, null);
             return null;
@@ -2532,6 +2537,7 @@ export class RelationService {
           embedCache.set(en.id, vec);
           return vec;
         } catch (err) {
+          this.signal?.throwIfAborted();
           this.logger?.warn(
             `[user-relation] consolidate entity embed 失败 ${en.id} (${en.name.slice(0, 20)}): ${err instanceof Error ? err.message : String(err)}`,
           );
@@ -2760,7 +2766,7 @@ export class RelationService {
           );
           continue;
         }
-        const v = await verifyAliasPair(llmModel, a, b, llmDisableThinking, {
+        const v = await verifyAliasPair(llmModel, a, b, llmDisableThinking, this.signal, {
           aEvidenceQuotes: (a.evidence ?? [])
             .slice(-3)
             .map(ev => (ev.quote ?? '').trim())
@@ -3079,6 +3085,7 @@ export class RelationService {
             relatedPersons: relatedPersons.slice(0, 8),
           },
           llmDisableThinking,
+          this.signal,
         );
         if (newSummary && newSummary !== ent.summary) {
           // 落笔核实况：ent 来自阶段快照，可能已被真合并删除（死节点不复活）
@@ -3120,7 +3127,13 @@ export class RelationService {
 
       if (hierarchyCandidates.length > 0 && llmModel) {
         // LLM 核验：批量确认
-        const results = await inferEntityHierarchy(this.logger, llmModel, hierarchyCandidates, llmDisableThinking);
+        const results = await inferEntityHierarchy(
+          this.logger,
+          llmModel,
+          hierarchyCandidates,
+          llmDisableThinking,
+          this.signal,
+        );
         for (const r of results) {
           if (!r.confirmed) continue;
           await this.addEntityEntityEdge({
@@ -3206,6 +3219,7 @@ export class RelationService {
             llmModel,
             { parentName: cluster.lcp, kind, siblings: cluster.members },
             llmDisableThinking,
+            this.signal,
           );
           if (!verdict.accept) {
             this.logger?.info(
@@ -3390,7 +3404,7 @@ export class RelationService {
         return { verdict: { isSame: false, reason: `mergeReject 缓存：${cached.reason}` }, cacheHit: true };
       }
 
-      const verdict = await verifyEventPair(llmModel, a, b, opts.disableThinking ?? true, {
+      const verdict = await verifyEventPair(llmModel, a, b, opts.disableThinking ?? true, this.signal, {
         aEvidenceQuotes: (a.evidence ?? [])
           .slice(-3)
           .map(ev => (ev.quote ?? '').trim())
@@ -3497,7 +3511,7 @@ export class RelationService {
         return null;
       }
       try {
-        const vec = await opts.embedding.embed(text);
+        const vec = await opts.embedding.embed(text, { signal: this.signal });
         if (!Array.isArray(vec) || vec.length === 0) {
           eventVecCache.set(ev.id, null);
           return null;
@@ -3516,6 +3530,7 @@ export class RelationService {
         eventVecCache.set(ev.id, vec);
         return vec;
       } catch (err) {
+        this.signal?.throwIfAborted();
         logger?.warn(
           `[user-relation] consolidate event embed 失败 ${ev.id} (${ev.title.slice(0, 20)}): ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -3534,7 +3549,12 @@ export class RelationService {
       // 独立命名空间拉进本轮缓存，否则 O(N²) 配对循环会逐对同步打存储。
       // ensureEmbedding 自带"hash 一致读存储 / 不一致重算"的分流与缓存。
       for (let start = 0; start < workingEvents.length; start += EMBED_CONCURRENCY) {
-        await Promise.all(workingEvents.slice(start, start + EMBED_CONCURRENCY).map(ev => ensureEmbedding(ev)));
+        // 这一批全部落定再往下：ensureEmbedding 只在中止时拒绝，同批已拿到向量的先把 hash 与向量写完，再抛中止原因，
+        // 不在整理抛出之后才写
+        const settled = await Promise.allSettled(
+          workingEvents.slice(start, start + EMBED_CONCURRENCY).map(ev => ensureEmbedding(ev)),
+        );
+        for (const result of settled) if (result.status === 'rejected') throw result.reason;
       }
       logger?.info(
         `[user-relation] consolidate event 预热 embedding：${workingEvents.length} 个事件（重算 ${embeddedCount}，其余读库/缓存命中）`,
