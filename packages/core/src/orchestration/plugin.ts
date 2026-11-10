@@ -5,13 +5,7 @@ import { type PluginEntry, type PluginState, parseInstanceId } from '../types/pl
 import type { Activation } from './activation.js';
 import type { ActivationHost } from './activation-host.js';
 import { abortInitializing, freezeActivations } from './close-plan.js';
-import {
-  type ActivationDeps,
-  activatePlugin,
-  type PluginRecord,
-  requiredSatisfied,
-  retireBatch,
-} from './plugin-activation.js';
+import { type ActivationDeps, activatePlugin, type PluginRecord, retireBatch } from './plugin-activation.js';
 import { topoSortByDeps } from './plugin-topology.js';
 import {
   assertValidInstanceId,
@@ -598,10 +592,14 @@ export class PluginManager implements PluginManagerService {
         // 没落定：此刻重新激活会让新旧实例同 instanceId 并存——同名服务重复 provide、偏好按 contextId 二义。跳过本轮，
         // 等管理路径收尾后、或旧实例停下后的 recompute 重新调度
         if (entry.state !== 'pending' || entry.activation || this.#lingering.has(entry.instanceId)) continue;
-        if (!requiredSatisfied(entry, services)) continue;
-        // 它为某个 required 服务选中的那一家已进关闭计划（如被管理动作接手、flight 已不再等的在飞激活）：激活到它
-        // 上面拿到的是正在关闭的实例。等它关完、服务下线触发重算再判定
-        if (entry.spec.required.some(name => this.#host.closing(services.ownerOf(name, entry.instanceId)!))) continue;
+        // 每个 required 服务都为它选得到一家，且那一家没进关闭计划（如被管理动作接手、flight 已不再等的在飞激活）：激活到
+        // 正在关闭的实例上拿到的是旧实例，等它关完、服务下线触发重算再判定。optional 不在判据里：它的上下线不改变目标态，
+        // 业务句柄每次访问解析当前那一家，有状态的接线经 follow 跟随提供者换人（Phase A 的退场另按 survives 判）
+        const ready = entry.spec.required.every(name => {
+          const owner = services.ownerOf(name, entry.instanceId);
+          return owner !== undefined && !this.#host.closing(owner);
+        });
+        if (!ready) continue;
         // 'retry'：required 缺失、预算未用尽，已回到 pending，下一轮重新观察依赖
         if ((await this.#activate(entry)) === 'retry' || (entry.state as PluginState) === 'active') changed = true;
       }

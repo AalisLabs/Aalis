@@ -3,7 +3,6 @@
 //
 // 从 plugin.ts 拆出的单个条目的推进与拆卸：
 //   - retireBatch：拆卸的唯一形状
-//   - requiredSatisfied：单个 entry 的 required 依赖此刻是否都有提供者
 //   - activatePlugin：建激活 → 挂载定义 → 校验 provides → 标记 active/error
 //
 // 需要的 PluginManager 状态经 deps 传入，PluginManager 自身只负责事件路由与重算编排。
@@ -11,8 +10,6 @@
 
 import { coreFailure } from '../types/failure.js';
 import type { PluginEntry, PluginState } from '../types/plugin.js';
-
-import type { ServiceContainer } from '../primitives/services.js';
 
 import type { Activation } from './activation.js';
 import type { ActivationHost } from './activation-host.js';
@@ -102,14 +99,6 @@ export async function retireBatch(
     if (entry.activation === activation) entry.activation = undefined;
     if (loaded && opts?.emitUnloaded !== false) deps.host.runtime.notify('plugin:unloaded', entry.instanceId);
   }
-}
-
-/**
- * required 依赖此刻是否都有提供者：Phase B 激活 pending 条目的判据（Phase A 的退场另按 survives 判）。optional 依赖的
- * 上下线不改变目标态：业务句柄每次访问解析当前那一家，有状态的接线经 follow 跟随提供者换人，不靠重启插件。
- */
-export function requiredSatisfied(entry: PluginRecord, services: ServiceContainer): boolean {
-  return entry.spec.required.every(name => services.get(name) !== undefined);
 }
 
 /**
