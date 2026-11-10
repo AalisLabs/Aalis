@@ -48,7 +48,7 @@ export function selectFrameIndices(totalFrames: number, maxFrames: number): numb
   return [...new Set(indices)].sort((a, b) => a - b);
 }
 
-export async function getFrameCount(filePath: string, signal?: AbortSignal): Promise<number> {
+export async function getFrameCount(filePath: string, signal: AbortSignal): Promise<number> {
   const { proc } = getMediaRuntime();
   try {
     const r = await proc.execFile(
@@ -71,13 +71,13 @@ export async function getFrameCount(filePath: string, signal?: AbortSignal): Pro
     return Number.isNaN(n) ? 0 : n;
   } catch {
     // 中止不是数不出帧：抛中止原因，调用方停下，不按抽不出帧退回整图
-    signal?.throwIfAborted();
+    signal.throwIfAborted();
     return 0;
   }
 }
 
 /** 提取指定帧为 PNG，返回 data URI 数组。 */
-export async function extractFrames(filePath: string, frameIndices: number[], signal?: AbortSignal): Promise<string[]> {
+export async function extractFrames(filePath: string, frameIndices: number[], signal: AbortSignal): Promise<string[]> {
   if (frameIndices.length === 0) return [];
   const { proc, storage } = getMediaRuntime();
   const tmp = await proc.makeTempDir('media-frames');
@@ -115,8 +115,8 @@ export async function extractFrames(filePath: string, frameIndices: number[], si
   }
 }
 
-/** 抽取视频音轨为 mp3。返回 data URI 或 null（失败/无音轨）。 */
-export async function extractAudioTrack(filePath: string): Promise<string | null> {
+/** 抽取视频音轨为 mp3。返回 data URI 或 null（失败/无音轨）；signal 交给 ffmpeg，中止时抛中止原因。 */
+export async function extractAudioTrack(filePath: string, signal: AbortSignal): Promise<string | null> {
   const { proc, storage } = getMediaRuntime();
   const tmp = await proc.makeTempDir('media-audio');
   try {
@@ -125,12 +125,14 @@ export async function extractAudioTrack(filePath: string): Promise<string | null
     await proc.execFile(
       'ffmpeg',
       ['-i', filePath, '-vn', '-acodec', 'libmp3lame', '-ab', '64k', '-ar', '16000', '-y', outLocal],
-      { timeout: 120000 },
+      { timeout: 120000, signal },
     );
     const buf = (await storage.readFile(outUri)) as Uint8Array;
     if (buf.byteLength < 256) return null; // 几乎肯定没音轨
     return `data:audio/mpeg;base64,${Buffer.from(buf).toString('base64')}`;
   } catch {
+    // 中止不是没有音轨：抛中止原因，调用方停下
+    signal.throwIfAborted();
     return null;
   } finally {
     await tmp.cleanup();
@@ -148,9 +150,9 @@ export async function extractAudioTrack(filePath: string): Promise<string | null
  * 输入支持的格式取决于本机 ffmpeg：mp3 / wav / amr / m4a / ogg / flac 通常都行；
  * SILK 不在 ffmpeg 原生支持范围内，会失败返回 null。
  *
- * 返回纯 base64（不带 data: 前缀），失败返回 null。
+ * 返回纯 base64（不带 data: 前缀），失败返回 null；signal 交给 ffmpeg，中止时抛中止原因。
  */
-export async function transcodeAudioToWav(filePath: string): Promise<string | null> {
+export async function transcodeAudioToWav(filePath: string, signal: AbortSignal): Promise<string | null> {
   const { proc, storage } = getMediaRuntime();
   const tmp = await proc.makeTempDir('media-wav');
   try {
@@ -159,12 +161,14 @@ export async function transcodeAudioToWav(filePath: string): Promise<string | nu
     await proc.execFile(
       'ffmpeg',
       ['-i', filePath, '-vn', '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1', '-y', outLocal],
-      { timeout: 60000 },
+      { timeout: 60000, signal },
     );
     const buf = (await storage.readFile(outUri)) as Uint8Array;
     if (buf.byteLength < 256) return null;
     return Buffer.from(buf).toString('base64');
   } catch {
+    // 中止不是转不了：抛中止原因，调用方停下
+    signal.throwIfAborted();
     return null;
   } finally {
     await tmp.cleanup();
@@ -192,9 +196,10 @@ export async function materializeBytes(
   }
 }
 
-/** 把 base64 data URL / file:/ 路径写到临时文件，返回本地路径与清理函数。 */
+/** 把 base64 data URL / file:/ 路径写到临时文件，返回本地路径与清理函数。网址的下载随 signal 停下，中止时抛中止原因 */
 export async function materializeAttachment(
   data: string,
+  signal?: AbortSignal,
 ): Promise<{ path: string; uri?: string; cleanup: () => Promise<void> } | null> {
   const { proc, storage } = getMediaRuntime();
   try {
@@ -212,7 +217,7 @@ export async function materializeAttachment(
     }
     // 网址：受保护的下载（SSRF 防护、20 MiB 上限、15 秒超时）读进内存再落临时文件
     if (isWebUrl(data)) {
-      return await materializeBytes(await safeFetchBuffer(data));
+      return await materializeBytes(await safeFetchBuffer(data, { signal }));
     }
     // storage URI（如 data:/images/...）→ 解析到本地路径。
     if (isStorageUri(data)) {
@@ -225,6 +230,8 @@ export async function materializeAttachment(
     }
     return null;
   } catch {
+    // 中止不是取不到：抛中止原因，调用方停下
+    signal?.throwIfAborted();
     return null;
   }
 }

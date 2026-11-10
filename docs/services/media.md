@@ -297,7 +297,7 @@ export default definePlugin({
 
 - **先看 `present`**：`plugin-message-archive`、`plugin-image-sender`、`plugin-file-reader` 都是先取 `media.present ? media.use : undefined`，再加 `if (!svc?.xxx)` 守卫，对照见 [§2](#_2-谁提供-谁消费)。
 - **只复用缓存、不触发识别**：对引用消息里的图，OneBot 适配器只调 `lookupDescription(url)`，未命中就保持 `[图片]` 占位，不会主动消耗 vision token。
-- **错误边界**：`describe`/`transcribe`/`describeVideo` 内部做了 try/catch，失败返回 `undefined` 或空串而非抛错，调用方按「空 = 降级」处理即可。`describeImage` 不同：没有可用的 vision processor 或识别结果为空时返回空串，动图抽不出帧时按整图识别；识别过程出错（识别模型调用失败、图取不到等）时直接抛出，调用方需自行 try/catch。
+- **错误边界**：`describe`/`transcribe`/`describeVideo` 内部做了 try/catch，失败返回 `undefined` 或空串而非抛错，调用方按「空 = 降级」处理即可；例外是 media 停用、停机时中止的转写，`transcribe` 抛中止原因，不当成转不出。`describeImage` 不同：没有可用的 vision processor 或识别结果为空时返回空串，动图抽不出帧时按整图识别；识别过程出错（识别模型调用失败、图取不到等）时直接抛出，调用方需自行 try/catch。
 - **顺序识别更稳**：本地视觉模型多为单实例串行，`plugin-image-sender` 显式逐张识别而非并发，避免它们互相排队又同时超时。
 
 ---

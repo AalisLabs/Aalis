@@ -1,5 +1,5 @@
 import type { BoundDoctor, DoctorService } from '../../packages/api-doctor/src/index.js';
-import type { Logger, ServiceSelection, ServiceView } from '../../packages/core/src/index.js';
+import type { LifecycleCap, Logger, ServiceSelection, ServiceView } from '../../packages/core/src/index.js';
 import type { MediaServiceCaps } from '../../packages/plugin-media/src/service.js';
 
 /** 缺席的业务句柄：访问成员即抛错，与真实句柄选不到提供者时一样（then 不转发，可以 await） */
@@ -36,9 +36,14 @@ export function ref<P>(
   };
 }
 
-/** MediaServiceImpl 的能力桩：各服务一律无提供者 */
+/** MediaServiceImpl 的能力桩：各服务一律无提供者，激活一直不中止 */
 export function emptyMediaCaps(logger: Logger): MediaServiceCaps {
-  return { logger: fixedRef(logger), llm: ref(), asr: ref(), memory: ref() };
+  return { logger: fixedRef(logger), llm: ref(), asr: ref(), memory: ref(), lifecycle: liveLifecycle() };
+}
+
+/** 一直不中止的激活：只给中止信号 */
+export function liveLifecycle(): ServiceSelection<LifecycleCap> {
+  return fixedRef({ signal: new AbortController().signal } as LifecycleCap);
 }
 
 /** 只有一家（或缺席）的选择层 */

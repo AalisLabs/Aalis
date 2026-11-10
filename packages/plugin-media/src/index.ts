@@ -408,7 +408,13 @@ function run(caps: Caps): void {
       for (const m of data.messages) {
         if (m.role !== 'user' || !m.images?.length || transformed.has(m)) continue;
         transformed.add(m);
-        m.images = await svc.transformModelImages(m.images, svc.resolveDelivery(data.acceptsImages));
+        try {
+          m.images = await svc.transformModelImages(m.images, svc.resolveDelivery(data.acceptsImages));
+        } catch (err) {
+          // 抽帧与下载只在中止时抛出：本插件停用或重启时这条的图不再交出，这一轮照常往下，不因停用让整轮失败
+          if (!caps.lifecycle.use.signal.aborted) throw err;
+          m.images = [];
+        }
       }
     }
     return next();

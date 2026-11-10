@@ -25,6 +25,8 @@ import { t } from './texts.js';
 export interface AdapterCaps {
   llm: ServiceSelection<LLMModel>;
   logger: Logger;
+  /** 本插件这次激活的中止信号：转写的契约不带中止信号，转写前的转码与转写的模型调用接它，停用时随之停下 */
+  signal: AbortSignal;
 }
 
 export const DEFAULT_VISION_PROMPT =
@@ -203,8 +205,8 @@ export async function imageToBase64DataUrl(data: string, mimeType?: string): Pro
  * 把 audio attachment.data 解析为 **带 mime 前缀的 data URL**，供 LLM provider 直接使用：Ollama 兼容接口按写明的类型给
  * input_audio.format，没写明的拒收。Message.audios 是 string[]，data URL 照样合法
  */
-async function audioToBase64(data: string): Promise<string> {
-  const mat = await materializeAttachment(data);
+async function audioToBase64(data: string, signal: AbortSignal): Promise<string> {
+  const mat = await materializeAttachment(data, signal);
   if (!mat) throw new Error(`无法物化音频附件: ${data.slice(0, 80)}`);
   try {
     // 落在 storage 根内 → 经 storage 读；file:// / 治外绝对路径 → 经 proc.readExternalFile
@@ -217,7 +219,7 @@ async function audioToBase64(data: string): Promise<string> {
     // 这几种原样交出、写明判定出的类型，不转码；模型插件不收的类型由它自己报错（Ollama 的兼容接口只收 wav 与 mp3）
     if (format && DIRECT_AUDIO.has(format.format)) return `data:${format.mime};base64,${buf.toString('base64')}`;
 
-    const wav = await transcodeAudioToWav(mat.path);
+    const wav = await transcodeAudioToWav(mat.path, signal);
     if (!wav) {
       throw new Error(`音频格式为 ${format?.format ?? '未知'}，ffmpeg 无法转码为 WAV（可能是 SILK 或加密格式）`);
     }
@@ -242,6 +244,7 @@ function wrapLLMAsProcessor(
   cap: 'vision' | 'audio',
   logger: Logger,
   opts: LlmProcessorOptions,
+  signal: AbortSignal,
 ): MediaProcessor {
   const llm: LLMModel = entry.use;
   const name = `llm:${entry.id}#${cap}`;
@@ -325,7 +328,7 @@ function wrapLLMAsProcessor(
       const langHint = input.language ? `\n* 输出语言：${input.language}` : '';
       const ctxBlock = input.context ? `\n\n上下文/最近对话:\n${input.context}` : '';
       const prompt = `${opts.prompt ?? DEFAULT_AUDIO_PROMPT}${langHint}${ctxBlock}`;
-      const b64 = await audioToBase64(input.attachment.data);
+      const b64 = await audioToBase64(input.attachment.data, signal);
       const sizeKB = Math.round((b64.length * 3) / 4 / 1024);
       const audios = [b64];
       const messages: Message[] = [{ role: 'user', content: prompt, audios }];
@@ -341,6 +344,7 @@ function wrapLLMAsProcessor(
         think: think ? undefined : lightestThinking(llm),
         sessionId: input.sessionId,
         purpose: '转写',
+        signal,
       });
       const rawLen = resp.content?.length ?? 0;
       const text = recognizedText(resp);
@@ -383,11 +387,11 @@ export function scanLLMProcessors(
   for (const entry of caps.llm.list()) {
     const modelCaps = entry.use.capabilities;
     if (modelCaps.includes(LLMCapabilities.Vision)) {
-      processors.push(wrapLLMAsProcessor(entry, 'vision', caps.logger, opts.vision));
+      processors.push(wrapLLMAsProcessor(entry, 'vision', caps.logger, opts.vision, caps.signal));
     }
     if (modelCaps.includes(LLMCapabilities.Audio)) {
       // Gemma 3n / Gemini / GPT-4o-audio 等原生音频 LLM 单一 cap 覆盖转写 + 描述，由全能 prompt 驱动
-      processors.push(wrapLLMAsProcessor(entry, 'audio', caps.logger, opts.audio));
+      processors.push(wrapLLMAsProcessor(entry, 'audio', caps.logger, opts.audio, caps.signal));
     }
   }
   return processors;

@@ -20,7 +20,7 @@ import { registerMediaTools } from '../../packages/plugin-media/src/tools.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { IncomingMessage, Message } from '../../packages/schema-message/src/index.js';
 import { storedRoom } from '../fixtures/rooms.js';
-import { fixedRef, ref } from '../fixtures/service-ref.js';
+import { fixedRef, liveLifecycle, ref } from '../fixtures/service-ref.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 
 /** analyze_image 直通分支的远端下载桩：只替换 safeFetchBuffer，其余走原实现；seen 记下下载的网址，next 为空时按下载失败抛错 */
@@ -69,7 +69,7 @@ function makeCaps(entries: Array<{ contextId: string; caps: string[] }>): MediaS
     instance: { id: e.contextId.split('/')[1], capabilities: e.caps } as unknown as LLMModel,
     priority: 0,
   }));
-  return { logger: fixedRef(logger), llm: ref(models), asr: ref(), memory: ref() };
+  return { logger: fixedRef(logger), llm: ref(models), asr: ref(), memory: ref(), lifecycle: liveLifecycle() };
 }
 
 const VISION_LLM = makeCaps([{ contextId: 'p/m', caps: ['chat', 'vision'] }]);

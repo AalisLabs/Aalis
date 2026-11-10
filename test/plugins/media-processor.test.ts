@@ -14,7 +14,7 @@ import { type ConfigSchema, parseConfig } from '../../packages/schema-config/src
 import { defineTexts, type TextRef } from '../../packages/schema-i18n/src/index.js';
 import type { IncomingMessage, MessageAttachment } from '../../packages/schema-message/src/index.js';
 import { renderIn } from '../fixtures/host-language.js';
-import { fixedRef, ref } from '../fixtures/service-ref.js';
+import { fixedRef, liveLifecycle, ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // MediaService.pickProcessor — 模型选择
@@ -25,7 +25,7 @@ import { fixedRef, ref } from '../fixtures/service-ref.js';
 const logger = { info: () => {}, debug: () => {}, warn: () => {} } as unknown as Logger;
 
 function caps(over: Partial<MediaServiceCaps> = {}): MediaServiceCaps {
-  return { logger: fixedRef(logger), llm: ref(), asr: ref(), memory: ref(), ...over };
+  return { logger: fixedRef(logger), llm: ref(), asr: ref(), memory: ref(), lifecycle: liveLifecycle(), ...over };
 }
 
 const cfg = {
@@ -266,7 +266,11 @@ describe('LLM 识别在长度上限处停下', () => {
       chat: async () => ({ content, finishReason }),
     } as unknown as LLMModel;
     const found = scanLLMProcessors(
-      { llm: ref([{ instance: model, contextId: 'zz-provider/zz-model', priority: 0 }]), logger },
+      {
+        llm: ref([{ instance: model, contextId: 'zz-provider/zz-model', priority: 0 }]),
+        logger,
+        signal: new AbortController().signal,
+      },
       OPTS,
     )[0];
     if (!found) throw new Error('没有包出识别处理器');
@@ -345,6 +349,7 @@ describe('处理器的显示名', () => {
       {
         llm: ref([{ instance: model as unknown as LLMModel, contextId: 'zz-third/eyes', label: third('label') }]),
         logger,
+        signal: new AbortController().signal,
       },
       { vision: { maxTokens: 2048 }, audio: { maxTokens: 2048 } },
     );

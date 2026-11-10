@@ -18,7 +18,7 @@ import {
 } from '@aalis/api-media';
 import type { MemoryService } from '@aalis/api-memory';
 import { isStorageUri, isWebUrl } from '@aalis/api-storage';
-import type { Logger, ServiceSelection } from '@aalis/core';
+import type { LifecycleCap, Logger, ServiceSelection } from '@aalis/core';
 import { asText } from '@aalis/schema-i18n';
 import type { IncomingMessage, MessageAttachment } from '@aalis/schema-message';
 import {
@@ -92,12 +92,15 @@ function staticImageSource(data: string, bytes: Uint8Array | null): string {
 
 /**
  * 调度器用到的能力。llm / asr 是 processor 池的两个来源；memory 供识别上下文取历史与发送者画像。三者都可缺席（各自路径降级）。
+ * lifecycle 给本插件这次激活的中止信号：来消息即识别是本插件自己发起的处理，转写与按网址描述视频的契约不带中止信号，这几处的
+ * 下载、ffprobe、ffmpeg 与模型调用接它，停用时随之停下
  */
 export interface MediaServiceCaps {
   logger: ServiceSelection<Logger>;
   llm: ServiceSelection<LLMModel>;
   asr: ServiceSelection<ASRService>;
   memory: ServiceSelection<MemoryService>;
+  lifecycle: ServiceSelection<LifecycleCap>;
 }
 
 export interface MediaConfigResolved {
@@ -270,12 +273,17 @@ export class MediaServiceImpl implements MediaService {
             mode: 'single',
             hint: opts.hint,
             maxTokens: opts.maxTokens,
+            // 契约不带中止信号：接本插件这次激活的，停用时随之停下
+            signal: this.caps.lifecycle.use.signal,
           });
           for (let j = 0; j < byKind.image.length; j++) {
             out[byKind.image[j]] = r.descriptions[j] ?? r.descriptions[0];
           }
         } catch (err) {
-          this.logger.warn(`图像描述失败: ${err instanceof Error ? err.message : err}`);
+          // 停用、停机时中止不是描述失败：不告警
+          if (!this.caps.lifecycle.use.signal.aborted) {
+            this.logger.warn(`图像描述失败: ${err instanceof Error ? err.message : err}`);
+          }
         }
       }
     }
@@ -293,7 +301,10 @@ export class MediaServiceImpl implements MediaService {
             });
             out[i] = r.text || undefined;
           } catch (err) {
-            this.logger.warn(`音频识别失败: ${err instanceof Error ? err.message : err}`);
+            // 停用、停机时中止不是识别失败：不告警
+            if (!this.caps.lifecycle.use.signal.aborted) {
+              this.logger.warn(`音频识别失败: ${err instanceof Error ? err.message : err}`);
+            }
           }
         }
       }
@@ -302,6 +313,10 @@ export class MediaServiceImpl implements MediaService {
     return out;
   }
 
+  /**
+   * 转写一条音频，转不出时为 undefined 并告警。处理器（内置 LLM 处理器、asr 桥接）的转写接本插件这次激活的中止信号：停用、
+   * 停机时中止的抛中止原因，不当成转不出，调用方据此按中止收尾
+   */
   async transcribe(
     attachment: MessageAttachment,
     opts: TranscribeOptions & Pick<TranscribeInput, 'context' | 'sessionId'> = {},
@@ -322,6 +337,7 @@ export class MediaServiceImpl implements MediaService {
       });
       return r.text;
     } catch (err) {
+      this.caps.lifecycle.use.signal.throwIfAborted();
       this.logger.warn(`音频识别失败: ${err instanceof Error ? err.message : err}`);
       return undefined;
     }
@@ -380,6 +396,7 @@ export class MediaServiceImpl implements MediaService {
   }
 
   private async recognizeMessage(msg: IncomingMessage): Promise<MediaProcessReport> {
+    const signal = this.caps.lifecycle.use.signal;
     const attachments = normalizeAttachments(msg);
     const report: MediaProcessReport = { total: attachments.length, successCount: 0, items: [] };
     if (attachments.length === 0) return report;
@@ -419,6 +436,8 @@ export class MediaServiceImpl implements MediaService {
         return null;
       };
       try {
+        // 已停用：后面的附件不再起新的处理（经 asr 桥接的转写与外部处理器不接中止信号，起了就跑到完）
+        signal.throwIfAborted();
         if (att.kind === 'image') {
           if (!this.cfg.vision.recognizeOnArrival || !vision) {
             // 只留指针：不识别（关了到达即识别，或没有模型看得到图）。OneBot 适配器已把 ref 写进正文；WebUI 等平台的
@@ -437,10 +456,10 @@ export class MediaServiceImpl implements MediaService {
               imageRef = await landImage(i).catch(unstored);
               // 动图（多帧的 GIF、APNG、动态 WebP 与视频容器）走视频帧流程获得综合描述，按读到的字节判；抽不出帧的退回
               // 整图识别，与直通同一条规则
-              const bytes = await readSourceBytes(att.data);
+              const bytes = await readSourceBytes(att.data, signal);
               const frames =
                 bytes && needsFrames(bytes)
-                  ? await this.processVideo(att, ctxText, 'animated', msg.sessionId, bytes)
+                  ? await this.processVideo(att, signal, ctxText, 'animated', msg.sessionId, bytes)
                   : undefined;
               let raw = frames && 'text' in frames ? frames.text : undefined;
               if (raw === undefined) {
@@ -460,6 +479,7 @@ export class MediaServiceImpl implements MediaService {
                   basePrompt,
                   context: ctxText,
                   sessionId: msg.sessionId,
+                  signal,
                 });
                 raw = r.descriptions[0];
                 if (!raw) throw new Error('识别模型没有返回内容');
@@ -487,7 +507,7 @@ export class MediaServiceImpl implements MediaService {
           }
         } else if (att.kind === 'video') {
           if (this.cfg.video.mode !== 'disabled') {
-            const result = await this.processVideo(att, ctxText, 'video', msg.sessionId);
+            const result = await this.processVideo(att, signal, ctxText, 'video', msg.sessionId);
             item.description = 'text' in result ? result.text : result.failure;
             descriptions[i] = item.description;
             item.cap = 'vision';
@@ -499,13 +519,18 @@ export class MediaServiceImpl implements MediaService {
         if (item.description) report.successCount++;
       } catch (err) {
         item.error = err instanceof Error ? err.message : String(err);
-        this.logger.warn(`附件处理失败 [${att.kind}]: ${item.error}`);
-        // 把失败如实写进描述位：留空的话渲染出来只是个裸占位，LLM 无从区分
-        // 「这里有张图但没识别出来」和「这条消息本来就没图」。写一句实话，
-        // 它才能据此追问或跳过，而不是被一段幻觉描述当成事实喂进上下文。已落盘的图带上引用，按需看还找得到它
-        descriptions[i] = imageRef
-          ? formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: UNRECOGNIZED, ref: imageRef })
-          : `[${ATTACHMENT_REF_KINDS[att.kind]}：${UNRECOGNIZED}]`;
+        if (signal.aborted) {
+          // 停用、停机时中止不是识别失败：不告警，描述位不写「未能识别」；已落盘的图只留指针，按需看还找得到它
+          if (imageRef) descriptions[i] = formatAttachmentRef({ kind: AttachmentRefKind.Image, ref: imageRef });
+        } else {
+          this.logger.warn(`附件处理失败 [${att.kind}]: ${item.error}`);
+          // 把失败如实写进描述位：留空的话渲染出来只是个裸占位，LLM 无从区分
+          // 「这里有张图但没识别出来」和「这条消息本来就没图」。写一句实话，
+          // 它才能据此追问或跳过，而不是被一段幻觉描述当成事实放入上下文。已落盘的图带上引用，按需看还找得到它
+          descriptions[i] = imageRef
+            ? formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: UNRECOGNIZED, ref: imageRef })
+            : `[${ATTACHMENT_REF_KINDS[att.kind]}：${UNRECOGNIZED}]`;
+        }
       }
       report.items.push(item);
     }
@@ -538,7 +563,7 @@ export class MediaServiceImpl implements MediaService {
    * 抽帧内核：本地动图/视频文件 → 均匀采样的关键帧 data URI（describe/describeImage/直通三处共用）。抽不出返回 []。
    * signal 交给 ffprobe 与 ffmpeg，调用中止时由 process 服务停掉它们，不等到各自的超时
    */
-  private async framesFromLocal(path: string, maxFrames: number, signal?: AbortSignal): Promise<string[]> {
+  private async framesFromLocal(path: string, maxFrames: number, signal: AbortSignal): Promise<string[]> {
     const totalFrames = await getFrameCount(path, signal);
     if (totalFrames <= 0) {
       this.logger.debug(`[frames] ffprobe 未数出帧（探测失败或非视频容器）: ${path}`);
@@ -550,7 +575,7 @@ export class MediaServiceImpl implements MediaService {
   }
 
   /** 已读到的动图或视频字节 → 关键帧：写进临时文件再抽；写不出、抽不出或抽帧出错时为 []，中止时抛中止原因 */
-  private async framesOf(bytes: Uint8Array, maxFrames: number, signal?: AbortSignal): Promise<string[]> {
+  private async framesOf(bytes: Uint8Array, maxFrames: number, signal: AbortSignal): Promise<string[]> {
     const local = await materializeBytes(bytes);
     if (!local) {
       this.logger.debug('[frames] 动图写不进临时文件，不抽帧');
@@ -560,7 +585,7 @@ export class MediaServiceImpl implements MediaService {
       return await this.framesFromLocal(local.path, maxFrames, signal);
     } catch (err) {
       // 中止不按抽帧失败处理：返回 [] 会让调用方退回整图识别，中止之后还发起一次识图
-      signal?.throwIfAborted();
+      signal.throwIfAborted();
       this.logger.warn(`[frames] 抽帧失败: ${(err as Error).message}`);
       return [];
     } finally {
@@ -592,14 +617,16 @@ export class MediaServiceImpl implements MediaService {
    * 回复失败）。已经是 data URI / http 的逐字节原样返回；交不出合法形态的那一张丢弃并
    * warn——留着它等于让整轮请求被 provider 拒收。
    *
-   * signal（analyze_image 直通分支交这次调用的）交给读来源字节与抽帧：中止时抛中止原因，不跑满 ffprobe、ffmpeg 的超时。
+   * signal（analyze_image 直通分支交这次调用的）与本插件这次激活的合起来（见 callSignal），交给读来源字节与抽帧：中止时
+   * 抛中止原因，不等满 ffprobe、ffmpeg 的超时。
    */
   async transformModelImages(
     images: string[],
     delivery: 'passthrough' | 'describe',
-    signal?: AbortSignal,
+    callerSignal?: AbortSignal,
   ): Promise<string[]> {
     if (delivery === 'describe') return [];
+    const signal = this.callSignal(callerSignal);
     const out: string[] = [];
     /** 交给 provider 前的最后一道：非 data URI / http 的一律物化成 data URL，失败就丢这一张。 */
     const normalized = async (src: string): Promise<void> => {
@@ -629,16 +656,18 @@ export class MediaServiceImpl implements MediaService {
    * 视频：抽帧 + 抽音轨转写 → 拼综合描述。
    * sourceKind: 'video'（默认）用 cfg.video.maxFrames；'animated' 用 cfg.animatedImage.maxFrames
    * （两者独立配置，动图信息量低通常给更小预算）。sessionId 是消息所在的会话，帧识别与音轨转写按它记账。
+   * signal 交给下载、ffprobe、ffmpeg 与帧识别：中止时抛中止原因，不等到各自的时限。
    */
   private async processVideo(
     att: MessageAttachment,
+    signal: AbortSignal,
     contextText?: string,
     sourceKind: 'video' | 'animated' = 'video',
     sessionId?: string,
     /** 调用方已读到的字节（判动图时读的），有就不再按 att.data 取一次 */
     bytes?: Uint8Array,
   ): Promise<VideoResult> {
-    const local = bytes ? await materializeBytes(bytes) : await materializeAttachment(att.data);
+    const local = bytes ? await materializeBytes(bytes) : await materializeAttachment(att.data, signal);
     if (!local) {
       this.logger.debug('视频无法物化为本地文件，跳过');
       // 显式占位，避免 LLM 看不到"视频曾到达但无法读取内容"这一事实
@@ -650,7 +679,7 @@ export class MediaServiceImpl implements MediaService {
     try {
       const frameTexts: string[] = [];
       const maxFrames = sourceKind === 'animated' ? this.cfg.animatedImage.maxFrames : this.cfg.video.maxFrames;
-      const frames = await this.framesFromLocal(local.path, maxFrames);
+      const frames = await this.framesFromLocal(local.path, maxFrames, signal);
       this.logger.info(`[video] 抽帧采样 ${frames.length}/${maxFrames} 帧（实际抽出/期望上限）`);
       if (frames.length > 0) {
         const proc = this.pickProcessor('vision', this.cfg.vision.prefer);
@@ -663,6 +692,7 @@ export class MediaServiceImpl implements MediaService {
             hint: this.cfg.video.framesHint ?? '以下为同一视频的关键帧，按时间顺序排列。',
             context: contextText,
             sessionId,
+            signal,
           });
           const text = r.descriptions[0];
           if (text) {
@@ -680,7 +710,7 @@ export class MediaServiceImpl implements MediaService {
       }
 
       if (this.cfg.video.mode === 'frames+asr' && this.cfg.audio.mode === 'enabled') {
-        const audioDataUrl = await extractAudioTrack(local.path);
+        const audioDataUrl = await extractAudioTrack(local.path, signal);
         if (audioDataUrl) {
           const text = await this.transcribe(
             { kind: 'audio', data: audioDataUrl, mimeType: 'audio/mpeg' },
@@ -714,7 +744,7 @@ export class MediaServiceImpl implements MediaService {
     const sig = all.map(e => `${e.id}:${e.use.capabilities.join(',')}`).join('|');
     if (this.llmCache?.signature === sig) return this.llmCache.processors;
     const processors = scanLLMProcessors(
-      { llm: this.caps.llm, logger: this.logger },
+      { llm: this.caps.llm, logger: this.logger, signal: this.caps.lifecycle.use.signal },
       {
         vision: {
           prompt: this.cfg.vision.prompt,
@@ -744,7 +774,16 @@ export class MediaServiceImpl implements MediaService {
   }
 
   /**
-   * 单图描述（带缓存 + 自动判定动图）。供 analyze_image 工具与外部直接调用。
+   * 替调用方做的处理用的中止信号：调用方的与本插件这次激活的合起来，调用方没中止、本插件停用或重启时下载、抽帧与识别同样
+   * 停下；调用方不给时只用本插件的
+   */
+  private callSignal(signal: AbortSignal | undefined): AbortSignal {
+    const own = this.caps.lifecycle.use.signal;
+    return signal ? AbortSignal.any([signal, own]) : own;
+  }
+
+  /**
+   * 单图描述（带缓存 + 自动判定动图）。供 analyze_image 工具与外部直接调用。中止信号见 callSignal
    */
   async describeImage(imageUrl: string, opts: DescribeImageOptions = {}): Promise<string> {
     // 描述缓存按详略档分键：auto（默认）与到达识别共用一条，casual/detailed/professional 各自一条——
@@ -763,10 +802,11 @@ export class MediaServiceImpl implements MediaService {
       return '';
     }
 
+    const signal = this.callSignal(opts.signal);
     // 有本地缓存路径时从它读，不再下载；按读到的字节判动图，抽不出帧的退回整图识别，与直通同一条规则
-    const bytes = await readSourceBytes(opts.localPath ? `file://${opts.localPath}` : imageUrl, opts.signal);
+    const bytes = await readSourceBytes(opts.localPath ? `file://${opts.localPath}` : imageUrl, signal);
     const frames =
-      bytes && needsFrames(bytes) ? await this.framesOf(bytes, this.cfg.animatedImage.maxFrames, opts.signal) : [];
+      bytes && needsFrames(bytes) ? await this.framesOf(bytes, this.cfg.animatedImage.maxFrames, signal) : [];
     let result = '';
 
     if (frames.length > 0) {
@@ -783,7 +823,7 @@ export class MediaServiceImpl implements MediaService {
         basePrompt: this.cfg.video.animatedPrompt || DEFAULT_VISION_BATCH_PROMPT,
         hint: opts.hint,
         sessionId: opts.sessionId,
-        signal: opts.signal,
+        signal,
       });
       result = r.descriptions[0] ?? '';
     } else {
@@ -807,7 +847,7 @@ export class MediaServiceImpl implements MediaService {
         basePrompt,
         hint: opts.hint,
         sessionId: opts.sessionId,
-        signal: opts.signal,
+        signal,
       });
       result = r.descriptions[0] ?? '';
     }
@@ -826,12 +866,16 @@ export class MediaServiceImpl implements MediaService {
     if (cached) return cached;
     const att: MessageAttachment = { kind: 'video', data: opts.localPath ?? videoUrl };
     try {
-      const result = await this.processVideo(att, opts.hint);
+      // 契约不带中止信号：接本插件这次激活的，停用时随之停下
+      const result = await this.processVideo(att, this.caps.lifecycle.use.signal, opts.hint);
       if (!('text' in result)) return result.failure;
       rememberDescription(videoUrl, result.text, true, VIDEO_VARIANT);
       return result.text;
     } catch (err) {
-      this.logger.warn(`describeVideo 失败 url=${videoUrl}: ${err instanceof Error ? err.message : err}`);
+      // 停用、停机时中止不是描述失败：不告警
+      if (!this.caps.lifecycle.use.signal.aborted) {
+        this.logger.warn(`describeVideo 失败 url=${videoUrl}: ${err instanceof Error ? err.message : err}`);
+      }
       return '';
     }
   }

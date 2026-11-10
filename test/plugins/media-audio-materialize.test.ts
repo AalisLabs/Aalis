@@ -73,7 +73,8 @@ function audioLLMCaps(): { caps: AdapterCaps; audios: () => string[]; request: (
   } as unknown as LLMModel;
   const logger = { info: () => {}, debug: () => {}, warn: () => {} } as unknown as Logger;
   const llm = ref([{ contextId: 'p/fake-audio', instance }]);
-  return { caps: { llm, logger }, audios: () => seen?.messages[0]?.audios ?? [], request: () => seen };
+  const caps = { llm, logger, signal: new AbortController().signal };
+  return { caps, audios: () => seen?.messages[0]?.audios ?? [], request: () => seen };
 }
 
 beforeAll(async () => {

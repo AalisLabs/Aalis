@@ -15,9 +15,9 @@ import { emptyMediaCaps, fixedRef, ref } from '../fixtures/service-ref.js';
 import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
-// analyze_image（识图）声明可转后台：执行器给这次调用的中止信号经 media 服务一路传到识图的模型调用，中止时识图停住。
-// 识图模型是替身：一直不回，中止后以中止原因拒绝；不连任何模型服务。网址来源的下载也随这个信号停下（上游是本机桩）。
-// 动图抽帧用的 ffprobe 与 ffmpeg 也是替身，不起真实子进程。
+// analyze_image（识图）声明可转后台：执行器给这次调用的中止信号经 media 服务一路传到识图的模型调用，中止时识图停住；调用方
+// 没中止、media 停用或重启（本插件这次激活的信号断开）时同样停住。识图模型是替身：一直不回，中止后以中止原因拒绝；不连任何
+// 模型服务。网址来源的下载也随这两个信号停下（上游是本机桩）。动图抽帧用的 ffprobe 与 ffmpeg 也是替身，不启动真实子进程。
 // ════════════════════════════════════════════════════════════
 
 const logger = { info: () => {}, debug: () => {}, warn: () => {}, error: () => {} } as unknown as Logger;
@@ -26,8 +26,8 @@ const logger = { info: () => {}, debug: () => {}, warn: () => {}, error: () => {
 const PNG = `data:image/png;base64,${Buffer.from('89504e470d0a1a0a', 'hex').toString('base64')}`;
 const ANIMATED_GIF = `data:image/gif;base64,${Buffer.from(gif(2)).toString('base64')}`;
 
-/** delivery 'auto'：主模型能看图（工具上下文的 acceptsImages）时走直通分支 */
-function setup(delivery: 'describe' | 'auto' = 'describe') {
+/** delivery 'auto'：主模型能看图（工具上下文的 acceptsImages）时走直通分支；activation 是 media 这次激活的中止信号 */
+function setup(delivery: 'describe' | 'auto' = 'describe', activation = new AbortController()) {
   const requests: ChatModelRequest[] = [];
   const vision: LLMModel = {
     id: 'zz-vision',
@@ -48,9 +48,16 @@ function setup(delivery: 'describe' | 'auto' = 'describe') {
     video: { maxTokens: 300, think: false },
     animatedImage: { maxFrames: 4 },
   } as unknown as MediaConfigResolved;
-  const svc = new MediaServiceImpl(emptyMediaCaps(logger), cfg);
+  const svc = new MediaServiceImpl(
+    { ...emptyMediaCaps(logger), lifecycle: fixedRef({ signal: activation.signal } as never) },
+    cfg,
+  );
   for (const processor of scanLLMProcessors(
-    { llm: ref([{ instance: vision, contextId: 'zz-provider/zz-vision', priority: 0 }]), logger },
+    {
+      llm: ref([{ instance: vision, contextId: 'zz-provider/zz-vision', priority: 0 }]),
+      logger,
+      signal: new AbortController().signal,
+    },
     { vision: { maxTokens: 2048 }, audio: { maxTokens: 2048 } },
   )) {
     svc.registerProcessor(processor);
@@ -112,8 +119,23 @@ describe('analyze_image 可转后台', () => {
       toolContext({ sessionId: 's', signal: ac.signal }),
     );
     await vi.waitFor(() => expect(requests).toHaveLength(1));
-    expect(requests[0].signal).toBe(ac.signal);
+    expect(requests[0].signal?.aborted).toBe(false);
     ac.abort();
+    expect(requests[0].signal?.aborted).toBe(true);
+    const out = await pending;
+    expect(JSON.parse(typeof out === 'string' ? out : out.content).error).toBeDefined();
+  });
+
+  it('调用方没中止、media 停用：识图的模型调用随之停住、回错', async () => {
+    const activation = new AbortController();
+    const { analyze, requests } = setup('describe', activation);
+    const pending = analyze.handler(
+      { image: PNG, task: '看看是什么' },
+      toolContext({ sessionId: 's', signal: new AbortController().signal }),
+    );
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    activation.abort();
+    expect(requests[0].signal?.aborted).toBe(true);
     const out = await pending;
     expect(JSON.parse(typeof out === 'string' ? out : out.content).error).toBeDefined();
   });
@@ -126,8 +148,8 @@ describe('analyze_image 可转后台', () => {
     const ac = new AbortController();
     const pending = svc.describeImage(ANIMATED_GIF, { noCache: true, signal: ac.signal });
     await vi.waitFor(() => expect(requests).toHaveLength(1));
-    expect(requests[0].signal).toBe(ac.signal);
     ac.abort();
+    expect(requests[0].signal?.aborted).toBe(true);
     await expect(pending).rejects.toBeDefined();
   });
 
@@ -140,10 +162,33 @@ describe('analyze_image 可转后台', () => {
     const ac = new AbortController();
     const pending = svc.describeImage(ANIMATED_GIF, { noCache: true, signal: ac.signal });
     await vi.waitFor(() => expect(calls.map(c => c.cmd)).toEqual(called));
-    for (const { cmd, signal } of calls) expect(signal, cmd).toBe(ac.signal);
     ac.abort();
+    for (const { cmd, signal } of calls) expect(signal?.aborted, cmd).toBe(true);
     await expect(pending).rejects.toBeDefined();
     expect(requests, '识图模型一次也没被调用').toHaveLength(0);
+  });
+
+  it('调用方不给信号、抽帧途中 media 停用：中止信号交给已调用的抽帧工具，停下回错', async () => {
+    const activation = new AbortController();
+    const { requests, svc } = setup('describe', activation);
+    const calls = frameTools('ffprobe');
+    const pending = svc.describeImage(ANIMATED_GIF, { noCache: true });
+    await vi.waitFor(() => expect(calls.map(c => c.cmd)).toEqual(['ffprobe']));
+    activation.abort();
+    expect(calls[0].signal?.aborted).toBe(true);
+    await expect(pending).rejects.toBeDefined();
+    expect(requests).toHaveLength(0);
+  });
+
+  it('直通时调用方不给信号、抽帧途中 media 停用：中止信号交给已调用的抽帧工具，抛出', async () => {
+    const activation = new AbortController();
+    const { svc } = setup('auto', activation);
+    const calls = frameTools('ffprobe');
+    const pending = svc.transformModelImages([ANIMATED_GIF], 'passthrough');
+    await vi.waitFor(() => expect(calls.map(c => c.cmd)).toEqual(['ffprobe']));
+    activation.abort();
+    expect(calls[0].signal?.aborted).toBe(true);
+    await expect(pending).rejects.toBeDefined();
   });
 
   it('网址来源：下载来源字节也随中止信号停下，不等满下载时限，不退回整图识别', async () => {
@@ -185,8 +230,8 @@ describe('analyze_image 可转后台', () => {
       toolContext({ sessionId: 's', signal: ac.signal, acceptsImages: true }),
     );
     await vi.waitFor(() => expect(calls.map(c => c.cmd)).toEqual(called));
-    for (const { cmd, signal } of calls) expect(signal, cmd).toBe(ac.signal);
     ac.abort();
+    for (const { cmd, signal } of calls) expect(signal?.aborted, cmd).toBe(true);
     const out = await pending;
     expect(typeof out, '回的是错误文本，不带图').toBe('string');
     expect(JSON.parse(out as string)).toEqual({ error: expect.any(String) });

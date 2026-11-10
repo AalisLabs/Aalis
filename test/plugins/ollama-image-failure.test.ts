@@ -150,7 +150,7 @@ describe('media 视觉识别的接线', () => {
       },
     } as never);
     const vision = scanLLMProcessors(
-      { llm: host.llm, logger: host.logger.use },
+      { llm: host.llm, logger: host.logger.use, signal: new AbortController().signal },
       { vision: { maxTokens: 2048 }, audio: { maxTokens: 2048 } },
     ).find(p => p.capabilities.includes('vision' as never));
     if (!vision?.describe) throw new Error('未扫描出带 describe 的 vision processor');

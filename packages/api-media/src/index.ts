@@ -132,7 +132,7 @@ export interface MediaService {
 
   /** 描述：根据每个 attachment 的 kind/mime 自动选 processor */
   describe(attachments: MessageAttachment[], opts?: DescribeOptions): Promise<Array<string | undefined>>;
-  /** 转写：单条音频 */
+  /** 转写：单条音频。转不出时为 undefined；提供方停用、停机时中止的抛中止原因 */
   transcribe(attachment: MessageAttachment, opts?: TranscribeOptions): Promise<string | undefined>;
 
   /**

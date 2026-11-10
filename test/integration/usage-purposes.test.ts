@@ -18,7 +18,7 @@ import type { IncomingMessage } from '../../packages/schema-message/src/index.js
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
-import { fixedRef, ref } from '../fixtures/service-ref.js';
+import { fixedRef, liveLifecycle, ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 对话、子任务、摘要与识图的模型调用都带上用途与会话，经服务商登记的 metered 模型发出 llm:usage，记进用量账本：
@@ -101,11 +101,11 @@ describe('模型调用的用途与会话', () => {
     }
     await host.compression.use.compress(owner.id, { reason: 'manual' });
     const media = new MediaServiceImpl(
-      { logger: fixedRef(quiet), llm: host.llm, asr: ref(), memory: ref() },
+      { logger: fixedRef(quiet), llm: host.llm, asr: ref(), memory: ref(), lifecycle: liveLifecycle() },
       MEDIA_CONFIG,
     );
     for (const processor of scanLLMProcessors(
-      { llm: host.llm, logger: quiet },
+      { llm: host.llm, logger: quiet, signal: new AbortController().signal },
       { vision: { maxTokens: 2048 }, audio: { maxTokens: 2048 } },
     ))
       media.registerProcessor(processor);
