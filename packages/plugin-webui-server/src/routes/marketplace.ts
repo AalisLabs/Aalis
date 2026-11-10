@@ -10,7 +10,7 @@ import { classifyDepSpec, type DepOrigin, isRegistryDep, isUpgrade } from '@aali
 import type express from 'express';
 import { declaredProvides, type LocalScanEntry } from '../client-discovery.js';
 import type { RouteGate } from '../gate.js';
-import { route } from '../route.js';
+import { clientGone, route } from '../route.js';
 import { t } from '../texts.js';
 
 // 纯 npm 路线：npm registry 的 keyword 检索即天然索引，无自建服务器、无静态索引。
@@ -416,7 +416,7 @@ export function buildSearchUrl(q: string, keyword: string, registryBase: string 
  * 按精确包名向 base 源取 `/{包}/latest`：最新版这一份的清单，版本与声明提供的服务一次拿到，每包一次请求。
  * 查不到（离线、源上没有该包、非 2xx、超时、格式不对、包名不合法）返回 undefined，调用方当作「最新版未知」：不显示可更新。
  * 包名来自检索结果，进 URL 路径前过 {@link PKG_NAME_RE}；带作用域的包名不转义斜杠，各源都认这种写法。客户端断开时随
- * signal 停下（见 {@link clientGone}）
+ * signal 停下（见 route.ts 的 clientGone）
  */
 async function fetchLatest(base: string, name: string, signal: AbortSignal): Promise<LatestManifest | undefined> {
   if (!PKG_NAME_RE.test(name)) return undefined;
@@ -432,16 +432,6 @@ async function fetchLatest(base: string, name: string, signal: AbortSignal): Pro
   } catch {
     return undefined;
   }
-}
-
-/**
- * 这次请求的客户端断开时中止的信号：检索、查版本与 packument 都是替前端的这次请求做的，前端不要了（换页、刷新）就不再等源。
- * 应答发完之后 close 照样会来，那时这次请求的取数都已落定
- */
-function clientGone(res: express.Response): AbortSignal {
-  const gone = new AbortController();
-  res.once('close', () => gone.abort());
-  return gone.signal;
 }
 
 /** 市场路由用到的能力 */

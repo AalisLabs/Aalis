@@ -35,6 +35,16 @@ type RouteHandler<K extends RouteKey> = (
 export const issueViews = (issues: readonly SchemaIssue[]): NonNullable<ErrorResponse['issues']> =>
   issues.map(({ path, kind, code, text }) => ({ path, kind, code, message: text }));
 
+/**
+ * 这次请求的客户端断开时中止的信号：替前端这次请求做的取数（市场的检索与查版本、图片代理连上游）交它，前端不要了（换页、刷新、
+ * 图片滚出视野被取消）就不再等上游。应答发完之后 close 照样会来，那时这次请求的取数都已落定
+ */
+export function clientGone(res: express.Response): AbortSignal {
+  const gone = new AbortController();
+  res.once('close', () => gone.abort());
+  return gone.signal;
+}
+
 export function route<K extends RouteKey>(app: express.Express, key: K, ...handlers: RouteHandler<K>[]): void {
   const space = key.indexOf(' ');
   const method = key.slice(0, space).toLowerCase() as 'get' | 'post' | 'put' | 'delete';

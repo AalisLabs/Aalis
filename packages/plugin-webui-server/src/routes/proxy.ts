@@ -4,7 +4,7 @@ import { FILE_HEAD_BYTES } from '@aalis/util-file-signature';
 import { safeFetch } from '@aalis/util-network-guard';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
-import { route } from '../route.js';
+import { clientGone, route } from '../route.js';
 import { t } from '../texts.js';
 import { browserMediaOf } from './media.js';
 
@@ -64,11 +64,13 @@ export function registerProxyRoutes(expressApp: express.Express, logger: Logger,
 
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
+    // 客户端断开时连上游、读文件头与转发都随之停下
+    const gone = clientGone(res);
 
     try {
       // safeFetch 内含协议/host/逐跳重定向校验（SSRF）；非法 URL/内网/重定向越界等统一落到下方 catch。
       const upstream = await safeFetch(raw, {
-        signal: ac.signal,
+        signal: AbortSignal.any([ac.signal, gone]),
         // 不带 cookie / 不发用户 referer，避免泄露认证态；按 UA 鉴别的站点给个常见 desktop UA
         headers: {
           'user-agent': 'Mozilla/5.0 (Aalis WebUI Image Proxy)',
@@ -152,6 +154,8 @@ export function registerProxyRoutes(expressApp: express.Express, logger: Logger,
       }
       res.end();
     } catch (err) {
+      // 客户端已断开：没有谁等这条应答，不是代理失败，不记告警
+      if (gone.aborted) return;
       const reason = textOf(err);
       logger.warn(`图片代理失败 url=${raw} err=${toSource(reason)}`);
       if (!res.headersSent) res.status(502).json({ error: t('proxyFailed', { error: reason }) });
