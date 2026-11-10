@@ -53,6 +53,9 @@ interface PageSlot {
   lastAccess: number;
 }
 
+/** 下载 Chrome 失败时报错里带的 stderr 结尾长度：命令行失败时先打一整屏用法，报错与调用栈在最后 */
+const CLI_STDERR_TAIL = 1500;
+
 // ──────────── 插件元数据 ────────────
 
 const configSchema = defineConfig({
@@ -274,11 +277,16 @@ function runBrowserTools(caps: Caps): void {
     if (fs.existsSync(await bundledChromePath())) return;
 
     logger.info('Chrome 未安装，正在自动下载...');
-    // 走 ProcessService.execFile，避免直接 import node:child_process
-    await proc.execFile(process.execPath, [puppeteerCliPath(), 'browsers', 'install', 'chrome'], {
-      stdio: 'inherit',
-      timeout: 300_000,
-    });
+    // 走 ProcessService，避免直接 import node:child_process。输出按管道收，不写进宿主的终端（全屏界面会被写花），全文进
+    // 调试日志；失败的报错带上 stderr 的结尾
+    const result = await proc
+      .spawn(process.execPath, [puppeteerCliPath(), 'browsers', 'install', 'chrome'], { timeout: 300_000 })
+      .wait();
+    logger.debug(`下载 Chrome 的输出:\n${result.stdout}${result.stderr}`);
+    if (result.code !== 0) {
+      const detail = result.stderr || `退出码 ${result.code}，信号 ${result.signal}`;
+      throw new Error(`下载 Chrome 失败: ${detail.slice(-CLI_STDERR_TAIL)}`);
+    }
     logger.info('Chrome 下载完成');
   }
 
