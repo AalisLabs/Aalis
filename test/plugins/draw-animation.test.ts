@@ -103,7 +103,7 @@ describe('draw 动画（真浏览器 + 真 ffmpeg）', () => {
   });
 
   it('SMIL+CSS 双机制被步进：首帧≠中帧；两次渲染字节级一致；GIF 合法', async () => {
-    const renderer = new OfflineRenderer({ sandbox: 'preferred', idleShutdownSec: 0, maxConcurrency: 4, logger });
+    const renderer = new OfflineRenderer({ sandbox: false, idleShutdownSec: 0, maxConcurrency: 4, logger });
     try {
       const plan = resolveCanvas(ANIMATED_SVG, 200, caps);
       const req = renderRequest(plan, 1, caps.maxPixels);

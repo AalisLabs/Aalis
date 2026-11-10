@@ -2,7 +2,7 @@
 // @aalis/plugin-draw — 让纯文本模型画图
 //
 // LLM 写标记（SVG 或 HTML+内联 CSS），本插件经离线渲染库（@aalis/util-offline-render：
-// 开沙箱、禁脚本、零网络、每次渲染全新上下文，见该包头注释）渲染成 PNG，或把声明式动画
+// 禁脚本、零网络、每次渲染全新上下文，见该包头注释；带不带 Chromium 沙箱看配置 sandbox）渲染成 PNG，或把声明式动画
 // （CSS/SMIL）逐帧截图合成 GIF（draw_animation），落盘到本插件在会话媒体目录里的子目录
 // data:/images/<会话目录>/draw/（@aalis/api-media 的目录约定，/clear 与删会话时由本插件清理）后由 send_attachment 投递进聊天。
 // 标记是不可信输入；渲染请求里只有外壳文档一个资源（见 plan.renderRequest）。
@@ -23,7 +23,7 @@ import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, lifecycle, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { textOf } from '@aalis/schema-i18n';
-import { OfflineRenderer } from '@aalis/util-offline-render';
+import { OfflineRenderer, RenderUnavailableError } from '@aalis/util-offline-render';
 import { framesToGif } from './gif.js';
 import { type DrawCaps, renderRequest, resolveCanvas } from './plan.js';
 import { t } from './texts.js';
@@ -74,6 +74,13 @@ const configSchema = defineConfig({
     onInvalid: 'error',
     description: t('executablePathDescription'),
   },
+  sandbox: {
+    type: 'boolean',
+    label: t('sandboxLabel'),
+    default: false,
+    onInvalid: 'error',
+    description: t('sandboxDescription'),
+  },
   idleShutdownSec: {
     type: 'number',
     label: t('idleShutdownSecLabel'),
@@ -115,6 +122,7 @@ const configSchema = defineConfig({
 interface DrawConfig extends DrawCaps {
   headless: boolean;
   executablePath: string;
+  sandbox: boolean;
   idleShutdownSec: number;
   maxConcurrency: number;
   animMaxDurationSec: number;
@@ -134,6 +142,7 @@ function resolveConfig(raw: ConfigOf<typeof configSchema>): DrawConfig {
     scale: num(raw.scale, configSchema.scale.default, 1, 3),
     headless: raw.headless,
     executablePath: raw.executablePath,
+    sandbox: raw.sandbox,
     idleShutdownSec: num(raw.idleShutdownSec, configSchema.idleShutdownSec.default, 0, 86400),
     maxConcurrency: num(raw.maxConcurrency, configSchema.maxConcurrency.default, 1, 8),
     animMaxDurationSec: num(raw.animMaxDurationSec, configSchema.animMaxDurationSec.default, 1, 30),
@@ -183,9 +192,8 @@ function registerDraw(caps: Caps): void {
   const proc = caps.processService.use;
   const { tools } = caps;
 
-  // 沙箱起不来时回落到不带沙箱（任何平台）：draw 的输入是模型写的标记，回落的理由与平台无关
   const renderer = new OfflineRenderer({
-    sandbox: 'preferred',
+    sandbox: cfg.sandbox,
     headless: cfg.headless,
     executablePath: cfg.executablePath || undefined,
     maxConcurrency: cfg.maxConcurrency,
@@ -194,6 +202,14 @@ function registerDraw(caps: Caps): void {
     logger,
   });
   caps.lifecycle.use.onDispose(() => renderer.dispose());
+
+  /** 工具报错的说明；带沙箱起不来时接上修法 */
+  const failureText = (err: unknown): string => {
+    const message = err instanceof Error ? err.message : String(err);
+    return cfg.sandbox && err instanceof RenderUnavailableError
+      ? `${message}。若是沙箱不可用（如 Linux 上以 root 运行、容器里），可在绘图的配置里关掉「Chromium 沙箱」（sandbox）`
+      : message;
+  };
 
   // 参与 memory:clear（/clear 与删除会话）：所选类型含 image 时清本插件在会话媒体目录里的子目录，会话级清这个会话的、
   // 全局清各会话的；存储不在时不清、不出回执。登记 image 类型，/clear -t 才选得中（别的写入方也登记它，帮助里只列一次）
@@ -278,7 +294,7 @@ function registerDraw(caps: Caps): void {
           message: '已渲染并落盘。用 send_attachment({ kind: "image", storage_uri: uri }) 发送到聊天。',
         });
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = failureText(err);
         logger.warn(`draw_image 失败: ${message}`);
         return JSON.stringify({ error: message });
       }
@@ -387,7 +403,7 @@ function registerDraw(caps: Caps): void {
             'check_frames 仅供没把握时可选核对（视觉识别较慢，通常无需核对）。',
         });
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = failureText(err);
         logger.warn(`draw_animation 失败: ${message}`);
         return JSON.stringify({ error: message });
       }

@@ -39,6 +39,7 @@ export default definePlugin({
 | `viewportHeight` | number | `720` | 视口高度 |
 | `maxPages` | number | `5` | 最大页面数：同时打开的最大页面数量。超出后关闭最早打开的页面。 |
 | `executablePath` | string | `''` | Chrome 路径：自定义 Chrome/Chromium 可执行文件的绝对路径。留空则使用 Puppeteer 内置 Chromium。 |
+| `sandbox` | boolean | `false` | Chromium 沙箱：打开后 Chromium 带沙箱启动，网页即使攻破渲染进程也出不了沙箱。Linux 上以 root 运行或容器里没有可用的沙箱时，打开后浏览器无法启动。 |
 | `maxContentLength` | number | `50000` | 最大内容长度：返回给 Agent 的页面文本最大字符数。 |
 | `blockPrivate` | boolean | `true` | 封锁内网与本地：拒绝 localhost / 127.x / ::1 / 10.x / 172.16-31.x / 192.168.x / 169.254.x / 0.0.0.0，防止 SSRF。 |
 | `allowedProtocols` | multiselect | `["http","https"]` | 允许的协议：浏览器只允许访问这些协议的 URL。 |
@@ -96,7 +97,7 @@ base64 任何情况下都不进文本结果：整张 PNG 的 base64 有几十万
 
 ## 浏览器实例
 
-Chromium 按需启动，进程级共享一个实例与一张页面表；并发的首次调用共用同一次启动。取实例时检查连接是否存活：崩溃或被杀之后再调工具会重新启动浏览器，并清空页面表（此前的 `pageId` 随之失效，需重新 `browser_navigate`）。插件停用时若浏览器正在启动，启动完成后随即关闭，发起启动的调用返回错误。
+Chromium 按需启动，进程级共享一个实例与一张页面表；并发的首次调用共用同一次启动。是否带 Chromium 沙箱由 `sandbox` 决定：默认不带（以 `--no-sandbox --disable-setuid-sandbox` 启动）；打开后带沙箱启动失败时，调用报启动失败并写明可以在配置里关掉 `sandbox`，不回落到不带沙箱，下次调用照样带沙箱启动。取实例时检查连接是否存活：崩溃或被杀之后再调工具会重新启动浏览器，并清空页面表（此前的 `pageId` 随之失效，需重新 `browser_navigate`）。插件停用时若浏览器正在启动，启动完成后随即关闭，发起启动的调用返回错误。
 
 每个页面（`pageId`）独占一个浏览器窗口，`headless=false` 时即各自一个系统窗口。`browser_click`、`browser_type` 与 `browser_screenshot` 操作前先把目标页切到前台：页面自己用 `window.open` 或 `target=_blank` 开出的窗口会把原页压到后台，而无头 Chrome 的后台页不做渲染，点击、默认先清空的输入与按选择器截图会一直等不到结果。
 
@@ -108,4 +109,4 @@ WebUI 插件详情里的「浏览器」页（`key: 'browser'`）列出打开着�
 
 ## 配置校验
 
-`blockPrivate`、`allowedProtocols`、`allowedHosts` 和 `executablePath` 的显式无效值使实例进入错误态，不会注册浏览器工具。协议只接受 `http` 与 `https`；白名单必须是字符串数组。其他错误类型回落默认值并告警。
+`blockPrivate`、`allowedProtocols`、`allowedHosts`、`executablePath` 和 `sandbox` 的显式无效值使实例进入错误态，不会注册浏览器工具。协议只接受 `http` 与 `https`；白名单必须是字符串数组。其他错误类型回落默认值并告警。

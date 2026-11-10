@@ -14,4 +14,4 @@ export {
   type RenderResource,
   StepTimeoutError,
 } from './engine.js';
-export { RenderUnavailableError, type SandboxPolicy } from './launch.js';
+export { RenderUnavailableError } from './launch.js';

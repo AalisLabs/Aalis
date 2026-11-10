@@ -90,7 +90,7 @@ const MAGENTA_PNG = Buffer.from(
 let renderer: OfflineRenderer | undefined;
 
 function makeRenderer(maxConcurrency = 2): OfflineRenderer {
-  renderer = new OfflineRenderer({ sandbox: 'preferred', idleShutdownSec: 0, maxConcurrency, logger });
+  renderer = new OfflineRenderer({ sandbox: false, idleShutdownSec: 0, maxConcurrency, logger });
   return renderer;
 }
 

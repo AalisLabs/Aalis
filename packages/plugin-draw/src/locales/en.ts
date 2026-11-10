@@ -20,6 +20,9 @@ export default defineLocale<Source>()({
   executablePathLabel: 'Chrome path (left empty, detected automatically)',
   executablePathDescription:
     'Left empty, the Chrome cached by puppeteer is used (the same binary as the browser tools, in a separate process)',
+  sandboxLabel: 'Chromium sandbox',
+  sandboxDescription:
+    'When on, Chromium starts with its sandbox, so markup that takes over the renderer process still cannot leave it. As root on Linux, or in a container without a usable sandbox, Chromium then cannot start.',
   idleShutdownSecLabel: 'Idle shutdown (seconds)',
   idleShutdownSecDescription:
     'Shut Chromium down to free memory after the renderer has been idle this long; 0 = always on',

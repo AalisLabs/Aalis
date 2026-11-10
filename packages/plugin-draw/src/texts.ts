@@ -20,6 +20,9 @@ const SOURCE = {
   headlessDescription: '调试时可关闭以观察渲染页面',
   executablePathLabel: 'Chrome 路径（留空自动探测）',
   executablePathDescription: '留空使用 puppeteer 缓存的 Chrome（与浏览器工具共用同一份二进制，进程独立）',
+  sandboxLabel: 'Chromium 沙箱',
+  sandboxDescription:
+    '打开后 Chromium 带沙箱启动，所画标记即使攻破渲染进程也出不了沙箱。Linux 上以 root 运行或容器里没有可用的沙箱时，打开后 Chromium 无法启动。',
   idleShutdownSecLabel: '空闲关停（秒）',
   idleShutdownSecDescription: '渲染引擎空闲该时长后关停 Chromium 释放内存；0 = 常驻',
   maxConcurrencyLabel: '渲染并发上限',

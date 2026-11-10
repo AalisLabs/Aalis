@@ -77,6 +77,13 @@ const configSchema = defineConfig({
     format: 'absolute-path',
     onInvalid: 'error',
   },
+  sandbox: {
+    type: 'boolean',
+    label: t('sandboxLabel'),
+    default: false,
+    onInvalid: 'error',
+    description: t('sandboxDescription'),
+  },
   maxContentLength: {
     type: 'number',
     label: t('maxContentLengthLabel'),
@@ -330,7 +337,11 @@ function runBrowserTools(caps: Caps): void {
       instance = await launchFn({
         headless: config.headless,
         defaultViewport: { width: config.viewportWidth, height: config.viewportHeight },
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', ...gateArgs],
+        args: [
+          ...(config.sandbox ? [] : ['--no-sandbox', '--disable-setuid-sandbox']),
+          '--disable-dev-shm-usage',
+          ...gateArgs,
+        ],
         ...(config.executablePath ? { executablePath: config.executablePath } : {}),
         // 单条 CDP 命令的时限（puppeteer 默认 180 秒）。正常操作里最长的单条命令是等选择器与导航，都受 defaultTimeout 约束；
         // 取它的两倍，让操作自己的超时先报，挂住的命令以此为上限。defaultTimeout 为 0（不设时限）时它也是 0，同样不设时限
@@ -347,7 +358,12 @@ function runBrowserTools(caps: Caps): void {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error(`启动浏览器失败: ${msg}`);
-      throw new Error(`浏览器启动失败: ${msg}。请确保已安装 Chrome: npx puppeteer browsers install chrome`);
+      const sandboxHint = config.sandbox
+        ? '；若是沙箱不可用（如 Linux 上以 root 运行、容器里），可在浏览器工具的配置里关掉「Chromium 沙箱」（sandbox）'
+        : '';
+      throw new Error(
+        `浏览器启动失败: ${msg}。请确保已安装 Chrome: npx puppeteer browsers install chrome${sandboxHint}`,
+      );
     }
     // 启动期间插件被停用：onDispose 只关得到已交出的实例，这一代在这里关掉。
     // 不等关闭落定：onDispose 要等这次启动落定才关闸，关闭挂住会把闸一起拖住

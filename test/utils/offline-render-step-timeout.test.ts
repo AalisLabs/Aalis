@@ -101,7 +101,7 @@ let renderer: OfflineRenderer | undefined;
 
 function makeRenderer(): OfflineRenderer {
   renderer = new OfflineRenderer({
-    sandbox: 'preferred',
+    sandbox: false,
     idleShutdownSec: 0,
     stepTimeoutMs: STEP_MS,
     maxConcurrency: 2,

@@ -20,7 +20,7 @@ function pngSize(png: Uint8Array): { width: number; height: number } {
 }
 
 function makeRenderer(): OfflineRenderer {
-  return new OfflineRenderer({ sandbox: 'preferred', idleShutdownSec: 0, maxConcurrency: 4, logger });
+  return new OfflineRenderer({ sandbox: false, idleShutdownSec: 0, maxConcurrency: 4, logger });
 }
 
 describe('draw 渲染（真浏览器）', () => {

@@ -14,6 +14,9 @@ export default defineLocale<Source>()({
   executablePathLabel: 'Chrome path',
   executablePathDescription:
     'Absolute path to a custom Chrome/Chromium executable. Left empty, the Chromium bundled with Puppeteer is used.',
+  sandboxLabel: 'Chromium sandbox',
+  sandboxDescription:
+    'When on, Chromium starts with its sandbox, so a web page that takes over the renderer process still cannot leave it. As root on Linux, or in a container without a usable sandbox, the browser then cannot start.',
   maxContentLengthLabel: 'Max content length',
   maxContentLengthDescription: 'Maximum number of characters of page text returned to the agent.',
   blockPrivateLabel: 'Block private and local networks',

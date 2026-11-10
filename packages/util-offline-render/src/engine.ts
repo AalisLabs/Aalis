@@ -13,10 +13,11 @@
 
 import type { Browser, BrowserContext, HTTPRequest, Page } from 'puppeteer';
 import { type AnimationOptions, type FramesResult, PAUSE_AND_PROBE, planFrames, seekScript } from './animation.js';
-import { Launcher, type SandboxPolicy } from './launch.js';
+import { Launcher } from './launch.js';
 
 export interface OfflineRendererOptions {
-  sandbox: SandboxPolicy;
+  /** 为真时带 Chromium 沙箱启动，无法启动就报 RenderUnavailableError、不回落；为假时带 --no-sandbox 启动 */
+  sandbox: boolean;
   /** 透传 puppeteer；缺省 true */
   headless?: boolean | 'shell';
   executablePath?: string;

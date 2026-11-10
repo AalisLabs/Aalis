@@ -153,7 +153,7 @@ describe('零网络（真浏览器）', () => {
     const frame = '<meta http-equiv="refresh" content="0;url=https://refresh.ext.test/next"><p>frame</p>';
     const html = (body: string) => ({ body: new TextEncoder().encode(body), contentType: 'text/html; charset=utf-8' });
     const renderer = new OfflineRenderer({
-      sandbox: 'preferred',
+      sandbox: false,
       idleShutdownSec: 0,
       logger: { debug: () => {}, info: () => {}, warn: () => {} },
     });
