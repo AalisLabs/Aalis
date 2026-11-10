@@ -28,7 +28,7 @@ const probe = vi.hoisted(() => ({
 }));
 
 vi.mock('../../packages/util-chromium/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js', async importOriginal => {
-  // 根目录不直接依赖 puppeteer：只声明用到的部分，不经类型导入引用它
+  // 只声明用到的部分，不经类型导入引用 puppeteer
   type Req = { url(): string; failure(): { errorText: string } | null };
   type Page = { on(event: string, handler: (r: Req) => void): void };
   type Context = { closed: boolean; newPage(): Promise<Page>; close(): Promise<void> };

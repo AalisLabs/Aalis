@@ -29,7 +29,7 @@ type Handler = (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<
 // WebRTC 不用 mDNS 主机名（否则会向局域网发组播）。
 // 不映射成「解析不到」：导航因解析失败出错时，Chrome 会拿公网域名做一次 DNS 探测
 vi.mock('../../packages/util-chromium/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js', async importOriginal => {
-  // 根目录不直接依赖 puppeteer：只声明用到的部分，不经类型导入引用它
+  // 只声明用到的部分，不经类型导入引用 puppeteer
   type Launch = (options?: { args?: string[] } & Record<string, unknown>) => Promise<unknown>;
   const actual = await importOriginal<{ launch: Launch; default: Record<string, unknown> }>();
   const launch: Launch = options =>

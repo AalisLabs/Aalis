@@ -25,7 +25,7 @@ const probe = vi.hoisted(() => ({
 }));
 
 vi.mock('../../packages/util-chromium/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js', async importOriginal => {
-  // 根目录不直接依赖 puppeteer：只声明用到的部分，不经类型导入引用它
+  // 只声明用到的部分，不经类型导入引用 puppeteer
   type Page = { evaluate(expr: string): Promise<unknown>; screenshot(opts: unknown): Promise<Uint8Array> };
   type Context = { newPage(opts?: unknown): Promise<Page> };
   type Browser = { connected: boolean; createBrowserContext(): Promise<Context> };

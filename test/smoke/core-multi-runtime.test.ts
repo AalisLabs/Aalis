@@ -87,7 +87,7 @@ describe('core 多运行时冒烟', () => {
     let page: Page;
 
     beforeAll(async () => {
-      // 根目录不直接依赖 puppeteer，从 util-chromium 的依赖里取
+      // 从 util-chromium 的依赖里取，与插件启动浏览器用的是同一份 puppeteer
       const puppeteer = createRequire(join(ROOT, 'packages/util-chromium/package.json'))('puppeteer') as Puppeteer;
       browser = await puppeteer.launch({
         headless: true,
