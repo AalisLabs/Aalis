@@ -415,12 +415,15 @@ export function buildSearchUrl(q: string, keyword: string, registryBase: string 
 /**
  * 按精确包名向 base 源取 `/{包}/latest`：最新版这一份的清单，版本与声明提供的服务一次拿到，每包一次请求。
  * 查不到（离线、源上没有该包、非 2xx、超时、格式不对、包名不合法）返回 undefined，调用方当作「最新版未知」：不显示可更新。
- * 包名来自检索结果，进 URL 路径前过 {@link PKG_NAME_RE}；带作用域的包名不转义斜杠，各源都认这种写法。
+ * 包名来自检索结果，进 URL 路径前过 {@link PKG_NAME_RE}；带作用域的包名不转义斜杠，各源都认这种写法。客户端断开时随
+ * signal 停下（见 {@link clientGone}）
  */
-async function fetchLatest(base: string, name: string): Promise<LatestManifest | undefined> {
+async function fetchLatest(base: string, name: string, signal: AbortSignal): Promise<LatestManifest | undefined> {
   if (!PKG_NAME_RE.test(name)) return undefined;
   try {
-    const r = await fetch(`${base}/${name}/latest`, { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) });
+    const r = await fetch(`${base}/${name}/latest`, {
+      signal: AbortSignal.any([AbortSignal.timeout(SEARCH_TIMEOUT_MS), signal]),
+    });
     if (!r.ok) return undefined;
     const manifest = (await r.json()) as { version?: unknown };
     return typeof manifest.version === 'string'
@@ -429,6 +432,16 @@ async function fetchLatest(base: string, name: string): Promise<LatestManifest |
   } catch {
     return undefined;
   }
+}
+
+/**
+ * 这次请求的客户端断开时中止的信号：检索、查版本与 packument 都是替前端的这次请求做的，前端不要了（换页、刷新）就不再等源。
+ * 应答发完之后 close 照样会来，那时这次请求的取数都已落定
+ */
+function clientGone(res: express.Response): AbortSignal {
+  const gone = new AbortController();
+  res.once('close', () => gone.abort());
+  return gone.signal;
 }
 
 /** 市场路由用到的能力 */
@@ -494,9 +507,12 @@ export function registerMarketplaceRoutes(
     const localPkgs = getLocalPackages();
     /** 已装判定与版本展示共用，每个包名只读一次盘 */
     const localOf = localPackageLookup(appDir, localPkgs);
+    const gone = clientGone(res);
     // 四类关键词各发一条检索（npm 的 keywords 逗号是 AND 非 OR），并行后按包名合并去重 = OR。
     const fetchKw = async (kw: string): Promise<NpmSearchResponse> => {
-      const r = await fetch(buildSearchUrl(q, kw, registryBase), { signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS) });
+      const r = await fetch(buildSearchUrl(q, kw, registryBase), {
+        signal: AbortSignal.any([AbortSignal.timeout(SEARCH_TIMEOUT_MS), gone]),
+      });
       if (!r.ok) throw new TextError(t('registryStatus', { status: r.status }));
       return (await r.json()) as NpmSearchResponse;
     };
@@ -533,7 +549,7 @@ export function registerMarketplaceRoutes(
     if ('base' in source) {
       await Promise.all(
         [...byName.keys()].map(async n => {
-          const manifest = await fetchLatest(source.base, n);
+          const manifest = await fetchLatest(source.base, n, gone);
           if (manifest) latest.set(n, manifest);
         }),
       );
@@ -549,6 +565,7 @@ export function registerMarketplaceRoutes(
   // 在市场里拿到一张「内核」卡片。版本查询按精确包名，故不存在冒名空间。
   // 这一页只提供更新，无安装无卸载：它们要么随脚手架就位，要么是插件的依赖被自动带入。
   route(expressApp, 'GET /api/system-components', gate(), async (_req, res) => {
+    const gone = clientGone(res);
     const appDir = caps.appDir;
     if (!appDir) {
       res.status(503).json({ error: NO_APP_DIR });
@@ -588,7 +605,7 @@ export function registerMarketplaceRoutes(
     if ('base' in source) {
       await Promise.all(
         components.map(async c => {
-          c.latest = (await fetchLatest(source.base, c.name))?.version;
+          c.latest = (await fetchLatest(source.base, c.name, gone))?.version;
         }),
       );
     }
@@ -630,7 +647,7 @@ export function registerMarketplaceRoutes(
     if (source && 'base' in source) {
       try {
         const r = await fetch(`${source.base}/${name.replace('/', '%2F')}`, {
-          signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
+          signal: AbortSignal.any([AbortSignal.timeout(SEARCH_TIMEOUT_MS), clientGone(res)]),
         });
         if (r.ok) {
           const m = toManifest((await r.json()) as Parameters<typeof toManifest>[0]);

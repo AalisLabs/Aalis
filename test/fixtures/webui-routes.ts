@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { localizeFor } from '../../packages/api-i18n/src/index.js';
 import type { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 
@@ -19,10 +20,11 @@ const rethrow = (err: unknown) => {
  * 路由测试挂具，不起端口。路由注册器只调用 `app.<method>(path, ...handlers)`：`expressApp` 是把处理器链
  * 按「METHOD path」记下的假 app；`invoke` 取出链，带 res 桩（status / json 写进回复）经 next 逐个执行。
  * json 写进回复之前按 i18n 缺席渲染（读者语言与跳过原样数据的出口见 test/plugins/webui-i18n.test.ts）。
+ * res 桩是事件源：给了 connection 就用它，用例在它上面 emit('close') 模拟客户端断开。
  */
 export function captureRoutes(): {
   expressApp: Parameters<typeof registerPluginRoutes>[0];
-  invoke: (key: string, req?: unknown) => Promise<RouteReply>;
+  invoke: (key: string, req?: unknown, connection?: EventEmitter) => Promise<RouteReply>;
 } {
   const routes = new Map<string, Handler[]>();
   const expressApp = new Proxy(
@@ -35,11 +37,11 @@ export function captureRoutes(): {
         },
     },
   );
-  const invoke = async (key: string, req: unknown = {}): Promise<RouteReply> => {
+  const invoke = async (key: string, req: unknown = {}, connection = new EventEmitter()): Promise<RouteReply> => {
     const handlers = routes.get(key);
     if (!handlers) throw new Error(`路由未注册: ${key}`);
     const out: RouteReply = { status: 200 };
-    const res = {
+    const res = Object.assign(connection, {
       status(code: number) {
         out.status = code;
         return res;
@@ -48,7 +50,7 @@ export function captureRoutes(): {
         out.body = localizeFor(ABSENT, payload, { host: true }, { onError: rethrow });
         return res;
       },
-    };
+    });
     let i = 0;
     const next = async (): Promise<void> => {
       const h = handlers[i++];
