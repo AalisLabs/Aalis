@@ -2,7 +2,7 @@
 // @aalis/plugin-code-sandbox-os — code-sandbox 的 OS 原生实现
 //
 // Linux bubblewrap / macOS sandbox-exec。把不可信代码包成沙箱启动器命令后，
-// **经现有 `process` 服务** spawn（不碰 process-api / process-local 的实现，
+// **经现有 `process` 服务** spawn（不碰 api-process / process-local 的实现，
 // 也不直接 import node:child_process / node:fs——OS 探测靠经 process 服务功能性试跑）。
 // ============================================================
 

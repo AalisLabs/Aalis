@@ -1,5 +1,5 @@
 // ============================================================
-// @aalis/plugin-process-local — process-api 的本地实现
+// @aalis/plugin-process-local — api-process 的本地实现
 // ============================================================
 
 import { type ChildProcess, spawn as nodeSpawn } from 'node:child_process';

@@ -37,7 +37,7 @@ export default definePlugin({
 - **独立服务，不污染通用 `process` 契约**：「隔离执行不可信代码」是 code_runner 独有诉求，故自成
   `code-sandbox` 服务，而非给所有子进程共享的 `ProcessService` 加字段。
 - **经 `caps.processService.use` spawn**：把命令包成 `bwrap …` / `sandbox-exec …` 后交给现有 `process` 服务执行——
-  沙箱相关的逻辑不进 process-api / process-local；也不直接 import `node:child_process`/`node:fs`（后端探测用经 process 服务的功能性试跑）。
+  沙箱相关的逻辑不进 api-process / process-local；也不直接 import `node:child_process`/`node:fs`（后端探测用经 process 服务的功能性试跑）。
   调用方的中止信号（`SandboxRunRequest.signal`）原样交给 `execFile`，由 process 服务按进程组停掉。
 - **功能性探测**：启动时真跑一次最小沙箱命令（超时 5000ms），退出码为 0 才 `available=true`——一次覆盖「存在性」+「Linux userns 是否真能用」。
   Linux 的探测命令是 `bwrap --ro-bind / / --dev /dev --proc /proc --unshare-all true`，与正式运行一样挂 `/dev` 与 `/proc`：只放开 seccomp、挂不了 `/proc` 的容器里探测即失败、按无后端，不会探测报可用、之后每次运行都失败。
