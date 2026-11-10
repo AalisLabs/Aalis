@@ -60,6 +60,7 @@
         "embedding",
         "events",
         "hooks",
+        "lifecycle",
         "logger",
         "provide",
         "vectorstore"

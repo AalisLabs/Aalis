@@ -15,6 +15,7 @@ import {
   definePlugin,
   defineService,
   events,
+  lifecycle,
   logger,
   optional,
   provide,
@@ -300,6 +301,8 @@ const uses = {
   provide,
   logger,
   config,
+  /** 停用时排着与在途的收录在收尾段写完 */
+  lifecycle,
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -326,6 +329,7 @@ async function run(caps: Caps): Promise<void> {
     provide,
     logger,
     config,
+    lifecycle,
   } = caps;
   // memory 是可选依赖，provider 换人不级联 bounce 本插件：引用与能力探测都必须在调用点现算，
   // 否则 provider 晚于本插件注册时 hasRangeQuery 永久为假，或扩窗落在已关闭的旧实例上。
@@ -615,7 +619,8 @@ async function run(caps: Caps): Promise<void> {
     | { kind: 'user'; msg: IncomingMessage; archived: Message }
     | { kind: 'assistant' | 'rewritten'; sessionId: string; message: Message };
   const pendingIndexMessages: PendingIndexItem[] = [];
-  let activeIndexers = 0;
+  /** 在途的收录（数量即并发占用）：收尾段等它们与排着的落定 */
+  const running = new Set<Promise<void>>();
   /**
    * 在途的收录与重收录，按会话与时间戳：改写项先等同一条在途的那个落定再删旧条目。识图命中缓存时改写通知紧跟着落库到来，不等
    * 的话删不到还没写进去的旧条目，原来那条随后照旧写进去；同一条的几次改写也这样排成一串，按到达的先后落定
@@ -636,37 +641,39 @@ async function run(caps: Caps): Promise<void> {
       const dropped = pendingIndexMessages.splice(0, pendingIndexMessages.length - cfg.indexing.maxQueueSize).length;
       logger.use.warn(`向量索引队列过长，已丢弃 ${dropped} 条最旧待索引消息`);
     }
-    void drainIndexQueue();
+    drainIndexQueue();
   }
 
-  async function drainIndexQueue(): Promise<void> {
+  function drainIndexQueue(): void {
     while (
-      (cfg.indexing.concurrency <= 0 || activeIndexers < cfg.indexing.concurrency) &&
+      (cfg.indexing.concurrency <= 0 || running.size < cfg.indexing.concurrency) &&
       pendingIndexMessages.length > 0
     ) {
-      const next = pendingIndexMessages.shift()!;
-      activeIndexers++;
-      void (async () => {
-        try {
-          if (next.kind === 'user') {
-            await track(
-              entryKey(next.msg.sessionId, next.archived.timestamp),
-              indexUserMessage(next.msg, next.archived),
-            );
-          } else if (next.kind === 'assistant') {
-            const work = indexEntry(() => assistantEntry(next.sessionId, next.message), 'assistant 向量索引失败:');
-            await track(entryKey(next.sessionId, next.message.timestamp), work);
-          } else {
-            const key = entryKey(next.sessionId, next.message.timestamp);
-            await track(key, reindexRewritten(next.sessionId, next.message, indexing.get(key)));
-          }
-        } finally {
-          activeIndexers--;
-          void drainIndexQueue();
-        }
-      })();
+      const work = indexItem(pendingIndexMessages.shift()!).finally(() => {
+        running.delete(work);
+        drainIndexQueue();
+      });
+      running.add(work);
     }
   }
+
+  /** 收录一项；出错只记 warn，不拒绝 */
+  function indexItem(next: PendingIndexItem): Promise<void> {
+    if (next.kind === 'user') {
+      return track(entryKey(next.msg.sessionId, next.archived.timestamp), indexUserMessage(next.msg, next.archived));
+    }
+    if (next.kind === 'assistant') {
+      const work = indexEntry(() => assistantEntry(next.sessionId, next.message), 'assistant 向量索引失败:');
+      return track(entryKey(next.sessionId, next.message.timestamp), work);
+    }
+    const key = entryKey(next.sessionId, next.message.timestamp);
+    return track(key, reindexRewritten(next.sessionId, next.message, indexing.get(key)));
+  }
+
+  // 收尾：排着的与在途的收录写完再撤回（这时向量化与向量存储都还在，收录不随停用中止）；超过清理宽限的按 core 的规则处理
+  lifecycle.use.onDrain(async () => {
+    while (running.size > 0) await Promise.all(running);
+  }, '等排着与在途的向量收录写完');
 
   async function indexUserMessage(msg: IncomingMessage, archived: Message): Promise<void> {
     // 带来源的是内部注入，不是谁在跟她说话，不进长期记忆（与档案插件同一判据；宿主通知按契约必带来源）
