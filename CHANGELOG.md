@@ -10,7 +10,48 @@
 
 ## 未发布
 
+### core 与配置
+
 - @aalis/core、@aalis/schema-config、@aalis/runtime：配置拷贝改为逐层拷贝，数组里的数组也拷开，插件就地改它不再改到调用方传入的对象（如 runtime 的配置文档）；原型不是 `Array.prototype` 的数组（子类、vm 等别的 realm 造的、改过原型的）与别的类实例一样按引用透传。数组成环的配置与对象成环一样拒收：core 的登记与改配置返回 false，拒因写明是环状引用；runtime 装载 `aalis.config.yaml` 时，递归别名（如 `&a [1, *a]`）解出的成环数组让整份文档被拒，启动时拒绝启动，运行中的改动不生效、沿用旧配置，之后的进程保存与配置写坏时一样拒写，不盖掉这份手改（对象成环同样如此，原来环在插件配置段以外时运行态会先换成被拒的文档，下一次保存还会把手改整份盖掉）。
+- @aalis/core：多实例的 id 须为「name:后缀」（前缀是本定义的 name、后缀非空），其余形状记 error 并拒绝登记。
+- @aalis/core：`register` 与 `updateConfig` 的配置同一规则：不传即 `{}`，传了须是纯对象；null、数组、原始值与类实例拒收、返回 false（register 记 error，updateConfig 记 warn）。日志里的「配置无法拷贝」改为「配置无效」。
+- @aalis/core：插件定义在登记时取定，之后再改定义对象不生效，要换定义先卸载再重新登记；`getStatus()` 每次交出新的数组与对象。`config.use` 每次激活一份拷贝，`getPlugin().config` 也交拷贝，插件就地改配置只影响本次激活。
+- @aalis/core：事件总线与日志中枢按派发开始时的登记送达，途中新登记的不收这一次，途中退订的跳过；sticky 屏障（`app:ready`、`app:started`）派发途中才登记的监听器经补发收到，`start()` 不再等它。日志中枢同一函数订阅两次各收一份、各自退订。
+- @aalis/core：插件管理器（`plugins` 作用域）的日志晚一个微任务交给宿主，宿主日志回调里看到的是改完之后的状态。注入日志器的 `child` 派生出的不是日志器时沿用上一层。
+- @aalis/core：偏好与登记没变时不发 `service:changed`（同值的 `prefer`、没有可清的 `unprefer`、重复调用的退订）；停机打断的那一轮重算不发 `plugins:changed`。
+- @aalis/core：去掉重算的轮数上限与「疑似插件间状态振荡」告警；初始化期 required 依赖缺失的重试预算不变，用尽时 `failure` 的 `cause` 是最后一次的不可用错误。
+- @aalis/core：关闭之后迟到登记的清理（`onDrain`、`onDispose`、`track`）各记一条 warn 并就地执行，陆续登记的清理整段收口共用一个 `disposeTimeoutMs`；拒收的告警统一写「激活 "x" 已关闭」。停机时无依赖的插件按登记序倒着关，重启过的不再提到最前。
+- @aalis/runtime、@aalis/api-host-config：插件配置段须为映射。留空读入即 `{}`；数组与标量在启动时一行报错退出（点名 `plugins.<id>`），热重载时搁置这次变更。host-config 的 `setPluginConfig`、`applyPluginConfig` 收到不是映射的配置时抛错，什么都不改。
+
+### runtime 与插件来源
+
+- @aalis/runtime（破坏性）：`withPluginConfigSync(app, store, opts?)` 不再收加载器，返回 `{ prepare, finishInitialLoad }`；`createPluginDiscovery` 加第四个参数 `options`（类型 `PluginDiscoveryOptions`），`prepare` 交给它。`PluginLoader` 仍是 `discover`、`load` 与可选的 `reload`。
+- @aalis/api-plugin-source（破坏性）：插件来源服务加必填方法 `loadedFrom(name)`，回以 name 登记的主实例来自哪个包，没登记或宿主直接登记的回 undefined。runtime 实现它。
+- @aalis/runtime：两个包声明同一个插件名时，先发现的登记，后一个在同步配置与登记之前跳过，告警点名两个包；热扫描时插件名已登记的同样跳过。先发现的定义过不了校验时名字让给后一个。热扫描按包认出已加载的包，包名与插件名不同的包不再每次重新导入。
+- @aalis/runtime：关掉所在的终端（SIGHUP）时走完停机、以 0 退出；以 `--service` 运行时 `kill -HUP` 同样走完停机、以 0 退出。按 Ctrl+C 开始停机时在 stderr 提示改按 Ctrl+\（Windows 为 Ctrl+Break）当场退出；停机途中再按 Ctrl+C 不打断停机。
+- @aalis/plugin-package-manager：包声明的插件名已被别的包或宿主直接登记的插件占着时，安装回执写明被谁占用、未加载（`ok` 为 false），不再报已安装并加载。新增 peerDependencies `@aalis/runtime >=0.20.0`：runtime 低于 0.20.0 时装不上、也更新不到本版。
+
+### 计划任务与工作流
+
+- @aalis/plugin-scheduler、@aalis/plugin-workflow（破坏性）：storage 由 optional 改为 required，storage 上线之前不激活，下线时随之停下，重新上线后按文件读回。scheduler 拆卸时等排队中的动态任务写盘落定；workflow 的触发器关闭之后不再挂新的。
+
+### 浏览器工具与绘图
+
+- @aalis/util-chromium 0.1.0（新包）：浏览器工具与绘图共用的 Chromium 启动器，含绘图用的离线渲染。@aalis/util-offline-render 并入它，不再更新。
+- @aalis/plugin-draw（破坏性）：是否带 Chromium 沙箱由新配置 `sandbox` 决定，默认不带；原来先试带沙箱，启动失败就回落到不带并记住。打开后带沙箱启动失败时报错，写明可在配置里关掉，不回落。
+- @aalis/plugin-tool-browser：新增配置 `sandbox`（默认 false，与原来的行为相同），打开后的规则同绘图。浏览器经管道连接，宿主不经停机退出（kill -9、内存耗尽）时浏览器随之退出；不再让 puppeteer 接管 SIGINT、SIGTERM、SIGHUP，原来按 Ctrl+C 时以 130 退出、停机无法执行完毕。没装自带的 Chrome 又没配 `executablePath` 时的自动下载能用了，原来跑的命令行路径不存在，下载必定失败。
+
+### 代码沙箱
+
+- @aalis/plugin-code-sandbox-os（破坏性）：macOS 沙箱里的代码只能给同一沙箱里的进程发信号；放行同一沙箱建的 POSIX 信号量，Python multiprocessing 的锁、队列与进程池可用；不再放行 POSIX 共享内存，`multiprocessing.shared_memory` 在 macOS 沙箱里报 PermissionError。
+
+### 其余修复
+
+- @aalis/plugin-process-local：停机时先等用 process 服务的插件关完，再整组 SIGTERM，宽限后对还有成员的组 SIGKILL；停机时在跑的 exec、代码执行与后台任务记为已中止，不再是退出码 -1。宿主不经停机退出时由看门进程收掉它启动的进程组；组空即撤登记，停机不再对可能被复用的组号发信号。
+- @aalis/plugin-tools：停用之后才到的可转后台调用，以及等审批期间工具已撤回登记的调用，都回「未执行」，不执行。
+- @aalis/plugin-tool-system：shell 与文件工具开着就登记，storage、process 晚于本插件上线也用得上；缺服务时调用报服务不可用，`/tools` 照列这两组。@aalis/plugin-office：`pdf_convert` 每次调用现查 process 服务。
+- @aalis/plugin-media：`analyze_image` 中止时，下载与抽帧用的 ffprobe、ffmpeg 随之停下回错，不再退回整图识别。
+- @aalis/plugin-authority、@aalis/plugin-flow-control、@aalis/plugin-checkpoint：停机时等级表、禁言表的写盘与在跑回合的提交放进收尾，storage 或 memory 的提供者与本插件经 optional 依赖成环时不再丢。
 - @aalis/plugin-adapter-onebot：实现端拒绝连接时日志写明原因。握手时直接回 HTTP 状态码的（如 401），记下状态码与响应体（只留开头 4096 个字符）后立即断开，照常 5 秒后重连，不再等 15 秒握手超时，响应体一直不结束或读到一半断了也一样，也不再多记一条自己断开引出的「连接错误」；接受握手后回一条不对应任何请求的失败回执再断开的（如 token 没填或不对），按 warn 记下返回码与原话，原来这条回执被丢掉；没有数字返回码的帧不算回执，照常当事件处理。连接地址的说明写明实现端要开正向 WebSocket（Aalis 主动去连），不支持反向。
 - @aalis/plugin-llm-deepseek：带图的 user 消息把图编成文字之后的 `image_url` 段发出去，原来图整段丢掉、只发文字。在单模型能力覆盖里给能看图的模型（如 `deepseek-flash`）写上 `vision` 后，它能做识别模型，做主模型时也能亲眼看图；原来写了 `vision` 时识别模型收不到图，回的话照样被当成图片描述存下。单模型能力覆盖的说明改用 `deepseek-flash` 作例子，并列出可用能力。
 
