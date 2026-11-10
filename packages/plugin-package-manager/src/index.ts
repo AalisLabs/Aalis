@@ -22,6 +22,7 @@ import {
   provide,
   services,
 } from '@aalis/core';
+import type { RestartRollback } from '@aalis/runtime';
 import { TextError, type TextRef, textClauses, textOf, toSource } from '@aalis/schema-i18n';
 import { classifyDepSpec, type DepOrigin, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
 import { t } from './texts.js';
@@ -342,12 +343,7 @@ export interface PackageManagerDeps {
    * 重启进程并交付回滚凭据（新实例启动失败时由重启策略消费）。宿主没有重启策略或应用已开始停机时同步抛错
    * （core 的 `app.restart()`）。
    */
-  restartApp(rollback: {
-    reason: string;
-    /** `deleteIfEmpty` 表示该文件更新前并不存在，回滚时应删除而非写空（见 runtime 的 RestartRollback）。 */
-    restore: Array<{ path: string; content: string; deleteIfEmpty?: boolean }>;
-    postRestore?: { cmd: string; args: string[]; cwd: string };
-  }): void;
+  restartApp(rollback: RestartRollback): void;
 }
 
 /** `@scope/foo@1.2.3` → `@scope/foo`（剥掉版本后缀，保留 scope）。 */
@@ -915,9 +911,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
 
     // ── 快照：预检过了才有必要 ──
     // lockfile 与 package.json 必须一起回退，否则还原后的树是「声明旧版、锁定新版」。
-    const restore: Array<{ path: string; content: string; deleteIfEmpty?: boolean }> = [
-      { path: rootPkgPath, content: rootPkgText },
-    ];
+    const restore: RestartRollback['restore'] = [{ path: rootPkgPath, content: rootPkgText }];
     const lockPath = `${root}/package-lock.json`;
     const lockText = await deps.readText(lockPath);
     if (lockText !== undefined) {

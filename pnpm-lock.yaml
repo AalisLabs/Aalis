@@ -2461,6 +2461,9 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/runtime':
+        specifier: workspace:*
+        version: link:../runtime
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
