@@ -110,7 +110,7 @@ export function registerHttpTools(tools: BoundTools, config: HttpConfig): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, callCtx) => {
       const url = args.url as string;
       const method = ((args.method as string) || 'GET').toUpperCase();
       const headers = (args.headers as Record<string, string>) || {};
@@ -124,10 +124,12 @@ export function registerHttpTools(tools: BoundTools, config: HttpConfig): void {
       }
 
       try {
+        // 超时与执行器给这次调用的中止信号谁先到按谁停
+        const deadline = AbortSignal.timeout(timeout);
         const fetchOptions: RequestInit = {
           method,
           headers,
-          signal: AbortSignal.timeout(timeout),
+          signal: callCtx.signal ? AbortSignal.any([deadline, callCtx.signal]) : deadline,
         };
 
         // 字符串正文原样发出（fetch 给 text/plain;charset=UTF-8），不猜它是不是 JSON
