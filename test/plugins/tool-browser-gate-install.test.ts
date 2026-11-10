@@ -5,13 +5,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type ToolCallContext, type ToolExecutionResult, tools } from '../../packages/api-tools/src/index.js';
 import { App, type AppOptions, LogHub, provide } from '../../packages/core/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
+import { puppeteerCliPath } from '../../packages/util-chromium/src/index.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
 import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 浏览器的启动：
 // - 网络闸先于浏览器起好；闸起不来（监听失败）就不启动浏览器，报闸的错误，下次调用重新尝试。
-//   「请确保已安装 Chrome」的提示只跟在浏览器本身启动失败后面，闸的错误与 Chrome 装没装无关。
+//   「请确保已安装 Chrome」的提示只跟在浏览器本身启动失败后面，闸的错误与 Chrome 装没装无关。提示里的安装命令用 node 跑
+//   util-chromium 依赖的那份 puppeteer 的命令行：puppeteer 是间接依赖，不提升依赖的布局下 npx 会另取一份、装上别的版本的 Chrome。
 // - 并发的首次调用共用同一次启动；启动途中插件被停用时，这一代浏览器由启动方自己关掉（不等关闭落定），调用报错。
 // - 浏览器崩溃后重启沿用同一道闸，不另起监听。
 // - 经管道连浏览器：这里只断言启动参数带 pipe: true；宿主不经停机退出时浏览器随之退出，
@@ -208,13 +210,15 @@ describe('浏览器进程', () => {
 });
 
 describe('浏览器本身启动失败', () => {
-  it('报启动失败并附安装 Chrome 的提示', async () => {
+  it('报启动失败并附安装 Chrome 的确切命令', async () => {
     const { app, handlers } = await startBrowserTools();
     try {
       fake.launch.mockRejectedValueOnce(new Error('zz-launch 失败'));
       const out = await navigate(handlers);
       expect(out.error).toContain('zz-launch 失败');
-      expect(out.error).toContain('请确保已安装 Chrome');
+      expect(out.error).toContain(
+        `请确保已安装 Chrome: "${process.execPath}" "${puppeteerCliPath()}" browsers install chrome`,
+      );
     } finally {
       await app.stop();
     }

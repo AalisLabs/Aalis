@@ -11,7 +11,7 @@
 - SIGINT、SIGTERM、SIGHUP 不交给 puppeteer 处理，浏览器由调用方的生命周期关。
 - 经管道连接：宿主不经停机退出（崩溃、被 SIGKILL、未捕获异常）时管道由系统关掉，浏览器随之退出。
 
-调用方给无头模式、浏览器路径、自己的启动参数（浏览器工具的网络闸、离线渲染的封网）、单条 CDP 命令的时限，以及可选的缺省视口。`bundledChromePath` 给出 puppeteer 自带 Chrome 的路径，`puppeteerEntry` 给出 puppeteer 包入口的地址，浏览器工具据此判断 Chrome 装没装、用包里的命令行下载它。
+调用方给无头模式、浏览器路径、自己的启动参数（浏览器工具的网络闸、离线渲染的封网）、单条 CDP 命令的时限，以及可选的缺省视口。`bundledChromePath` 给出 puppeteer 自带 Chrome 的路径，`puppeteerCliPath` 给出 puppeteer 包里命令行脚本的路径，浏览器工具据此判断 Chrome 装没装、用它下载。
 
 ## 离线渲染
 

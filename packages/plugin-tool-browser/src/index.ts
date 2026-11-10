@@ -23,7 +23,7 @@ import {
   bundledChromePath,
   ChromiumLaunchError,
   launchChromium,
-  puppeteerEntry,
+  puppeteerCliPath,
 } from '@aalis/util-chromium';
 import {
   assertAddressesSafe,
@@ -271,22 +271,11 @@ function runBrowserTools(caps: Caps): void {
 
   async function ensureChrome(): Promise<void> {
     const fs = await import('node:fs');
-    const path = await import('node:path');
     if (fs.existsSync(await bundledChromePath())) return;
 
     logger.info('Chrome 未安装，正在自动下载...');
-    // 通过 puppeteer 包路径找到其内置 CLI
-    const puppeteerPkg = path.dirname((await import('node:url')).fileURLToPath(puppeteerEntry()));
-    // 向上找到 puppeteer 包根目录（含 package.json）
-    let pkgRoot = puppeteerPkg;
-    while (!fs.existsSync(path.join(pkgRoot, 'package.json'))) {
-      const parent = path.dirname(pkgRoot);
-      if (parent === pkgRoot) break;
-      pkgRoot = parent;
-    }
-    const cliPath = path.join(pkgRoot, 'lib', 'cjs', 'puppeteer', 'node', 'cli.js');
     // 走 ProcessService.execFile，避免直接 import node:child_process
-    await proc.execFile(process.execPath, [cliPath, 'browsers', 'install', 'chrome'], {
+    await proc.execFile(process.execPath, [puppeteerCliPath(), 'browsers', 'install', 'chrome'], {
       stdio: 'inherit',
       timeout: 300_000,
     });
@@ -356,8 +345,10 @@ function runBrowserTools(caps: Caps): void {
         config.sandbox && err instanceof ChromiumLaunchError
           ? '；若是沙箱不可用（如 Linux 上以 root 运行、容器里），可在浏览器工具的配置里关掉「Chromium 沙箱」（sandbox）'
           : '';
+      // 安装命令用 node 跑 util-chromium 依赖的那份 puppeteer 的命令行：它是间接依赖，不提升依赖的布局下 npx 会另取一份、
+      // 装上别的版本的 Chrome
       throw new Error(
-        `浏览器启动失败: ${msg}。请确保已安装 Chrome: npx puppeteer browsers install chrome${sandboxHint}`,
+        `浏览器启动失败: ${msg}。请确保已安装 Chrome: "${process.execPath}" "${puppeteerCliPath()}" browsers install chrome${sandboxHint}`,
       );
     }
     // 启动期间插件被停用：onDispose 只关得到已交出的实例，这一代在这里关掉。

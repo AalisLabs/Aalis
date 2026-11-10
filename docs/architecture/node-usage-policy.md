@@ -62,7 +62,7 @@
 |  |  | `plugin-process-local` | `readExternalFile()`：用于 OneBot 实现端动作应答里交回的 `/tmp/...` 等不在任何 storage 根内的绝对路径 |
 |  |  | `plugin-webui-server` | `existsSync` 探测前端 dist 目录（位于工作区外、由 webui-client 提供） |
 |  |  | `create-aalis-plugin` | 脚手架 CLI，物理生成新插件目录 |
-|  |  | `plugin-tool-browser` | 探测 puppeteer 包内 `cli.js` 与 Chrome 是否已下载（包资产管理） |
+|  |  | `plugin-tool-browser` | 判断自带的 Chrome 是否已下载（包资产管理） |
 |  |  | `plugin-memory-sqlite/src/index.ts` | `statSync` 取数据库文件的设备号与 inode，判断两个实例是否打开了同一个库 |
 |  |  | `plugin-session-server/src/approvals.ts` | `appendFile` / `mkdir` 追加审批审计：只追加的记录，存储服务没有追加写 |
 |  |  | `plugin-usage-stats/src/index.ts` | `appendFile` / `mkdir` / `createReadStream` 追加与按行读回用量账本：只追加的记录，存储服务没有追加写与按行读 |
@@ -118,8 +118,8 @@
 
 ### 浏览器自动化
 
-- **`plugin-tool-browser/src/index.ts`** — `node:fs`（`existsSync`）+ `node:path` + `node:url`（`fileURLToPath`）+ `node:crypto`（`createHash`）+ `node:net`（`createServer` / `connect` / `isIP`）
-  从 `@aalis/util-chromium` 取得 puppeteer 包入口与自带 Chrome 的路径后，需要对 puppeteer 包做包内文件探测（找到内置 `cli.js`、检测 Chrome 是否已下载），属于 puppeteer 包的本地资产管理需求，storage 服务覆盖不到。**Chrome 安装本身**（原先的 `execFileSync`）已迁移到 `ProcessService.execFile`。`node:net` 用于浏览器网络闸：在 `127.0.0.1` 起 SOCKS5 服务接收浏览器的全部 TCP 连接，判定通过后由插件进程连接目标。`node:crypto` 的 `createHash` 取截图 PNG 内容的 sha256 作文件名。
+- **`plugin-tool-browser/src/index.ts`** — `node:fs`（动态导入，`existsSync`）+ `node:crypto`（`createHash`）+ `node:net`（`createServer` / `connect` / `isIP`）
+  从 `@aalis/util-chromium` 取得自带 Chrome 的路径后，用 `existsSync` 判断是否已下载，属于 puppeteer 包的本地资产管理需求，storage 服务覆盖不到。没下载时经 `ProcessService.execFile` 用 node 跑 puppeteer 包里的命令行下载，脚本路径由 `puppeteerCliPath` 给出。`node:net` 用于浏览器网络闸：在 `127.0.0.1` 起 SOCKS5 服务接收浏览器的全部 TCP 连接，判定通过后由插件进程连接目标。`node:crypto` 的 `createHash` 取截图 PNG 内容的 sha256 作文件名。
 
 ### 记忆后端
 

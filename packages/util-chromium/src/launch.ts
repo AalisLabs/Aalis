@@ -11,6 +11,8 @@
 // puppeteer 只在这个包里加载，且在真要启动浏览器时才加载：查 Chrome 装没装、下载它与启动用的是同一份 puppeteer。
 // ============================================================
 
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
 import type { Browser } from 'puppeteer';
 
 export interface ChromiumLaunchOptions {
@@ -62,5 +64,9 @@ export async function bundledChromePath(): Promise<string> {
   return puppeteer.executablePath();
 }
 
-/** puppeteer 包入口模块的地址（file: 网址）：调用方据此找包里自带的命令行，下载自带的 Chrome */
-export const puppeteerEntry = (): string => import.meta.resolve('puppeteer');
+/** puppeteer 包里命令行脚本（package.json 的 bin）的路径：调用方用 node 跑它下载自带的 Chrome */
+export function puppeteerCliPath(): string {
+  const require = createRequire(import.meta.url);
+  const manifest = require.resolve('puppeteer/package.json');
+  return join(dirname(manifest), (require(manifest) as { bin: string }).bin);
+}
