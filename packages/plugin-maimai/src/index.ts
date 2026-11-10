@@ -2,7 +2,7 @@ import { type CommandArgv, commands } from '@aalis/api-commands';
 import { type MemoryService, memory } from '@aalis/api-memory';
 import { originChatOf, sessionManager } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
-import { type BoundOf, config, definePlugin, type Logger, logger, optional } from '@aalis/core';
+import { type BoundOf, config, definePlugin, type Logger, lifecycle, logger, optional } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { isTextRef, TextError, type TextRef, textLines, textOf, toSource } from '@aalis/schema-i18n';
 import { t } from './texts.js';
@@ -117,6 +117,7 @@ const uses = {
   memory: optional(memory),
   sessionManager: optional(sessionManager),
   logger,
+  lifecycle,
   config,
 };
 type Caps = BoundOf<typeof uses>;
@@ -168,7 +169,12 @@ class MaimaiClient {
     private logger: Logger,
   ) {}
 
-  private async request<T = unknown>(path: string, params?: Record<string, unknown>): Promise<T> {
+  /** signal 是调用方的中止信号，与 timeoutMs 谁先到按谁停；中止时抛中止原因，不按连不上报 */
+  private async request<T = unknown>(
+    path: string,
+    signal: AbortSignal | undefined,
+    params?: Record<string, unknown>,
+  ): Promise<T> {
     const url = new URL(path, this.cfg.baseUrl);
     if (params) {
       for (const [k, v] of Object.entries(params)) {
@@ -185,13 +191,15 @@ class MaimaiClient {
     try {
       // 工具执行面与调用方都没有外层超时：对端不应答即那轮对话永久挂住（与已修的 embedding-openai 同形）。
       // 时限连读响应体一起算：响应头到了、响应体卡住时同样超时
+      const timeout = AbortSignal.timeout(Math.max(1000, this.cfg.timeoutMs));
       resp = await fetch(url.toString(), {
         method: 'GET',
         headers,
-        signal: AbortSignal.timeout(Math.max(1000, this.cfg.timeoutMs)),
+        signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
       });
       text = await resp.text();
     } catch (err) {
+      signal?.throwIfAborted();
       // 超时或连不上：底层原因常在 cause 里（fetch 只说 fetch failed）
       const reason = err instanceof Error ? (err.cause instanceof Error ? err.cause : err).message : String(err);
       throw new TextError(t('unreachable', { reason }), { cause: err });
@@ -213,32 +221,35 @@ class MaimaiClient {
     return text as unknown as T;
   }
 
-  getPlayer(friendCode: number): Promise<MaiPlayer> {
-    return this.request<MaiPlayer>(`/api/v0/maimai/player/${friendCode}`);
+  getPlayer(friendCode: number, signal: AbortSignal | undefined): Promise<MaiPlayer> {
+    return this.request<MaiPlayer>(`/api/v0/maimai/player/${friendCode}`, signal);
   }
 
-  getPlayerByQQ(qq: number): Promise<MaiPlayer> {
-    return this.request<MaiPlayer>(`/api/v0/maimai/player/qq/${qq}`);
+  getPlayerByQQ(qq: number, signal: AbortSignal | undefined): Promise<MaiPlayer> {
+    return this.request<MaiPlayer>(`/api/v0/maimai/player/qq/${qq}`, signal);
   }
 
-  getBests(friendCode: number): Promise<MaiBests> {
-    return this.request<MaiBests>(`/api/v0/maimai/player/${friendCode}/bests`);
+  getBests(friendCode: number, signal: AbortSignal | undefined): Promise<MaiBests> {
+    return this.request<MaiBests>(`/api/v0/maimai/player/${friendCode}/bests`, signal);
   }
 
-  getApBests(friendCode: number): Promise<MaiBests> {
-    return this.request<MaiBests>(`/api/v0/maimai/player/${friendCode}/bests/ap`);
+  getApBests(friendCode: number, signal: AbortSignal | undefined): Promise<MaiBests> {
+    return this.request<MaiBests>(`/api/v0/maimai/player/${friendCode}/bests/ap`, signal);
   }
 
-  getRecents(friendCode: number): Promise<MaiScore[]> {
-    return this.request<MaiScore[]>(`/api/v0/maimai/player/${friendCode}/recents`);
+  getRecents(friendCode: number, signal: AbortSignal | undefined): Promise<MaiScore[]> {
+    return this.request<MaiScore[]>(`/api/v0/maimai/player/${friendCode}/recents`, signal);
   }
 
-  getSongList(): Promise<{ songs: MaiSong[] }> {
-    return this.request<{ songs: MaiSong[] }>(`/api/v0/maimai/song/list`, { notes: false });
+  getSongList(signal: AbortSignal | undefined): Promise<{ songs: MaiSong[] }> {
+    return this.request<{ songs: MaiSong[] }>(`/api/v0/maimai/song/list`, signal, { notes: false });
   }
 
-  getAliasList(): Promise<{ aliases: Array<{ song_id: number; aliases: string[] }> }> {
-    return this.request<{ aliases: Array<{ song_id: number; aliases: string[] }> }>(`/api/v0/maimai/alias/list`);
+  getAliasList(signal: AbortSignal | undefined): Promise<{ aliases: Array<{ song_id: number; aliases: string[] }> }> {
+    return this.request<{ aliases: Array<{ song_id: number; aliases: string[] }> }>(
+      `/api/v0/maimai/alias/list`,
+      signal,
+    );
   }
 }
 
@@ -304,9 +315,13 @@ function parseIntStrict(v: unknown): number | undefined {
   return undefined;
 }
 
-async function fetchPlayer(client: MaimaiClient, target: ResolveResult): Promise<MaiPlayer> {
-  if (target.friend_code) return client.getPlayer(target.friend_code);
-  if (target.qq) return client.getPlayerByQQ(target.qq);
+async function fetchPlayer(
+  client: MaimaiClient,
+  target: ResolveResult,
+  signal: AbortSignal | undefined,
+): Promise<MaiPlayer> {
+  if (target.friend_code) return client.getPlayer(target.friend_code, signal);
+  if (target.qq) return client.getPlayerByQQ(target.qq, signal);
   throw new TextError(t('noTarget'));
 }
 
@@ -376,11 +391,19 @@ interface SongIndex {
 
 const SONG_TTL_MS = 60 * 60 * 1000; // 1 小时
 
-async function loadSongIndex(client: MaimaiClient, cache: { ref: SongIndex | null }): Promise<SongIndex> {
+async function loadSongIndex(
+  client: MaimaiClient,
+  cache: { ref: SongIndex | null },
+  signal: AbortSignal | undefined,
+): Promise<SongIndex> {
   if (cache.ref && Date.now() - cache.ref.lastFetch < SONG_TTL_MS) return cache.ref;
   const [{ songs }, { aliases }] = await Promise.all([
-    client.getSongList(),
-    client.getAliasList().catch(() => ({ aliases: [] as Array<{ song_id: number; aliases: string[] }> })),
+    client.getSongList(signal),
+    // 别名取不到时按没有别名缓存曲库；中止不是取不到，不把缺了别名的曲库缓存一小时
+    client.getAliasList(signal).catch(() => {
+      signal?.throwIfAborted();
+      return { aliases: [] as Array<{ song_id: number; aliases: string[] }> };
+    }),
   ]);
   const aliasMap = new Map<number, string[]>();
   for (const a of aliases) aliasMap.set(a.song_id, a.aliases);
@@ -427,7 +450,7 @@ export default definePlugin({
   subsystem: 'skills',
   configSchema,
   uses,
-  apply({ tools, commands, memory, sessionManager, logger, config }) {
+  apply({ tools, commands, memory, sessionManager, logger, lifecycle, config }) {
     const cfg = parseConfig(configSchema, config.use, logger.use);
     if (!URL.canParse(cfg.baseUrl) || new URL(cfg.baseUrl).username || new URL(cfg.baseUrl).password) {
       throw configError(t('baseUrlNotPlain'));
@@ -538,7 +561,7 @@ export default definePlugin({
             },
           },
         },
-        handler: async args => toSource(await handleSearchSong(client, songCache, args)),
+        handler: async (args, callCtx) => toSource(await handleSearchSong(client, songCache, args, callCtx.signal)),
       });
 
       // 绑定好友码
@@ -580,11 +603,13 @@ export default definePlugin({
     // ===== 用户指令（同样的功能，文本入口） =====
     //
     // 设计：Agent 端走结构化原生工具；用户端走指令。两者共用 handle* 函数，指令把回复的文字对象原样交出。
+    // 指令的契约不带中止信号：查询接本插件这次激活的，停用、停机时随之停下
     if (cfg.enableCommands) {
       const callCtxOf = (argv: CommandArgv) => ({
         sessionId: argv.session.sessionId,
         userId: argv.session.userId,
         platform: argv.session.platform,
+        signal: lifecycle.use.signal,
       });
 
       // 裸敲 /maimai 回指令系统生成的用法（列出子指令）
@@ -623,7 +648,9 @@ export default definePlugin({
       commands.use
         .command('maimai.song <keyword:text>', t('songDescription'))
         .argument('keyword', t('songKeyword'))
-        .action(async (_argv, keyword) => handleSearchSong(client, songCache, { keyword, limit: 5 }));
+        .action(async (_argv, keyword) =>
+          handleSearchSong(client, songCache, { keyword, limit: 5 }, lifecycle.use.signal),
+        );
 
       commands.use
         .command('maimai.bind <code:string>', t('bindDescription'))
@@ -641,17 +668,25 @@ export default definePlugin({
 
 // ===== 处理函数（工具与指令共用） =====
 
+/** 查询的上下文：signal 是调用方的中止信号（工具是这次调用的，指令是本插件这次激活的），中止时回复带的是中止原因 */
+interface QueryContext {
+  sessionId: string;
+  userId?: string;
+  platform?: string;
+  signal?: AbortSignal;
+}
+
 async function handleGetPlayer(
   refs: TargetRefs,
   cfg: MaimaiConfig,
   client: MaimaiClient,
   args: Record<string, unknown>,
-  callCtx: { sessionId: string; userId?: string; platform?: string },
+  callCtx: QueryContext,
 ): Promise<TextRef> {
   const target = await resolveTarget(refs, cfg, callCtx, args);
   if (target.source === 'none') return target.hint!;
   try {
-    const player = await fetchPlayer(client, target);
+    const player = await fetchPlayer(client, target, callCtx.signal);
     return textLines([...hintLines(target), formatPlayer(player)]);
   } catch (err) {
     return t('queryFailed', { error: textOf(err) });
@@ -663,7 +698,7 @@ async function handleGetBests(
   cfg: MaimaiConfig,
   client: MaimaiClient,
   args: Record<string, unknown>,
-  callCtx: { sessionId: string; userId?: string; platform?: string },
+  callCtx: QueryContext,
 ): Promise<TextRef> {
   const target = await resolveTarget(refs, cfg, callCtx, args);
   if (target.source === 'none') return target.hint!;
@@ -671,13 +706,15 @@ async function handleGetBests(
   let friendCode = target.friend_code;
   try {
     if (!friendCode && target.qq) {
-      const p = await client.getPlayerByQQ(target.qq);
+      const p = await client.getPlayerByQQ(target.qq, callCtx.signal);
       friendCode = p.friend_code;
     }
     if (!friendCode) return t('noFriendCode');
     const apOnly = args.ap_only === true;
     const topN = parseIntStrict(args.top_n) ?? 50;
-    const bests = apOnly ? await client.getApBests(friendCode) : await client.getBests(friendCode);
+    const bests = apOnly
+      ? await client.getApBests(friendCode, callCtx.signal)
+      : await client.getBests(friendCode, callCtx.signal);
     return textLines([...hintLines(target), ...(apOnly ? [t('apBests')] : []), formatBests(bests, { topN })]);
   } catch (err) {
     return t('queryFailed', { error: textOf(err) });
@@ -689,19 +726,19 @@ async function handleGetRecents(
   cfg: MaimaiConfig,
   client: MaimaiClient,
   args: Record<string, unknown>,
-  callCtx: { sessionId: string; userId?: string; platform?: string },
+  callCtx: QueryContext,
 ): Promise<TextRef> {
   const target = await resolveTarget(refs, cfg, callCtx, args);
   if (target.source === 'none') return target.hint!;
   let friendCode = target.friend_code;
   try {
     if (!friendCode && target.qq) {
-      const p = await client.getPlayerByQQ(target.qq);
+      const p = await client.getPlayerByQQ(target.qq, callCtx.signal);
       friendCode = p.friend_code;
     }
     if (!friendCode) return t('noFriendCode');
     const limit = Math.min(50, Math.max(1, parseIntStrict(args.limit) ?? 10));
-    const scores = await client.getRecents(friendCode);
+    const scores = await client.getRecents(friendCode, callCtx.signal);
     return formatRecents(scores, limit);
   } catch (err) {
     return t('queryFailed', { error: textOf(err) });
@@ -712,12 +749,13 @@ async function handleSearchSong(
   client: MaimaiClient,
   cache: { ref: SongIndex | null },
   args: Record<string, unknown>,
+  signal: AbortSignal | undefined,
 ): Promise<TextRef> {
   const keyword = String(args.keyword ?? '').trim();
   if (!keyword) return t('noKeyword');
   const limit = Math.min(20, Math.max(1, parseIntStrict(args.limit) ?? 5));
   try {
-    const idx = await loadSongIndex(client, cache);
+    const idx = await loadSongIndex(client, cache, signal);
     const matches = searchSongs(idx, keyword, limit);
     if (matches.length === 0) return t('noSong', { keyword });
     // 各条之间空一行
