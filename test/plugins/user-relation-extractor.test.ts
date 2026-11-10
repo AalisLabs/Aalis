@@ -1,4 +1,4 @@
-import { App, events, logger, provide, services } from '@aalis/core';
+import { App, events, LogHub, lifecycle, logger, provide, services } from '@aalis/core';
 import { describe, expect, it, vi } from 'vitest';
 import { type ChatModelRequest, type ChatResponse, type LLMModel, llm } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
@@ -57,9 +57,9 @@ function makeFakeLLM(cannedResponse: string | ChatResponse[]): {
   return { model, calls, fail };
 }
 
-/** 宿主侧能力：provide 种桩服务，其余五样正是 RelationExtractor 声明要用的 */
+/** 宿主侧能力：provide 种桩服务，其余六样正是 RelationExtractor 声明要用的（lifecycle 是根激活的，停机时中止） */
 function bindHost(app: App) {
-  return app.bind({ provide, events, logger, memory, llm, persona });
+  return app.bind({ provide, events, logger, memory, llm, persona, lifecycle });
 }
 
 /** 直驱一轮提取（私有方法；插件不提供手动触发入口，生产上只由消息计数触发） */
@@ -737,6 +737,50 @@ describe('plugin-user-relation: extractor', () => {
     // 3. 消息行带 [sid:] 前缀（两个 session 都拉到了）
     expect(userContent).toContain('[sid:sessA]');
     expect(userContent).toContain('[sid:sessB]');
+  });
+});
+
+describe('plugin-user-relation: extractor 随停用中止', () => {
+  it('提取的模型调用途中停机：交给它的中止信号随之断开，不记提取失败', async () => {
+    const hub = new LogHub();
+    const warns: string[] = [];
+    hub.onEntry(entry => {
+      if (entry.level === 'warn') warns.push(entry.message);
+    });
+    const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+    const host = bindHost(app);
+    await app.plugins.register(memoryInMemory, {});
+    await app.plugins.idle();
+    const mem = app.bind({ services }).services.use.get(memory)!;
+    const service = new RelationService(new RelationStore(mem));
+    const calls: ChatModelRequest[] = [];
+    const chat = (req: ChatModelRequest) =>
+      new Promise<ChatResponse>((_, reject) => {
+        calls.push(req);
+        req.signal?.addEventListener('abort', () => reject(req.signal?.reason), { once: true });
+      });
+    host.provide.use(llm, { id: 'fake-extractor', contextLength: 8000, capabilities: ['chat'], chat } as never, {
+      entryId: 'fake/extractor',
+    });
+    new RelationExtractor(host, service, {
+      ...EXTRACTOR_DEFAULTS,
+      triggerEveryNMessages: 1,
+      readWindowSize: 10,
+      mode: 'incremental',
+      senderNeighborhoodEdgeLimit: 0,
+      disableThinking: true,
+      debug: false,
+    }).start();
+    await mem.saveMessage('sess-stop', mkUserMsg('m1', 'u1', '我喜欢猫', '甲'));
+    await host.events.use.emit('inbound:message:archived', {
+      sessionId: 'sess-stop',
+      incoming: { userId: 'u1', platform: 'onebot' } as IncomingMessage,
+    } as never);
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    await app.stop();
+    expect(calls[0].signal?.aborted).toBe(true);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(warns.filter(line => line.includes('提取失败'))).toEqual([]);
   });
 });
 

@@ -30,7 +30,7 @@ import { sessionFields } from '@aalis/api-session-settings';
 import { tools } from '@aalis/api-tools';
 import { userRelation } from '@aalis/api-user-relation';
 import { webuiServer } from '@aalis/api-webui';
-import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { textOf } from '@aalis/schema-i18n';
 import { type EvictionConfig, registerRelationCommands } from './commands.js';
@@ -443,7 +443,14 @@ function start(caps: Caps): void {
   const triggerEveryN = cfg.triggerEveryNMessages;
   if (extractionEnabled && triggerEveryN > 0) {
     const extractor = new RelationExtractor(
-      { events: caps.events, logger: caps.logger, memory: caps.memory, llm: caps.llm, persona: caps.persona },
+      {
+        events: caps.events,
+        logger: caps.logger,
+        memory: caps.memory,
+        llm: caps.llm,
+        persona: caps.persona,
+        lifecycle: caps.lifecycle,
+      },
       service,
       {
         triggerEveryNMessages: triggerEveryN,
@@ -613,6 +620,7 @@ export * from './types.js';
 const uses = {
   memory,
   logger,
+  lifecycle,
   config,
   events,
   hooks,

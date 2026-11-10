@@ -27,7 +27,7 @@ import {
 } from '@aalis/api-llm';
 import type { MemoryService, RecentMessageRecord } from '@aalis/api-memory';
 import type { PersonaService } from '@aalis/api-persona';
-import type { Events, Logger, ServiceSelection } from '@aalis/core';
+import type { Events, LifecycleCap, Logger, ServiceSelection } from '@aalis/core';
 import type { Message } from '@aalis/schema-message';
 import { DIRECTIVE_KINDS, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { parseLLMJsonObject } from '@aalis/util-json-repair';
@@ -295,6 +295,8 @@ export interface ExtractorCaps {
   llm: ServiceSelection<LLMModel>;
   /** 提取提示里机器人的称呼取人设名；缺席时用中性称呼 */
   persona: ServiceSelection<PersonaService>;
+  /** 本插件这次激活：提取的模型调用接它的中止信号，停用、停机时随之停下 */
+  lifecycle: ServiceSelection<LifecycleCap>;
 }
 
 export class RelationExtractor {
@@ -330,6 +332,8 @@ export class RelationExtractor {
         return;
       }
       void this.extractSession(sessionId).catch(err => {
+        // 停用、停机时中止不是提取失败：不退避、不告警
+        if (this.caps.lifecycle.use.signal.aborted) return;
         const penalty = Math.min((this.backoff.get(sessionId)?.penalty ?? 1) * 2, MAX_BACKOFF_PENALTY);
         this.backoff.set(sessionId, { penalty, skip: penalty - 1 });
         // warn 频率随重试几何变疏，自带节流不会刷屏
@@ -443,7 +447,8 @@ export class RelationExtractor {
         { crossSession, currentSessionId: sessionId, botName },
       );
 
-      const first = await callLLM(modelEntry.use, promptMessages, this.cfg.disableThinking);
+      const { signal } = this.caps.lifecycle.use;
+      const first = await callLLM(modelEntry.use, promptMessages, this.cfg.disableThinking, signal);
       // LLM 往返成功即视为下游恢复，清除退避——解析失败走下面的带内重试，不计入惩罚
       this.backoff.delete(sessionId);
       let result = readExtraction(first);
@@ -465,7 +470,7 @@ export class RelationExtractor {
               '就输出 `{"persons":[],"events":[],"entities":[],"personEventEdges":[],"personEntityEdges":[],"personPersonEdges":[],"eventEventEdges":[],"eventEntityEdges":[],"entityEntityEdges":[]}`。',
           } as Message,
         ];
-        const retry = await callLLM(modelEntry.use, retryMessages, this.cfg.disableThinking);
+        const retry = await callLLM(modelEntry.use, retryMessages, this.cfg.disableThinking, signal);
         result = readExtraction(retry);
         if (result.kind === 'parse-error') {
           this.caps.logger.use.warn(
@@ -1584,11 +1589,13 @@ async function callLLM(
   model: LLMModel,
   messages: Message[],
   disableThinking: boolean,
+  signal: AbortSignal,
 ): Promise<{ text: string; finishReason: ChatResponse['finishReason'] }> {
   const resp = await model.chat({
     messages,
     temperature: 0,
     think: disableThinking ? lightestThinking(model) : undefined,
+    signal,
   });
   const text = typeof resp.content === 'string' ? resp.content : JSON.stringify(resp.content);
   return { text, finishReason: resp.finishReason };

@@ -11,7 +11,7 @@ import { persona } from '../../packages/api-persona/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { type VectorSearchResult, vectorstore } from '../../packages/api-vectorstore/src/index.js';
-import { App, events, logger, provide } from '../../packages/core/src/index.js';
+import { App, events, lifecycle, logger, provide } from '../../packages/core/src/index.js';
 import { t as onebotText } from '../../packages/plugin-adapter-onebot/src/texts.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
@@ -391,7 +391,7 @@ const RELATION_CFG = {
 
 async function setupRelation(cfg: Partial<ExtractorConfig> = {}) {
   const app = newApp();
-  const host = app.bind({ provide, events, logger, memory, llm, persona });
+  const host = app.bind({ provide, events, logger, memory, llm, persona, lifecycle });
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();
   const mem = host.memory.use;
