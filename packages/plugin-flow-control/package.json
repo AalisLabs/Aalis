@@ -57,10 +57,10 @@
         "hooks",
         "lifecycle",
         "logger",
-        "provide"
+        "provide",
+        "storage"
       ],
       "optional": [
-        "storage",
         "message-archive",
         "session-manager",
         "session-settings",

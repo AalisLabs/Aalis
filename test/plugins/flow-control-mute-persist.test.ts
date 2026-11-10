@@ -3,9 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type FlowControlService, flowControl } from '../../packages/api-flow-control/src/index.js';
-import { gateway, INBOUND_PHASE } from '../../packages/api-gateway/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { App, definePlugin, events, optional, provide, services } from '../../packages/core/src/index.js';
+import { App, definePlugin, lifecycle, optional, provide, services } from '../../packages/core/src/index.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
@@ -14,15 +13,13 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/memory-storage.js';
 
 // ════════════════════════════════════════════════════════════
-// 禁言表持久化跟随 storage 上线：storage 是 optional，不参与激活拓扑，按字母序整批登记时
-// flow-control 先于 storage-local 激活。曾经只在 apply 里读一次：那一刻没有 storage，
-// 读失败被当成空表，之后第一次 setMuted 整表写回，磁盘上只剩这一次写入的会话。
+// 禁言表持久化：storage 是 required，激活时读回整表，禁言改动整表写回；storage 下线时本插件随之停下，重新上线后重新读回。
 // 真 storage-local 多根（用户根 workspace 在前、内置根 data 在后，映射到数据目录的 state/），禁言表落在 data 根。
 // ════════════════════════════════════════════════════════════
 
 const MUTES = 'flow-control-mutes.json';
 
-describe('flow-control 禁言表：storage 晚于本插件上线', () => {
+describe('flow-control 禁言表持久化', () => {
   let base: string;
   let app: App;
 
@@ -62,7 +59,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
     return svc;
   };
 
-  /** 登记了 data 根的 storage 实例：用例替换它的 writeFile 来控制写盘的快慢与成败 */
+  /** 登记了 data 根的 storage 实例：用例替换它的 writeFile 来控制写盘的快慢 */
   const dataRootOf = () => {
     const root = app
       .bind({ services })
@@ -74,20 +71,13 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
   };
 
   const URI = `data:/${MUTES}`;
-  /** 内存 storage 提供者，禁言表初始为 content：hold 写 / 读时挂住，entered 通知调用已到达 */
-  const provider = (name: string, content: string) => {
-    const mem = memoryStorage({ [URI]: content });
-    const hold = { write: undefined as Promise<void> | undefined, read: undefined as Promise<void> | undefined };
-    const entered = { write: () => {}, read: () => {} };
+  /** 内存 storage，禁言表初始为空表：hold 写时阻塞，entered 通知写已到达 */
+  const provider = () => {
+    const mem = memoryStorage({ [URI]: '{}' });
+    const hold = { write: undefined as Promise<void> | undefined };
+    const entered = { write: () => {} };
     const service = {
       ...mem.service,
-      async readFile(uri: string) {
-        if (hold.read) {
-          entered.read();
-          await hold.read;
-        }
-        return mem.service.readFile(uri);
-      },
       async writeFile(uri: string, data: string | Buffer) {
         if (hold.write) {
           entered.write();
@@ -96,15 +86,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
         return mem.service.writeFile(uri, data);
       },
     };
-    const definition = definePlugin({
-      name,
-      provides: [storage],
-      uses: { provide },
-      apply(caps) {
-        caps.provide.use(storage, service as never);
-      },
-    });
-    return { definition, service, files: mem.files, hold, entered };
+    return { service, files: mem.files, hold, entered };
   };
   const gate = () => {
     let open!: () => void;
@@ -131,7 +113,27 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
     expect(svcOf().isMuted('zz-old')).toBe(true);
   });
 
-  it('拆卸时仍有写在排队：等写链落完再清表，磁盘保留全部会话', async () => {
+  it('storage 下线：本插件随之停下、不再提供服务；重新上线后重新激活，从文件读回禁言', async () => {
+    app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
+    provideHostPaths(app, base);
+    await app.pluginAll([storageLocal(), { definition: gatewayPlugin, config: {} }]);
+    await app.plugin(flowControlPlugin, {});
+    await app.plugins.idle();
+    svcOf().setMuted('zz-a', 600, 'onebot');
+
+    await app.plugins.disable('@aalis/plugin-storage-local');
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('@aalis/plugin-flow-control')?.state).toBe('pending');
+    expect(app.bind({ services }).services.use.get(flowControl), 'storage 下线后流控仍在提供服务').toBeUndefined();
+
+    await app.plugins.enable('@aalis/plugin-storage-local');
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('@aalis/plugin-flow-control')?.state).toBe('active');
+    expect(svcOf().isMuted('zz-a'), '重新激活后没有从文件读回禁言').toBe(true);
+  });
+
+  it('拆卸时仍有写在排队：等写链落完，磁盘保留全部会话', async () => {
     writeFileSync(
       join(base, 'state', MUTES),
       JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: Date.now() + 3600_000 } }),
@@ -162,10 +164,59 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
     expect(Object.keys(readMutes()).sort()).toEqual(['zz-a', 'zz-b', 'zz-old']);
   });
 
-  // storage 的提供者经 optional 依赖又用到 flow-control（如 optional 用 storage 与 flow-control 的平台适配器）时两者成环，
-  // 关停先放行环内的收尾，后登记的 storage 可能先关完、撤下服务，flow-control 清理时它已不在
-  it('storage 提供者与 flow-control 经 optional 依赖成环且先关：停机前排着的禁言照样写进 storage', async () => {
-    const p = provider('zz-storage', '{}');
+  // 宿主（根激活）用着 flow-control 时，根的收尾排在它关闭之前：flow-control 收尾完之后、撤回之前的空档里，先登记的插件照
+  // 自然次序收尾，经 services 现查到它调 setMuted，这笔写排在收尾的等待之后。清理也要等它落完（storage 等本插件关完才收尾）
+  it('收尾之后、撤回之前才排上的写：清理等它落完，停机返回时已写进 storage', async () => {
+    const p = provider();
+    app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
+    await app.plugin(
+      definePlugin({
+        name: 'zz-late-caller',
+        uses: { services, lifecycle },
+        apply({ services, lifecycle }) {
+          lifecycle.use.onDrain(() => {
+            services.use.get(flowControl)?.setMuted('zz-late', 600, 'onebot');
+          });
+        },
+      }),
+    );
+    await app.plugin(
+      definePlugin({
+        name: 'zz-storage',
+        provides: [storage],
+        uses: { provide },
+        apply({ provide }) {
+          provide.use(storage, p.service as never);
+        },
+      }),
+    );
+    await app.pluginAll([
+      { definition: gatewayPlugin, config: {} },
+      { definition: flowControlPlugin, config: {} },
+    ]);
+    await app.plugins.idle();
+    app.bind({ fc: flowControl });
+
+    const g = gate();
+    p.hold.write = g.promise;
+    const entered = new Promise<void>(r => (p.entered.write = r));
+    let stopped = false;
+    const stopping = app.stop().then(() => {
+      stopped = true;
+    });
+    await entered;
+    for (let i = 0; i < 3; i++) await new Promise(r => setImmediate(r));
+    expect(stopped, '这笔写还没落定，停机就返回了').toBe(false);
+    g.open();
+    await stopping;
+    expect(Object.keys(JSON.parse(p.files.get(URI) ?? '{}'))).toEqual(['zz-late']);
+  });
+
+  // storage 的提供者经 optional 依赖又用到 flow-control（如 optional 用 storage 与 flow-control 的平台适配器）时两者成环：
+  // 关停只放行被 optional 边挡着的收尾，flow-control 经 required 边照样整个关完 storage 才收尾
+  it('storage 提供者与 flow-control 经 optional 依赖成环：停机前排着的禁言照样写进 storage', async () => {
+    const p = provider();
     app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     await app.plugin(flowControlPlugin, {});
@@ -212,272 +263,11 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
     await app.plugins.idle();
     const svc = svcOf();
 
-    await expect.poll(() => svc.isMuted('zz-old'), { timeout: 2000 }).toBe(true);
+    expect(svc.isMuted('zz-old')).toBe(true);
 
     svc.setMuted('zz-new', 600, 'onebot');
     await expect.poll(() => Object.keys(readMutes()).sort(), { timeout: 2000 }).toEqual(['zz-new', 'zz-old']);
     expect(readMutes()['zz-old'].mutedUntil).toBe(until);
-  });
-
-  it('storage 上线后读回完成前就 setMuted：写盘等读回合并完，磁盘仍保留原有会话', async () => {
-    const until = Date.now() + 3600_000;
-    writeFileSync(join(base, 'state', MUTES), JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: until } }));
-
-    app = new App({ name: 'T', logLevel: 'error' });
-    await registerHubs(app);
-    provideHostPaths(app, base);
-    await app.plugin(gatewayPlugin, {});
-    await app.plugin(flowControlPlugin, {});
-    await app.plugins.idle();
-    const svc = svcOf();
-
-    await app.pluginAll([storageLocal()]);
-    // 不等读回：storage 刚上线，follow 补读还在飞
-    svc.setMuted('zz-new', 600, 'onebot');
-    await expect.poll(() => svc.isMuted('zz-old'), { timeout: 2000 }).toBe(true);
-    await expect.poll(() => Object.keys(readMutes()).sort(), { timeout: 2000 }).toEqual(['zz-new', 'zz-old']);
-  });
-
-  it('storage 上线后读回完成前的入站消息：等读回再判禁言，已禁言会话照样被吞', async () => {
-    writeFileSync(
-      join(base, 'state', MUTES),
-      JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: Date.now() + 3600_000 } }),
-    );
-
-    app = new App({ name: 'T', logLevel: 'error' });
-    await registerHubs(app);
-    provideHostPaths(app, base);
-    await app.plugin(gatewayPlugin, {});
-    await app.plugin(flowControlPlugin, {});
-    await app.plugins.idle();
-    const host = app.bind({ events, gateway });
-    let flowPassed: boolean | undefined;
-    host.events.use.on('gateway:phase:done', d => {
-      if (d.phase === INBOUND_PHASE.FLOW) flowPassed = d.reachedEnd;
-    });
-
-    await app.pluginAll([storageLocal()]);
-    // 不等读回：storage 刚上线，follow 补读还在飞
-    await host.gateway.use.ingressMessage({
-      content: 'hi',
-      sessionId: 'zz-old',
-      platform: 'onebot',
-      sessionType: 'group',
-      groupId: 'g1',
-      userId: 'u1',
-    });
-    expect(flowPassed, '禁言表读回前放行了已禁言会话的消息').toBe(false);
-  });
-
-  it('读回前 setMuted 过的会话以内存为准', async () => {
-    const soon = Date.now() + 60_000;
-    writeFileSync(
-      join(base, 'state', MUTES),
-      JSON.stringify({
-        'zz-a': { platform: 'onebot', mutedUntil: soon },
-        'zz-b': { platform: 'onebot', mutedUntil: soon },
-      }),
-    );
-
-    app = new App({ name: 'T', logLevel: 'error' });
-    await registerHubs(app);
-    provideHostPaths(app, base);
-    await app.plugin(gatewayPlugin, {});
-    await app.plugin(flowControlPlugin, {});
-    await app.plugins.idle();
-    const svc = svcOf();
-    // storage 尚未上线：这次禁言只在内存里（写盘失败只记 warn）
-    const mutedAt = Date.now();
-    svc.setMuted('zz-a', 3600, 'onebot');
-
-    await app.pluginAll([storageLocal()]);
-    await app.plugins.idle();
-
-    await expect.poll(() => svc.isMuted('zz-b'), { timeout: 2000 }).toBe(true);
-    // 服务只回答是否禁言：再禁言一个会话触发整表落盘，从盘上读合并后的到期时刻
-    svc.setMuted('zz-c', 600, 'onebot');
-    await expect.poll(() => Object.keys(readMutes()).sort(), { timeout: 2000 }).toEqual(['zz-a', 'zz-b', 'zz-c']);
-    expect(readMutes()['zz-a'].mutedUntil, '内存里较晚的禁言被磁盘上较早的值盖掉').toBeGreaterThanOrEqual(
-      mutedAt + 3600_000,
-    );
-  });
-
-  it('storage 离线期间解禁：恢复后重读不把文件里的旧禁言撤回，并补写落盘', async () => {
-    writeFileSync(
-      join(base, 'state', MUTES),
-      JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: Date.now() + 3600_000 } }),
-    );
-    app = new App({ name: 'T', logLevel: 'error' });
-    await registerHubs(app);
-    provideHostPaths(app, base);
-    await app.pluginAll([storageLocal(), { definition: gatewayPlugin, config: {} }]);
-    await app.plugin(flowControlPlugin, {});
-    await app.plugins.idle();
-    const svc = svcOf();
-    expect(svc.isMuted('zz-old')).toBe(true);
-
-    await app.plugins.disable('@aalis/plugin-storage-local');
-    await app.plugins.idle();
-    svc.setMuted('zz-old', 0); // 写盘失败，只在内存生效
-    expect(svc.isMuted('zz-old')).toBe(false);
-
-    await app.plugins.enable('@aalis/plugin-storage-local');
-    await app.plugins.idle();
-    await expect.poll(() => Object.keys(readMutes()), { timeout: 2000 }).toEqual([]);
-    expect(svc.isMuted('zz-old'), '重读按文件恢复了旧禁言').toBe(false);
-  });
-
-  it('写盘在飞时又解禁、下一次写盘失败：成功的那次只清它快照以内的改动，重读不恢复旧禁言', async () => {
-    writeFileSync(
-      join(base, 'state', MUTES),
-      JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: Date.now() + 3600_000 } }),
-    );
-    app = new App({ name: 'T', logLevel: 'error' });
-    await registerHubs(app);
-    provideHostPaths(app, base);
-    await app.pluginAll([storageLocal(), { definition: gatewayPlugin, config: {} }]);
-    await app.plugin(flowControlPlugin, {});
-    await app.plugins.idle();
-    const svc = svcOf();
-    // 第一次写挂住直到放行，第二次写失败
-    const dataRoot = dataRootOf();
-    const write = dataRoot.writeFile.bind(dataRoot);
-    let writes = 0;
-    let entered!: () => void;
-    const firstEntered = new Promise<void>(r => (entered = r));
-    let release!: () => void;
-    const held = new Promise<void>(r => (release = r));
-    dataRoot.writeFile = async (...args: Parameters<typeof write>) => {
-      writes++;
-      if (writes === 1) {
-        entered();
-        await held;
-      } else if (writes === 2) {
-        throw new Error('zz 写盘失败');
-      }
-      return write(...args);
-    };
-
-    svc.setMuted('zz-a', 600, 'onebot');
-    await firstEntered; // 这次写的快照已取好，zz-old 在里面仍是禁言
-    svc.setMuted('zz-old', 0);
-    release();
-    await expect.poll(() => writes).toBe(2);
-    expect(Object.keys(readMutes()).sort(), '前提：文件里 zz-old 仍是旧禁言').toEqual(['zz-a', 'zz-old']);
-
-    await app.plugins.disable('@aalis/plugin-storage-local');
-    await app.plugins.enable('@aalis/plugin-storage-local');
-    await app.plugins.idle();
-    await expect.poll(() => Object.keys(readMutes()), { timeout: 2000 }).toEqual(['zz-a']);
-    expect(svc.isMuted('zz-old'), '重读按文件恢复了旧禁言').toBe(false);
-  });
-
-  it('写盘在飞时 storage 换人重读：旧 storage 的写先落、新 storage 的读后到，解禁不被撤回并补写到新 storage', async () => {
-    const old = JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: Date.now() + 3600_000 } });
-    const p1 = provider('zz-storage-1', old);
-    const p2 = provider('zz-storage-2', old);
-
-    app = new App({ name: 'T', logLevel: 'error' });
-    await registerHubs(app);
-    await app.pluginAll([{ definition: p1.definition }, { definition: gatewayPlugin, config: {} }]);
-    await app.plugin(flowControlPlugin, {});
-    await app.plugins.idle();
-    const svc = svcOf();
-    expect(svc.isMuted('zz-old')).toBe(true);
-
-    // 解禁：写 p1 挂住
-    const write = gate();
-    const writeEntered = gate();
-    p1.hold.write = write.promise;
-    p1.entered.write = writeEntered.open;
-    svc.setMuted('zz-old', 0);
-    await writeEntered.promise;
-
-    // 换人：p2 上线、p1 下线，follow 重读 p2，读挂住
-    const read = gate();
-    const readEntered = gate();
-    p2.hold.read = read.promise;
-    p2.entered.read = readEntered.open;
-    await app.plugins.register(p2.definition);
-    await app.plugins.unload('zz-storage-1');
-    await app.plugins.idle();
-    await readEntered.promise;
-
-    // 旧写先落（等它写完后的收尾跑完），新读后到
-    write.open();
-    await expect.poll(() => p1.files.get(URI)).toBe('{}');
-    await new Promise(r => setTimeout(r, 0));
-    read.open();
-
-    await expect.poll(() => p2.files.get(URI), { timeout: 2000 }).toBe('{}');
-    expect(svc.isMuted('zz-old'), '解禁被新 storage 文件里的旧禁言撤回').toBe(false);
-  });
-
-  it('写链等读回期间 storage 又换人重读：接着等新 storage 读回再写整表，不冲掉它文件里的其它会话', async () => {
-    const p1 = provider('zz-storage-1', '{}');
-    const p2 = provider(
-      'zz-storage-2',
-      JSON.stringify({ 'zz-other': { platform: 'onebot', mutedUntil: Date.now() + 3600_000 } }),
-    );
-
-    app = new App({ name: 'T', logLevel: 'error' });
-    await registerHubs(app);
-    await app.plugin(gatewayPlugin, {});
-    await app.plugin(flowControlPlugin, {});
-    await app.plugins.idle();
-    const svc = svcOf();
-
-    // p1 上线，follow 读 p1 挂住
-    const read1 = gate();
-    const read1Entered = gate();
-    p1.hold.read = read1.promise;
-    p1.entered.read = read1Entered.open;
-    await app.plugins.register(p1.definition);
-    await app.plugins.idle();
-    await read1Entered.promise;
-
-    // 读在飞时禁言：写链这一步等 p1 读回
-    svc.setMuted('zz-new', 3600, 'onebot');
-
-    // 换人：p2 上线、p1 下线，follow 重读 p2，读挂住
-    const read2 = gate();
-    const read2Entered = gate();
-    p2.hold.read = read2.promise;
-    p2.entered.read = read2Entered.open;
-    await app.plugins.register(p2.definition);
-    await app.plugins.unload('zz-storage-1');
-    await app.plugins.idle();
-    await read2Entered.promise;
-
-    // p1 先读回（等写链醒来后的动作跑完），p2 后读回
-    read1.open();
-    await new Promise(r => setTimeout(r, 0));
-    read2.open();
-
-    await expect
-      .poll(() => Object.keys(JSON.parse(p2.files.get(URI) ?? '{}')).sort(), { timeout: 2000 })
-      .toEqual(['zz-new', 'zz-other']);
-    expect(svc.isMuted('zz-other'), '新 storage 文件里的禁言被整表写冲掉').toBe(true);
-  });
-
-  it('storage 晚上线、读回前解禁尚无状态的会话：读回不恢复它的旧禁言', async () => {
-    writeFileSync(
-      join(base, 'state', MUTES),
-      JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: Date.now() + 3600_000 } }),
-    );
-    app = new App({ name: 'T', logLevel: 'error' });
-    await registerHubs(app);
-    provideHostPaths(app, base);
-    await app.plugin(gatewayPlugin, {});
-    await app.plugin(flowControlPlugin, {});
-    await app.plugins.idle();
-    const svc = svcOf();
-    svc.setMuted('zz-old', 0);
-
-    await app.pluginAll([storageLocal()]);
-    await app.plugins.idle();
-    await expect.poll(() => Object.keys(readMutes()), { timeout: 2000 }).toEqual([]);
-    expect(svc.isMuted('zz-old'), '读回按文件恢复了旧禁言').toBe(false);
   });
 
   // ════════════════════════════════════════════════════════════
@@ -493,9 +283,8 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
       app = new App({ name: 'T', logLevel: 'error' });
       await registerHubs(app);
       provideHostPaths(app, base);
-      await app.pluginAll([storageLocal()]);
-      await app.plugins.idle();
       await app.pluginAll([
+        storageLocal(),
         { definition: gatewayPlugin, config: {} },
         { definition: flowControlPlugin, config: {} },
       ]);
@@ -533,26 +322,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
       },
     );
 
-    it('storage 晚于本插件上线、文件损坏：follow 读回判为读不懂，setMuted 不覆盖原文件', async () => {
-      const broken = '{"zz-old":{"platform":"onebot"';
-      writeFileSync(mutesPath(), broken);
-
-      app = new App({ name: 'T', logLevel: 'error' });
-      await registerHubs(app);
-      provideHostPaths(app, base);
-      await app.plugin(gatewayPlugin, {});
-      await app.plugin(flowControlPlugin, {});
-      await app.plugins.idle();
-      await app.pluginAll([storageLocal()]);
-      await app.plugins.idle();
-
-      svcOf().setMuted('zz-new', 600, 'onebot');
-      await settle();
-
-      expect(readFileSync(mutesPath(), 'utf-8')).toBe(broken);
-    });
-
-    it('读失败后 storage 换人重读成功：恢复落盘', async () => {
+    it('读失败后 storage 重载、重读成功：恢复落盘', async () => {
       const broken = '{"zz-old":';
       writeFileSync(mutesPath(), broken);
       await bootStorageFirst();
@@ -561,7 +331,7 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
       await settle();
       expect(readFileSync(mutesPath(), 'utf-8')).toBe(broken);
 
-      // 修好文件后 storage 重载：follow 重读，失败标记须按这次读取重新判定
+      // 修好文件后 storage 重载：本插件随之重新激活、重读，失败标记按这次读取重新判定
       writeFileSync(
         mutesPath(),
         JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: Date.now() + 3600_000 } }),

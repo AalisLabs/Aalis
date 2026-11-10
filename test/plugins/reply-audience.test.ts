@@ -10,12 +10,14 @@ import {
 } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { SessionTypeDecl } from '../../packages/api-platform/src/index.js';
+import { storage } from '../../packages/api-storage/src/index.js';
 import { type App, definePlugin, provide } from '../../packages/core/src/index.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { storedRoom } from '../fixtures/rooms.js';
 import { ONEBOT_TYPES, startSettings } from '../fixtures/session-settings.js';
 
@@ -82,6 +84,16 @@ function recordingAgent(received: IncomingMessage[]) {
   });
 }
 
+/** 流控的禁言表落盘用：内存 storage */
+const storagePlugin = definePlugin({
+  name: 'zz-storage',
+  provides: [storage],
+  uses: { provide },
+  apply: ({ provide }) => {
+    provide.use(storage, memoryStorage(new Map()));
+  },
+});
+
 /** 在指令相位记下网关给的 data.chat（每条入站一项） */
 function chatProbe(seen: Array<InboundPhaseData['chat']>) {
   return definePlugin({
@@ -117,7 +129,7 @@ async function setup({
     doc,
     stored: Object.fromEntries(rooms.map(id => [id, storedRoom(id)])),
     adapters: types ? [{ platform: 'onebot', sessionTypes: types, canHandle: async () => true }] : [],
-    first: [gatewayPlugin, recordingAgent(received)],
+    first: [gatewayPlugin, recordingAgent(received), storagePlugin],
     plugins: [flowControlPlugin, triggerPolicyPlugin, ...extra],
   });
   apps.push(started.app);

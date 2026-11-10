@@ -8,6 +8,7 @@ import { type ChatModelRequest, type LLMModel, llm } from '../../packages/api-ll
 import { memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { persona } from '../../packages/api-persona/src/index.js';
+import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { type VectorSearchResult, vectorstore } from '../../packages/api-vectorstore/src/index.js';
 import { App, events, logger, provide } from '../../packages/core/src/index.js';
@@ -37,6 +38,7 @@ import {
   WellKnownMetadataKeys,
 } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { inputFromLastUser } from '../fixtures/turn-input.js';
 
 // ════════════════════════════════════════════════════════════
@@ -227,6 +229,7 @@ describe('message-archive：宿主通知归档', () => {
     await app.plugin(memoryInMemory);
     await app.plugin(messageArchivePlugin, { debugLogs: false });
     const host = app.bind({ provide, gateway, flowControl, memory });
+    host.provide.use(storage, memoryStorage(new Map()));
     const reached: IncomingMessage[] = [];
     host.provide.use(agent, {
       abort: () => false,

@@ -97,7 +97,7 @@ interface SetupOptions {
   autoReply?: (msg: IncomingMessage) => boolean;
   /** 提供 message-archive：收集影子归档的消息 */
   archived?: IncomingMessage[];
-  /** 提供内存 data 根存储（禁言落盘）；同一个 Map 传给下一个 App 即模拟重启 */
+  /** 内存 data 根存储（禁言落盘）的文件表，缺省为空；同一个 Map 传给下一个 App 即模拟重启 */
   files?: Map<string, string>;
   /** agent 收到消息后先等它（模拟回合在途） */
   hold?: (msg: IncomingMessage) => Promise<void>;
@@ -170,7 +170,7 @@ async function setup(opts: SetupOptions = {}): Promise<Harness> {
       },
     } as never);
   }
-  if (opts.files) host.provide.use(storage, memoryStorage(opts.files));
+  host.provide.use(storage, memoryStorage(opts.files ?? new Map()));
   if (opts.rooms) {
     host.provide.use(memory, fakeMemory(Object.fromEntries(opts.rooms.map(id => [id, storedRoom(id)]))) as never);
     await app.plugins.register(sessionManagerPlugin, {});

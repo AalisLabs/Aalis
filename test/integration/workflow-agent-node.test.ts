@@ -55,6 +55,7 @@ async function boot() {
     await app.plugin(plugin, {});
   }
   await app.plugin(messageArchivePlugin, { debugLogs: false });
+  app.bind({ provide }).provide.use(storage, memoryStorage(new Map()));
   await app.plugin(flowControlPlugin, {});
   await app.plugins.idle();
   for (const plugin of [gatewayPlugin, agentPlugin, flowControlPlugin]) {
@@ -115,7 +116,6 @@ describe('编排的 agent 节点经网关送达', () => {
 
   it('经 workflow_run 调起、agent 节点指向调用者所在的会话：立即失败，不送达', async () => {
     const s = await boot();
-    s.app.bind({ provide }).provide.use(storage, memoryStorage(new Map()));
     await s.app.plugin(cronEnginePlugin, {});
     await s.app.plugin(workflowPlugin, {});
     await s.app.plugins.idle();

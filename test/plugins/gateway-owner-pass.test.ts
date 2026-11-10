@@ -7,6 +7,7 @@ import { flowControl } from '../../packages/api-flow-control/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { storage } from '../../packages/api-storage/src/index.js';
 import { App, events, type LogEntry, LogHub, type PluginDefinition, provide } from '../../packages/core/src/index.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
@@ -15,6 +16,7 @@ import layaPlugin from '../../packages/plugin-trigger-laya/src/index.js';
 import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { storedRoom } from '../fixtures/rooms.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
 
@@ -24,7 +26,7 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 //
 // 经真实插件（gateway + session-manager + flow-control + 触发插件）走入站相位链；规则版（trigger-policy）与
 // Laya 版各一遍，生效范围的四个取值同时下发给触发插件与流控。agent 是记录型假件，每条都回复（回复经网关出站，
-// 流控按生效范围记冷却与限速）；authority 只给 owner 谓词；Laya 的侧车是本地假服务，判定恒为不开口；memory 是内存替身。
+// 流控按生效范围记冷却与限速）；authority 只给 owner 谓词；Laya 的侧车是本地假服务，判定恒为不开口；memory 与 storage 是内存替身。
 // 触发插件配成未点名的消息一律不开口、带禁言关键词，流控配成回复后冷却并限速一次：走了相位的消息会被吞。
 // ════════════════════════════════════════════════════════════
 
@@ -162,6 +164,7 @@ async function setup(opts: SetupOptions) {
     ...fakeMemory(Object.fromEntries(rooms.map(id => [id, storedRoom(id)]))),
     getFullHistory: async () => [],
   } as never);
+  host.provide.use(storage, memoryStorage(new Map()));
   if (!opts.noAuthority) {
     host.provide.use(authority, {
       isOwner: (platform: string, userId?: string) => platform === 'onebot' && userId === OWNER,

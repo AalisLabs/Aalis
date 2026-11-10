@@ -750,7 +750,12 @@ describe('能停下一轮的', () => {
   });
 
   it('禁言：点名她之后、生成期间 setMuted(>0)，这一轮不外发、不落库回复，结局为 aborted，排着的不开轮；setMuted(0) 不停', async () => {
-    const s = await boot({ after: app => app.plugin(flowControlPlugin, {}).then(() => undefined) });
+    const s = await boot({
+      after: async app => {
+        app.bind({ provide }).provide.use(storage, memoryStorage(new Map()));
+        await app.plugin(flowControlPlugin, {});
+      },
+    });
     const flow = s.app.bind({ flowControl }).flowControl.use;
     const held = s.model.hold(1);
     const a = s.say(GROUP_FREE, '<甲>', { triggerType: 'immediate' });

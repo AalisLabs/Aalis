@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { flowControl } from '../../packages/api-flow-control/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { resolveFields } from '../../packages/api-session-settings/src/index.js';
+import { storage } from '../../packages/api-storage/src/index.js';
 import { App, events, provide, services } from '../../packages/core/src/index.js';
 import { configSchema, type FlowControlSettings } from '../../packages/plugin-flow-control/src/config.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
@@ -13,6 +14,7 @@ import {
 } from '../../packages/plugin-flow-control/src/state.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { recordRoom } from '../fixtures/rooms.js';
 import { fakeMemory } from '../fixtures/session-memory.js';
 
@@ -40,6 +42,7 @@ describe('flow-control 按会话的参数', () => {
       await registerHubs(app);
       const host = app.bind({ events, provide, services });
       host.provide.use(memory, fakeMemory() as never);
+      host.provide.use(storage, memoryStorage(new Map()));
       await app.plugin(sessionManagerPlugin);
       await app.plugin(flowControlPlugin, { cooldownSeconds: 30 });
       await app.plugins.idle();

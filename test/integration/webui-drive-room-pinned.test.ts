@@ -6,6 +6,7 @@ import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/
 import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
+import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { type App, events, provide } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
@@ -22,6 +23,7 @@ import { textOf } from '../../packages/schema-i18n/src/index.js';
 import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 import { seedRooms } from '../fixtures/rooms.js';
 import { ALL, fieldsPlugin } from '../fixtures/session-settings.js';
@@ -77,6 +79,7 @@ async function loadStack() {
     authorize: () => null,
     meetsLevel: () => true,
   } as never);
+  app.bind({ provide }).provide.use(storage, memoryStorage(new Map()));
   const recorder: ChatModelRequest[] = [];
   const callExec: ChatResponse = {
     content: null,

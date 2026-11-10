@@ -4,8 +4,9 @@ import { flowControl } from '../../packages/api-flow-control/src/index.js';
 import { gateway, INBOUND_PHASE } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
+import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { type App, LogHub } from '../../packages/core/src/index.js';
+import { type App, LogHub, provide } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
@@ -16,6 +17,7 @@ import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { callTool, StepModel, stepModelPlugin } from '../fixtures/step-llm.js';
 import { deferred } from '../helpers/deferred.js';
 
@@ -57,6 +59,7 @@ async function boot(
   const { app } = hostedApp({ logLevel: 'debug' }, { logHub });
   apps.push(app);
   await registerHubs(app);
+  app.bind({ provide }).provide.use(storage, memoryStorage(new Map()));
   const model = new StepModel(decide);
   await app.plugin(stepModelPlugin(model));
   for (const plugin of [toolsPlugin, memoryInMemoryPlugin, gatewayPlugin, flowControlPlugin, triggerPolicyPlugin]) {

@@ -22,8 +22,11 @@ const uses = {
   lifecycle,
   config,
   provide,
-  // 持久化禁言状态用；缺席时写失败只记 warn、流控照常跑；上线（含晚于本插件）时由 follow 读回，读不懂则本次运行拒写
-  storage: optional(storage),
+  /**
+   * 禁言表的持久化出口：激活时读回整表、禁言改动整表写回。required：读回要在它上线之后（optional 不参与激活先后），
+   * 它下线时随之停下、重新上线后重新读回
+   */
+  storage,
   messageArchive: optional(messageArchive),
   /**
    * 带 source 的内部注入与回复计数按会话记下的聊天窗口判生效范围，也用来判从别的平台往房间里插话；缺席时只认真人消息经过
@@ -61,25 +64,11 @@ async function run(caps: Caps): Promise<void> {
   const muteStateUri = 'data:/flow-control-mutes.json';
   /**
    * 禁言表读不懂（不是「文件不存在」的读失败、解析失败、结构不对）：写的是整表，此后拒写，
-   * 否则下一次 setMuted 就把原有禁言冲掉。每次读（storage 换人时 follow 重读）都重新判定。
+   * 否则下一次 setMuted 就把原有禁言冲掉。只在激活时读一次。
    */
   let loadFailed = false;
-  /**
-   * 自上次成功写盘以来 setMuted 改过的会话（解禁也算，含尚无状态的会话）→ 改动序号。重读时这些会话以内存为准：
-   * storage 离线或读取在飞期间的改动还没进文件，按文件值合并会让解禁被旧禁言撤回。
-   * 写盘成功后清掉该次快照已含的改动；写链在飞期间又改过的会话序号更大，留到下一次。
-   */
-  const unsavedMutes = new Map<string, number>();
-  let muteRev = 0;
-  /**
-   * follow 重读的代数。写链等读回的期间又开始了重读就接着等，写出的整表总是已并进最近一次读回。
-   * 写盘在飞期间开始了重读时，读到的文件未必含这次写（storage 已换人，或读先于写落盘），
-   * 这次写成功也不清 unsavedMutes：重读以内存为准，由读完后的补写落到当前 storage。
-   */
-  let loadGen = 0;
 
   async function loadMuteState(): Promise<void> {
-    loadFailed = false;
     let raw: string;
     try {
       raw = (await storage.readFile(muteStateUri, 'utf-8')) as string;
@@ -98,16 +87,10 @@ async function run(caps: Caps): Promise<void> {
       let restored = 0;
       for (const [sessionId, entry] of Object.entries(data)) {
         const mutedUntil = Number(entry?.mutedUntil ?? 0);
-        if (!mutedUntil || mutedUntil <= now || unsavedMutes.has(sessionId)) continue;
-        // storage 晚上线时读回之前可能已有消息建了状态：合并而非替换，禁言取较晚的到期时刻
-        const existing = states.get(sessionId);
-        if (existing) {
-          existing.mutedUntil = Math.max(existing.mutedUntil, mutedUntil);
-        } else {
-          const s = createState(String(entry?.platform ?? ''));
-          s.mutedUntil = mutedUntil;
-          states.set(sessionId, s);
-        }
+        if (!mutedUntil || mutedUntil <= now) continue;
+        const s = createState(String(entry?.platform ?? ''));
+        s.mutedUntil = mutedUntil;
+        states.set(sessionId, s);
         restored++;
       }
       if (restored > 0) logger.use.info(`[flow] 已恢复 ${restored} 个未过期的禁言状态`);
@@ -117,28 +100,10 @@ async function run(caps: Caps): Promise<void> {
     }
   }
 
-  // storage 在场即读禁言表：optional 依赖不参与激活拓扑，storage-local 可能晚于本插件上线，
-  // 只在 apply 里读一次会读成空表。follow 对「已在线」的服务也会立即触发，故任意加载序都成立。
-  // 读一次即完，storage 换人时没有要拆的东西，故不返回清理
-  let loading: Promise<void> | undefined;
-  caps.storage.follow(() => {
-    loadGen++;
-    // 读完补写一次：离线期间的改动写盘失败过，还没进文件
-    loading = loadMuteState().then(() => {
-      if (!loadFailed && unsavedMutes.size > 0) saveMuteState();
-    });
-  });
-
   let saveChain: Promise<void> = Promise.resolve();
   function saveMuteState(): void {
     saveChain = saveChain
       .then(async () => {
-        // 写的是整表：禁言表还在读时先等它并进内存，等的期间又开始了重读就接着等，否则这次写会冲掉磁盘上的其它会话
-        let gen: number;
-        do {
-          gen = loadGen;
-          await loading;
-        } while (gen !== loadGen);
         if (loadFailed) {
           logger.use.warn('[flow] 禁言表加载失败，跳过写入以免覆盖（本次改动仅在内存生效）');
           return;
@@ -148,18 +113,14 @@ async function run(caps: Caps): Promise<void> {
         for (const [sessionId, s] of states.entries()) {
           if (s.mutedUntil > now) out[sessionId] = { platform: s.platform ?? '', mutedUntil: s.mutedUntil };
         }
-        const upTo = muteRev;
         await storage.writeFile(muteStateUri, JSON.stringify(out, null, 2));
-        if (gen !== loadGen) return;
-        for (const [sessionId, rev] of unsavedMutes) if (rev <= upTo) unsavedMutes.delete(sessionId);
       })
       .catch(err => {
         logger.use.warn(`[flow] 持久化禁言状态失败: ${err}`);
       });
   }
 
-  // storage 已在线时 follow 是同步首挂：把读取等完再让 apply 返回；storage 晚上线时无从等待，仍异步
-  if (loading) await loading;
+  await loadMuteState();
 
   /** 取或建状态：补全缺失的会话元数据（setMuted 建出的状态缺多方标记），刷新 lastSeenAt */
   function getOrCreate(sessionId: string, platform: string, multiParty?: boolean): MutableFlowSessionState {
@@ -242,8 +203,6 @@ async function run(caps: Caps): Promise<void> {
       if (!s && platform && durationSec > 0) {
         s = getOrCreate(sessionId, platform);
       }
-      // 尚无状态的会话解禁也记：禁言表还没读回时，读回不得恢复它的旧禁言
-      if (s || durationSec <= 0) unsavedMutes.set(sessionId, ++muteRev);
       if (!s) return;
       if (durationSec <= 0) {
         s.mutedUntil = 0;
@@ -277,8 +236,6 @@ async function run(caps: Caps): Promise<void> {
 
     // 禁言期一律吞：不看生效范围、不看来源（idle、调度消息同样不说话）。
     // 禁言状态只由关键词或平台禁言针对具体会话写入，范围之外的会话不会被误伤。
-    // 禁言表可能还在读（storage 晚上线时 follow 补读）：读完再判禁言
-    if (loading) await loading;
     if (service.isMuted(sessionId)) {
       logger.use.debug(`[flow] 禁言中 → 吞噬${arrivalTag(message)} | session=${sessionId}`);
       await shadowArchive(message);
@@ -330,13 +287,11 @@ async function run(caps: Caps): Promise<void> {
   }, SWEEP_INTERVAL_MS);
   if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
 
-  // 写盘是交给 storage 的依赖交接，在收尾里等完：storage 的提供者经 optional 依赖又用到本插件时两者成环，
-  // 关停先放行环内的收尾，本插件清理时 storage 可能已撤下
+  // 写盘是交给 storage 的依赖交接，在收尾里等完。收尾之后、撤回之前服务仍对外可调（如宿主用着本插件时，空档里先登记的
+  // 插件收尾时经 services 现查到它），这时排上的写在清理里再等一次：storage 等本插件关完才收尾，写落在它还在的时候
   lifecycle.use.onDrain(() => saveChain);
   lifecycle.use.onDispose(async () => {
     clearInterval(sweepTimer);
-    // 整表快照在写链里才取：收尾之后才排上的写也先等它落完再清表，否则清空后的空表会被写回磁盘
     await saveChain;
-    states.clear();
   });
 }

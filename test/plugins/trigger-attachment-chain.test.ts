@@ -6,6 +6,7 @@ import { gateway } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type MediaProcessor, media } from '../../packages/api-media/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
+import { storage } from '../../packages/api-storage/src/index.js';
 import { App, events, type Logger, provide } from '../../packages/core/src/index.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
@@ -16,6 +17,7 @@ import messageArchivePlugin from '../../packages/plugin-message-archive/src/inde
 import layaPlugin from '../../packages/plugin-trigger-laya/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { emptyMediaCaps, fixedRef } from '../fixtures/service-ref.js';
 import { deferred } from '../helpers/deferred.js';
 
@@ -26,7 +28,7 @@ import { deferred } from '../helpers/deferred.js';
 // （影子归档）都不等识别跑完。agent 预处理器与归档对同一个消息对象调 processMessage，按对象记忆命中
 // 这次识别（在途则等它），整条链只识别一次。
 //
-// 真实插件：gateway + flow-control + trigger-laya + message-archive（内存 memory）；侧车是本地假服务。
+// 真实插件：gateway + flow-control + trigger-laya + message-archive（内存 memory 与 storage）；侧车是本地假服务。
 // media 是真实的 MediaServiceImpl，识别模型换成可卡住的替身；agent 替身按真实 agent 的顺序先跑 media
 // 预处理器、再归档。每个用例用不同的图片 URL，避开描述缓存。
 // ════════════════════════════════════════════════════════════
@@ -100,6 +102,7 @@ async function setup(opts: { speak: boolean; flow?: Record<string, unknown> }) {
   booted.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, hooks, gateway, messageArchive });
+  host.provide.use(storage, memoryStorage(new Map()));
 
   // 识别模型替身：放行闸门前不返回，记调用次数
   const vision = { calls: 0, gate: deferred() };

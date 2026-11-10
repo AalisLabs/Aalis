@@ -3,7 +3,8 @@ import type { TokenUsageEvent } from '../../packages/api-agent/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import type { ChatModelRequest } from '../../packages/api-llm/src/index.js';
 import { memory as memoryService } from '../../packages/api-memory/src/index.js';
-import { App, events } from '../../packages/core/src/index.js';
+import { storage } from '../../packages/api-storage/src/index.js';
+import { App, events, provide } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
@@ -13,6 +14,7 @@ import messageArchivePlugin from '../../packages/plugin-message-archive/src/inde
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { memoryStorage } from '../fixtures/memory-files.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 import { seedRooms } from '../fixtures/rooms.js';
 
@@ -37,6 +39,7 @@ async function loadStack() {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
+  app.bind({ provide }).provide.use(storage, memoryStorage(new Map()));
   const recorder: ChatModelRequest[] = [];
   await app.plugin(createMockLLMPlugin({ responses: [{ content: '<回复占位>' }], recorder }));
   await app.plugin(memoryInMemoryPlugin);
