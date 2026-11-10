@@ -25,6 +25,11 @@ export interface TranscribeInput {
    * 传统 Whisper 类 ASR 会忽略。
    */
   context?: string;
+  /**
+   * 调用方的中止信号：调用方不再要结果时（停用、停机、调用被中止），后端的下载、转码与识别随之停下，以中止原因拒绝；
+   * 后端自己的超时照旧，谁先到按谁停
+   */
+  signal?: AbortSignal;
 }
 
 export interface TranscribeResult {

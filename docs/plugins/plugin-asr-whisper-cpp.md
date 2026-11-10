@@ -46,11 +46,11 @@ definePlugin({
 
 ## 子进程超时
 
-ffmpeg 转码与 whisper-cli 识别都经 `ProcessService.execFile` 带 `timeout` 调用：转码分到 `timeoutMs / 2`，识别拿完整 `timeoutMs`，两段子进程都卡住时上界是 `1.5 × timeoutMs`。http(s) 音频附件的下载不受 `timeoutMs` 约束，另有固定的 15 秒超时与 20 MiB 体积上限（与 plugin-media 同口径），超时或超限直接抛错。
+ffmpeg 转码与 whisper-cli 识别都经 `ProcessService.execFile` 带 `timeout` 调用：转码分到 `timeoutMs / 2`，识别拿完整 `timeoutMs`，两段子进程都卡住时上界是 `1.5 × timeoutMs`。http(s) 音频附件的下载不受 `timeoutMs` 约束，另有固定的 15 秒超时与 20 MiB 体积上限（与 plugin-media 同口径），超时或超限直接抛错。调用方经 `TranscribeInput.signal` 中止、或本插件停用、重启时，下载与两段子进程随之停下（子进程由 process 服务按进程组停掉），以中止原因拒绝，不按转码或识别失败报。
 
 默认值取 10 分钟而非更紧的数值：这道闸的目的是掐断**真正卡死**的子进程，不是给识别限速。CPU 上跑长语音本来就可能要几分钟，闸设得太紧会把本来能用的识别切掉——那是把一个挂死问题换成一个功能问题。
 
-这个参数不是调优项而是必需项——`plugin-process-local` 的 `spawn` 只在 `opts.timeout > 0` 时才武装 `killTree`，不传就意味着子进程不退时 `wait()` 永不 settle：那一轮对话被永久挂住（回合 abort 也停不掉已经起来的子进程），而每条音频都会再堆一个 whisper/ffmpeg 进程。
+这个参数不是调优项而是必需项——`plugin-process-local` 的 `spawn` 只在 `opts.timeout > 0` 时才武装 `killTree`，不传就意味着子进程不退时 `wait()` 永不 settle：调用方不中止时那一轮对话一直阻塞，而每条音频都会再堆一个 whisper/ffmpeg 进程。
 
 ## 配置校验
 

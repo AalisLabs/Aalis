@@ -50,6 +50,7 @@
       ],
       "required": [
         "config",
+        "lifecycle",
         "logger",
         "process",
         "provide",

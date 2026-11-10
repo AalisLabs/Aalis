@@ -194,7 +194,8 @@ export class MediaServiceImpl implements MediaService {
 
   /**
    * 把核心 `asr` 服务的每个 provider（whisper-cpp / 云 ASR…）包成 cap='audio' 的 MediaProcessor，
-   * 与「audio 能力的 LLM」同池，供 pickProcessor('audio', prefer) 统一仲裁。transcribe 直接转调 asr 服务。
+   * 与「audio 能力的 LLM」同池，供 pickProcessor('audio', prefer) 统一仲裁。transcribe 直接转调 asr 服务；转写的契约
+   * （api-media 的 TranscribeInput）不带中止信号，交本插件这次激活的，停用、停机时随之停下。
    */
   private asrProcessors(): MediaProcessor[] {
     return this.caps.asr.list().map(e => {
@@ -207,7 +208,7 @@ export class MediaServiceImpl implements MediaService {
         priority: e.priority,
         // asr-api 的 meta.processor 可选、media-api 必填 → 显式映射并盖上桥接器名。
         transcribe: async input => {
-          const r = await asr.transcribe(input);
+          const r = await asr.transcribe({ ...input, signal: this.caps.lifecycle.use.signal });
           return {
             text: r.text,
             segments: r.segments,
@@ -436,7 +437,7 @@ export class MediaServiceImpl implements MediaService {
         return null;
       };
       try {
-        // 已停用：后面的附件不再起新的处理（经 asr 桥接的转写与外部处理器不接中止信号，起了就跑到完）
+        // 已停用：后面的附件不再发起新的处理（外部注册的处理器不接中止信号，已发起的会运行结束）
         signal.throwIfAborted();
         if (att.kind === 'image') {
           if (!this.cfg.vision.recognizeOnArrival || !vision) {

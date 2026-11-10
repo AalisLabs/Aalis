@@ -9,7 +9,7 @@ import { Buffer } from 'node:buffer';
 import { type ASRService, asr, type TranscribeInput, type TranscribeResult } from '@aalis/api-asr';
 import { type ProcessService, processService } from '@aalis/api-process';
 import { isStorageUri, isWebUrl, type StorageService, storage as storageService } from '@aalis/api-storage';
-import { config, definePlugin, logger, optional, provide } from '@aalis/core';
+import { config, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { detectMediaFormat, FILE_HEAD_BYTES, type MediaFormatName } from '@aalis/util-file-signature';
 import { safeFetch } from '@aalis/util-network-guard';
@@ -46,11 +46,11 @@ const DOWNLOAD_TIMEOUT_MS = 15_000;
 
 /**
  * 下载远程音频。safeFetch 只管 SSRF 与重定向，不带超时也不限体积；入站语音 URL 由外部平台给出，
- * 对端不应答会挂住整轮语音回合，超大响应会整个读进内存。超时信号覆盖连接与读取响应体；
+ * 对端不应答会让整轮语音回合一直阻塞，超大响应会整个读进内存。超时信号覆盖连接与读取响应体，调用方中止时同样停下；
  * 体积按流式累计判定——不用 arrayBuffer()，无 Content-Length 的响应要全部读完才看得到大小。
  */
-async function downloadAudio(url: string): Promise<Buffer> {
-  const resp = await safeFetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+async function downloadAudio(url: string, signal: AbortSignal): Promise<Buffer> {
+  const resp = await safeFetch(url, { signal: AbortSignal.any([AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS), signal]) });
   if (!resp.ok) throw new Error(`下载失败 ${resp.status}`);
   const declared = Number(resp.headers.get('content-length'));
   if (declared > DOWNLOAD_MAX_BYTES) {
@@ -74,14 +74,19 @@ async function downloadAudio(url: string): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-/** 附件的字节：base64 data URL、file:// 与本机绝对路径、网址、存储地址四种来源 */
-async function attachmentBytes(data: string, proc: ProcessService, storage: StorageService): Promise<Uint8Array> {
+/** 附件的字节：base64 data URL、file:// 与本机绝对路径、网址、存储地址四种来源；网址的下载随 signal 停下 */
+async function attachmentBytes(
+  data: string,
+  proc: ProcessService,
+  storage: StorageService,
+  signal: AbortSignal,
+): Promise<Uint8Array> {
   // base64 data URL（必须带 ;base64,，借此与 storage URI `data:/...` 区分）
   const dataUri = data.match(/^data:[^;]+;base64,(.+)$/);
   if (dataUri) return Buffer.from(dataUri[1], 'base64');
   // 走 ProcessService.readExternalFile（治外文件能力），避免直 import node:fs
   if (data.startsWith('file://') || data.startsWith('/')) return proc.readExternalFile(data);
-  if (isWebUrl(data)) return downloadAudio(data);
+  if (isWebUrl(data)) return downloadAudio(data, signal);
   if (isStorageUri(data)) return (await storage.readFile(data)) as Uint8Array;
   throw new Error(`不支持的附件来源: ${data.slice(0, 32)}`);
 }
@@ -91,8 +96,9 @@ async function attachmentToBlob(
   data: string,
   proc: ProcessService,
   storage: StorageService,
+  signal: AbortSignal,
 ): Promise<{ blob: Blob; filename: string }> {
-  const bytes = await attachmentBytes(data, proc, storage);
+  const bytes = await attachmentBytes(data, proc, storage, signal);
   const format = detectMediaFormat(bytes.subarray(0, FILE_HEAD_BYTES));
   if (!format || !WHISPER_FORMATS.has(format.format)) {
     throw new Error(format ? `Whisper 接口不接受 ${format.format} 音频` : 'Whisper 接口不接受认不出格式的音频');
@@ -103,6 +109,7 @@ async function attachmentToBlob(
 const uses = {
   logger,
   config,
+  lifecycle,
   provide,
   proc: optional(processService),
   storage: optional(storageService),
@@ -129,27 +136,29 @@ export default definePlugin({
     const proc = caps.proc.use;
     const storage = caps.storage.use;
 
-    caps.provide.use(asr, buildAsrService(cfg, proc, storage), { priority: PRIORITY });
+    caps.provide.use(asr, buildAsrService(cfg, proc, storage, caps.lifecycle.use.signal), { priority: PRIORITY });
     caps.logger.use.info(`OpenAI Whisper ASR 已注册 (model=${cfg.model})`);
   },
 });
 
-function buildAsrService(cfg: Cfg, proc: ProcessService, storage: StorageService): ASRService {
+/** activation 是本插件这次激活的中止信号：调用方没中止、本插件停用或重启时，下载与转写请求同样停下 */
+function buildAsrService(cfg: Cfg, proc: ProcessService, storage: StorageService, activation: AbortSignal): ASRService {
   return {
     async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
-      const { blob, filename } = await attachmentToBlob(input.attachment.data, proc, storage);
+      const signal = input.signal ? AbortSignal.any([input.signal, activation]) : activation;
+      const { blob, filename } = await attachmentToBlob(input.attachment.data, proc, storage, signal);
       const fd = new FormData();
       fd.append('file', blob, filename);
       fd.append('model', cfg.model);
       if (input.language) fd.append('language', input.language);
       fd.append('response_format', input.withTimestamps ? 'verbose_json' : 'json');
+      // 调用方（plugin-media）与工具执行面都没有外层超时：对端不应答即整轮语音回合一直阻塞，
+      // 与 embedding-openai / whisper-cpp 已修的是同一形状。调用方中止、本插件停用时同样停下
       const resp = await fetch(`${cfg.baseUrl.replace(/\/+$/, '')}/audio/transcriptions`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${cfg.apiKey}` },
         body: fd,
-        // 调用方（plugin-media）与工具执行面都没有外层超时：对端不应答即整轮语音回合永久挂住，
-        // 与 embedding-openai / whisper-cpp 已修的是同一形状。
-        signal: AbortSignal.timeout(Math.max(1000, cfg.timeoutMs)),
+        signal: AbortSignal.any([AbortSignal.timeout(Math.max(1000, cfg.timeoutMs)), signal]),
       });
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');

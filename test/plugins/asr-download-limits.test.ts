@@ -125,15 +125,19 @@ describe.each([
     const probe: Probe = { downstream: 0, signals: new Map() };
     stubFetch(probe);
     const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    const anySpy = vi.spyOn(AbortSignal, 'any');
     const service = await bootAsr(plugin, config, probe);
     const r = await service.transcribe({ attachment: { kind: 'audio', data: `http://127.0.0.1:${port}/ok` } });
     expect(r.text).toBe('转写文本');
     const signal = probe.signals.get('/ok');
     expect(signal, '下载未带 AbortSignal，对端不应答会挂住整轮').toBeInstanceOf(AbortSignal);
     expect(signal?.aborted).toBe(false);
-    // 钉住时长：下载信号必须出自 AbortSignal.timeout(15_000)（openai 的转写上传另有一只超时信号）
-    const i = timeoutSpy.mock.results.findIndex(res => res.value === signal);
-    expect(i, '下载信号不是 AbortSignal.timeout 造的').toBeGreaterThanOrEqual(0);
+    // 钉住时长：下载信号由 AbortSignal.timeout(15_000) 与中止信号合成（openai 的转写上传另有一只超时信号）
+    const merged = anySpy.mock.results.findIndex(res => res.value === signal);
+    expect(merged, '下载信号不是合成出来的').toBeGreaterThanOrEqual(0);
+    const parts = anySpy.mock.calls[merged][0] as AbortSignal[];
+    const i = timeoutSpy.mock.results.findIndex(res => parts.includes(res.value));
+    expect(i, '合成下载信号的没有 AbortSignal.timeout 造的').toBeGreaterThanOrEqual(0);
     expect(timeoutSpy.mock.calls[i]).toEqual([15_000]);
   });
 

@@ -29,6 +29,7 @@ export interface TranscribeInput {
   language?: string;                      // ISO 639-1，如 'zh'/'en'；不填由后端自检
   withTimestamps?: boolean;               // 是否需要时间戳分段
   context?: string;                       // 仅 LLM-as-audio 后端有意义；传统 Whisper 忽略
+  signal?: AbortSignal;                   // 调用方的中止信号：下载、转码与识别随之停下，以中止原因拒绝；后端的超时照旧
 }
 ```
 
@@ -74,7 +75,7 @@ private asrProcessors(): MediaProcessor[] {
     return {
       name, capabilities: ['audio'], priority: e.priority,
       transcribe: async input => {
-        const r = await asr.transcribe(input);
+        const r = await asr.transcribe({ ...input, signal: this.caps.lifecycle.use.signal });
         return { text: r.text, segments: r.segments, language: r.language,
                  meta: { processor: name, model: r.meta?.model } };
       },
@@ -83,7 +84,7 @@ private asrProcessors(): MediaProcessor[] {
 }
 ```
 
-它用 `asr.list()` 拿**全部** provider（不只是本插件选中的那一家；条目的 `use` 是那一家的业务句柄，`id` 是条目身份），让用户在 media 的 `audio.prefer` 里按 processor 名挑后端，再回退到按 priority 取最高（`service.ts`）。当 `name === 'asr'` 的 provider 注册/注销时，media 监听服务事件刷新候选（`plugin-media/src/index.ts`）。
+转写的契约不带中止信号，桥接时交 media 这次激活的信号：停用、停机时转写随之停下。它用 `asr.list()` 拿**全部** provider（不只是本插件选中的那一家；条目的 `use` 是那一家的业务句柄，`id` 是条目身份），让用户在 media 的 `audio.prefer` 里按 processor 名挑后端，再回退到按 priority 取最高（`service.ts`）。当 `name === 'asr'` 的 provider 注册/注销时，media 监听服务事件刷新候选（`plugin-media/src/index.ts`）。
 
 ---
 
@@ -130,6 +131,7 @@ export default definePlugin({
 
 - `provide.use(descriptor, instance, { priority, label, entryId })`（签名 `packages/core/src/composition/core-services.ts`）。同名多 provider 共存，消费方选中哪一家按「本插件偏好 > 全局偏好 > 优先级 > 注册顺序」（`docs/concepts/service-model.md`、`docs/core/service.md`）。
 - **priority**：普通数字，越大越优先，含义自行记载。写成插件里的常量，只作提供者之间的默认先后：参考实现用 50（云）/ 80（本地，质量更高默认更优先）。不要把 priority 开成插件配置：用户要换转写后端，设 media 的 `audio.prefer`，再开一个优先级配置，同一件事就有了两个入口。服务偏好只决定 `asr.use` 打到哪一家，media 回退时按 priority 排，偏好只在优先级相同时决胜。
+- **中止信号**：`input.signal` 与本插件这次激活的信号（`lifecycle.use.signal`）合并后交给下载、请求与子进程：调用方中止、或提供方停用、重启时都停下，以中止原因拒绝；超时照旧，谁先到按谁停。参考实现都这样做。
 - **缺必填配置要抛错，不要静默 `return`**：因为声明了 `provides:['asr']` 却没 `provide`，core 激活后校验会把插件标记为 error（`docs/concepts/manifest-metadata.md` §`provides` / `plugin-activation.ts`），错误信息很难懂。参考实现的做法是抛清晰中文错误（`plugin-asr-openai/src/index.ts`、`plugin-asr-whisper-cpp/src/index.ts`）。
 - 若你想被 media 的 `audio.prefer` 精确选中，注意 media 生成的 processor 名是 `asr:${contextId}`，可在 `provide.use` 时传 `label` 让 WebUI 列表更可读（media 在 `displayName` 里用了它，`service.ts`）。
 

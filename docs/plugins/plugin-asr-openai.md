@@ -5,7 +5,7 @@
 
 ## 概述
 
-语音识别（ASR）的 OpenAI Whisper API 提供者。插件向核心注册 `asr` 服务，实现只有一个 `transcribe` 方法：把音频附件封装为 multipart 表单，POST 到 `baseUrl` 下的 `/audio/transcriptions`，返回文本与可选的时间戳分段。凡实现 OpenAI 风格 `/audio/transcriptions` 协议的服务端（如 Groq、本地 ollama-asr 网关）均可经 `baseUrl` 接入。音频附件支持以下来源：base64 data URL、`file://` 或绝对路径（经 process 服务读取）、http(s) URL（经 `safeFetch` 下载，超时 15 秒、体积上限 20 MiB，超时或超限直接抛错）、storage URI（经 storage 服务读取）。其它格式（含相对路径 `data/...`）直接抛错。
+语音识别（ASR）的 OpenAI Whisper API 提供者。插件向核心注册 `asr` 服务，实现只有一个 `transcribe` 方法：把音频附件封装为 multipart 表单，POST 到 `baseUrl` 下的 `/audio/transcriptions`，返回文本与可选的时间戳分段。凡实现 OpenAI 风格 `/audio/transcriptions` 协议的服务端（如 Groq、本地 ollama-asr 网关）均可经 `baseUrl` 接入。音频附件支持以下来源：base64 data URL、`file://` 或绝对路径（经 process 服务读取）、http(s) URL（经 `safeFetch` 下载，超时 15 秒、体积上限 20 MiB，超时或超限直接抛错）、storage URI（经 storage 服务读取）。其它格式（含相对路径 `data/...`）直接抛错。调用方经 `TranscribeInput.signal` 中止、或本插件停用、重启时，下载与转写请求随之停下，以中止原因拒绝。
 
 上传的文件名与类型取按内容判定的格式（[util-file-signature](../utils/README.md)，如 `audio.mp3`、`audio/mpeg`），不看来源的路径后缀、Content-Type 或 data URL 里写的类型：Whisper 接口按文件名的后缀认格式。接口接受 MP3、WAV、OGG、FLAC、M4A、MP4、WebM；别的格式（AMR、SILK 等）与认不出的，读出来就报「Whisper 接口不接受 <格式> 音频」，插件不做转码。
 

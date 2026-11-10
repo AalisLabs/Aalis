@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
+import { type ASRService, asr, type TranscribeInput } from '../../packages/api-asr/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type ChatModelRequest, type LLMModel, llm } from '../../packages/api-llm/src/index.js';
 import { type MediaService, media } from '../../packages/api-media/src/index.js';
@@ -28,7 +29,7 @@ const AMR = Buffer.concat([Buffer.from('#!AMR\n'), Buffer.alloc(32)]);
 const dataUri = (mime: string, bytes: Buffer) => `data:${mime};base64,${bytes.toString('base64')}`;
 const VIDEO = { kind: 'video', data: 'data:video/mp4;base64,AAAAIGZ0eXBpc29t' };
 
-type Hang = { cmd: 'ffprobe' } | { cmd: 'ffmpeg'; arg: string } | { chat: true };
+type Hang = { cmd: 'ffprobe' } | { cmd: 'ffmpeg'; arg: string } | { chat: true } | { asr: true };
 
 const apps: App[] = [];
 const cleanups: Array<() => Promise<void>> = [];
@@ -38,9 +39,10 @@ afterEach(async () => {
 });
 
 /**
- * 真插件装进 App。hang 指定卡住的那一步：ffprobe、带某个参数的 ffmpeg（抽帧 -vf、抽音轨 libmp3lame、转码 pcm_s16le），或
- * 模型调用；卡住的那一步中止时拒绝，已中止时调起的立即拒绝。ffprobe 数出 frames 帧；ffmpeg 照常写出帧、音轨与 WAV。
- * execs、chats 记下每次调用与收到的中止信号，warns 收告警
+ * 真插件装进 App。hang 指定卡住的那一步：ffprobe、带某个参数的 ffmpeg（抽帧 -vf、抽音轨 libmp3lame、转码 pcm_s16le）、
+ * 模型调用，或经 asr 桥接的转写（这时另装一个 asr 提供者、模型不认音频，转写走 asr）；卡住的那一步中止时拒绝，已中止时
+ * 调用的立即拒绝。ffprobe 数出 frames 帧；ffmpeg 照常写出帧、音轨与 WAV。execs、chats、heard 记下每次调用与收到的中止
+ * 信号，warns 收告警
  */
 async function boot(hang: Hang, frames = 2) {
   const files = new Map<string, Buffer>();
@@ -90,21 +92,29 @@ async function boot(hang: Hang, frames = 2) {
     id: 'seer',
     providerId: 'fake-host',
     contextLength: 8000,
-    capabilities: ['chat', 'vision', 'audio'],
+    capabilities: 'asr' in hang ? ['chat', 'vision'] : ['chat', 'vision', 'audio'],
     async chat(request) {
       chats.push(request);
       if ('chat' in hang || request.signal?.aborted) return stopped('识别', request.signal);
       return { content: '看到了' };
     },
   };
+  const heard: TranscribeInput[] = [];
+  const ears: ASRService = {
+    transcribe: input => {
+      heard.push(input);
+      return stopped('转写', input.signal);
+    },
+  };
   const host = definePlugin({
     name: 'fake-host',
-    provides: [processService, storage, llm],
+    provides: 'asr' in hang ? [processService, storage, llm, asr] : [processService, storage, llm],
     uses: { provide },
     apply({ provide }) {
       provide.use(processService, proc);
       provide.use(storage, store);
       provide.use(llm, model, { entryId: 'fake-host/seer' });
+      if ('asr' in hang) provide.use(asr, ears);
     },
   });
   const hub = new LogHub();
@@ -125,6 +135,7 @@ async function boot(hang: Hang, frames = 2) {
     service,
     execs,
     chats,
+    heard,
     warns,
     disable: () => app.plugins.disable(mediaPlugin.name),
     /** 主模型能看图时发出前的一次 agent:llm:before；passed 为是否交给了下一步 */
@@ -253,6 +264,7 @@ describe('来消息即识别随停用中止', () => {
 
   it.each([
     ['内置 LLM 处理器', { chat: true } as const, (t: Booted) => t.chats],
+    ['asr 桥接', { asr: true } as const, (t: Booted) => t.heard],
   ])('语音转写途中停用（%s）：交给它的中止信号随之断开，不告警，描述位不写识别失败', async (_label, hang, calls) => {
     const t = await boot(hang);
     const pending = t.arrive({ kind: 'audio', data: dataUri('audio/mpeg', MP3) });
@@ -263,6 +275,20 @@ describe('来消息即识别随停用中止', () => {
     expect(report.items[0].error).toBeDefined();
     expect((report.message._attachmentDescriptions ?? []).filter(Boolean)).toEqual([]);
     expect(t.warns.filter(message => /识别失败|附件处理失败/.test(message))).toEqual([]);
+  });
+
+  it('视频音轨转写途中停用（asr 桥接）：到达识别与 describeVideo 都不告警、不写失败', async () => {
+    const t = await boot({ asr: true });
+    const arrival = t.arrive(VIDEO);
+    await expect.poll(() => t.heard.length).toBe(1);
+    const described = t.service.describeVideo(`${VIDEO.data}#again`);
+    await expect.poll(() => t.heard.length).toBe(2);
+    await t.disable();
+    const report = await arrival;
+    expect(report.items[0].error).toBeDefined();
+    expect((report.message._attachmentDescriptions ?? []).filter(Boolean)).toEqual([]);
+    expect(await described).toBe('');
+    expect(t.warns.filter(message => /识别失败|附件处理失败|describeVideo 失败/.test(message))).toEqual([]);
   });
 
   it('describeVideo 途中停用：交给 ffprobe 的中止信号随之断开', async () => {
