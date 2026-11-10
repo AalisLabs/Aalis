@@ -9,7 +9,8 @@ import { App, type Logger, LogHub } from '../../packages/core/src/index.js';
 import { createConfigStore } from '../../packages/runtime/src/config-store.js';
 import { installConsoleSink } from '../../packages/runtime/src/console-sink.js';
 import { createNodeModulesPluginLoader, loadPluginDefinition } from '../../packages/runtime/src/node-modules-loader.js';
-import { createPluginDiscovery } from '../../packages/runtime/src/plugin-discovery.js';
+import { createPluginDiscovery, type PluginDescriptor } from '../../packages/runtime/src/plugin-discovery.js';
+import { createFsPluginLoader } from '../../packages/runtime/src/providers.js';
 
 // ════════════════════════════════════════════════════════════
 // 加载链信号：「装了没反应」死门族的告警锚。
@@ -201,6 +202,9 @@ describe('插件入口按 import 条件解析', () => {
       writePkg(nm, name, { keywords: ['aalis-plugin'], ...fields }, entry(name));
       deps[name] = '1.0.0';
     }
+    // 不是插件的包：入口解得出，两个加载器都不收
+    writePkg(nm, 'lib-not-plugin', { keywords: ['aalis-util'], main: 'index.mjs' }, 'export const x = 1;\n');
+    deps['lib-not-plugin'] = '1.0.0';
     writeFileSync(join(proj, 'package.json'), JSON.stringify({ name: 'proj', dependencies: deps }));
     warns = [];
     offHub = LogHub.default.onEntry(e => {
@@ -235,6 +239,16 @@ describe('插件入口按 import 条件解析', () => {
     const found = await createNodeModulesPluginLoader(proj).discover();
     for (const [name] of unresolvable) {
       expect(found.some(d => d.name === name)).toBe(false);
+      expect(warns.filter(w => w.includes(`"${name}"`) && w.includes('入口无法解析'))).toHaveLength(1);
+    }
+  });
+
+  it('扫 packages 目录的加载器按同一份规则解析入口：与 node_modules 加载器得到同样的入口，解不出的同样 warn 并跳过', async () => {
+    const entries = (found: PluginDescriptor[]) => Object.fromEntries(found.map(d => [d.name, d.source]));
+    const fromModules = entries(await createNodeModulesPluginLoader(proj).discover());
+    warns.length = 0;
+    expect(entries(await createFsPluginLoader(join(proj, 'node_modules')).discover())).toEqual(fromModules);
+    for (const [name] of unresolvable) {
       expect(warns.filter(w => w.includes(`"${name}"`) && w.includes('入口无法解析'))).toHaveLength(1);
     }
   });

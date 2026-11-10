@@ -17,7 +17,6 @@ import {
 import packageManagerPlugin, {
   buildUpdateSpecs,
   createPackageManager,
-  declaresPlugin,
   describeNpmFailure,
   extractPeerConflicts,
   findServiceDependents,
@@ -171,14 +170,6 @@ describe('纯函数判据', () => {
     expect(hasWorkspaceProtocol(undefined)).toBe(false);
     // 非字符串值不应崩
     expect(hasWorkspaceProtocol({ dependencies: { a: null } as unknown as Record<string, unknown> })).toBe(false);
-  });
-
-  it('declaresPlugin：仅认 aalis-plugin 关键词（与两个加载器同一判据）', () => {
-    expect(declaresPlugin({ keywords: ['aalis', 'aalis-plugin'] })).toBe(true);
-    expect(declaresPlugin({ keywords: ['aalis', 'aalis-interface'] })).toBe(false);
-    expect(declaresPlugin({ keywords: [] })).toBe(false);
-    expect(declaresPlugin({})).toBe(false);
-    expect(declaresPlugin(undefined)).toBe(false);
   });
 
   it('buildUpdateSpecs 按 argv **字节数**设闸，不按包个数', () => {

@@ -3,6 +3,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { AalisConfig } from '@aalis/api-host-config';
+import { declaresPlugin } from '@aalis/api-plugin-source';
 import type { RestartStrategy } from '@aalis/core';
 import { DefaultLogger } from '@aalis/core';
 import { CORE_CONFIG_SCHEMA, defaultsFrom } from '@aalis/schema-config';
@@ -12,7 +13,7 @@ import { assertAbsolute } from './data-dir.js';
 import {
   HOST_CORE_DIR,
   importPluginDefinition,
-  isLoadablePlugin,
+  pluginEntry,
   warnLikelyPluginMissingKeyword,
 } from './node-modules-loader.js';
 import type { PluginDescriptor, PluginLoader } from './plugin-discovery.js';
@@ -123,7 +124,7 @@ export function createFsSecretsProvider(absPath: string): FsSecretsProviderResul
 /**
  * 创建一个基于 packages 目录扫描的 PluginLoader。`rootDir` 是 packages 目录的绝对路径（源码形态的入口传 `<仓库>/packages`）。
  *
- * - `discover()`：读 dir 下每个子目录的 package.json，按 aalis-plugin 关键词收录可加载插件
+ * - `discover()`：读 dir 下每个子目录的 package.json，按 aalis-plugin 关键词收录插件，入口与 node_modules 加载器同一份解析
  * - `load()`：先经 assertSameCore 核对 core 是宿主那份，再用 `pathToFileURL(entry).href` 动态 import
  * - `reload()`：用入口文件 mtime 作为 import URL 的 query 强制 ESM 缓存失效
  */
@@ -152,18 +153,14 @@ export function createFsPluginLoader(rootDir: string): PluginLoader {
         } catch {
           continue;
         }
-        // 与 node_modules 加载器同一标准：纯 aalis-plugin 关键词正向门（单一真相，防两处漂移）。
-        // 非插件（核心/契约/前端/工具链/工具库）各带自己的类型关键词、不带 aalis-plugin，自然不被收录。
-        if (!isLoadablePlugin(pkgJson)) {
+        // 与 node_modules 加载器同一标准：纯 aalis-plugin 关键词正向门，入口按 import() 的规则解析
+        if (!declaresPlugin(pkgJson)) {
           warnLikelyPluginMissingKeyword(loaderLogger, entry, pkgJson);
           continue;
         }
-        const main = (pkgJson.main as string) || 'dist/index.js';
-        discovered.push({
-          name: pkgJson.name as string,
-          source: resolve(rootDir, entry, main),
-          metadata: { dir: resolve(rootDir, entry) },
-        });
+        const dir = resolve(rootDir, entry);
+        const source = pluginEntry(loaderLogger, entry, dir, pkgJson);
+        if (source) discovered.push({ name: pkgJson.name as string, source, metadata: { dir } });
       }
       return discovered;
     },

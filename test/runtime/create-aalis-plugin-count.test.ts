@@ -25,7 +25,7 @@ describe('create-aalis 插件计数', () => {
     expect(countPlugins(['@aalis/plugin-cli', '@aalis/plugin-agent'])).toBe(2);
   });
 
-  // 脚手架里的排除表是手抄的，真实判据却是加载器的关键词硬门（isLoadablePlugin）。
+  // 脚手架里的排除表是手抄的，真实判据却是加载器的关键词硬门（declaresPlugin）。
   // 两边同源漂移就会一起错，所以把手抄表钉到真实 package.json 上。
   it('排除表里的包，在真实 package.json 里确实不带 aalis-plugin 关键词', () => {
     expect(keywordsOf('plugin-webui-client')).not.toContain('aalis-plugin');

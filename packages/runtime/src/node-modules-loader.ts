@@ -2,7 +2,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { pluginDefinitionOf } from '@aalis/api-plugin-source';
+import { declaresPlugin, pluginDefinitionOf } from '@aalis/api-plugin-source';
 import type { Logger, PluginDefinition } from '@aalis/core';
 import { DefaultLogger } from '@aalis/core';
 import { assertAbsolute } from './data-dir.js';
@@ -17,11 +17,9 @@ import type { PluginDescriptor, PluginLoader } from './plugin-discovery.js';
 // 入口取 import 条件）找到已装的插件并 dynamic import。与 monorepo 的 createFsPluginLoader 是
 // 「两种部署模型的两个加载器」，非重复：前者扫目录，后者走 node 解析。
 //
-// 插件识别（纯正向关键词门）：
-//   - 唯一标准：package.json 的 keywords 含 'aalis-plugin'。
-// 每类包各带自己的类型关键词（插件 aalis-plugin / 契约 aalis-api / 前端 aalis-interface / 工具库 aalis-util /
-// 核心 aalis-core / 工具链 aalis-runtime，后几类均不带 aalis-plugin），所以 @aalis/core、各 *-api、webui-client、
-// @aalis/runtime、各 util-* 与 express/yaml 等普通依赖都因不带 aalis-plugin 而自然不被加载——无需 marker 特判或名前缀/service 回退。
+// 插件识别（纯正向关键词门）：@aalis/api-plugin-source 的 declaresPlugin，keywords 含 'aalis-plugin' 才收。
+// @aalis/core、各 *-api、webui-client、@aalis/runtime、各 util-* 与 express/yaml 等普通依赖都因不带 aalis-plugin
+// 而自然不被加载——无需 marker 特判或名前缀/service 回退。
 
 function readJson(path: string): Record<string, unknown> | null {
   try {
@@ -29,15 +27,6 @@ function readJson(path: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
-}
-
-/**
- * 判定一个已装依赖是否为可加载的 Aalis 插件。纯函数，便于单测。
- * 唯一标准：keywords 含 'aalis-plugin'（真插件均带；契约/前端/核心/工具库带各自类型词，自然排除）。
- */
-export function isLoadablePlugin(meta: Record<string, unknown>): boolean {
-  const keywords = Array.isArray(meta.keywords) ? (meta.keywords as string[]) : [];
-  return keywords.includes('aalis-plugin');
 }
 
 /**
@@ -106,6 +95,22 @@ function packageEntry(dir: string, meta: Record<string, unknown>): string | unde
   }
   const guesses = typeof main === 'string' && main ? [main, `${main}.js`, join(main, 'index.js')] : [];
   return [...guesses, 'index.js'].map(file => join(dir, file)).find(isFile);
+}
+
+/** 插件包的入口（{@link packageEntry}），解不出时 warn 点名、返回 undefined。两加载器共用，入口规则与告警只有这一份 */
+export function pluginEntry(
+  logger: Logger,
+  name: string,
+  dir: string,
+  meta: Record<string, unknown>,
+): string | undefined {
+  const entry = packageEntry(dir, meta);
+  if (!entry) {
+    logger.warn(
+      `插件 "${name}" 入口无法解析（exports 的 "." 没有 import 条件可用的目标，或入口文件不存在：main 写错、没有构建、产物未打进 files），跳过`,
+    );
+  }
+  return entry;
 }
 
 /**
@@ -185,7 +190,7 @@ export function warnLikelyPluginMissingKeyword(logger: Logger, name: string, met
  * @param opts.hostCoreDir 宿主那份 @aalis/core 的包目录，默认 {@link HOST_CORE_DIR}；插件解析到的 core 与它不同即拒绝加载
  *
  * - `discover()`：读 projectDir/package.json 的 dependencies + optionalDependencies，
- *   按 node_modules 上溯定位每个依赖的包目录并读其 package.json，按标记过滤出可加载插件；入口见 {@link packageEntry}。
+ *   按 node_modules 上溯定位每个依赖的包目录并读其 package.json，按 declaresPlugin 过滤出插件；入口见 {@link pluginEntry}。
  * - `load()`：先经 {@link assertSameCore} 核对 core 是宿主那份，再用 `pathToFileURL(entry).href` 动态 import。
  * - `reload()`：用入口文件 mtime 作 import URL query 强制 ESM 缓存失效。
  */
@@ -214,17 +219,12 @@ export function createNodeModulesPluginLoader(projectDir: string, opts: { hostCo
         if (!dir) continue;
         const meta = readJson(join(dir, 'package.json'));
         if (!meta) continue;
-        if (!isLoadablePlugin(meta)) {
+        if (!declaresPlugin(meta)) {
           warnLikelyPluginMissingKeyword(logger, dep, meta);
           continue;
         }
-        const entry = packageEntry(dir, meta);
-        if (!entry) {
-          logger.warn(
-            `插件 "${dep}" 入口无法解析（exports 的 "." 没有 import 条件可用的目标，或入口文件不存在：main 写错、产物未打进 files），跳过`,
-          );
-          continue;
-        }
+        const entry = pluginEntry(logger, dep, dir, meta);
+        if (!entry) continue;
         discovered.push({ name: (meta.name as string) ?? dep, source: entry, metadata: { dir } });
       }
       return discovered;

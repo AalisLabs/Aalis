@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
+import { declaresPlugin } from '../../packages/api-plugin-source/src/index.js';
 import { MINIMAL_BASE, pluginSettings, renderConfig } from '../../packages/create-aalis/src/cli.js';
 import { derivePaths, initDataDir } from '../../packages/runtime/src/data-dir.js';
-import { isLoadablePlugin } from '../../packages/runtime/src/node-modules-loader.js';
 
 // 脚手架生成的 aalis.config.yaml：插件段，不写平台档。工具分组没设时由 plugin-tools 按会话从哪里建的给
 // （在 WebUI 或终端建的开全部分组，聊天平台与内部会话不开），见 tools-session-groups.test.ts。
@@ -93,6 +93,6 @@ describe('最小档带会话设置', () => {
     const manifest = JSON.parse(
       readFileSync(new URL('../../packages/plugin-session-settings/package.json', import.meta.url), 'utf-8'),
     );
-    expect(isLoadablePlugin(manifest)).toBe(true);
+    expect(declaresPlugin(manifest)).toBe(true);
   });
 });

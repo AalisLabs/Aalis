@@ -6,10 +6,11 @@
 
 ## 概述
 
-插件从哪里来由宿主负责，core 只接收已定义好的插件（`app.plugin` / `app.pluginAll`）。本包定义两件事，不含服务实现：
+插件从哪里来由宿主负责，core 只接收已定义好的插件（`app.plugin` / `app.pluginAll`）。本包定义三件事，不含服务实现：
 
 - `pluginSource` 描述符（服务名 `plugin-source`）：宿主的热扫描入口。能在运行中重新发现插件的宿主在根上提供它；打包进来的静态插件表没有可重扫的来源，不提供。
-- `pluginDefinitionOf(mod)`：插件包的入口判定。加载器与包管理共用这一份判定。
+- `declaresPlugin(manifest)`：包是不是插件。两个加载器与包管理共用这一份判定。
+- `pluginDefinitionOf(mod)`：插件包的入口判定。两个加载器共用这一份判定。
 
 ## 服务接口
 
@@ -43,6 +44,14 @@ const names = source.present ? await source.use.rescan() : [];
 |---|---|---|
 | plugin-package-manager | 装完新包后让宿主发现它，按 `loaded` 判它装没装上；卸载时只卸经它从这个包加载的插件的实例 | 视同本次没有新插件、已登记的都不是经它加载的：声明为插件的包报未加载，插件名已登记的报被宿主直接登记的插件占用，卸载时只卸包 |
 | plugin-webui-server | `POST /api/plugins/scan` | 返回 503 |
+
+## 包是不是插件
+
+```ts
+function declaresPlugin(manifest: unknown): boolean;
+```
+
+`package.json` 的 `keywords` 含 `aalis-plugin` 即是插件；读不到（`undefined`）或 `keywords` 不是数组都不是。加载器只收这样的包，包管理据它分开「本就不是插件」（如前端界面包）与「声明为插件却没加载上」。每类包各带自己的类型关键词（契约 `aalis-api`、前端 `aalis-interface`、工具库 `aalis-util`、核心 `aalis-core`、工具链 `aalis-runtime`），都不带 `aalis-plugin`。
 
 ## 入口判定
 

@@ -126,13 +126,13 @@ service?: { required?: string[]; optional?: string[]; provides?: string[] };
 唯一判定「这是不是可加载插件」的依据，是 `keywords` 含 `'aalis-plugin'`：
 
 ```ts
-export function isLoadablePlugin(meta: Record<string, unknown>): boolean {
-  const keywords = Array.isArray(meta.keywords) ? (meta.keywords as string[]) : [];
-  return keywords.includes('aalis-plugin');
+export function declaresPlugin(manifest: unknown): boolean {
+  const keywords = (manifest as { keywords?: unknown } | null | undefined)?.keywords;
+  return Array.isArray(keywords) && keywords.includes('aalis-plugin');
 }
 ```
 
-两个加载器共用这一个纯函数。每类包打各自的类型词，互斥：
+这个纯函数在 `@aalis/api-plugin-source`，两个加载器与包管理共用。每类包打各自的类型词，互斥：
 
 | 包类型 | 类型关键词 | 会被当插件加载？ | 市场归类 |
 |---|---|---|---|

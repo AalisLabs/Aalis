@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { declaresPlugin } from '../../packages/api-plugin-source/src/index.js';
 
 const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '../../packages');
 
@@ -23,14 +24,14 @@ const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '../../packages')
  * 手写名单的失效方式是**静默漏测**，没有任何信号；改为扫描后新插件自动进来。
  */
 
-/** 判定与两个加载器同源：纯 `aalis-plugin` 关键词正向门（见 runtime 的 isLoadablePlugin）。 */
+/** 是不是插件用两个加载器同一份判定（api-plugin-source 的 declaresPlugin），private 的包不算。 */
 function loadablePluginDirs(): string[] {
   return readdirSync(PACKAGES)
     .filter(dir => {
       const manifest = join(PACKAGES, dir, 'package.json');
       if (!existsSync(manifest)) return false;
-      const pkg = JSON.parse(readFileSync(manifest, 'utf-8')) as { private?: boolean; keywords?: string[] };
-      return pkg.private !== true && Array.isArray(pkg.keywords) && pkg.keywords.includes('aalis-plugin');
+      const pkg = JSON.parse(readFileSync(manifest, 'utf-8')) as { private?: boolean };
+      return pkg.private !== true && declaresPlugin(pkg);
     })
     .sort();
 }

@@ -9,7 +9,7 @@ import {
   type UpdateResult,
   type UpdateTarget,
 } from '@aalis/api-package-manager';
-import { pluginSource } from '@aalis/api-plugin-source';
+import { declaresPlugin, pluginSource } from '@aalis/api-plugin-source';
 import { type ExecResult, type ProcessService, processService } from '@aalis/api-process';
 import {
   appService,
@@ -95,18 +95,6 @@ export function hasWorkspaceProtocol(pkgJson: Record<string, unknown> | undefine
     }
   }
   return false;
-}
-
-/**
- * 包是否声明自己是可加载插件（与两个加载器同一判据：纯 `aalis-plugin` 关键词正向门）。
- *
- * 用途是把「装完没发现新插件」分成两种情形：目标本就不是插件（如 `aalis-interface`
- * 前端包）→ 正常；目标声明了自己是插件却没被发现 → **静默假成功**，必须报失败。
- * 纯函数，便于单测。
- */
-export function declaresPlugin(pkgJson: Record<string, unknown> | undefined): boolean {
-  const kw = pkgJson?.keywords;
-  return Array.isArray(kw) && kw.includes('aalis-plugin');
 }
 
 /**

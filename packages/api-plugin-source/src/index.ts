@@ -1,7 +1,8 @@
 /**
  * @aalis/api-plugin-source — 插件来源契约
  *
- * 插件从哪里来是宿主的事（core 只接收定义好的插件）。宿主若能在运行中重新发现插件
+ * 插件从哪里来是宿主的事（core 只接收定义好的插件）。本包另有两份共用判定：包是不是插件（declaresPlugin）与插件包的入口
+ * 约定（pluginDefinitionOf）。宿主若能在运行中重新发现插件
  * （Node 宿主扫 node_modules 或 packages/），就在根上提供本服务；打包进来的静态插件表没有
  * 可重扫的来源，不提供即可，消费方以 optional 声明。
  */
@@ -25,8 +26,18 @@ export interface PluginSourceService {
 export const pluginSource = defineService<PluginSourceService>('plugin-source');
 
 /**
+ * 包是否声明自己是插件：package.json 的 keywords 含 `aalis-plugin`。加载器只收这样的包，包管理据它分开「本就不是插件」与
+ * 「声明为插件却没加载上」，两处共用这一份判定。每类包各带自己的类型关键词（契约 aalis-api、前端 aalis-interface、
+ * 工具库 aalis-util、核心 aalis-core、工具链 aalis-runtime），都不带 aalis-plugin，自然不收。
+ */
+export function declaresPlugin(manifest: unknown): boolean {
+  const keywords = (manifest as { keywords?: unknown } | null | undefined)?.keywords;
+  return Array.isArray(keywords) && keywords.includes('aalis-plugin');
+}
+
+/**
  * 插件包的入口约定：模块的 default 须是 `definePlugin` 的产物（带非空 name 与 apply 的对象）。
- * 对不上返回 null。加载器与包管理都走这里——「是不是插件 / 名字是什么」只有这一份判定。
+ * 对不上返回 null。两个加载器共用这一份判定；包是不是插件先看 {@link declaresPlugin}。
  *
  * default 为函数或类不算：它们天然继承 Function.prototype.apply，只查 `.apply` 会把
  * `export default function` 误当插件，随后被调用的是 Function.prototype.apply——插件体空跑却被标记已激活。

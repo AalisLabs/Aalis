@@ -27,13 +27,15 @@
 
 - @aalis/runtime（破坏性）：`withPluginConfigSync(app, store, opts?)` 不再收加载器，返回 `{ prepare }`，交给 `createPluginDiscovery` 新加的第四个参数 `options`（类型 `PluginDiscoveryOptions`）；发现驱动每批调用一次 `prepare`，这一批有改动就落盘一次，冷启动不再另外收尾。`PluginLoader` 仍是 `discover`、`load` 与可选的 `reload`。
 - @aalis/api-plugin-source（破坏性）：插件来源服务加必填方法 `loaded(name)`，回以 name 登记的主实例是不是经插件来源加载的，没登记或宿主直接登记的回 false。runtime 实现它。
+- @aalis/api-plugin-source：新增 `declaresPlugin(manifest)`，`package.json` 的 `keywords` 含 `aalis-plugin` 即是插件；两个加载器与包管理共用这一份判定。
+- @aalis/runtime：扫 packages 目录的 `createFsPluginLoader` 与 node_modules 加载器按同一份规则解析入口（`exports` 取 `"."` 的 import 条件目标，没有 `exports` 按 `main`），原来只看 `main`、没写时取 `dist/index.js`；入口解不出时告警并跳过。
 - @aalis/runtime（破坏性）：插件定义的 `name` 必须与包名相同，不一致的包在发现时报错拒载，原来只告警、照常加载。同一轮发现到同名的两份只加载前一份，告警点名两处来源；插件名已登记的不再导入，宿主直接登记的另告警。跳过与拒载都在同步配置之前，不碰配置段。
 - @aalis/runtime：启动时只读的核心键（`logLevel`、`slowThresholdMs`）按核心配置表单判定，与 WebUI 设置页同一套规则。`logLevel` 写成不是可选值的写法（如 `warning`）时告警并按默认级别输出，原来不提示、按 debug 全量输出；`slowThresholdMs` 写成带引号的数字照常可用。
 - @aalis/runtime（破坏性）：删掉启动期日志缓冲 `installBootstrapBuffer`、`getBootstrapBuffer`，它在日志输出装好之前从没收到过条目。文件日志装载时先订阅再清空 `latest.log`，清空还没写完时到的条目照样写进去。
 - @aalis/runtime（破坏性）：删掉退出时的终端复原（`installTerminalStateRestorer`、`restoreTerminalState` 与 `startAalis` 的 `terminalRestore`），改终端模式的插件（终端界面）在停用与进程退出时自己复原。
 - @aalis/runtime：关掉所在的终端（SIGHUP）时走完停机、以 0 退出；以 `--service` 运行时 `kill -HUP` 同样走完停机、以 0 退出。按 Ctrl+C 开始停机时在 stderr 提示改按 Ctrl+\（Windows 为 Ctrl+Break）当场退出；停机途中再按 Ctrl+C 不打断停机。
 - @aalis/runtime：stdout、stderr 写出错 EIO 或 EPIPE（终端已挂断、管道的读端已走）时与 SIGHUP 一样走完停机，此后的写不再报错；以 `--service` 运行时以 75 退出、由服务管理器重新启动进程，否则以 0 退出。respawn 出来的后代自成会话，关掉终端时收不到 SIGHUP，原来之后写日志得到 EIO 就以 1 退出、不经停机。
-- @aalis/plugin-package-manager（破坏性）：插件 id 就是包名，不再为取定义名另外 import 插件入口，`PackageManagerDeps` 去掉 `resolveDefinitionName` 与 `log.warn`，其余成员一律必填（原来可选的 `pluginStatus`、`availableServices`、`idle`、`recoveryChannelProviders`、`cleanupConfig`、`listPluginInstanceIds`、`restartApp` 各带一段缺省兜底）。插件名被宿主直接登记的插件占着时，安装回执写明、未加载（`ok` 为 false），不再报已安装并加载；卸载这样的包只卸包，不卸那个插件、不动它的配置。新增 peerDependencies `@aalis/runtime >=0.20.0`：runtime 低于 0.20.0 时装不上、也更新不到本版。
+- @aalis/plugin-package-manager（破坏性）：插件 id 就是包名，不再为取定义名另外 import 插件入口，`declaresPlugin` 移到 `@aalis/api-plugin-source`、本包不再导出；`PackageManagerDeps` 去掉 `resolveDefinitionName` 与 `log.warn`，其余成员一律必填（原来可选的 `pluginStatus`、`availableServices`、`idle`、`recoveryChannelProviders`、`cleanupConfig`、`listPluginInstanceIds`、`restartApp` 各带一段缺省兜底）。插件名被宿主直接登记的插件占着时，安装回执写明、未加载（`ok` 为 false），不再报已安装并加载；卸载这样的包只卸包，不卸那个插件、不动它的配置。新增 peerDependencies `@aalis/runtime >=0.20.0`：runtime 低于 0.20.0 时装不上、也更新不到本版。
 - @aalis/plugin-package-manager：安装、卸载与更新认同一套包名与版本写法，带构建元数据的版本（如 `foo@1.0.0+build`）能装了，原来只能更新、安装时报非法包名。
 - @aalis/plugin-package-manager：更新装完而宿主不能重启（没有重启策略、或应用已开始停机）时，回执写明已更新、不能自动重启的原因，手动重启后生效（`restarting` 为 false），之后的装卸照常受理；原来更新以错误结束，包管理一直报「正在进行中」，直到重启。
 

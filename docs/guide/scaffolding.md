@@ -264,7 +264,7 @@ my-plugin/
 }
 ```
 
-- **`keywords: ["aalis-plugin"]` 是加载硬门**：两个加载器都只认这个关键词来判定「这是不是可加载插件」（`isLoadablePlugin`，`node-modules-loader.ts`）。漏了它，插件永远不被发现。
+- **`keywords: ["aalis-plugin"]` 是加载硬门**：两个加载器都只认这个关键词来判定「这是不是可加载插件」（`@aalis/api-plugin-source` 的 `declaresPlugin`）。漏了它，插件永远不被发现。
 - **`@aalis/core` 走 peerDependency**，区间 `>=0.21.0 <1.0.0`：模板的显示名与页面标题是文字对象（`t('displayName')`），core 0.21 起插件定义的展示值才放宽为 `unknown`，0.20 的 `displayName` 只收字符串。插件不必随其后的 core 次版本升级重发（别用 `^0.x` caret 把自己锁死，也别用裸 `*`）。**注意 1.0 之前 core 的公开面可能在次版本被删**，用了更新的 API 就把下限再抬；稳定性承诺自 1.0 起生效，见 `docs/design/core-contract.md`。
 - **依赖写区间**：`dependencies` 里的 `@aalis/api-*` 与 `devDependencies` 里的 `@aalis/core` 写 `>=<生成时源上的最新版> <1.0.0`。区间能被包管理器去重到与宿主同一份安装，跨次版本也不断；不写 `latest`（发布出去等于不设上限），也不写 caret（0.x 下跨次版本即断）。
 - **选了哪个扩展点，才把对应 `*-api` 进 `dependencies`**：tool→`@aalis/api-tools`、command→`@aalis/api-commands`、webui→`@aalis/api-webui`、可按会话设的配置项→`@aalis/api-session-settings`、`@aalis/api-host-config` 与 `@aalis/schema-config`。描述符是值导入，不能只放 `devDependencies`。`@aalis/schema-i18n` 总在 `dependencies` 里：字典（`src/texts.ts`）运行时要它。
