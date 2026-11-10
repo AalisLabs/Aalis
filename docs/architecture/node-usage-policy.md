@@ -119,7 +119,10 @@
 ### 浏览器自动化
 
 - **`plugin-tool-browser/src/index.ts`** — `node:fs`（动态导入，`existsSync`）+ `node:crypto`（`createHash`）+ `node:net`（`createServer` / `connect` / `isIP`）
-  从 `@aalis/util-chromium` 取得自带 Chrome 的路径后，用 `existsSync` 判断是否已下载，属于 puppeteer 包的本地资产管理需求，storage 服务覆盖不到。没下载时经 `ProcessService.execFile` 用 node 跑 puppeteer 包里的命令行下载，脚本路径由 `puppeteerCliPath` 给出。`node:net` 用于浏览器网络闸：在 `127.0.0.1` 起 SOCKS5 服务接收浏览器的全部 TCP 连接，判定通过后由插件进程连接目标。`node:crypto` 的 `createHash` 取截图 PNG 内容的 sha256 作文件名。
+  从 `@aalis/util-chromium` 取得自带 Chrome 的路径后，用 `existsSync` 判断是否已下载，属于 puppeteer 包的本地资产管理需求，storage 服务覆盖不到。没下载时调 `installBundledChrome`，它给出的命令行（puppeteer 包里的命令行脚本）经 `ProcessService.spawn` 用 node 跑。`node:net` 用于浏览器网络闸：在 `127.0.0.1` 启动 SOCKS5 服务接收浏览器的全部 TCP 连接，判定通过后由插件进程连接目标。`node:crypto` 的 `createHash` 取截图 PNG 内容的 sha256 作文件名。
+
+- **`util-chromium/src/install.ts`** — `node:fs/promises`（`access` / `mkdir` / `mkdtemp` / `readdir` / `readFile` / `rename` / `rm` / `writeFile`）
+  `installBundledChrome` 让 puppeteer 的命令行装进缓存根下新建的临时目录，装完整目录改名到最终位置，并清掉宿主中途崩溃留下的临时目录、把版本别名并进缓存的 `.metadata`。puppeteer 的缓存目录不在任何存储根里，命令行由调用方经自己的 `ProcessService` 跑，本模块不碰子进程。
 
 ### 记忆后端
 
@@ -143,7 +146,7 @@
 - **`@aalis/runtime`** — `node:fs` / `node:fs/promises`（文件日志、`node_modules` 插件加载、配置读写与监听）+ `node:child_process`（`spawn`）+ `node:module`（`createRequire`）+ `node:crypto`（`randomBytes`）+ `node:path` / `node:url`
   独立部署宿主：从 `node_modules` 加载插件、读 YAML 配置、注入存储 / 进程等环境专有件。它本身就是宿主，直接使用 `node:*` 是本职——core 的环境无关红线正是靠它把副作用兜在外层。`randomBytes`（`providers.ts`）为配置文件原子写的临时文件名生成随机段。
 
-> 历史遗留迁移已完成：`plugin-file-reader` 的 sha256 hashId 改 Web Crypto；`plugin-asr-openai` / `plugin-llm-ollama` 的 `file://` 读取改走 `ProcessService.readExternalFile`；`plugin-tool-browser` 的 Chrome 安装改走 `ProcessService.execFile`。新代码不要再加入直接动态 import `node:fs|crypto|child_process`——如有需要，请按 § 4 流程申报新的例外。
+> 历史遗留迁移已完成：`plugin-file-reader` 的 sha256 hashId 改 Web Crypto；`plugin-asr-openai` / `plugin-llm-ollama` 的 `file://` 读取改走 `ProcessService.readExternalFile`；`plugin-tool-browser` 的 Chrome 安装改走 `ProcessService`。新代码不要再加入直接动态 import `node:fs|crypto|child_process`——如有需要，请按 § 4 流程申报新的例外。
 
 ## 4. 增加新例外的流程（仅当你想合入社区 / 让 lint 通过）
 

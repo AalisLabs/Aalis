@@ -1,21 +1,26 @@
-import { readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type ExecResult, processService, type SpawnOptions } from '../../packages/api-process/src/index.js';
 import { type ToolCallContext, type ToolExecutionResult, tools } from '../../packages/api-tools/src/index.js';
 import { App, LogHub, provide } from '../../packages/core/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
+import { fakeChromeCli } from '../fixtures/puppeteer-cli.js';
 import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 自带的 Chrome 没装、又没配 executablePath：启动浏览器之前经 process 服务跑 puppeteer 包里的命令行下载它。
 // - 跑的脚本就是 puppeteer 的 package.json 里 bin 指的那个文件。
+// - 下载或解压途中被打断时，puppeteer 的缓存里不留不完整的安装，下次调用照常重新装好。
 // - 下载接插件这次激活的中止信号：停用时由 process 服务停掉它，不等满 5 分钟的下载时限；在途的调用与启动期间停用一样报
 //   「浏览器工具已停用」，不当成启动失败。
 // - 输出不写进宿主的终端（按缺省的管道收），全文进调试日志；失败的报错带上 stderr 的结尾：命令行失败时先打一整屏用法，
 //   报错在最后。
-// puppeteer 换成替身（按 util-chromium 的依赖路径 mock），不启动真浏览器；process 服务换成替身，不真下载。
+// puppeteer 换成替身（按 util-chromium 的依赖路径 mock），不启动真浏览器，缓存根是每条用例自己的临时目录；process 服务换成
+// 替身，命令行按 puppeteer 的安装流程在缓存里摆放文件（见 fixtures/puppeteer-cli），不真下载。
 // ════════════════════════════════════════════════════════════
 
 type Handler = (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string | ToolExecutionResult>;
@@ -37,33 +42,44 @@ const fake = vi.hoisted(() => {
       createBrowserContext: async () => ({ newPage: async () => page }),
     };
   });
-  return { launch };
+  /** 缓存根与自带 Chrome 的可执行文件路径，每条用例前设好 */
+  const cache = { dir: '', exe: '' };
+  return { launch, cache };
 });
 vi.mock('../../packages/util-chromium/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js', () => ({
-  default: { launch: fake.launch, executablePath: () => '/zz-missing-chrome' },
+  default: {
+    launch: fake.launch,
+    executablePath: () => fake.cache.exe,
+    get configuration() {
+      return { cacheDirectory: fake.cache.dir };
+    },
+  },
   launch: fake.launch,
 }));
 
 const PUPPETEER = join(dirname(fileURLToPath(import.meta.url)), '../../packages/util-chromium/node_modules/puppeteer');
 
 const apps: App[] = [];
+beforeEach(async () => {
+  fake.cache.dir = await mkdtemp(join(tmpdir(), 'zz-chrome-cache-'));
+  fake.cache.exe = join(fake.cache.dir, 'chrome', 'mac_arm-1.2.3', 'chrome-mac', 'zz-chrome');
+});
 afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
   fake.launch.mockClear();
+  await rm(fake.cache.dir, { recursive: true, force: true });
 });
 
-/**
- * process 服务替身：子进程按 wait 落定。与 process-local 一样，execFile 是 spawn 加 wait、非零退出时带着结果抛错，
- * 所以不论插件用哪个，spawn 都记下了命令与选项
- */
-function fakeProcess(wait: (opts?: SpawnOptions) => Promise<ExecResult>) {
-  const spawn = vi.fn((_cmd: string, _args: readonly string[], opts?: SpawnOptions) => ({ wait: () => wait(opts) }));
-  const execFile = async (cmd: string, args: readonly string[], opts?: SpawnOptions) => {
-    const result = await spawn(cmd, args, opts).wait();
-    if (result.code === 0) return result;
-    throw Object.assign(new Error(`execFile ${cmd} 退出码 ${result.code}: ${result.stderr.slice(0, 200)}`), { result });
-  };
-  return { spawn, service: { spawn, execFile } };
+/** 按 puppeteer 的安装流程在缓存里摆放文件的命令行替身，自带 Chrome 装好后正好在 fake.cache.exe */
+const chromeCli = () =>
+  fakeChromeCli({ cacheDir: fake.cache.dir, platform: 'mac_arm', buildId: '1.2.3', exe: 'chrome-mac/zz-chrome' });
+
+/** process 服务替身：spawn 记下命令与选项，子进程按 wait 落定 */
+function fakeProcess(wait: (args: readonly string[], opts?: SpawnOptions) => Promise<ExecResult>) {
+  const spawn = vi.fn((_cmd: string, args: readonly string[], opts?: SpawnOptions) => ({
+    wait: () => wait(args, opts),
+  }));
+  return { spawn, service: { spawn } };
 }
 
 /** 启动浏览器工具，process 服务换成给的替身；debugs、errors 收调试与错误日志 */
@@ -98,7 +114,8 @@ async function start(proc: object, disposeTimeoutMs?: number) {
 
 describe('自动下载自带的 Chrome', () => {
   it('没装又没配路径：跑的是 puppeteer 包里 bin 指的命令行，下载完照常启动浏览器', async () => {
-    const proc = fakeProcess(async () => ({ stdout: '', stderr: '', code: 0, signal: null }));
+    const cli = chromeCli();
+    const proc = fakeProcess((args, opts) => cli.run(args, opts?.env));
     const { navigate } = await start(proc.service);
 
     const result = await navigate();
@@ -106,18 +123,38 @@ describe('自动下载自带的 Chrome', () => {
     expect(proc.spawn).toHaveBeenCalledTimes(1);
     const [cmd, args] = proc.spawn.mock.calls[0];
     expect(cmd).toBe(process.execPath);
-    expect(args.slice(1)).toEqual(['browsers', 'install', 'chrome']);
+    expect(args.slice(1)).toEqual(['browsers', 'install', 'chrome', '--format', '{{path}}']);
+    // 时限交给 process 服务：到时停掉命令行，过期临时目录的判定以它为界
+    expect(proc.spawn.mock.calls[0][2]?.timeout).toBe(300_000);
     const { bin } = JSON.parse(readFileSync(join(PUPPETEER, 'package.json'), 'utf-8')) as { bin: string };
     // 两边都取真实路径：包在 node_modules 里是指向存储目录的链接。脚本不存在时 realpathSync 抛错
     expect(realpathSync(args[0])).toBe(realpathSync(join(PUPPETEER, bin)));
     expect(result.error).toBeUndefined();
+    expect(existsSync(fake.cache.exe)).toBe(true);
+    expect(fake.launch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['下载', 'interrupt-download'],
+    ['解压（可执行文件已解出、别的还缺）', 'interrupt-extract'],
+  ] as const)('%s途中被打断：缓存里不留不完整的安装，下次调用照常重新装好', async (_label, outcome) => {
+    const cli = chromeCli();
+    cli.outcomes.push(outcome);
+    const proc = fakeProcess((args, opts) => cli.run(args, opts?.env));
+    const { navigate } = await start(proc.service);
+
+    expect((await navigate()).error).toBeDefined();
+    expect(await readdir(fake.cache.dir)).toEqual([]);
+
+    expect((await navigate()).error).toBeUndefined();
+    expect(existsSync(join(cli.installDir, 'zz-resources.pak'))).toBe(true);
     expect(fake.launch).toHaveBeenCalledTimes(1);
   });
 
   it('下载途中停用：交给下载的中止信号随之断开，停用不等下载完成，调用报「浏览器工具已停用」', async () => {
     // 替身：一直不回，中止时按终止信号落定（与 process 服务停掉进程组后一样）
     const proc = fakeProcess(
-      opts =>
+      (_args, opts) =>
         new Promise(resolve => {
           const stopped = { stdout: '', stderr: '', code: null, signal: 'SIGTERM' as const };
           opts?.signal?.addEventListener('abort', () => resolve(stopped), { once: true });

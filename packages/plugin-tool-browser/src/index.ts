@@ -23,6 +23,7 @@ import {
   type BrowserContext,
   bundledChromePath,
   ChromiumLaunchError,
+  installBundledChrome,
   launchChromium,
   type Page,
   puppeteerCliPath,
@@ -274,19 +275,20 @@ function runBrowserTools(caps: Caps): void {
     if (fs.existsSync(await bundledChromePath())) return;
 
     logger.info('Chrome 未安装，正在自动下载...');
-    // 走 ProcessService，避免直接 import node:child_process。输出按管道收，不写进宿主的终端（全屏界面会被写花），全文进
-    // 调试日志；失败的报错带上 stderr 的结尾。停用时由 process 服务停掉下载
-    const result = await proc
-      .spawn(process.execPath, [puppeteerCliPath(), 'browsers', 'install', 'chrome'], {
-        timeout: 300_000,
-        signal: lifecycle.use.signal,
-      })
-      .wait();
-    logger.debug(`下载 Chrome 的输出:\n${result.stdout}${result.stderr}`);
-    if (result.code !== 0) {
-      const detail = result.stderr || `退出码 ${result.code}，信号 ${result.signal}`;
-      throw new Error(`下载 Chrome 失败: ${detail.slice(-CLI_STDERR_TAIL)}`);
-    }
+    // 装法（先装进缓存里的临时目录、装完整体改名到位）归 util-chromium，这里只跑它给的命令行：走 ProcessService，避免直接
+    // import node:child_process。停用时由 process 服务停掉下载。输出按管道收，不写进宿主的终端（全屏界面会被写花），全文进
+    // 调试日志；失败的报错带上 stderr 的结尾
+    await installBundledChrome(async ({ args, env, timeoutMs }) => {
+      const result = await proc
+        .spawn(process.execPath, args, { env, timeout: timeoutMs, signal: lifecycle.use.signal })
+        .wait();
+      logger.debug(`下载 Chrome 的输出:\n${result.stdout}${result.stderr}`);
+      if (result.code !== 0) {
+        const detail = result.stderr || `退出码 ${result.code}，信号 ${result.signal}`;
+        throw new Error(`下载 Chrome 失败: ${detail.slice(-CLI_STDERR_TAIL)}`);
+      }
+      return result.stdout;
+    });
     logger.info('Chrome 下载完成');
   }
 
