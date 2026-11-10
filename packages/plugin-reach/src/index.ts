@@ -83,7 +83,7 @@ async function run(caps: Caps): Promise<void> {
   });
   const realRoots = await realRootsOf(declared, logger.use);
   const lists = withRealRoots(declared, root => realRoots.get(root));
-  const loginEnv = loginEnvs({ process: caps.process, userHome, logger: logger.use });
+  const loginEnv = loginEnvs({ process: caps.process, userHome, logger: logger.use, signal: lifecycle.use.signal });
 
   /** 删会话时在后台删着的临时区 */
   const deleting = new Map<string, Promise<void>>();

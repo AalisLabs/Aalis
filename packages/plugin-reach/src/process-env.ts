@@ -36,8 +36,16 @@ const NPMRC_SECRET = /(^|:)(_authToken|_auth|_password|username|password|(cert|k
 /** SSH 地址的拉取改走 HTTPS（沙箱里没有 SSH 凭据），推送仍是 SSH（沙箱里推不了，要宿主执行） */
 const HTTPS_HOSTS = ['github.com', 'gitlab.com'];
 
-/** 按 owner 的 login shell 取环境的入口：同一个主目录取到一次就一直用，同时来的调用共用一次取 */
-export function loginEnvs(deps: { process: ServiceSelection<ProcessService>; userHome: string; logger: Logger }) {
+/**
+ * 按 owner 的 login shell 取环境的入口：同一个主目录取到一次就一直用，同时来的调用共用一次取。共用的一次取不随哪一次调用
+ * 停下，接 signal（本插件这次激活的）：停用、停机时 login shell 随之停下，以中止原因拒绝，不按取不到告警
+ */
+export function loginEnvs(deps: {
+  process: ServiceSelection<ProcessService>;
+  userHome: string;
+  logger: Logger;
+  signal: AbortSignal;
+}) {
   const cache = new Map<string, { env: Promise<Env>; retryAt: number }>();
 
   /** 取不到时为 undefined */
@@ -57,6 +65,7 @@ export function loginEnvs(deps: { process: ServiceSelection<ProcessService>; use
         cwd,
         timeout: CAPTURE_TIMEOUT_MS,
         input: '',
+        signal: deps.signal,
       });
       const at = stdout.indexOf(mark);
       if (at < 0) throw new Error(`${shell} 的输出里没有环境`);
@@ -68,6 +77,7 @@ export function loginEnvs(deps: { process: ServiceSelection<ProcessService>; use
           .map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]),
       );
     } catch (err) {
+      deps.signal.throwIfAborted();
       deps.logger.warn(
         `没取到 owner 的 login shell 环境（主目录 ${home}），子进程用守护进程的环境，1 分钟后再取:`,
         err,

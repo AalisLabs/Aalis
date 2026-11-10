@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { App } from '../../packages/core/src/index.js';
+import type { App, Logger } from '../../packages/core/src/index.js';
 import {
   ownerTurn,
   projectSession,
@@ -51,8 +51,11 @@ let log: string;
 const saved: Record<string, string | undefined> = {};
 const apps: App[] = [];
 
-/** 写假 shell：failWhile 指的文件存在时只打印一行就失败退出；extra 是 rc 文件另外导出的变量 */
-function fakeShell(opts: { failWhile?: string; extra?: Record<string, string> } = {}): string {
+/**
+ * 写假 shell：failWhile 指的文件存在时只打印一行就失败退出，hangWhile 指的文件存在时把进程号写进旁边的 .pid 文件后卡住
+ * （rc 文件等输入、连网）；extra 是 rc 文件另外导出的变量
+ */
+function fakeShell(opts: { failWhile?: string; hangWhile?: string; extra?: Record<string, string> } = {}): string {
   const shell = join(dirs.base, 'bin', 'zz-shell');
   mkdirSync(join(dirs.base, 'bin'), { recursive: true });
   const exports = Object.entries({ ...RC_DROPPED, ...RC_KEPT, ...opts.extra })
@@ -65,6 +68,7 @@ function fakeShell(opts: { failWhile?: string; extra?: Record<string, string> } 
       `pwd -P >> '${log}'`,
       'echo zz-rc-noise',
       opts.failWhile ? `[ -e '${opts.failWhile}' ] && exit 1` : '',
+      opts.hangWhile ? `[ -e '${opts.hangWhile}' ] && { echo $$ > '${opts.hangWhile}.pid'; exec sleep 30; }` : '',
       exports,
       `export PATH='${join(dirs.base, 'node', 'bin')}':"$PATH"`,
       'for last; do :; done',
@@ -115,13 +119,13 @@ afterEach(async () => {
   removeDirs(dirs);
 });
 
-async function start() {
-  const started = await startReach(dirs);
+async function start(logger?: Logger) {
+  const started = await startReach(dirs, logger ? { logger } : {});
   apps.push(started.app);
   const sm = started.host.sessionManager.use;
   const svc = started.host.reach.use;
   const webui = (await sm.createSession({ name: 'w' }, { createdFrom: 'webui' })).id;
-  return { sm, svc, webui, paths: started.paths };
+  return { app: started.app, sm, svc, webui, paths: started.paths };
 }
 
 const shellCalls = () => readFileSync(log, 'utf8').trim().split('\n');
@@ -165,6 +169,41 @@ describe('取 login shell 的环境', () => {
     vi.setSystemTime(Date.now() + 60 * 60_000);
     expect(await hostEnv(), '取到的一直用').toMatchObject({ ZZ_FROM_RC: '1' });
     expect(shellCalls()).toHaveLength(2);
+  });
+
+  it('取环境途中停用：login shell 随之停下，以中止原因拒绝，不按取不到告警', async () => {
+    const hang = join(dirs.base, 'rc-hang');
+    writeFileSync(hang, '');
+    process.env.SHELL = fakeShell({ hangWhile: hang });
+    const warns: string[] = [];
+    const logger: Logger = {
+      debug() {},
+      info() {},
+      warn: (...args: unknown[]) => void warns.push(args.map(String).join(' ')),
+      error() {},
+      child: () => logger,
+    };
+    const { app, svc, webui } = await start(logger);
+    const cred = await svc.forCall(ownerTurn(webui));
+    const failure = cred.processEnv('host').then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    await expect.poll(() => readFileSync(`${hang}.pid`, 'utf8')).toMatch(/^\d+\n$/);
+    const pid = Number(readFileSync(`${hang}.pid`, 'utf8'));
+    const alive = () => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    await app.plugins.disable('@aalis/plugin-reach');
+    // 取环境的时限是 10 秒，这里只等 poll 的 5 秒：停下来的只能是中止
+    await expect.poll(alive).toBe(false);
+    expect(await failure).toMatchObject({ name: 'AbortError' });
+    expect(warns.filter(line => line.includes('login shell'))).toEqual([]);
   });
 });
 
