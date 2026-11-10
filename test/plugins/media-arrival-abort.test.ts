@@ -15,9 +15,9 @@ import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
-// 来消息即识别的预处理是本插件自己发起的，转写与 describeVideo 的契约不带中止信号：它们交给下载、ffprobe、ffmpeg 与内置
-// LLM 处理器的中止信号是本插件这次激活的，停用时随之停下，不跑到各自的时限；中止不按取不到、没有音轨、转不了处理，
-// 到达识别也不再处理后面的附件。ffmpeg 与 ffprobe 经进程服务调用：替身里卡住的那条一直不回，中止时按非零退出拒绝
+// 来消息即识别的预处理是本插件自己发起的，交给下载、ffprobe、ffmpeg 与内置 LLM 处理器的中止信号是本插件这次激活的；
+// describe、transcribe 与 describeVideo 把调用方给的信号与它合并。停用或调用方中止时这些随之停下，不等到各自的时限；
+// 中止不按取不到、没有音轨、转不了处理，到达识别也不再处理后面的附件。ffmpeg 与 ffprobe 经进程服务调用：替身里卡住的那条一直不回，中止时按非零退出拒绝
 // （与 process 服务停掉进程组后一样），其余照常回放输出；存储在内存里，不依赖本机的 ffmpeg；识别模型是替身。
 // ════════════════════════════════════════════════════════════
 
@@ -298,5 +298,52 @@ describe('来消息即识别随停用中止', () => {
     await t.disable();
     expect(t.execs[0].signal?.aborted).toBe(true);
     expect(await pending).toBe('');
+  });
+});
+
+describe('describe、transcribe 与 describeVideo 随调用方的信号中止', () => {
+  it.each([
+    ['识图', { kind: 'image', data: dataUri('image/png', PNG) }],
+    ['转写', { kind: 'audio', data: dataUri('audio/mpeg', MP3) }],
+  ] as const)('describe %s的模型调用途中调用方中止：交给它的中止信号随之断开，不告警', async (_label, attachment) => {
+    const t = await boot({ chat: true });
+    const caller = new AbortController();
+    const pending = t.service.describe([attachment], { signal: caller.signal });
+    await expect.poll(() => t.chats.length).toBe(1);
+    caller.abort();
+    expect(t.chats[0].signal?.aborted).toBe(true);
+    expect(await pending).toEqual([undefined]);
+    expect(t.warns.filter(message => /描述失败|识别失败/.test(message))).toEqual([]);
+  });
+
+  it.each([
+    ['内置 LLM 处理器', { chat: true } as const, (t: Booted) => t.chats],
+    ['asr 桥接', { asr: true } as const, (t: Booted) => t.heard],
+  ])('transcribe 途中调用方中止（%s）：交给它的中止信号随之断开，抛中止原因，不告警', async (_label, hang, calls) => {
+    const t = await boot(hang);
+    const caller = new AbortController();
+    const pending = t.service.transcribe(
+      { kind: 'audio', data: dataUri('audio/mpeg', MP3) },
+      { signal: caller.signal },
+    );
+    await expect.poll(() => calls(t).length).toBe(1);
+    caller.abort();
+    expect(calls(t)[0].signal?.aborted).toBe(true);
+    await expect(pending).rejects.toBe(caller.signal.reason);
+    expect(t.warns.filter(message => message.includes('识别失败'))).toEqual([]);
+  });
+
+  it.each([
+    ['数帧', { cmd: 'ffprobe' } as const, (t: Booted) => t.execs],
+    ['音轨转写（asr 桥接）', { asr: true } as const, (t: Booted) => t.heard],
+  ])('describeVideo %s途中调用方中止：交给它的中止信号随之断开，不告警', async (_label, hang, calls) => {
+    const t = await boot(hang);
+    const caller = new AbortController();
+    const pending = t.service.describeVideo(VIDEO.data, { signal: caller.signal });
+    await expect.poll(() => calls(t).length).toBe(1);
+    caller.abort();
+    expect(calls(t)[0].signal?.aborted).toBe(true);
+    expect(await pending).toBe('');
+    expect(t.warns.filter(message => message.includes('describeVideo 失败'))).toEqual([]);
   });
 });

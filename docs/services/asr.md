@@ -75,7 +75,7 @@ private asrProcessors(): MediaProcessor[] {
     return {
       name, capabilities: ['audio'], priority: e.priority,
       transcribe: async input => {
-        const r = await asr.transcribe({ ...input, signal: this.caps.lifecycle.use.signal });
+        const r = await asr.transcribe({ ...input, signal: input.signal ?? this.caps.lifecycle.use.signal });
         return { text: r.text, segments: r.segments, language: r.language,
                  meta: { processor: name, model: r.meta?.model } };
       },
@@ -84,7 +84,7 @@ private asrProcessors(): MediaProcessor[] {
 }
 ```
 
-转写的契约不带中止信号，桥接时交 media 这次激活的信号：停用、停机时转写随之停下。它用 `asr.list()` 拿**全部** provider（不只是本插件选中的那一家；条目的 `use` 是那一家的业务句柄，`id` 是条目身份），让用户在 media 的 `audio.prefer` 里按 processor 名挑后端，再回退到按 priority 取最高（`service.ts`）。当 `name === 'asr'` 的 provider 注册/注销时，media 监听服务事件刷新候选（`plugin-media/src/index.ts`）。
+桥接时交 media 收到的信号（media 的 `transcribe` 已把调用方的与本插件这次激活的合并，见 `callSignal`），直接调桥接处理器而没给信号的交 media 这次激活的：调用方中止、media 停用或停机时转写随之停下。它用 `asr.list()` 拿**全部** provider（不只是本插件选中的那一家；条目的 `use` 是那一家的业务句柄，`id` 是条目身份），让用户在 media 的 `audio.prefer` 里按 processor 名挑后端，再回退到按 priority 取最高（`service.ts`）。当 `name === 'asr'` 的 provider 注册/注销时，media 监听服务事件刷新候选（`plugin-media/src/index.ts`）。
 
 ---
 

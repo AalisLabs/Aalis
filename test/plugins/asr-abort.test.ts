@@ -14,7 +14,7 @@ import { fixedRef, ref } from '../fixtures/service-ref.js';
 // ════════════════════════════════════════════════════════════
 // 转写接调用方的中止信号（TranscribeInput.signal）：远程音频的下载、云端转写请求、ffmpeg 转码与 whisper-cli 随之停下，
 // 抛出中止原因，不按转码或识别失败报；超时照旧。调用方没中止、提供转写的插件停用或重启时同样停下（实现另接自己这次激活的
-// 信号）。plugin-media 经 asr 桥接转写时交本插件这次激活的信号。下载打到本机一个
+// 信号）。plugin-media 的 asr 桥接在调用方没给信号时交本插件这次激活的信号。下载打到本机一个
 // 只收不回的上游桩；转写请求的 fetch 与 process 服务是替身，卡住的那一步只在中止时拒绝（与 process 服务停掉进程组后一样）。
 // ════════════════════════════════════════════════════════════
 
@@ -179,7 +179,7 @@ describe('plugin-asr-whisper-cpp：子进程随中止停下', () => {
 });
 
 describe('plugin-media 经 asr 桥接转写', () => {
-  it('交给 asr 服务的是本插件这次激活的中止信号', async () => {
+  it('调用方没给信号：桥接交给 asr 服务的是本插件这次激活的中止信号，停用时随之断开', async () => {
     const received: TranscribeInput[] = [];
     const ears: ASRService = {
       transcribe: async input => {
@@ -203,7 +203,9 @@ describe('plugin-media 经 asr 桥接转写', () => {
         video: { maxTokens: 300, think: false },
       } as unknown as MediaConfigResolved,
     );
-    expect(await service.transcribe({ kind: 'audio', data: WAV })).toBe('听到了');
-    expect(received[0]?.signal).toBe(activation.signal);
+    const bridge = service.pickProcessor('audio');
+    expect((await bridge?.transcribe?.({ attachment: { kind: 'audio', data: WAV } }))?.text).toBe('听到了');
+    activation.abort();
+    expect(received[0]?.signal?.aborted).toBe(true);
   });
 });

@@ -109,6 +109,8 @@ export interface TranscribeInput {
   context?: string;
   /** 音频所在的会话：转写的模型调用按它记账（api-llm 的 ChatModelRequest.sessionId）；不在会话里转写时不填 */
   sessionId?: string;
+  /** 中止信号：交给转写前的转码与转写（模型调用或 asr 的转写），中止时转写随之停下 */
+  signal?: AbortSignal;
 }
 
 export interface TranscribeResult {
@@ -132,7 +134,7 @@ export interface MediaService {
 
   /** 描述：根据每个 attachment 的 kind/mime 自动选 processor */
   describe(attachments: MessageAttachment[], opts?: DescribeOptions): Promise<Array<string | undefined>>;
-  /** 转写：单条音频。转不出时为 undefined；提供方停用、停机时中止的抛中止原因 */
+  /** 转写：单条音频。转不出时为 undefined；调用方中止、提供方停用或停机时抛中止原因 */
   transcribe(attachment: MessageAttachment, opts?: TranscribeOptions): Promise<string | undefined>;
 
   /**
@@ -207,6 +209,8 @@ export interface DescribeVideoOptions {
   hint?: string;
   /** 本地缓存路径（避免重新下载） */
   localPath?: string;
+  /** 中止信号：调用方不再要结果时（停用、回合中止等）下载、抽帧、转写与识别随之停下 */
+  signal?: AbortSignal;
 }
 
 export interface DescribeOptions {
@@ -214,10 +218,14 @@ export interface DescribeOptions {
   maxTokens?: number;
   /** 强制使用某个 processor（processor name 或 LLM ModelRef） */
   prefer?: string | ModelRef;
+  /** 中止信号：调用方不再要结果时识别随之停下 */
+  signal?: AbortSignal;
 }
 
 export interface TranscribeOptions {
   language?: string;
+  /** 中止信号：调用方不再要结果时下载、转码与转写随之停下 */
+  signal?: AbortSignal;
 }
 
 export interface MediaProcessReport {

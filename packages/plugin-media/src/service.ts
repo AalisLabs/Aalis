@@ -92,8 +92,8 @@ function staticImageSource(data: string, bytes: Uint8Array | null): string {
 
 /**
  * 调度器用到的能力。llm / asr 是 processor 池的两个来源；memory 供识别上下文取历史与发送者画像。三者都可缺席（各自路径降级）。
- * lifecycle 给本插件这次激活的中止信号：来消息即识别是本插件自己发起的处理，转写与按网址描述视频的契约不带中止信号，这几处的
- * 下载、ffprobe、ffmpeg 与模型调用接它，停用时随之停下
+ * lifecycle 给本插件这次激活的中止信号：来消息即识别是本插件自己发起的处理，下载、ffprobe、ffmpeg 与模型调用接它；替调用方做的
+ * （describe、transcribe、describeImage、describeVideo 等）把调用方的信号与它合起来（见 callSignal）。停用时这些都随之停下
  */
 export interface MediaServiceCaps {
   logger: ServiceSelection<Logger>;
@@ -194,8 +194,8 @@ export class MediaServiceImpl implements MediaService {
 
   /**
    * 把核心 `asr` 服务的每个 provider（whisper-cpp / 云 ASR…）包成 cap='audio' 的 MediaProcessor，
-   * 与「audio 能力的 LLM」同池，供 pickProcessor('audio', prefer) 统一仲裁。transcribe 直接转调 asr 服务；转写的契约
-   * （api-media 的 TranscribeInput）不带中止信号，交本插件这次激活的，停用、停机时随之停下。
+   * 与「audio 能力的 LLM」同池，供 pickProcessor('audio', prefer) 统一仲裁。transcribe 直接转调 asr 服务，交它收到的中止信号；
+   * 没给的交本插件这次激活的，停用、停机时随之停下。
    */
   private asrProcessors(): MediaProcessor[] {
     return this.caps.asr.list().map(e => {
@@ -208,7 +208,7 @@ export class MediaServiceImpl implements MediaService {
         priority: e.priority,
         // asr-api 的 meta.processor 可选、media-api 必填 → 显式映射并盖上桥接器名。
         transcribe: async input => {
-          const r = await asr.transcribe({ ...input, signal: this.caps.lifecycle.use.signal });
+          const r = await asr.transcribe({ ...input, signal: input.signal ?? this.caps.lifecycle.use.signal });
           return {
             text: r.text,
             segments: r.segments,
@@ -256,6 +256,7 @@ export class MediaServiceImpl implements MediaService {
 
   async describe(attachments: MessageAttachment[], opts: DescribeOptions = {}): Promise<Array<string | undefined>> {
     if (attachments.length === 0) return [];
+    const signal = this.callSignal(opts.signal);
     const out: Array<string | undefined> = new Array(attachments.length).fill(undefined);
     // 按 kind 分组批处理
     const byKind: Record<string, number[]> = { image: [], audio: [], video: [], file: [] };
@@ -274,15 +275,14 @@ export class MediaServiceImpl implements MediaService {
             mode: 'single',
             hint: opts.hint,
             maxTokens: opts.maxTokens,
-            // 契约不带中止信号：接本插件这次激活的，停用时随之停下
-            signal: this.caps.lifecycle.use.signal,
+            signal,
           });
           for (let j = 0; j < byKind.image.length; j++) {
             out[byKind.image[j]] = r.descriptions[j] ?? r.descriptions[0];
           }
         } catch (err) {
-          // 停用、停机时中止不是描述失败：不告警
-          if (!this.caps.lifecycle.use.signal.aborted) {
+          // 调用方中止、停用、停机时中止不是描述失败：不告警
+          if (!signal.aborted) {
             this.logger.warn(`图像描述失败: ${err instanceof Error ? err.message : err}`);
           }
         }
@@ -299,11 +299,12 @@ export class MediaServiceImpl implements MediaService {
               attachment: attachments[i],
               language: this.cfg.audio.language,
               context: opts.hint,
+              signal,
             });
             out[i] = r.text || undefined;
           } catch (err) {
-            // 停用、停机时中止不是识别失败：不告警
-            if (!this.caps.lifecycle.use.signal.aborted) {
+            // 调用方中止、停用、停机时中止不是识别失败：不告警
+            if (!signal.aborted) {
               this.logger.warn(`音频识别失败: ${err instanceof Error ? err.message : err}`);
             }
           }
@@ -315,8 +316,8 @@ export class MediaServiceImpl implements MediaService {
   }
 
   /**
-   * 转写一条音频，转不出时为 undefined 并告警。处理器（内置 LLM 处理器、asr 桥接）的转写接本插件这次激活的中止信号：停用、
-   * 停机时中止的抛中止原因，不当成转不出，调用方据此按中止收尾
+   * 转写一条音频，转不出时为 undefined 并告警。处理器（内置 LLM 处理器、asr 桥接）的转写接调用方的信号与本插件这次激活的
+   * （见 callSignal）：调用方中止、停用、停机时抛中止原因，不当成转不出，调用方据此按中止收尾
    */
   async transcribe(
     attachment: MessageAttachment,
@@ -329,16 +330,18 @@ export class MediaServiceImpl implements MediaService {
       this.logger.debug('无音频处理器可用（asr / audio LLM 均未注册）');
       return undefined;
     }
+    const signal = this.callSignal(opts.signal);
     try {
       const r = await proc.transcribe({
         attachment,
         language: opts.language ?? this.cfg.audio.language,
         context: opts.context,
         sessionId: opts.sessionId,
+        signal,
       });
       return r.text;
     } catch (err) {
-      this.caps.lifecycle.use.signal.throwIfAborted();
+      signal.throwIfAborted();
       this.logger.warn(`音频识别失败: ${err instanceof Error ? err.message : err}`);
       return undefined;
     }
@@ -715,7 +718,7 @@ export class MediaServiceImpl implements MediaService {
         if (audioDataUrl) {
           const text = await this.transcribe(
             { kind: 'audio', data: audioDataUrl, mimeType: 'audio/mpeg' },
-            { context: contextText, sessionId },
+            { context: contextText, sessionId, signal },
           );
           if (text) {
             frameTexts.push(`${this.cfg.video.audioTrackPrefix}${text}`);
@@ -866,15 +869,15 @@ export class MediaServiceImpl implements MediaService {
     const cached = lookupCachedDescription(videoUrl, true, VIDEO_VARIANT);
     if (cached) return cached;
     const att: MessageAttachment = { kind: 'video', data: opts.localPath ?? videoUrl };
+    const signal = this.callSignal(opts.signal);
     try {
-      // 契约不带中止信号：接本插件这次激活的，停用时随之停下
-      const result = await this.processVideo(att, this.caps.lifecycle.use.signal, opts.hint);
+      const result = await this.processVideo(att, signal, opts.hint);
       if (!('text' in result)) return result.failure;
       rememberDescription(videoUrl, result.text, true, VIDEO_VARIANT);
       return result.text;
     } catch (err) {
-      // 停用、停机时中止不是描述失败：不告警
-      if (!this.caps.lifecycle.use.signal.aborted) {
+      // 调用方中止、停用、停机时中止不是描述失败：不告警
+      if (!signal.aborted) {
         this.logger.warn(`describeVideo 失败 url=${videoUrl}: ${err instanceof Error ? err.message : err}`);
       }
       return '';

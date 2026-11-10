@@ -69,9 +69,9 @@ export interface MediaProcessor {
 - **`DescribeInput`**：`attachments`，加上 `basePrompt`（完整替换默认 base）/ `hint`（在 base+context 之后追加一条约束）/ `context`（对话上下文，processor 可拼进 prompt）/ `maxTokens` / `mode:'single'|'combined'` / `sessionId`（附件所在的会话，LLM processor 把它带进模型请求供记账；不在会话里识别时不填）/ `signal`（中止信号，LLM processor 把它带进模型请求，中止时识别随之停下）。
   - `basePrompt` 与 `hint` 的语义严格分离：要换整段 prompt 用 `basePrompt`，只加一条要求用 `hint`。把整段 prompt 塞进 `hint` 会与默认 base 冲突。
 - **`DescribeResult`**：`descriptions`（`mode=single` 时与 `attachments` 等长；`mode=combined` 时是单元素），加上 `meta?:{processor,model?,tokens?}`。
-- **`TranscribeInput`**：单条 `attachment`，加上 `language?`（ISO 639-1）/ `withTimestamps?`（后端可忽略：第一方只有经 asr 桥接的 plugin-asr-openai 返回 `segments`，音频 LLM 与 plugin-asr-whisper-cpp 只给整段 `text`）/ `context?`（仅对 LLM-as-audio 有意义，传统 Whisper 忽略）/ `sessionId?`（音频所在的会话，音频 LLM 把它带进模型请求供记账；不在会话里转写时不填）。
+- **`TranscribeInput`**：单条 `attachment`，加上 `language?`（ISO 639-1）/ `withTimestamps?`（后端可忽略：第一方只有经 asr 桥接的 plugin-asr-openai 返回 `segments`，音频 LLM 与 plugin-asr-whisper-cpp 只给整段 `text`）/ `context?`（仅对 LLM-as-audio 有意义，传统 Whisper 忽略）/ `sessionId?`（音频所在的会话，音频 LLM 把它带进模型请求供记账；不在会话里转写时不填）/ `signal?`（中止信号，交给转写前的转码与转写，中止时转写随之停下；没给时内置处理器接 media 这次激活的）。
 - **`TranscribeResult`**：`text` / `segments?` / `language?` / `meta?:{processor,model?}`。
-- **服务层 opts**：`DescribeImageOptions`（含 `detailLevel` 档位，详见 [§6](#_6-能力-风险-→-影响)；`sessionId` 是图片所在的会话，识别按它记账；`signal` 让网址来源的下载随之停下，并经 `DescribeInput.signal` 交给识别的模型调用，`analyze_image` 传执行器给这次调用的信号）、`DescribeVideoOptions`（`hint` / `localPath`）、`DescribeOptions`（含 `prefer`，强制选定 processor）、`TranscribeOptions`（`language`；音频 processor 由配置 `audio.prefer` 选定）。
+- **服务层 opts**：`DescribeImageOptions`（含 `detailLevel` 档位，详见 [§6](#_6-能力-风险-→-影响)；`sessionId` 是图片所在的会话，识别按它记账；`signal` 让网址来源的下载随之停下，并经 `DescribeInput.signal` 交给识别的模型调用，`analyze_image` 传执行器给这次调用的信号）、`DescribeVideoOptions`（`hint` / `localPath`）、`DescribeOptions`（含 `prefer`，强制选定 processor）、`TranscribeOptions`（`language`；音频 processor 由配置 `audio.prefer` 选定）；后三者的 `signal` 与 media 这次激活的合并，交给下载、抽帧、转写与识图。
 - **`MediaProcessReport`**：`{ total, successCount, items[] }`，`items` 与 `msg.attachments` 等长，每条含 `{kind,cap?,processor?,description?,error?}`。
 
 ### 事件（declaration merging）
@@ -297,7 +297,7 @@ export default definePlugin({
 
 - **先看 `present`**：`plugin-message-archive`、`plugin-image-sender`、`plugin-file-reader` 都是先取 `media.present ? media.use : undefined`，再加 `if (!svc?.xxx)` 守卫，对照见 [§2](#_2-谁提供-谁消费)。
 - **只复用缓存、不触发识别**：对引用消息里的图，OneBot 适配器只调 `lookupDescription(url)`，未命中就保持 `[图片]` 占位，不会主动消耗 vision token。
-- **错误边界**：`describe`/`transcribe`/`describeVideo` 内部做了 try/catch，失败返回 `undefined` 或空串而非抛错，调用方按「空 = 降级」处理即可；例外是 media 停用、停机时中止的转写，`transcribe` 抛中止原因，不当成转不出。`describeImage` 不同：没有可用的 vision processor 或识别结果为空时返回空串，动图抽不出帧时按整图识别；识别过程出错（识别模型调用失败、图取不到等）时直接抛出，调用方需自行 try/catch。
+- **错误边界**：`describe`/`transcribe`/`describeVideo` 内部做了 try/catch，失败返回 `undefined` 或空串而非抛错，调用方按「空 = 降级」处理即可；例外是中止的转写（调用方给的 `signal` 断开，或 media 停用、停机），`transcribe` 抛中止原因，不当成转不出。`describeImage` 不同：没有可用的 vision processor 或识别结果为空时返回空串，动图抽不出帧时按整图识别；识别过程出错（识别模型调用失败、图取不到等）时直接抛出，调用方需自行 try/catch。
 - **顺序识别更稳**：本地视觉模型多为单实例串行，`plugin-image-sender` 显式逐张识别而非并发，避免它们互相排队又同时超时。
 
 ---

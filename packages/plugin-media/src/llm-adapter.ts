@@ -25,7 +25,7 @@ import { t } from './texts.js';
 export interface AdapterCaps {
   llm: ServiceSelection<LLMModel>;
   logger: Logger;
-  /** 本插件这次激活的中止信号：转写的契约不带中止信号，转写前的转码与转写的模型调用接它，停用时随之停下 */
+  /** 本插件这次激活的中止信号：调用方没给信号（TranscribeInput.signal）时，转写前的转码与转写的模型调用接它，停用时随之停下 */
   signal: AbortSignal;
 }
 
@@ -328,7 +328,8 @@ function wrapLLMAsProcessor(
       const langHint = input.language ? `\n* 输出语言：${input.language}` : '';
       const ctxBlock = input.context ? `\n\n上下文/最近对话:\n${input.context}` : '';
       const prompt = `${opts.prompt ?? DEFAULT_AUDIO_PROMPT}${langHint}${ctxBlock}`;
-      const b64 = await audioToBase64(input.attachment.data, signal);
+      const stop = input.signal ?? signal;
+      const b64 = await audioToBase64(input.attachment.data, stop);
       const sizeKB = Math.round((b64.length * 3) / 4 / 1024);
       const audios = [b64];
       const messages: Message[] = [{ role: 'user', content: prompt, audios }];
@@ -344,7 +345,7 @@ function wrapLLMAsProcessor(
         think: think ? undefined : lightestThinking(llm),
         sessionId: input.sessionId,
         purpose: '转写',
-        signal,
+        signal: stop,
       });
       const rawLen = resp.content?.length ?? 0;
       const text = recognizedText(resp);
