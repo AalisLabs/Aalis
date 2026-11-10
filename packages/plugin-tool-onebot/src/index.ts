@@ -355,11 +355,13 @@ async function resolveForwardImageSource(
   }
 }
 
+/** signal 是这次工具调用的，交给识图 */
 async function recognizeForwardImages(
   caps: ForwardCaps,
   selfId: string,
   data: unknown,
   limit: number,
+  signal: AbortSignal | undefined,
 ): Promise<ForwardFormatContext> {
   const refs = collectForwardImageRefs(data, limit);
   const imageDescriptions = new Map<string, string>();
@@ -380,9 +382,11 @@ async function recognizeForwardImages(
     try {
       const imageSource = await resolveForwardImageSource(caps, selfId, ref);
       if (!imageSource) continue;
-      const description = await mediaService.describeImage(imageSource);
+      const description = await mediaService.describeImage(imageSource, { signal });
       if (description) imageDescriptions.set(key, description);
     } catch (err) {
+      // 中止时后面的图不再识别，也不把缺了描述的正文当结果交出：抛中止原因
+      signal?.throwIfAborted();
       logger.use.debug(`合并转发图片识别失败 (${ref.source}): ${err}`);
     }
   }
@@ -1100,7 +1104,7 @@ function registerGroupInfoTools(caps: GroupInfoCaps, bundle: OneBotToolBundle): 
       } catch (err) {
         throw readFailed(err);
       }
-      const formatContext = await recognizeForwardImages(caps, selfId, data, limit);
+      const formatContext = await recognizeForwardImages(caps, selfId, data, limit, callCtx.signal);
       return formatForwardMessage(data, limit, formatContext);
     },
   });

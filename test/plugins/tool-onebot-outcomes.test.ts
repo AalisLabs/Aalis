@@ -57,10 +57,10 @@ function toolRecorder(app: App) {
     },
     registerGroup: () => () => {},
   } as never);
-  return (name: string, args: Record<string, unknown>, sessionId = GROUP) => {
+  return (name: string, args: Record<string, unknown>, sessionId = GROUP, signal?: AbortSignal) => {
     const handler = handlers.get(name);
     if (!handler) throw new Error(`工具 ${name} 未注册`);
-    return handler(args, toolContext({ sessionId, platform: 'onebot' }));
+    return handler(args, toolContext({ sessionId, platform: 'onebot', signal }));
   };
 }
 
@@ -284,6 +284,42 @@ describe('合并转发里的图：get_image 给的地址原样交给识图', () 
     await call('onebot_get_forward_msg', { id: 'zz-forward' });
     expect(sources).toEqual(['zz:/x.png']);
     expect(reads).toEqual([]);
+  });
+});
+
+describe('合并转发里的图：识图接这次调用的中止信号', () => {
+  it('识图途中回合中止：交给识图的信号随之断开，后面的图不再识别，调用抛中止原因', async () => {
+    const signals: Array<AbortSignal | undefined> = [];
+    const image = (file: string) => ({
+      type: 'node',
+      data: { nickname: '甲', content: [{ type: 'image', data: { file } }] },
+    });
+    const { call } = await withStub(
+      async action => {
+        if (action === 'get_image') return { url: 'https://example.invalid/a.png' };
+        if (action === 'get_forward_msg') return unexpanded({ messages: [image('zz-image-1'), image('zz-image-2')] });
+        return {};
+      },
+      {},
+      {
+        media: {
+          describeImage: (_source: string, opts?: { signal?: AbortSignal }) => {
+            signals.push(opts?.signal);
+            if (opts?.signal?.aborted) return Promise.reject(opts.signal.reason);
+            return new Promise<string>((_, reject) =>
+              opts?.signal?.addEventListener('abort', () => reject(opts.signal?.reason), { once: true }),
+            );
+          },
+        },
+      },
+    );
+    const ac = new AbortController();
+    const result = Promise.resolve(call('onebot_get_forward_msg', { id: 'zz-forward' }, GROUP, ac.signal));
+    await expect.poll(() => signals.length).toBe(1);
+    ac.abort();
+    expect(signals[0]?.aborted).toBe(true);
+    await expect(result).rejects.toBe(ac.signal.reason);
+    expect(signals).toHaveLength(1);
   });
 });
 
