@@ -177,30 +177,35 @@ export function findServiceDependents(
 }
 
 /**
- * 合法 npm 包 spec：包名（可选 scope）+ 可选 `@version` 后缀。
+ * 交给 npm 的 argv 里的包名（可选 scope，不含版本）与版本，spec = 包名(@版本)?。
  *
- * 名段与版本段的首字符**都**必须是字母数字。该值最终作为一个 argv 传给 npm，而 npm 会：
+ * 两段的首字符**都**必须是字母数字。spec 最终作为一个 argv 传给 npm，而 npm 会：
  *   - 把以 `-` 开头的 token 当命令行标志（`--force`、`--ignore-scripts` 都是 npm 上真实存在的可发布包名）；
  *   - 把 `.` / `..` / `./x` 当本地目录 spec —— **`foo@.` 与 `@a/b@..` 同样是目录 spec**，
  *     只锚名段挡不住；实测这条能让 npm 转去打包宿主工作目录并执行其 prepack/prepare 生命周期脚本。
- * 两段各自锚住首字符，即封死目录 spec 与标志注入两条面。
+ * 两段各自锚住首字符，即封死目录 spec 与标志注入两条面。版本只含字母数字与 `.` `-` `+`：版本号（可带预发布与
+ * 构建元数据）与 dist-tag，`^`、`~`、`>=` 这类带运算符的范围与路径都不收。
  */
-const PKG_SPEC_RE = /^(@[a-z0-9][a-z0-9\-_.]*\/)?[a-z0-9][a-z0-9\-_.]*(@[a-z0-9][a-z0-9.-]*)?$/i;
+const PKG_NAME_RE = /^(@[a-z0-9][a-z0-9\-_.]*\/)?[a-z0-9][a-z0-9\-_.]*$/i;
+const VERSION_RE = /^[a-z0-9][a-z0-9.\-+]*$/i;
 
 /**
- * 校验单个包 spec，合法返回 `undefined`、非法返回可读理由。
+ * 校验单个包 spec（包名，可带 `@版本`），合法返回 `undefined`、非法返回可读理由。
  *
  * 放在**服务层**：本服务对外公开，任何插件都能绕过 HTTP 路由直接调用。
  * 这与 `buildUpdateSpecs` 是同一条纪律——路由只做「是不是字符串」的形状检查，安全校验
- * 收在所有调用方的必经之路上。**argv 面只有这一份实现**（两份正则漂移是本仓栽过的坑）；
+ * 收在所有调用方的必经之路上。argv 面的包名与版本各只有一个正则，装、卸（本函数）与更新（buildUpdateSpecs）共用；
  * URL 路径段另有一份不含版本段的（webui-server 的 depgraph 端点，见那里的注释）——
  * 两者挡的东西不同，不是同一份的拷贝，别再把它们合并成一条。
  * 纯函数，便于单测。
  */
 export function validatePackageSpec(spec: unknown): TextRef | undefined {
   if (typeof spec !== 'string' || spec.length === 0) return t('emptyName');
-  if (!PKG_SPEC_RE.test(spec)) return t('badName', { name: JSON.stringify(spec) });
-  return undefined;
+  // 包名里的 @ 只能是开头的 scope：开头之后还有 @，最后一个就是版本的分隔
+  const at = spec.lastIndexOf('@');
+  const valid =
+    at > 0 ? PKG_NAME_RE.test(spec.slice(0, at)) && VERSION_RE.test(spec.slice(at + 1)) : PKG_NAME_RE.test(spec);
+  return valid ? undefined : t('badName', { name: JSON.stringify(spec) });
 }
 
 // ===== 插件入口 =====
@@ -353,17 +358,6 @@ export function stripVersion(spec: string): string {
 }
 
 /**
- * 合法 npm 包名（可选 scope），**不含**版本后缀。
- *
- * 首字符锚死字母数字：npm 会把 `-` 开头的 token 当命令行标志，把 `.` / `..` / `./x`
- * 当本地目录 spec（`foo@.` 能让 npm 转去打包宿主工作目录并执行其 prepack 脚本）。
- * 版本段单独用 {@link isSafeVersion} 校验，两段各自锚住首字符才封得死。
- */
-const PKG_NAME_ONLY_RE = /^(@[a-z0-9][a-z0-9\-_.]*\/)?[a-z0-9][a-z0-9\-_.]*$/i;
-/** 精确版本号：只收字母数字打头、不含路径与标志字符的形态。 */
-const VERSION_RE = /^[a-z0-9][a-z0-9.\-+]*$/i;
-
-/**
  * 读 npm 的隐藏锁 `node_modules/.package-lock.json`，得到「此刻树上装的是哪些版本」。
  *
  * 这是 npm 自己维护的、对**实际 node_modules 树**的记录，比 package.json 的范围声明精确，
@@ -430,7 +424,7 @@ export function buildUpdateSpecs(
   for (const target of targets) {
     const name = typeof target?.name === 'string' ? target.name : '';
     const version = typeof target?.version === 'string' ? target.version : '';
-    if (!PKG_NAME_ONLY_RE.test(name)) return { error: t('badName', { name: JSON.stringify(name) }) };
+    if (!PKG_NAME_RE.test(name)) return { error: t('badName', { name: JSON.stringify(name) }) };
     if (!VERSION_RE.test(version)) return { error: t('badVersion', { name, version: JSON.stringify(version) }) };
     // 同名多版本会让 npm 取最后一个，静默丢弃前面的选择——宁可让用户重选。
     if (seen.has(name)) return { error: t('duplicateTarget', { name }) };

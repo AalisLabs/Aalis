@@ -26,6 +26,7 @@ import packageManagerPlugin, {
   nonMarketKind,
   type PackageManagerDeps,
   stripVersion,
+  validatePackageSpec,
 } from '../../packages/plugin-package-manager/src/index.js';
 import { createNodeModulesPluginLoader } from '../../packages/runtime/src/node-modules-loader.js';
 import { createPluginDiscovery } from '../../packages/runtime/src/plugin-discovery.js';
@@ -377,6 +378,17 @@ describe('install（只有一条路径：写根依赖）', () => {
         h.execCalls.some(c => c.cmd === 'npm'),
         evil,
       ).toBe(false);
+    }
+  });
+
+  it('装与更新认同一套版本写法：带构建元数据（+）的版本两边都收，带路径与标志字符的两边都拒', async () => {
+    for (const version of ['1.0.0+build.5', '1.0.0-beta.1', 'next']) {
+      expect(validatePackageSpec(`@scope/foo@${version}`), version).toBeUndefined();
+      expect(buildUpdateSpecs([{ name: '@scope/foo', version }]).error, version).toBeUndefined();
+    }
+    for (const version of ['.', '..', '-1.0.0', '1.0.0/x', '^1.0.0', '']) {
+      expect(validatePackageSpec(`@scope/foo@${version}`), version).toBeDefined();
+      expect(buildUpdateSpecs([{ name: '@scope/foo', version }]).error, version).toBeDefined();
     }
   });
 

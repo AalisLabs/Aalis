@@ -29,7 +29,7 @@ const SEARCH_TIMEOUT_MS = 8000;
 // 装/卸/更新三条路径的包名校验都在 package-manager 服务层（validatePackageSpec /
 // buildUpdateSpecs）——那里是所有调用方的必经之路，路由不再自带第二份 argv 面校验。
 //
-// 这一份**不含版本段**，与服务层那份（`PKG_SPEC_RE`，允许 `name@version` 因为它要过 npm argv）
+// 这一份**不含版本段**，与服务层那份（`validatePackageSpec`，允许 `name@version` 因为它要过 npm argv）
 // 刻意不同：packument URL 是 `${base}/${name}`，带上 `@1.2.3` 必然 404，而 404 只会让
 // `if (r.ok)` 静默跳过、前端拿到一张空图而不是 400。收成纯包名后这类输入直接被拒。
 const PKG_NAME_RE = /^(@[a-z0-9][a-z0-9\-_.]*\/)?[a-z0-9][a-z0-9\-_.]*$/i;
