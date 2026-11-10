@@ -30,6 +30,7 @@ import {
   createProcessRespawnStrategy,
   createServiceRestartStrategy,
   READY_MESSAGE,
+  SERVICE_RESTART_EXIT_CODE,
 } from './providers.js';
 import { tryDispatchSubcommand } from './subcommand.js';
 
@@ -117,6 +118,9 @@ function readCoreVersion(): string | undefined {
  * ② 子命令短路必须在 `app.start` 之前。
  */
 export async function startAalis(opts: StartAalisOptions): Promise<App> {
+  // 两条输出流先在这里建好：macOS 上终端挂断之后首次取 process.stdout / process.stderr 会卡住（建流时重新打开已挂断的终端设备，
+  // 一直等不到），停机路径（下面的 SIGHUP 与写出错）要用到它们。不靠哪个依赖在载入时碰巧把它们建好
+  const outputs = [process.stdout, process.stderr];
   // JS 入口可能一个参数都不传：在动数据目录之前停下，不落到缺省的数据目录
   if (typeof opts?.appDir !== 'string') {
     console.error(
@@ -371,7 +375,8 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   // 配置外部变更热重载（provider 不支持 watch 时为 no-op）；文件里新增的后缀实例经发现驱动登记。
   installConfigHotReload(app, store, discovery, opts.configSync);
   let stopping = false;
-  const shutdown = async () => {
+  /** 走完停机后以 exitCode 退出。停机途中再来的不另行执行一次，退出码按先来的那次 */
+  const shutdown = async (exitCode: number) => {
     if (stopping) return;
     stopping = true;
     await app.stop();
@@ -379,7 +384,7 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
     // 入队，再等队列清空，确保 latest.log 含完整关闭日志。
     await new Promise<void>(r => setImmediate(r));
     await fileLogger?.dispose();
-    process.exit(0);
+    process.exit(exitCode);
   };
   // 停机要等插件收尾，停机途中再按 Ctrl+C 不打断它（npm start 一次 Ctrl+C 本就送来两个 SIGINT）。要立即退出改按 Ctrl+\：
   // 不接 SIGQUIT，按默认动作当场结束，卡住的事件循环也拦不住；Windows 上对应的是 Ctrl+Break（SIGBREAK）。
@@ -389,18 +394,24 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
       console.error(
         `[aalis] Shutting down; press ${process.platform === 'win32' ? 'Ctrl+Break' : 'Ctrl+\\'} to quit now without waiting.`,
       );
-    void shutdown();
+    void shutdown(0);
   });
-  process.on('SIGTERM', shutdown);
-  // 关掉所在的终端时 shell 给前台作业发 SIGHUP，默认动作是不经停机直接结束，插件收尾与清理里的落盘全被跳过。
-  // 收到它时终端已经挂断，之后写 stdout/stderr 都报 EIO。直接写流的（终端界面停用时写的复原序列）出错即是未捕获的 'error'；
-  // console 只在流上没有别的 'error' 监听时才自己接住，有工作线程（经 tsx 跑源码时就有）时它的输出接在这两条流上，管道留下的
-  // 监听把错误再抛出来，console 也接不住。未捕获的 'error' 经顶部的 fatal handler 以 1 退出，停机断在中途。
-  // 输出已无处可去，先给两条流挂上空的监听再停机
-  process.on('SIGHUP', () => {
-    for (const stream of [process.stdout, process.stderr]) stream.on('error', () => {});
-    void shutdown();
-  });
+  process.on('SIGTERM', () => void shutdown(0));
+  // 关掉所在的终端时 shell 给前台作业发 SIGHUP，默认动作是不经停机直接结束，插件收尾与清理里的落盘全被跳过：接住它走完停机。
+  // respawn 出来的后代自成会话，终端关掉时收不到 SIGHUP，只在之后往已挂断的终端写时得到 EIO；输出接在管道上而读端走了是 EPIPE。
+  // 这两种写出错同样走完停机。以 --service 运行时输出断了（日志转发进程异常退出）不是要它停：停完以服务重启的退出码结束，由服务
+  // 管理器重新启动进程、重新接上输出，以 0 退出的话服务管理器当它正常退出、不再重新启动。两条流上一直挂着监听，写出错都由它接住、不再抛：
+  // 直接写流的（终端界面停用时写的复原序列）出错原本是未捕获的 'error'；console 只在流上没有别的 'error' 监听时才自己接住，有工作
+  // 线程（经 tsx 跑源码时就有）时它的输出接在这两条流上，管道留下的监听把错误再抛出来，console 也接不住。未捕获的 'error' 经顶部
+  // 的 fatal handler 以 1 退出，停机断在中途。别的写错误（如输出重定向到写满的磁盘）只丢掉这次输出，与流上没有监听时 console 的
+  // 做法一致，文件日志照常
+  process.on('SIGHUP', () => void shutdown(0));
+  const outputLost = hostArgs.service ? SERVICE_RESTART_EXIT_CODE : 0;
+  for (const stream of outputs) {
+    stream.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EIO' || err.code === 'EPIPE') void shutdown(outputLost);
+    });
+  }
 
   return app;
 }

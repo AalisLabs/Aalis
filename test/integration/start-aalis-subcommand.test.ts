@@ -35,7 +35,7 @@ import { nodeProcessProbe } from '../../packages/runtime/src/instance-lock.js';
 // 3. 子命令进程无重启策略——否则 `restart` 在 app.stop ≥ 500ms 时 spawn 出 argv 仍带 restart 的
 //    detached 子进程，无限连环（实测 5 代）。
 //
-// 守护路径（argv 为空）作为对照：旧日志轮转为 latest.1.log、文件日志照常写、SIGTERM 与 SIGHUP 优雅退出；另守启动收敛后的 pending 告警把「等待仍在激活的
+// 守护路径（不带子命令）作为对照：旧日志轮转为 latest.1.log、文件日志照常写、SIGTERM 与 SIGHUP 优雅退出；另守启动收敛后的 pending 告警把「等待仍在激活的
 // 提供者」与「缺少」分开报。
 // ════════════════════════════════════════════════════════════
 
@@ -258,6 +258,39 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     expect(readLog(dir)).toContain('已停止');
     expect(r.stderr).not.toContain('to quit now');
     expect(readdirSync(join(dir, 'run')).filter(n => n.endsWith('.lock'))).toEqual([]);
+  });
+
+  // EIO：终端已挂断；EPIPE：输出接在管道上而读端已走。以 --service 运行时停完以 75 退出，交给服务管理器重新启动进程
+  it.each([
+    ['', 'EIO', 0, ''],
+    ['', 'EPIPE', 0, ''],
+    ['（以 --service 运行）', 'EIO', 75, '--service'],
+    ['（以 --service 运行）', 'EPIPE', 75, '--service'],
+  ])('守护路径%s：stdout 写出错 %s 时与 SIGHUP 一样走完停机，exit %i', async (_label, code, exit, argv) => {
+    const dir = project();
+    const r = await run(dir, [], { AALIS_E2E_MODE: 'daemon', AALIS_E2E_ARGV: argv, AALIS_E2E_OUTPUT_ERROR: code });
+    expect(r.signal).toBeNull();
+    expect(r.code).toBe(exit);
+    expect(readLog(dir)).toContain('已停止');
+    expect(readdirSync(join(dir, 'run')).filter(n => n.endsWith('.lock'))).toEqual([]);
+  });
+
+  // ENOSPC：输出重定向到写满的磁盘
+  it('守护路径：stdout 报别的写错误只丢掉这次输出，照常运行，收到 SIGTERM 时走完停机', async () => {
+    const dir = project();
+    const r = await run(dir, [], {
+      AALIS_E2E_MODE: 'daemon',
+      AALIS_E2E_OUTPUT_ERROR: 'ENOSPC',
+      AALIS_E2E_SIGNAL: 'SIGTERM',
+    });
+    expect(r.signal).toBeNull();
+    expect(r.code).toBe(0);
+    expect(r.stderr).not.toContain('Uncaught exception');
+    // 停机是 SIGTERM 引起的，不是写出错引起的
+    const log = readLog(dir);
+    expect(log).toContain('e2e 写出错已处理');
+    expect(log.indexOf('正在停止')).toBeGreaterThan(log.indexOf('e2e 写出错已处理'));
+    expect(log).toContain('已停止');
   });
 
   it('守护路径：Ctrl+C（SIGINT）开始停机时提示一次要立即退出改按 Ctrl+\\，停机途中再来的 SIGINT（npm start 一次 Ctrl+C 送来两个）不打断停机、不重复提示，exit 0', async () => {
@@ -663,8 +696,17 @@ const python3 = process.platform !== 'win32' && spawnSync('python3', ['-c', 'pas
 
 describe.skipIf(!python3)('startAalis 在终端里运行（真实子进程，伪终端）', () => {
   const dirs: string[] = [];
+  /** respawn 出来、不归伪终端管的后代：用例结束时还在就杀掉 */
+  const respawned: number[] = [];
 
   afterEach(() => {
+    for (const pid of respawned.splice(0)) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* 已退出 */
+      }
+    }
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
@@ -712,6 +754,21 @@ describe.skipIf(!python3)('startAalis 在终端里运行（真实子进程，伪
     const log = readLog(dir);
     expect(log).toContain('e2e-probe 收尾');
     expect(log).toContain('已停止');
+    expect(readdirSync(join(dir, 'run')).filter(n => n.endsWith('.lock'))).toEqual([]);
+  }, 45_000);
+
+  // respawn 出来的后代自成会话：关掉终端时收不到 SIGHUP，只在之后往已挂断的终端写日志时得到 EIO
+  it('respawn 出来的后代在终端关掉后写日志：走完停机，关闭日志落盘、放掉实例锁，exit 0', async () => {
+    const dir = makeProject();
+    dirs.push(dir);
+    // 伪终端里跑的是第一代：交出实例锁、第二代就绪后以 0 退出
+    expect(await runInTerminal(dir, 'close', { AALIS_E2E_MODE: 'tty-respawn' })).toBe('exit 0');
+    const [gen2, wrapper] = readFileSync(join(dir, 'ready'), 'utf-8').split(' ').map(Number);
+    respawned.push(wrapper!, gen2!);
+    await expect.poll(() => existsSync(join(dir, 'gen2-exit.txt')), { timeout: 15_000 }).toBe(true);
+    expect(existsSync(join(dir, 'uncaught.txt')) ? readFileSync(join(dir, 'uncaught.txt'), 'utf-8') : '').toBe('');
+    expect(readFileSync(join(dir, 'gen2-exit.txt'), 'utf-8')).toBe('0');
+    expect(readLog(dir)).toContain('已停止');
     expect(readdirSync(join(dir, 'run')).filter(n => n.endsWith('.lock'))).toEqual([]);
   }, 45_000);
 

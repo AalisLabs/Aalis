@@ -27,7 +27,7 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 
 | 导出 | 作用 |
 |---|---|
-| `startAalis(opts?)` | **一行启动**：解析数据目录 → 读数据目录里的 `aalis.config.yaml` 与 `secrets.yaml` → 组装 `App` 并接上宿主路径与配置文档 → 从安装集的 `node_modules` 发现并登记已装插件 → 启动 + 挂 SIGINT/SIGTERM/SIGHUP 优雅退出（SIGHUP 即关掉所在的终端，停机途中写已挂断的终端出错不打断停机；SIGINT 开始停机时在 stderr 提示改按 Ctrl+\ 当场退出，SIGQUIT 不接）+ 进程级重生。返回 `App`。数据目录见「数据目录」一节，装配顺序见「startAalis 的装配顺序」。 |
+| `startAalis(opts?)` | **一行启动**：解析数据目录 → 读数据目录里的 `aalis.config.yaml` 与 `secrets.yaml` → 组装 `App` 并接上宿主路径与配置文档 → 从安装集的 `node_modules` 发现并登记已装插件 → 启动 + 挂 SIGINT/SIGTERM/SIGHUP 优雅退出（SIGHUP 即关掉所在的终端；stdout、stderr 写出错 EIO 或 EPIPE 时同样停机，respawn 出来的后代关掉终端时收不到 SIGHUP、靠这一条；写已挂断的终端出错不打断停机；SIGINT 开始停机时在 stderr 提示改按 Ctrl+\ 当场退出，SIGQUIT 不接）+ 进程级重生。返回 `App`。数据目录见「数据目录」一节，装配顺序见「startAalis 的装配顺序」。 |
 | `createNodeModulesPluginLoader(appDir)` | **独立部署**插件加载器：读安装集（绝对路径）`package.json` 的 `dependencies`+`optionalDependencies`，按 `isLoadablePlugin`（**唯一标准：`keywords` 含 `aalis-plugin`**；契约 `aalis-api`/前端 `aalis-interface`/核心 `aalis-core`/工具链 `aalis-runtime`/工具库 `aalis-util` 因不带该词自然排除，无名前缀/service/subsystem 回退、无 marker 排除）发现并动态 import。包目录按 `node_modules` 逐级上溯定位，入口按 `import()` 的规则解析（`exports` 取 `"."` 的 import 条件目标，没有 `exports` 时按 `main`）。 |
 | `createFsPluginLoader(packagesDir)` | **monorepo 自托管**加载器：扫给定的 packages 目录（绝对路径，本仓库入口传 `<仓库>/packages`），复用同一 `aalis-plugin` 纯关键词正向门。 |
 | `createPluginDiscovery(app, loader, store, options?)` | 发现驱动：`loadAll()` 发现并导入全部插件，按配置存储取各实例的配置（解析密钥引用后）与禁用标记（含 `name:suffix` 实例），整批交给 `app.pluginAll`，返回时已静置；`rescan()` 登记新出现的插件与配置里尚未注册的 `name:suffix` 实例，返回本次新登记的主实例名（插件名，即包名），即 `plugin-source` 服务的实现；`registerConfiguredInstances()` 只登记配置里尚未注册的 `name:suffix` 实例（模块取注册表里该模块在册实例的定义，主实例优先；主实例已卸载时取同模块其它在册实例的），供配置热重载调用。插件名即包名：定义的 `name` 与描述符名（包名）不同的包报错拒载；名字已登记的不再导入（宿主直接登记的另告警），同一轮发现到同名的两份只导入前一份，告警点名两处来源；`loaded(name)` 对经本驱动登记的回 `true`。后缀实例的模块定义取这一批新登记的，没有就取注册表里在册的。`options.prepare(definitions)` 每批（冷启动一批、每次热扫描一批）在交给 core 之前调用一次，传入这一批要登记的定义，返回其中准备好的；被拒载、跳过的定义不经过它（`startAalis` 在这里挂配置同步）。加载器契约 `PluginLoader`（`discover` / `load` / 可选 `reload`）与 `options` 的类型 `PluginDiscoveryOptions` 由本包导出。 |
@@ -114,7 +114,7 @@ profile 只由 `--profile` 与 `AALIS_PROFILE` 给出：经 `--data` 或 `AALIS_
 - **查不了启动标识的平台**：Windows 与没有 `ps` 的精简 Linux 镜像只看 pid。强杀留下的锁、pid 又恰好被别的进程占用时，启动会一直报占用；确认没有实例在运行时删掉报错里点名的锁文件即可。
 - **被占用**：打印占用者的 pid 与锁文件后以 1 退出，不碰正在用的日志。以 `--service` 启动（服务单元带上）时以 0 退出：配合 launchd 的 `KeepAlive={SuccessfulExit=false}`，不会每隔几秒被拉起、抢锁失败地循环。锁文件读不了（权限）时不猜它是残留，报错退出。
 - **前台重启的交接**：取锁时生成一个随机令牌，锁里只记它的哈希。`/restart` 与市场更新引起的前台重启，把令牌经环境变量 `AALIS_LOCK_HANDOFF` 交给新进程；新进程看到锁里的哈希对得上就接手，并立即把它从环境里删掉，不让插件起的子进程与侧车继承。
-- **服务形态的重启**：以 `--service` 运行时，`/restart` 与市场更新停掉 App 后以 75 退出，由服务管理器（launchd 的 KeepAlive、systemd 的 `Restart=on-failure`）拉起新进程；不自己起新进程，否则它会脱离服务管理器的监管。服务形态下没有「新版起不来就回滚」，市场更新照常退出并记一条说明。
+- **服务形态的重启**：以 `--service` 运行时，`/restart` 与市场更新停掉 App 后以 75 退出，由服务管理器（launchd 的 KeepAlive、systemd 的 `Restart=on-failure`）启动新进程；输出断了（stdout、stderr 写出 EPIPE 或 EIO，如日志转发进程异常退出）同样停完以 75 退出；不自己启动新进程，否则它会脱离服务管理器的监管。服务形态下没有「新版启动失败就回滚」，市场更新照常退出并记一条说明。
 - **子命令不取锁**：子命令是一次性实例，与守护进程并存是预期的。
 - **只有 `startAalis` 取锁**：自己组装 App 的宿主不经过这一步，需要时自行保证同一数据目录只起一份。
 

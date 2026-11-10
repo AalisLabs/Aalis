@@ -2,11 +2,17 @@
 // 在临时目录（cwd）里以子进程方式运行。只走 runtime **源码**（start.ts），不依赖 runtime dist。
 //
 // 环境变量：
-//   AALIS_E2E_MODE     'subcommand'（默认；按 process.argv 分发）| 'default-loader'（不传插件加载器）| 'no-app-dir'（不传 appDir）| 'daemon'（传 argv: []，
-//                      startAalis 返回后自发 AALIS_E2E_SIGNAL（缺省 SIGTERM；逗号隔开的几个依次发），验证守护路径的文件日志与优雅退出仍在）|
+//   AALIS_E2E_MODE     'subcommand'（默认；按 process.argv 分发）| 'default-loader'（不传插件加载器）| 'no-app-dir'（不传 appDir）| 'daemon'（argv 见 AALIS_E2E_ARGV，
+//                      startAalis 返回后自发 AALIS_E2E_SIGNAL（缺省 SIGTERM；逗号隔开的几个依次发），验证守护路径的文件日志与优雅退出仍在；
+//                      给了 AALIS_E2E_OUTPUT_ERROR 时 stdout 的底层写从此以这个错误码失败，再经 console.log 写一行，
+//                      这时只在给了 AALIS_E2E_SIGNAL 时才发信号）|
 //                      'tty'（守护进程，另载终端界面插件，e2e-probe 收尾时记一条 warn、经控制台日志写到 stderr；未捕获的异常
 //                      当场记进 cwd/uncaught.txt，fatal handler 的崩溃日志是异步追加的，赶不上先落定的停机；startAalis
-//                      返回后写 cwd/ready，不自发信号，由测试关掉它所在的伪终端）
+//                      返回后写 cwd/ready，不自发信号，由测试关掉它所在的伪终端）|
+//                      'tty-respawn'（守护进程，启动后经 app.restart() 启动第二代进程：respawn 出来的后代自成会话，关掉终端时收不到
+//                      SIGHUP。第二代启动后当即并且之后每 100ms 记一条 warn（经控制台日志写到 stderr），随后写 cwd/ready（内容为本进程与
+//                      父进程的 pid），退出时把退出码记进 cwd/gen2-exit.txt，未捕获的异常同 'tty' 记进 cwd/uncaught.txt）
+//   AALIS_E2E_ARGV     'daemon'、'tty'、'tty-respawn' 传给 startAalis 的 argv（空格隔开，缺省为空），如 --service
 //   AALIS_E2E_SLOW_MS  内联插件 onDispose 的延迟毫秒数（>=500 即让 app.stop 慢过重启策略的等待窗口）
 //   AALIS_E2E_APPLY_MS 设了才多登记几个内联插件：e2e-slow 提供 e2e-slow-svc，其 apply 延迟这么多毫秒（验证配置里的
 //                      慢操作阈值）；e2e-waiting 依赖 e2e-slow-svc 与没人提供的 e2e-missing-svc，e2e-patient 只依赖
@@ -29,10 +35,11 @@ const GEN_FILE = resolve(process.cwd(), 'gen.txt');
 const gen = (existsSync(GEN_FILE) ? Number(readFileSync(GEN_FILE, 'utf-8').trim() || '0') : 0) + 1;
 writeFileSync(GEN_FILE, String(gen));
 const mode = process.env.AALIS_E2E_MODE ?? 'subcommand';
-// 'restart' 模式的第一代经 app.restart() 拉起第二代，第二代照常运行；除此之外第二次启动都是被错误拉起的
-if (gen > (mode === 'restart' ? 2 : 1)) process.exit(99);
+// 'restart' 与 'tty-respawn' 模式的第一代经 app.restart() 启动第二代进程，第二代照常运行；除此之外的第二次启动都是不该发生的
+const respawns = mode === 'restart' || mode === 'tty-respawn';
+if (gen > (respawns ? 2 : 1)) process.exit(99);
 const slowMs = Number(process.env.AALIS_E2E_SLOW_MS ?? '0');
-if (mode === 'tty') {
+if (mode === 'tty' || mode === 'tty-respawn') {
   process.on('uncaughtException', err => appendFileSync(resolve(process.cwd(), 'uncaught.txt'), `${String(err)}\n`));
 }
 
@@ -131,15 +138,24 @@ const opts = {
   ...(mode === 'default-loader' ? {} : { pluginLoader }),
   ...(mode === 'no-app-dir' ? {} : { appDir: process.env.AALIS_E2E_APP_DIR ?? process.cwd() }),
   consoleSink: false,
-  ...(mode === 'daemon' || mode === 'tty' ? { argv: [] } : {}),
+  ...(mode === 'daemon' || mode === 'tty' || mode === 'tty-respawn'
+    ? { argv: (process.env.AALIS_E2E_ARGV ?? '').split(' ').filter(Boolean) }
+    : {}),
 } as StartAalisOptions;
 const app = await startAalis(opts);
 if (mode === 'tty') writeFileSync(resolve(process.cwd(), 'ready'), String(process.pid));
 // 'restart' 模式的第一代：守护进程起来后调 app.restart()。前台由重启策略拉起第二代并交出实例锁，第二代就绪后
 // 第一代退出；以 --service 启动时第一代停掉后以服务重启的退出码结束，由服务管理器拉起（这里没有服务管理器）。
-if (mode === 'restart' && gen === 1) {
+if (respawns && gen === 1) {
   writeFileSync(resolve(process.cwd(), 'gen1-pid.txt'), String(process.pid));
   (app.bind({ services }).services.use.get('app') as { restart(): void }).restart();
+}
+if (mode === 'tty-respawn' && gen === 2) {
+  process.on('exit', code => writeFileSync(resolve(process.cwd(), 'gen2-exit.txt'), String(code)));
+  const beat = () => app.logger.warn('e2e 第二代在跑');
+  beat();
+  setInterval(beat, 100);
+  writeFileSync(resolve(process.cwd(), 'ready'), `${process.pid} ${process.ppid}`);
 }
 // 守护路径：startAalis 已挂好信号处理器，自发一次走优雅退出（app.stop → flush → exit 0）。
 // 退出前经宿主提供的插件来源重扫一次，记下返回的新登记名单（插件都已注册，应为空）与 e2e-probe 是不是经它加载的；
@@ -170,5 +186,18 @@ if (mode === 'daemon' || (mode === 'restart' && gen === 2)) {
       preferred: host.preferred(commands) ?? null,
     }),
   );
-  for (const signal of (process.env.AALIS_E2E_SIGNAL ?? 'SIGTERM').split(',')) process.kill(process.pid, signal);
+  // 写出错走 console 的真实路径：底层写失败，错误由流在下一拍发出。前面的写还在途时，排队的块经 _writev 一并写出
+  const outputError = process.env.AALIS_E2E_OUTPUT_ERROR;
+  if (outputError) {
+    const fail = (callback: (err: Error) => void) =>
+      callback(Object.assign(new Error(`write ${outputError}`), { code: outputError }));
+    process.stdout._write = (_chunk, _encoding, callback) => fail(callback);
+    process.stdout._writev = (_chunks, callback) => fail(callback);
+    console.log('e2e 输出写出错');
+    // 等写出错处理完再记一条、再发信号：用例按它与停机日志的先后分出停机是谁引起的
+    await new Promise<void>(r => setImmediate(r));
+    app.logger.info('e2e 写出错已处理');
+  }
+  const signals = process.env.AALIS_E2E_SIGNAL ?? (outputError ? '' : 'SIGTERM');
+  for (const signal of signals.split(',').filter(Boolean)) process.kill(process.pid, signal);
 }
