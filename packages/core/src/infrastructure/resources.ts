@@ -57,6 +57,12 @@ export class Resources {
     return this.#closing;
   }
 
+  /** 关闭后拒收的统一出口：已开始关闭就告警「已关闭，忽略 <what>」并回 true，调用方据此不收这次登记 */
+  refuses(what: string): boolean {
+    if (this.#closing) this.#logger.warn(`激活 "${this.#id}" 已关闭，忽略 ${what}`);
+    return this.#closing;
+  }
+
   /** 跟踪中的初始化尚未落定 */
   get initializing(): boolean {
     return this.#initialization !== undefined;

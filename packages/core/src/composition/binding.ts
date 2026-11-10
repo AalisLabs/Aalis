@@ -283,10 +283,7 @@ function createTarget<P, B>(
   };
 
   const follow = (attach: Follower['attach'], overlap: boolean): (() => void) => {
-    if (scope.resources.disposed) {
-      scope.logger.warn(`激活 "${scope.id}" 已关闭，忽略对 ${name} 的跟随`);
-      return () => {};
-    }
+    if (scope.resources.refuses(`${name} 的跟随`)) return () => {};
     const follower: Follower = { attach, overlap, busy: false, attaching: false, cancelled: false };
     followers.add(follower);
     // 归属表的条目是本激活对外可见的能力，关闭时与原语同一拍撤掉，不等下游交接
@@ -378,10 +375,7 @@ function createTarget<P, B>(
       return {
         add(item: Item) {
           const key = options.key(item);
-          if (scope.resources.disposed) {
-            scope.logger.warn(`激活 "${scope.id}" 已关闭，忽略 ${name} 登记 "${key}"`);
-            return () => {};
-          }
+          if (scope.resources.refuses(`${name} 登记 "${key}"`)) return () => {};
           const previous = entries.get(key);
           const entry: Entry = { item };
           // 先占位再执行任何用户回调：旧 off 或新 register 的重入替换都必须成为最新条目。挪到末尾：换提供者时按登记到达的

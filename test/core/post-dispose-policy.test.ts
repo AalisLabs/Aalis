@@ -108,7 +108,7 @@ describe('订阅类 post-dispose：warn + no-op', () => {
     });
     expect(called).toBe(0);
     expect(() => off()).not.toThrow();
-    expect(lines.find(l => l.includes('忽略对 ready-svc 的跟随'))).toMatch(/^warn\|/);
+    expect(lines.find(l => l.includes('忽略 ready-svc 的跟随'))).toMatch(/^warn\|/);
     await provider.activation.disposeAsync();
   });
 

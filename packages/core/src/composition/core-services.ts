@@ -157,11 +157,6 @@ export function coreProviders(
 ): { provide: (identity: symbol) => Provide; rest: Array<[AnyDescriptor, (identity: symbol) => unknown]> } {
   const entry = <B>(descriptor: ServiceDescriptor<(identity: symbol) => B, B>, view: (c: CoreCaller) => B) =>
     [descriptor, (identity: symbol) => view(caller(identity, descriptor.name))] as [AnyDescriptor, (i: symbol) => B];
-  const accepts = (c: CoreCaller, operation: string): boolean => {
-    if (!c.resources.disposed) return true;
-    c.logger.warn(`激活 "${c.id}" 已关闭，忽略 ${operation}`);
-    return false;
-  };
   const { events: bus, services: container } = runtime;
   const shared: Services = {
     get: <K extends ServiceKey>(key: K) => container.get<KeyedProvider<K>>(keyName(key)),
@@ -178,7 +173,7 @@ export function coreProviders(
   };
   const [, provideFor] = entry<Provide>(provide, c => (descriptor, implementation, options) => {
     const name = descriptor.name;
-    if (!accepts(c, `provide("${name}")`)) return () => {};
+    if (c.resources.refuses(`provide("${name}")`)) return () => {};
     const entryId = options?.entryId ?? c.id;
     if (runtime.devMode && container.hasEntry(name, entryId, c.owner))
       c.logger.warn(
@@ -205,7 +200,7 @@ export function coreProviders(
     provide: provideFor,
     rest: [
       entry<Events>(events, c => ({
-        on: (event, handler) => (accepts(c, `on("${event}")`) ? bus.on(event, handler, c.owner) : () => {}),
+        on: (event, handler) => (c.resources.refuses(`on("${event}")`) ? () => {} : bus.on(event, handler, c.owner)),
         emit: (event, ...args) => bus.emit(event, ...args),
       })),
       entry<LifecycleCap>(lifecycle, c => ({
