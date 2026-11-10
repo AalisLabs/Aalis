@@ -1,4 +1,4 @@
-// 本插件自己的原文字典：显示名（同为工具分组名）与分组概述（模拟盘、实盘两句）、配置项与配置报错
+// 本插件自己的原文字典：显示名（同为工具分组名）与分组概述（模拟盘、实盘两句）、配置项与配置报错，改变状态的请求发出之后中止或超时、结果未知的说明
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
@@ -29,6 +29,7 @@ const SOURCE = {
     'LLM 传入的 limit 会被 cap 到该值；查到的条目整份交给模型，调大会增加单次工具结果的体积。OKX API 本身单页一般最多 100（个别接口 300）。',
   baseUrlNotPlain: 'baseUrl 需为不带用户名或密码的完整 URL',
   baseUrlHasQuery: 'baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径',
+  abortedAfterSent: '请求已发出后中止，OKX 是否已执行未知：先查询订单、持仓或资金状态，确认之后再决定是否重试',
 } as const;
 export type Source = typeof SOURCE;
 

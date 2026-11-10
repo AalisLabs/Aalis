@@ -1,7 +1,6 @@
-import type { OkxClient } from '../client.js';
 import { errJson, type RegFn, truncate } from './_shared.js';
 
-export function registerRubikTools(reg: RegFn, client: OkxClient): void {
+export function registerRubikTools(reg: RegFn): void {
   reg({
     definition: {
       type: 'function',
@@ -19,7 +18,7 @@ export function registerRubikTools(reg: RegFn, client: OkxClient): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getLongShortRatio(args.ccy as string, (args.period as string) || '1D');
         return JSON.stringify(truncate(r.data, 30));
@@ -46,7 +45,7 @@ export function registerRubikTools(reg: RegFn, client: OkxClient): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getContractOpenInterestVolume(args.ccy as string, (args.period as string) || '1D');
         return JSON.stringify(truncate(r.data, 30));
@@ -74,7 +73,7 @@ export function registerRubikTools(reg: RegFn, client: OkxClient): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getTakerVolume(
           args.ccy as string,

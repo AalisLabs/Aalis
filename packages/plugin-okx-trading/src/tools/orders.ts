@@ -1,7 +1,6 @@
-import type { OkxClient } from '../client.js';
 import { errJson, type PageLimitCfg, pickLimit, type RegFn, truncate } from './_shared.js';
 
-export function registerOrderQueryTools(reg: RegFn, client: OkxClient, pageLimit: PageLimitCfg): void {
+export function registerOrderQueryTools(reg: RegFn, pageLimit: PageLimitCfg): void {
   reg({
     definition: {
       type: 'function',
@@ -18,7 +17,7 @@ export function registerOrderQueryTools(reg: RegFn, client: OkxClient, pageLimit
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getPendingOrders(args.instType as string | undefined, args.instId as string | undefined);
         return JSON.stringify(truncate(r.data));
@@ -49,7 +48,7 @@ export function registerOrderQueryTools(reg: RegFn, client: OkxClient, pageLimit
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const limit = pickLimit(args, pageLimit);
         const r = await client.getOrderHistory(args.instType as string, args.instId as string | undefined, limit);
@@ -80,7 +79,7 @@ export function registerOrderQueryTools(reg: RegFn, client: OkxClient, pageLimit
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const limit = pickLimit(args, pageLimit);
         const r = await client.getFills(args.instType as string | undefined, args.instId as string | undefined, limit);

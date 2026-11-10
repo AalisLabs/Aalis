@@ -1,7 +1,6 @@
-import type { OkxClient } from '../client.js';
 import { errJson, type PageLimitCfg, pickLimit, type RegFn, truncate } from './_shared.js';
 
-export function registerTransferTools(reg: RegFn, client: OkxClient, pageLimit: PageLimitCfg): void {
+export function registerTransferTools(reg: RegFn, pageLimit: PageLimitCfg): void {
   reg({
     definition: {
       type: 'function',
@@ -21,7 +20,7 @@ export function registerTransferTools(reg: RegFn, client: OkxClient, pageLimit: 
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.transfer(args.ccy as string, args.amt as string, args.from as string, args.to as string);
         return JSON.stringify(r.data);
@@ -45,7 +44,7 @@ export function registerTransferTools(reg: RegFn, client: OkxClient, pageLimit: 
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getTransferState(args.transId as string);
         return JSON.stringify(r.data);
@@ -75,7 +74,7 @@ export function registerTransferTools(reg: RegFn, client: OkxClient, pageLimit: 
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const limit = pickLimit(args, pageLimit);
         const r = await client.getAssetBills(args.ccy as string | undefined, args.type as string | undefined, limit);
@@ -100,7 +99,7 @@ export function registerTransferTools(reg: RegFn, client: OkxClient, pageLimit: 
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getDepositAddress(args.ccy as string);
         return JSON.stringify(r.data);
@@ -129,7 +128,7 @@ export function registerTransferTools(reg: RegFn, client: OkxClient, pageLimit: 
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const limit = pickLimit(args, pageLimit);
         const r = await client.getDepositHistory(args.ccy as string | undefined, limit);
@@ -159,7 +158,7 @@ export function registerTransferTools(reg: RegFn, client: OkxClient, pageLimit: 
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const limit = pickLimit(args, pageLimit);
         const r = await client.getWithdrawalHistory(args.ccy as string | undefined, limit);

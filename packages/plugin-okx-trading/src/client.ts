@@ -1,5 +1,8 @@
 // ===== OKX API v5 客户端 =====
 
+import { TextError } from '@aalis/schema-i18n';
+import { t } from './texts.js';
+
 interface OkxCredentials {
   apiKey: string;
   secretKey: string;
@@ -12,6 +15,8 @@ interface OkxClientOptions {
   /** 是否模拟盘 */
   demo: boolean;
   timeoutMs: number;
+  /** 调用方的中止信号（见 {@link OkxClient.withSignal}） */
+  signal?: AbortSignal;
 }
 
 interface OkxApiResponse<T = unknown> {
@@ -47,13 +52,21 @@ export class OkxClient {
     this.opts = opts;
   }
 
-  /** 发送已签名的 API 请求 */
+  /** 同一个客户端，请求另接 signal（这次工具调用的中止信号），与超时谁先到按谁停 */
+  withSignal(signal: AbortSignal | undefined): OkxClient {
+    return new OkxClient({ ...this.opts, signal });
+  }
+
+  /**
+   * 发送已签名的 API 请求。POST 一律是改变状态的请求（下单、撤单、改单、平仓、杠杆、保证金、策略委托、划转）：发出之后被
+   * 中止或超时的，OKX 可能已经执行，抛「结果未知」并提示先查询，不报成失败；发出之前已中止的不发，抛中止原因
+   */
   async request<T = unknown>(
     method: 'GET' | 'POST',
     path: string,
     params?: Record<string, unknown>,
   ): Promise<OkxApiResponse<T>> {
-    const { credentials, baseUrl, demo, timeoutMs } = this.opts;
+    const { credentials, baseUrl, demo, timeoutMs, signal } = this.opts;
     let requestPath = path;
     let body = '';
 
@@ -83,19 +96,30 @@ export class OkxClient {
     }
 
     const url = `${baseUrl}${requestPath}`;
-    const response = await fetch(url, {
-      method,
-      headers,
-      body: method === 'POST' ? body : undefined,
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+    signal?.throwIfAborted();
+    const timeout = AbortSignal.timeout(timeoutMs);
+    let response: Response;
+    let text: string;
+    try {
+      response = await fetch(url, {
+        method,
+        headers,
+        body: method === 'POST' ? body : undefined,
+        signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
+      });
+      text = await response.text();
+    } catch (err) {
+      if (method === 'POST' && (signal?.aborted || timeout.aborted)) {
+        throw new TextError(t('abortedAfterSent'), { cause: err });
+      }
+      throw err;
+    }
 
     if (!response.ok) {
-      const text = await response.text();
       throw new Error(`OKX HTTP ${response.status}: ${text}`);
     }
 
-    const result = (await response.json()) as OkxApiResponse<T>;
+    const result = JSON.parse(text) as OkxApiResponse<T>;
     if (result.code !== '0') {
       throw new Error(`OKX API 错误 [${result.code}]: ${result.msg}`);
     }

@@ -1,7 +1,6 @@
-import type { OkxClient } from '../client.js';
 import { errJson, type PageLimitCfg, pickLimit, type RegFn, truncate } from './_shared.js';
 
-export function registerAccountTools(reg: RegFn, client: OkxClient, pageLimit: PageLimitCfg): void {
+export function registerAccountTools(reg: RegFn, pageLimit: PageLimitCfg): void {
   reg({
     definition: {
       type: 'function',
@@ -15,7 +14,7 @@ export function registerAccountTools(reg: RegFn, client: OkxClient, pageLimit: P
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getBalance(args.ccy as string | undefined);
         return JSON.stringify(r.data);
@@ -41,7 +40,7 @@ export function registerAccountTools(reg: RegFn, client: OkxClient, pageLimit: P
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getPositions(args.instType as string | undefined, args.instId as string | undefined);
         return JSON.stringify(r.data);
@@ -60,7 +59,7 @@ export function registerAccountTools(reg: RegFn, client: OkxClient, pageLimit: P
         parameters: { type: 'object', properties: {}, additionalProperties: false },
       },
     },
-    handler: async () => {
+    handler: async (_args, client) => {
       try {
         const r = await client.getAccountConfig();
         return JSON.stringify(r.data);
@@ -83,7 +82,7 @@ export function registerAccountTools(reg: RegFn, client: OkxClient, pageLimit: P
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getAssetBalances(args.ccy as string | undefined);
         return JSON.stringify(r.data);
@@ -110,7 +109,7 @@ export function registerAccountTools(reg: RegFn, client: OkxClient, pageLimit: P
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getLeverageInfo(args.instId as string, args.mgnMode as 'cross' | 'isolated');
         return JSON.stringify(r.data);
@@ -138,7 +137,7 @@ export function registerAccountTools(reg: RegFn, client: OkxClient, pageLimit: P
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getMaxSize(args.instId as string, args.tdMode as string, args.px as string | undefined);
         return JSON.stringify(r.data);
@@ -165,7 +164,7 @@ export function registerAccountTools(reg: RegFn, client: OkxClient, pageLimit: P
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getMaxAvailSize(args.instId as string, args.tdMode as string);
         return JSON.stringify(r.data);
@@ -184,7 +183,7 @@ export function registerAccountTools(reg: RegFn, client: OkxClient, pageLimit: P
         parameters: { type: 'object', properties: {}, additionalProperties: false },
       },
     },
-    handler: async () => {
+    handler: async (_args, client) => {
       try {
         const r = await client.getRiskState();
         return JSON.stringify(r.data);
@@ -215,7 +214,7 @@ export function registerAccountTools(reg: RegFn, client: OkxClient, pageLimit: P
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const limit = pickLimit(args, pageLimit);
         const r = await client.getBills(
@@ -252,7 +251,7 @@ export function registerAccountTools(reg: RegFn, client: OkxClient, pageLimit: P
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const limit = pickLimit(args, pageLimit);
         const r = await client.getBillsArchive(
@@ -285,7 +284,7 @@ export function registerAccountTools(reg: RegFn, client: OkxClient, pageLimit: P
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getTradeFee(args.instType as string, args.instId as string | undefined);
         return JSON.stringify(r.data);
@@ -315,7 +314,7 @@ export function registerAccountTools(reg: RegFn, client: OkxClient, pageLimit: P
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const limit = pickLimit(args, pageLimit);
         const r = await client.getPositionsHistory(
@@ -350,7 +349,7 @@ export function registerAccountTools(reg: RegFn, client: OkxClient, pageLimit: P
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const limit = pickLimit(args, pageLimit);
         const r = await client.getInterestAccrued(
@@ -374,7 +373,7 @@ export function registerAccountTools(reg: RegFn, client: OkxClient, pageLimit: P
         parameters: { type: 'object', properties: {}, additionalProperties: false },
       },
     },
-    handler: async () => {
+    handler: async (_args, client) => {
       try {
         const r = await client.getCurrencies();
         return JSON.stringify(truncate(r.data, 50));

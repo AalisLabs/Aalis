@@ -1,7 +1,6 @@
-import type { OkxClient } from '../client.js';
 import { errJson, type PageLimitCfg, pickLimit, type RegFn, truncate } from './_shared.js';
 
-export function registerTradeTools(reg: RegFn, client: OkxClient, modeLabel: string, pageLimit: PageLimitCfg): void {
+export function registerTradeTools(reg: RegFn, modeLabel: string, pageLimit: PageLimitCfg): void {
   reg({
     definition: {
       type: 'function',
@@ -25,7 +24,7 @@ export function registerTradeTools(reg: RegFn, client: OkxClient, modeLabel: str
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.placeOrder({
           instId: args.instId as string,
@@ -62,7 +61,7 @@ export function registerTradeTools(reg: RegFn, client: OkxClient, modeLabel: str
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.cancelOrder(
           args.instId as string,
@@ -96,7 +95,7 @@ export function registerTradeTools(reg: RegFn, client: OkxClient, modeLabel: str
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.amendOrder({
           instId: args.instId as string,
@@ -131,7 +130,7 @@ export function registerTradeTools(reg: RegFn, client: OkxClient, modeLabel: str
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.setLeverage(
           args.instId as string,
@@ -160,7 +159,7 @@ export function registerTradeTools(reg: RegFn, client: OkxClient, modeLabel: str
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.setPositionMode(args.posMode as 'long_short_mode' | 'net_mode');
         return JSON.stringify(r.data);
@@ -189,7 +188,7 @@ export function registerTradeTools(reg: RegFn, client: OkxClient, modeLabel: str
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.adjustMarginBalance(
           args.instId as string,
@@ -236,7 +235,7 @@ export function registerTradeTools(reg: RegFn, client: OkxClient, modeLabel: str
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const orders = args.orders as Array<{
           instId: string;
@@ -285,7 +284,7 @@ export function registerTradeTools(reg: RegFn, client: OkxClient, modeLabel: str
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.batchCancelOrders(
           args.orders as Array<{ instId: string; ordId?: string; clOrdId?: string }>,
@@ -315,7 +314,7 @@ export function registerTradeTools(reg: RegFn, client: OkxClient, modeLabel: str
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.closePosition(
           args.instId as string,
@@ -347,7 +346,7 @@ export function registerTradeTools(reg: RegFn, client: OkxClient, modeLabel: str
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getOrderDetail(
           args.instId as string,
@@ -382,7 +381,7 @@ export function registerTradeTools(reg: RegFn, client: OkxClient, modeLabel: str
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const limit = pickLimit(args, pageLimit);
         const r = await client.getFillsArchive(args.instType as string, args.instId as string | undefined, limit);

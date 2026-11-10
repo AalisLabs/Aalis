@@ -1,6 +1,15 @@
 import type { BoundTools } from '@aalis/api-tools';
+import type { OkxClient } from '../client.js';
 
-export type RegFn = BoundTools['register'];
+/**
+ * 本插件的工具：处理函数收到的客户端绑着这次调用的中止信号（index.ts 的 reg 在每次调用时绑上），各工具不经手调用上下文，
+ * 请求不会漏接信号
+ */
+export type OkxTool = Omit<Parameters<BoundTools['register']>[0], 'handler'> & {
+  handler: (args: Record<string, unknown>, client: OkxClient) => Promise<string>;
+};
+
+export type RegFn = (tool: OkxTool) => void;
 
 /** 分页 limit 参数的 default 与硬上限（OKX API 单页一般 100，个别 300）。 */
 export interface PageLimitCfg {

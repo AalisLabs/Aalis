@@ -1,7 +1,6 @@
-import type { OkxClient } from '../client.js';
 import { errJson, type PageLimitCfg, pickLimit, type RegFn, truncate } from './_shared.js';
 
-export function registerAlgoTools(reg: RegFn, client: OkxClient, modeLabel: string, pageLimit: PageLimitCfg): void {
+export function registerAlgoTools(reg: RegFn, modeLabel: string, pageLimit: PageLimitCfg): void {
   reg({
     definition: {
       type: 'function',
@@ -29,7 +28,7 @@ export function registerAlgoTools(reg: RegFn, client: OkxClient, modeLabel: stri
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.placeAlgoOrder({
           instId: args.instId as string,
@@ -69,7 +68,7 @@ export function registerAlgoTools(reg: RegFn, client: OkxClient, modeLabel: stri
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.cancelAlgoOrder([{ algoId: args.algoId as string, instId: args.instId as string }]);
         return JSON.stringify(r.data);
@@ -97,7 +96,7 @@ export function registerAlgoTools(reg: RegFn, client: OkxClient, modeLabel: stri
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getPendingAlgoOrders(
           args.ordType as string,
@@ -133,7 +132,7 @@ export function registerAlgoTools(reg: RegFn, client: OkxClient, modeLabel: stri
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const limit = pickLimit(args, pageLimit);
         const r = await client.getAlgoOrderHistory(

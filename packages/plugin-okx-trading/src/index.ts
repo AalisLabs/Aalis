@@ -3,6 +3,7 @@ import { type BoundOf, config, definePlugin, logger, optional } from '@aalis/cor
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { OkxClient } from './client.js';
 import { t } from './texts.js';
+import type { RegFn } from './tools/_shared.js';
 import { registerAccountTools } from './tools/account.js';
 import { registerAlgoTools } from './tools/algo.js';
 import { registerMarketTools } from './tools/market.js';
@@ -198,22 +199,24 @@ function registerOkxTools({ tools: baseTools, logger, config }: Caps): void {
     description: `OKX 虚拟币交易工具集 (${modeLabel})，提供行情查询、账户管理、下单交易等功能`,
   });
 
-  // 工具代理：自动注入 groups；权限档在这一个点按三分名单派发（见模块级名单注释）。
-  const reg: Parameters<typeof registerMarketTools>[0] = tool => {
+  // 工具代理：自动注入 groups；权限档在这一个点按三分名单派发（见模块级名单注释）；处理函数拿到的客户端绑着这次调用的
+  // 中止信号，回合中止时请求随之停下。
+  const reg: RegFn = tool => {
     const toolName = tool.definition.function.name;
-    return baseTools.use.register({
+    baseTools.use.register({
       ...tool,
       groups: ['okx'],
       visibility: MUTATING_OKX_TOOLS.has(toolName) ? 'restricted' : tool.visibility,
       risk: ACCOUNT_READ_OKX_TOOLS.has(toolName) ? 'sensitive' : tool.risk,
+      handler: (args, callCtx) => tool.handler(args, client.withSignal(callCtx.signal)),
     });
   };
 
-  registerMarketTools(reg, client);
-  registerRubikTools(reg, client);
+  registerMarketTools(reg);
+  registerRubikTools(reg);
   const pageLimit = { defaultLimit: cfg.defaultPageLimit, maxLimit: cfg.maxPageLimit };
-  registerAccountTools(reg, client, pageLimit);
-  registerOrderQueryTools(reg, client, pageLimit);
+  registerAccountTools(reg, pageLimit);
+  registerOrderQueryTools(reg, pageLimit);
   // 实盘安全闸：真实资金交易须显式确认（demo:false 时还要 confirmRealMoney:true），否则只暴露查询工具。
   // 不加逐单人工确认（保留实时/算法交易能力）——以「一次性显式确认 + 启动告警」替代。
   const tradingArmed = cfg.demo || cfg.confirmRealMoney;
@@ -224,7 +227,7 @@ function registerOkxTools({ tools: baseTools, logger, config }: Caps): void {
         : 'OKX 处于实盘(demo:false)但未设 confirmRealMoney:true，已禁用交易/策略/划转工具（仅保留查询）。',
     );
   }
-  if (cfg.enableTrading && tradingArmed) registerTradeTools(reg, client, modeLabel, pageLimit);
-  if (cfg.enableAlgo && tradingArmed) registerAlgoTools(reg, client, modeLabel, pageLimit);
-  if (cfg.enableTransfer && tradingArmed) registerTransferTools(reg, client, pageLimit);
+  if (cfg.enableTrading && tradingArmed) registerTradeTools(reg, modeLabel, pageLimit);
+  if (cfg.enableAlgo && tradingArmed) registerAlgoTools(reg, modeLabel, pageLimit);
+  if (cfg.enableTransfer && tradingArmed) registerTransferTools(reg, pageLimit);
 }

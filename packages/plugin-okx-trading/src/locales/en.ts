@@ -33,4 +33,6 @@ export default defineLocale<Source>()({
   baseUrlNotPlain: 'baseUrl must be a complete URL without a user name or password',
   baseUrlHasQuery:
     'baseUrl must not contain a query string or fragment (anything after ? or #): the plugin appends paths to it',
+  abortedAfterSent:
+    'The request was aborted after it had been sent, so whether OKX carried it out is unknown: check the order, position or funding status first, then decide whether to retry',
 });

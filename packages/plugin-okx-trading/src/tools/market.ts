@@ -1,7 +1,6 @@
-import type { OkxClient } from '../client.js';
 import { errJson, type RegFn, truncate } from './_shared.js';
 
-export function registerMarketTools(reg: RegFn, client: OkxClient): void {
+export function registerMarketTools(reg: RegFn): void {
   reg({
     definition: {
       type: 'function',
@@ -17,7 +16,7 @@ export function registerMarketTools(reg: RegFn, client: OkxClient): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getTicker(args.instId as string);
         return JSON.stringify(r.data);
@@ -41,7 +40,7 @@ export function registerMarketTools(reg: RegFn, client: OkxClient): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getTickers(args.instType as string);
         return JSON.stringify(truncate(r.data, 30));
@@ -70,7 +69,7 @@ export function registerMarketTools(reg: RegFn, client: OkxClient): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const limit = Math.min((args.limit as number) || 50, 300);
         const r = await client.getCandles(args.instId as string, (args.bar as string) || '1H', limit);
@@ -98,7 +97,7 @@ export function registerMarketTools(reg: RegFn, client: OkxClient): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getOrderBook(args.instId as string, (args.sz as number) || 5);
         return JSON.stringify(r.data);
@@ -126,7 +125,7 @@ export function registerMarketTools(reg: RegFn, client: OkxClient): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getInstruments(args.instType as string, args.instId as string | undefined);
         return JSON.stringify(truncate(r.data, 30));
@@ -153,7 +152,7 @@ export function registerMarketTools(reg: RegFn, client: OkxClient): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getMarkPrice(args.instType as string, args.instId as string | undefined);
         return JSON.stringify(truncate(r.data));
@@ -177,7 +176,7 @@ export function registerMarketTools(reg: RegFn, client: OkxClient): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getFundingRate(args.instId as string);
         return JSON.stringify(r.data);
@@ -204,7 +203,7 @@ export function registerMarketTools(reg: RegFn, client: OkxClient): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getFundingRateHistory(args.instId as string, (args.limit as number) || 30);
         return JSON.stringify(truncate(r.data, 50));
@@ -228,7 +227,7 @@ export function registerMarketTools(reg: RegFn, client: OkxClient): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getPriceLimit(args.instId as string);
         return JSON.stringify(r.data);
@@ -255,7 +254,7 @@ export function registerMarketTools(reg: RegFn, client: OkxClient): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getOpenInterest(args.instType as string, args.instId as string | undefined);
         return JSON.stringify(truncate(r.data));
@@ -282,7 +281,7 @@ export function registerMarketTools(reg: RegFn, client: OkxClient): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getTrades(args.instId as string, (args.limit as number) || 30);
         return JSON.stringify(truncate(r.data, 50));
@@ -311,7 +310,7 @@ export function registerMarketTools(reg: RegFn, client: OkxClient): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const limit = Math.min((args.limit as number) || 100, 100);
         const r = await client.getHistoryCandles(
@@ -343,7 +342,7 @@ export function registerMarketTools(reg: RegFn, client: OkxClient): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getIndexTickers(args.instId as string | undefined, args.quoteCcy as string | undefined);
         return JSON.stringify(truncate(r.data, 30));
@@ -371,7 +370,7 @@ export function registerMarketTools(reg: RegFn, client: OkxClient): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getIndexCandles(
           args.instId as string,
@@ -403,7 +402,7 @@ export function registerMarketTools(reg: RegFn, client: OkxClient): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, client) => {
       try {
         const r = await client.getMarkPriceCandles(
           args.instId as string,
@@ -426,7 +425,7 @@ export function registerMarketTools(reg: RegFn, client: OkxClient): void {
         parameters: { type: 'object', properties: {}, additionalProperties: false },
       },
     },
-    handler: async () => {
+    handler: async (_args, client) => {
       try {
         const r = await client.get24hVolume();
         return JSON.stringify(r.data);
