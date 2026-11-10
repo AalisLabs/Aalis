@@ -280,6 +280,24 @@ describe('disable 撞 activating 且 apply 抛错：catch 段接管让位', () =
     expect(app.plugins.getPlugin('gated')?.state).toBe('disabled');
     expect(host.services.use.get(gatedSvc)).toBeUndefined();
   });
+
+  it('拆卸等 apply 超过时限、关完之后 apply 才抛错：终态仍锁 disabled，不写 error', async () => {
+    const app = new App({ name: 'T', logLevel: 'error', disposeTimeoutMs: 20 });
+    apps.push(app);
+    app.bind({ provide }).provide.use(hub, new HubRegistry());
+    const { definition, entered, release } = makeGatedPlugin([], { failAfterGate: true });
+    void app.plugin(definition);
+    await entered;
+
+    // 关闭计划等初始化超过时限后放行、拆完，激活记录随之清掉；这之后 apply 才拒绝
+    expect(await app.plugins.disable('gated')).toBe(true);
+    release();
+    await app.plugins.idle();
+    await new Promise(r => setTimeout(r, 0));
+
+    expect(app.plugins.getPlugin('gated')?.state).toBe('disabled');
+    expect(app.plugins.getPlugin('gated')?.error).toBeUndefined();
+  });
 });
 
 describe('级联拆卸窗口内 disable：终态不被拆卸收尾覆写', () => {

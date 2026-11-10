@@ -128,10 +128,12 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
   // 先标记为 activating，防止服务变更触发的重算导致重入
   entry.state = 'activating';
 
+  // 提到 try 外：catch 里认接手看的是本次激活自己，拆卸超过时限放行后 entry.activation 可能已被关闭计划清掉
+  let activation: Activation | undefined;
   try {
     // 与其他内置服务一样，每次激活一份：插件改它只影响本次激活，碰不到注册表与下一次激活。拷贝在 try 里：按引用透传的
     // 叶子此刻可能读不了（如登记后被撤销的 Proxy），这时没有激活可拆，照激活失败转 error
-    const activation = host.create(entry.instanceId, cloneConfigObject(entry.config));
+    activation = host.create(entry.instanceId, cloneConfigObject(entry.config));
     entry.activation = activation;
     // 登记后再 await，让拆卸路径能先等 apply 落定（见 Resources.trackInitialization）
     // 按取定的 uses 装配；this 仍是定义对象
@@ -140,18 +142,12 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     activation.resources.trackInitialization(applying);
     await applying;
 
-    // 根已冻进停机计划：App 正等当前 recompute 落定后才执行该计划。
-    // 此处不能转入 retireBatch 再 join 计划，否则有限 apply 也会与 stop 互等。
-    if (host.root.resources.disposed) return;
-
-    // 接管检查（CAS 式）：unload / disable / bounce 撞上在飞 apply 时
-    // 会先把 state 改离 'activating' 再 disposeAsync（等的正是上面这个 applying）。
-    // 此处一旦观察到 state 被改走，说明终态与激活的拆卸责任已归管理路径所有，
-    // 本次激活的收尾（置 active / 报 error / 发 plugin:loaded）全部让位。
-    // 不必再比激活身份：本次激活停下之前同一 id 不起新一轮（PluginManager 的 lingering 闸），state 仍是 activating
-    // 就是本次。检查与下方各写入之间无 await，不存在二次窗口。
-    if (entry.state !== 'activating') {
-      logger.debug(`插件 "${entry.instanceId}" 激活期间被管理操作接管（现态 ${entry.state}），本次激活让位`);
+    // 接管检查：本次激活已冻进某张关闭计划，拆卸与终态归那张计划，本次激活的收尾（置 active / 报 error / 发
+    // plugin:loaded）全部让位，也不转入 retireBatch 再 join 计划（停机时 App 正等当前 recompute 落定才执行计划，再 join
+    // 就会与 stop 互等）。两种接手都表现为本激活已开始关闭：管理动作（retireBatch）改走 state 与冻结计划在同一同步段
+    // （closeActivations 的第一句），停机冻结根激活时名下全部激活一并冻上。检查与下方各写入之间无 await，不存在二次窗口
+    if (activation.resources.disposed) {
+      logger.debug(`插件 "${entry.instanceId}" 激活期间已被接手（现态 ${entry.state}），本次激活让位`);
       return;
     }
 
@@ -184,15 +180,13 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     for (const name of services.release(activation.owner)) host.runtime.serviceChanged(name);
     logger.info(`插件已激活: ${entry.instanceId}`);
   } catch (err) {
-    // apply 拒绝也不能夺回停机已接管的拆卸责任；资源由同一计划回滚。
-    if (host.root.resources.disposed) return;
-    // 接管让位同上
-    if (entry.state !== 'activating') {
-      logger.debug(`插件 "${entry.instanceId}" 激活中止且已被管理操作接管（现态 ${entry.state}）:`, err);
+    // 接管让位同上：apply 拒绝也不夺回拆卸责任，资源由接手的那张计划回滚。配置拷贝失败时没有激活，也谈不上被接手
+    if (activation?.resources.disposed) {
+      logger.debug(`插件 "${entry.instanceId}" 激活中止且已被接手（现态 ${entry.state}）:`, err);
       return;
     }
-    // 接管已让位，entry.activation 就是本次激活；配置拷贝失败时没有激活，也就谈不上缺服务
-    const missing = entry.activation && missingRequiredService(err, entry.activation.resources, entry.spec.required);
+    // 配置拷贝失败时没有激活，也就谈不上缺服务
+    const missing = activation && missingRequiredService(err, activation.resources, entry.spec.required);
     if (missing !== undefined) {
       entry.failure = undefined;
       const target = deps.spendRetry(entry, missing, err);
