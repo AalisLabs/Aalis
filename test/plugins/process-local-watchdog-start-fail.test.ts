@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
-import { LocalProcessService } from '../../packages/plugin-process-local/src/index.js';
+import { killAll, LocalProcessService } from '../../packages/plugin-process-local/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 看门进程启动失败时，用户的子进程照常交出句柄。启动看门进程的 spawn 有两种失败：描述符耗尽（EMFILE、ENFILE）时 Node
@@ -45,7 +45,7 @@ describe.skipIf(!posix)('process-local 看门进程启动失败', () => {
     expect(await handle.wait()).toMatchObject({ code: 0, stdout: 'hi\n' });
     const kill = vi.spyOn(process, 'kill');
     try {
-      await svc.killAll();
+      await killAll();
       expect(kill.mock.calls.filter(([target]) => target === -handle.pid!)).toEqual([]);
     } finally {
       kill.mockRestore();

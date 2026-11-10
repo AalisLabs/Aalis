@@ -177,58 +177,60 @@ function killOnAbort(child: ChildProcess, signal: AbortSignal): void {
   child.once('error', unlisten);
 }
 
+/**
+ * 存活进程组登记表（键 = 直接子进程 pid = pgid）。detached 后终端 Ctrl+C 不再直达子进程，改由 killAll
+ * 在停机时统一收尸；`cmd &` 留下的孙进程在直接子进程退出后仍占着这个组，所以按组而非按子进程登记。
+ * 模块级、与看门进程同寿，一个进程一份：本插件被 bounce 后新旧实例共用，停机时连旧实例启动的进程组一起收；同一进程里启动了
+ * 几个 App 的也共用，其中一个停机就收全部。
+ * 登记与撤销同步告诉看门进程（见 tellWatchdog），宿主意外退出时由它收掉；只在组空时撤销（子进程退出时或 sweep 里）。
+ */
+const groups = new Map<number, ChildProcess>();
+/** 直接子进程已退、组里还有成员时定时探（见 sweep），没有这样的组就停 */
+let sweeper: NodeJS.Timeout | undefined;
+
+/**
+ * 宿主停机时收掉仍有成员的进程组，维持「Aalis 退出，工具子进程一起退出」。与中止同一规矩：整组 SIGTERM，至多等
+ * ABORT_KILL_GRACE_MS 让它们自己收尾，还有成员的再整组 SIGKILL。Windows 没有优雅终止，立即结束整棵树。
+ */
+export async function killAll(): Promise<void> {
+  const entries = [...groups];
+  if (isWindows) {
+    for (const [, child] of entries) killTree(child);
+    return;
+  }
+  for (const [, child] of entries) killGroup(child, 'SIGTERM');
+  const until = Date.now() + ABORT_KILL_GRACE_MS;
+  while (Date.now() < until && entries.some(([pid]) => groupAlive(pid))) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  for (const [pid, child] of entries) if (groupAlive(pid)) killTree(child);
+}
+
+/**
+ * 直接子进程已退的组，定时探组空没空，空了就撤登记：组号要等组空才会被复用，空出来之后可能落到别的进程组上，
+ * 留在登记表里停机就会对它发信号
+ */
+function sweep(): void {
+  sweeper ??= setInterval(() => {
+    let lingering = false;
+    for (const [pid, child] of groups) {
+      if (child.exitCode === null && child.signalCode === null) continue;
+      if (groupAlive(pid)) lingering = true;
+      else unregister(pid);
+    }
+    if (lingering) return;
+    clearInterval(sweeper);
+    sweeper = undefined;
+  }, GROUP_SWEEP_MS).unref();
+}
+
+function unregister(pid: number): void {
+  groups.delete(pid);
+  tellWatchdog(`-${pid}`);
+}
+
 export class LocalProcessService implements ProcessService {
-  /**
-   * 存活进程组登记表（键 = 直接子进程 pid = pgid）。detached 后终端 Ctrl+C 不再直达子进程，改由 killAll
-   * 在停机时统一收尸；`cmd &` 留下的孙进程在直接子进程退出后仍占着这个组，所以按组而非按子进程登记。
-   * 登记与撤销同步告诉看门进程（见 tellWatchdog），宿主意外退出时由它收掉；只在组空时撤销（子进程退出时或 sweep 里）。
-   */
-  private readonly groups = new Map<number, ChildProcess>();
-  /** 直接子进程已退、组里还有成员时定时探（见 sweep），没有这样的组就停 */
-  private sweeper?: NodeJS.Timeout;
-
   constructor(private readonly storage: StorageService) {}
-
-  /**
-   * 宿主停机时收掉仍有成员的进程组，维持「Aalis 退出，工具子进程一起退出」。与中止同一规矩：整组 SIGTERM，至多等
-   * ABORT_KILL_GRACE_MS 让它们自己收尾，还有成员的再整组 SIGKILL。Windows 没有优雅终止，立即结束整棵树。
-   */
-  async killAll(): Promise<void> {
-    const entries = [...this.groups];
-    if (isWindows) {
-      for (const [, child] of entries) killTree(child);
-      return;
-    }
-    for (const [, child] of entries) killGroup(child, 'SIGTERM');
-    const until = Date.now() + ABORT_KILL_GRACE_MS;
-    while (Date.now() < until && entries.some(([pid]) => groupAlive(pid))) {
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
-    for (const [pid, child] of entries) if (groupAlive(pid)) killTree(child);
-  }
-
-  /**
-   * 直接子进程已退的组，定时探组空没空，空了就撤登记：组号要等组空才会被复用，空出来之后可能落到别的进程组上，
-   * 留在登记表里停机就会对它发信号
-   */
-  private sweep(): void {
-    this.sweeper ??= setInterval(() => {
-      let lingering = false;
-      for (const [pid, child] of this.groups) {
-        if (child.exitCode === null && child.signalCode === null) continue;
-        if (groupAlive(pid)) lingering = true;
-        else this.unregister(pid);
-      }
-      if (lingering) return;
-      clearInterval(this.sweeper);
-      this.sweeper = undefined;
-    }, GROUP_SWEEP_MS).unref();
-  }
-
-  private unregister(pid: number): void {
-    this.groups.delete(pid);
-    tellWatchdog(`-${pid}`);
-  }
 
   spawn(cmd: string, args: readonly string[], opts: SpawnOptions = {}): SpawnHandle {
     opts.signal?.throwIfAborted(); // 已中止：不创建子进程，同步抛出 signal.reason
@@ -244,13 +246,13 @@ export class LocalProcessService implements ProcessService {
     // 调用方显式 detached 的（fire-and-forget，如拉起浏览器）不登记：它本就该独立于宿主生存
     if (child.pid !== undefined && opts.detached !== true) {
       const pid = child.pid;
-      this.groups.set(pid, child);
+      groups.set(pid, child);
       tellWatchdog(`+${pid}`);
       // 直接子进程退了不等于组空：孙进程还在就留着，停机时一并收掉；组空了即撤登记（见 sweep）。pgid 被占用期间
       // 该 pid 不会被复用，负 pid 只会指向本插件建的这个组。
       child.on('exit', () => {
-        if (isWindows || !groupAlive(pid)) this.unregister(pid);
-        else this.sweep();
+        if (isWindows || !groupAlive(pid)) unregister(pid);
+        else sweep();
       });
     }
     if (opts.input != null && stdioMode === 'pipe') {
@@ -400,7 +402,7 @@ export default definePlugin({
       stopping = true;
     });
     caps.lifecycle.use.onDispose(async () => {
-      if (stopping) await service.killAll();
+      if (stopping) await killAll();
     });
     caps.logger.use.info('process-local 就绪');
   },

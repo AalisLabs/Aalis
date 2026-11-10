@@ -6,6 +6,7 @@ import type { StorageService } from '../../packages/api-storage/src/index.js';
 import { App, definePlugin, lifecycle, optional, services } from '../../packages/core/src/index.js';
 import processLocal, {
   ABORT_KILL_GRACE_MS,
+  killAll,
   LocalProcessService,
 } from '../../packages/plugin-process-local/src/index.js';
 
@@ -15,9 +16,9 @@ import processLocal, {
 //   2) 超时打的是整个进程组（detached 使子进程成为组长），孙进程同死；
 //   3) detached 后 Ctrl+C 不再直达子进程 → 停机时由 killAll 按进程组收尸：先整组 SIGTERM，宽限后还有成员的整组 SIGKILL；
 //      调用方显式 detached 的不登记。收在本插件自己的清理里：用 process 服务的插件先关完、先按自己的方式停下各自的子进程；
-//      本插件被 bounce 时不收，别的插件正在跑的子进程不陪葬；
+//      本插件被 bounce 时不收，别的插件正在跑的子进程不随之结束；登记表在模块级、bounce 前后的实例共用，停机时连旧实例启动的组一起收；
 //   4) 直接子进程退出后组里的进程也都退了，即撤这个组的登记，停机不再对空出来、可能被复用的组号发信号；
-//   5) 宿主没走完停机就退出（kill -9 等）或 bounce 过本插件时，宿主进程退出后由看门进程照停机的规矩收掉仍登记的组。
+//   5) 宿主没走完停机就退出（kill -9 等）时，宿主进程退出后由看门进程照停机的规矩收掉仍登记的组。
 // 均为 POSIX 语义，非 POSIX 平台跳过。
 // ════════════════════════════════════════════════════════════
 
@@ -84,21 +85,23 @@ describe('process-local 子进程生命周期', () => {
 
   it.skipIf(!posix)('`cmd &` 留下的孙进程：直接子进程退了组仍在册，killAll 一并收尸', async () => {
     const marker = mark('orphan');
-    const svc = new LocalProcessService({} as unknown as StorageService);
-    const handle = svc.spawn('bash', ['-c', `exec -a ${marker} sleep 30 & echo hi`], {});
+    const handle = proc.spawn('bash', ['-c', `exec -a ${marker} sleep 30 & echo hi`], {});
     const res = await handle.wait();
     expect(res.stdout).toContain('hi');
     expect(alive(marker)).toBe(true); // 防空跑：孙进程确实还活着
-    svc.killAll();
+    killAll();
     expect(await waitGone(marker, 1000)).toBe(true);
   });
 
   it.skipIf(!posix)('孙进程后来也退了：组空即撤登记，停机不再对这个组号发信号（它可能已被别的进程复用）', async () => {
+    // 登记表与探测定时器是模块级的：另载一份模块，不接前面用例留下的、还在跑的探测定时器
+    vi.resetModules();
+    const fresh = await import('../../packages/plugin-process-local/src/index.js');
     // 只假探测用的 setInterval：组空之后手动走一轮探测，不等真实的间隔
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     const kill = vi.spyOn(process, 'kill');
     try {
-      const svc = new LocalProcessService({} as unknown as StorageService);
+      const svc = new fresh.LocalProcessService({} as unknown as StorageService);
       // 孙进程要活过 wait() 在直接子进程退出后的关闭宽限（CLOSE_GRACE_MS），留足负载下的余量
       const handle = svc.spawn('sh', ['-c', 'sleep 2 & echo hi'], {});
       await handle.wait();
@@ -107,7 +110,7 @@ describe('process-local 子进程生命周期', () => {
       await vi.waitFor(() => expect(() => process.kill(group, 0)).toThrow(), { timeout: 5000 });
       vi.runOnlyPendingTimers();
       kill.mockClear();
-      await svc.killAll();
+      await fresh.killAll();
       expect(kill.mock.calls.filter(([target]) => target === group)).toEqual([]);
     } finally {
       kill.mockRestore();
@@ -117,12 +120,11 @@ describe('process-local 子进程生命周期', () => {
 
   it.skipIf(!posix)('调用方显式 detached 的进程不登记：killAll 不动它', async () => {
     const marker = mark('fnf');
-    const svc = new LocalProcessService({} as unknown as StorageService);
-    const handle = svc.spawn('bash', ['-c', `exec -a ${marker} sleep 30`], { detached: true, stdio: 'ignore' });
+    const handle = proc.spawn('bash', ['-c', `exec -a ${marker} sleep 30`], { detached: true, stdio: 'ignore' });
     handle.unref();
     await sleep(200);
     expect(alive(marker)).toBe(true);
-    svc.killAll();
+    killAll();
     await sleep(200);
     expect(alive(marker)).toBe(true);
     handle.kill('SIGKILL'); // 收拾
@@ -218,6 +220,28 @@ describe('process-local 子进程生命周期', () => {
       expect(groupAlive(pid)).toBe(true);
     } finally {
       await app.stop();
+    }
+  });
+
+  it.skipIf(!posix)('本插件被 bounce 过：停机连旧实例启动的进程组一起收，先整组 SIGTERM，等它收尾退出', async () => {
+    const app = new App({ name: 'T', logLevel: 'error' });
+    await app.plugin(processLocal);
+    await app.plugins.idle();
+    const old = app.bind({ services }).services.use.get(processService);
+    if (!old) throw new Error('process 服务未注册');
+    // 收尾要花一点时间：停机不等它的话，停完时组里还有进程
+    const run = old.spawn('bash', ['-c', "trap 'sleep 0.3; echo bye; exit 0' TERM; echo ready; sleep 30 & wait"], {});
+    const ended = run.wait();
+    await new Promise(ready => run.stdout?.once('data', ready));
+    const pid = run.pid!;
+    try {
+      await app.plugins.bounce(processLocal.name);
+      await app.plugins.idle();
+      await app.stop();
+      expect(groupAlive(pid), '停机等到组里的进程都退出').toBe(false);
+      expect((await ended).stdout).toBe('ready\nbye\n');
+    } finally {
+      if (groupAlive(pid)) process.kill(-pid, 'SIGKILL');
     }
   });
 });
