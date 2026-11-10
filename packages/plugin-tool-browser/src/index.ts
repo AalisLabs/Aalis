@@ -19,6 +19,13 @@ import {
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { TextError } from '@aalis/schema-i18n';
 import {
+  type Browser,
+  bundledChromePath,
+  ChromiumLaunchError,
+  launchChromium,
+  puppeteerEntry,
+} from '@aalis/util-chromium';
+import {
   assertAddressesSafe,
   assertPortAllowed,
   canonicalAddress,
@@ -260,18 +267,16 @@ function runBrowserTools(caps: Caps): void {
     ],
   });
 
-  // ── 动态加载 puppeteer ──
+  // ── 启动浏览器 ──
 
   async function ensureChrome(): Promise<void> {
     const fs = await import('node:fs');
     const path = await import('node:path');
-    const puppeteer = await import('puppeteer');
-    const execPath = puppeteer.executablePath?.() ?? puppeteer.default?.executablePath?.();
-    if (execPath && fs.existsSync(execPath)) return;
+    if (fs.existsSync(await bundledChromePath())) return;
 
     logger.info('Chrome 未安装，正在自动下载...');
     // 通过 puppeteer 包路径找到其内置 CLI
-    const puppeteerPkg = path.dirname((await import('node:url')).fileURLToPath(import.meta.resolve('puppeteer')));
+    const puppeteerPkg = path.dirname((await import('node:url')).fileURLToPath(puppeteerEntry()));
     // 向上找到 puppeteer 包根目录（含 package.json）
     let pkgRoot = puppeteerPkg;
     while (!fs.existsSync(path.join(pkgRoot, 'package.json'))) {
@@ -327,40 +332,30 @@ function runBrowserTools(caps: Caps): void {
         '--webrtc-ip-handling-policy=disable_non_proxied_udp',
       );
     }
-    let instance: import('puppeteer').Browser;
+    let instance: Browser;
     try {
       if (!config.executablePath) {
         await ensureChrome();
       }
-      const puppeteer = await import('puppeteer');
-      const launchFn = puppeteer.default?.launch ?? puppeteer.launch;
-      instance = await launchFn({
+      // 信号、管道与沙箱参数由共用启动器给，浏览器在插件停用时关
+      instance = await launchChromium({
         headless: config.headless,
-        defaultViewport: { width: config.viewportWidth, height: config.viewportHeight },
-        args: [
-          ...(config.sandbox ? [] : ['--no-sandbox', '--disable-setuid-sandbox']),
-          '--disable-dev-shm-usage',
-          ...gateArgs,
-        ],
-        ...(config.executablePath ? { executablePath: config.executablePath } : {}),
+        executablePath: config.executablePath,
+        viewport: { width: config.viewportWidth, height: config.viewportHeight },
+        args: gateArgs,
         // 单条 CDP 命令的时限（puppeteer 默认 180 秒）。正常操作里最长的单条命令是等选择器与导航，都受 defaultTimeout 约束；
         // 取它的两倍，让操作自己的超时先报，挂住的命令以此为上限。defaultTimeout 为 0（不设时限）时它也是 0，同样不设时限
         protocolTimeout: config.defaultTimeout * 2,
-        // 信号归宿主：puppeteer 默认在 SIGINT 时先杀浏览器、再 process.exit(130)，宿主的停机跑不完；
-        // SIGTERM、SIGHUP 时另行关浏览器，挂着 SIGHUP 监听还让宿主在终端关闭后不退出。浏览器在插件停用时关
-        handleSIGINT: false,
-        handleSIGTERM: false,
-        handleSIGHUP: false,
-        // 经管道连接：宿主不经停机退出（kill -9、内存耗尽、终端关闭）时 exit 钩子不跑，管道由系统关掉，浏览器随之退出；
-        // 经 WebSocket 连接时浏览器自成进程组，整组留下
-        pipe: true,
+        sandbox: config.sandbox,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error(`启动浏览器失败: ${msg}`);
-      const sandboxHint = config.sandbox
-        ? '；若是沙箱不可用（如 Linux 上以 root 运行、容器里），可在浏览器工具的配置里关掉「Chromium 沙箱」（sandbox）'
-        : '';
+      // 只在带沙箱时 Chromium 本身起不来才提沙箱：准备 Chrome、加载 puppeteer 失败与沙箱无关
+      const sandboxHint =
+        config.sandbox && err instanceof ChromiumLaunchError
+          ? '；若是沙箱不可用（如 Linux 上以 root 运行、容器里），可在浏览器工具的配置里关掉「Chromium 沙箱」（sandbox）'
+          : '';
       throw new Error(
         `浏览器启动失败: ${msg}。请确保已安装 Chrome: npx puppeteer browsers install chrome${sandboxHint}`,
       );

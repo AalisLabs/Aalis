@@ -14,7 +14,8 @@ import { toolContext } from '../fixtures/tool-call.js';
 //   「请确保已安装 Chrome」的提示只跟在浏览器本身启动失败后面，闸的错误与 Chrome 装没装无关。
 // - 并发的首次调用共用同一次启动；启动途中插件被停用时，这一代浏览器由启动方自己关掉（不等关闭落定），调用报错。
 // - 浏览器崩溃后重启沿用同一道闸，不另起监听。
-// - 经管道连浏览器：宿主不经停机退出（kill -9、内存耗尽、终端关闭）时管道由系统关掉，浏览器随之退出，不整组留下。
+// - 经管道连浏览器：这里只断言启动参数带 pipe: true；宿主不经停机退出时浏览器随之退出，
+//   由 test/utils/util-chromium-launch.test.ts 守。
 // - SIGINT、SIGTERM、SIGHUP 不交给 puppeteer 处理：它默认在 SIGINT 时先杀浏览器、再 process.exit(130)，宿主的停机无法执行完毕；
 //   信号归宿主，浏览器在插件停用时关。
 // - 只有起了闸（blockPrivate=true）时，browser_navigate 才给 ERR_SOCKS_CONNECTION_FAILED 附拦截说明。
@@ -22,7 +23,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 // - 插件停用时，闸里已接通的连接随之断开，停用不等它们自己结束；闸的关闭不等浏览器关闭落定。
 // - 闸里的 IP 字面量不论写法都按进程级网络策略判定，连的就是判的那个地址；问候与请求限时收齐；与请求同包到达的数据接通后交给上游。
 // - 闸按进程级网络策略的 allowedPorts 判定端口，allowedHosts 里的主机也不例外；回失败应答后随即关闭连接。
-// puppeteer 换成替身（根目录不直接依赖 puppeteer，按插件自己的依赖路径 mock），不启动真浏览器；
+// puppeteer 换成替身（根目录不直接依赖 puppeteer，按 util-chromium 的依赖路径 mock），不启动真浏览器；
 // 闸是真的 SOCKS 服务，只监听 127.0.0.1，替身浏览器不经它发任何请求；直连闸的用例只连测试自己在 127.0.0.1 起的服务，
 // 要解析的域名由 DNS 替身作答。
 // ════════════════════════════════════════════════════════════
@@ -60,7 +61,7 @@ const fake = vi.hoisted(() => {
   });
   return { launch, goto, closeResult, instances };
 });
-vi.mock('../../packages/plugin-tool-browser/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js', () => ({
+vi.mock('../../packages/util-chromium/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js', () => ({
   default: { launch: fake.launch },
   launch: fake.launch,
 }));

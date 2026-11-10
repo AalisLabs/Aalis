@@ -11,7 +11,7 @@ import drawPlugin from '../../packages/plugin-draw/src/index.js';
 import { type DrawCaps, renderRequest, resolveCanvas } from '../../packages/plugin-draw/src/plan.js';
 import processLocal from '../../packages/plugin-process-local/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
-import { OfflineRenderer } from '../../packages/util-offline-render/src/index.js';
+import { OfflineRenderer } from '../../packages/util-chromium/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 
 // ════════════════════════════════════════════════════════════

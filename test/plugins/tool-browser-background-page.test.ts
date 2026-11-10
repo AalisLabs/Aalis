@@ -19,19 +19,16 @@ import { toolContext } from '../fixtures/tool-call.js';
 
 type Handler = (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string | ToolExecutionResult>;
 
-vi.mock(
-  '../../packages/plugin-tool-browser/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js',
-  async importOriginal => {
-    type Launch = (options?: { args?: string[] } & Record<string, unknown>) => Promise<unknown>;
-    const actual = await importOriginal<{ launch: Launch; default: Record<string, unknown> }>();
-    const launch: Launch = options =>
-      actual.launch({
-        ...options,
-        args: [...(options?.args ?? []), '--host-resolver-rules=MAP * 127.0.0.1:1, EXCLUDE 127.0.0.1'],
-      });
-    return { ...actual, default: { ...actual.default, launch }, launch };
-  },
-);
+vi.mock('../../packages/util-chromium/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js', async importOriginal => {
+  type Launch = (options?: { args?: string[] } & Record<string, unknown>) => Promise<unknown>;
+  const actual = await importOriginal<{ launch: Launch; default: Record<string, unknown> }>();
+  const launch: Launch = options =>
+    actual.launch({
+      ...options,
+      args: [...(options?.args ?? []), '--host-resolver-rules=MAP * 127.0.0.1:1, EXCLUDE 127.0.0.1'],
+    });
+  return { ...actual, default: { ...actual.default, launch }, launch };
+});
 
 const PAGE = `<!doctype html><title>zz-page</title><body>
 <button id="plain" onclick="document.title = 'zz-clicked'">plain</button>

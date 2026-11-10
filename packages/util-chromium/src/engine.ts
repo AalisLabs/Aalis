@@ -5,7 +5,10 @@
 //   1) setJavaScriptEnabled(false)：文档里的脚本一律不执行；
 //   2) 请求拦截：data:、blob: 放行，resources 里精确列出的网址由这里响应，其余（file:、未列出的 http(s)、chrome: 等）
 //      一律中止。https 文档里对 file: 的引用由 Chrome 自己的来源规则挡住、到不了拦截回调，所以入口只收 https 网址；
-//   3) 解析规则与代理把漏过拦截的连接送到死端口（见 launch.ts）。
+//   3) 启动参数封网（NETWORK_ARGS）：
+//      - 解析规则把所有主机名映射到本机 1 号端口（那里没有服务）。不映射成 NOTFOUND：那样 Chrome 会发一次公网 DNS 探测。
+//      - 代理指向同一个死端口，`<-loopback>` 取消回环地址默认直连：漏过拦截的连接（IP 字面量、预连接、DNS 预取、
+//        浏览器自己的后台请求）都落到死端口上；同时压住 macOS 上 Chrome 默认走系统代理。
 // 主框架在加载后被导航出去（如 meta refresh 指向清单外）时，导航同样被中止，Chrome 换上自己的错误页：渲染随之失败，
 // 或截到错误页。调用方把渲染失败当作「没看到内容」处理。
 // 不落盘；puppeteer 的用户数据目录由它自己在系统临时目录建与删。
@@ -13,7 +16,7 @@
 
 import type { Browser, BrowserContext, HTTPRequest, Page } from 'puppeteer';
 import { type AnimationOptions, type FramesResult, PAUSE_AND_PROBE, planFrames, seekScript } from './animation.js';
-import { Launcher } from './launch.js';
+import { ChromiumLaunchError, type ChromiumLaunchOptions, launchChromium } from './launch.js';
 
 export interface OfflineRendererOptions {
   /** 为真时带 Chromium 沙箱启动，无法启动就报 RenderUnavailableError、不回落；为假时带 --no-sandbox 启动 */
@@ -54,6 +57,11 @@ export interface RenderRequest {
   viewport: { width: number; height: number; deviceScaleFactor?: number };
   clip: RenderClip;
   signal?: AbortSignal;
+}
+
+/** 浏览器起不来：puppeteer 加载失败，或 Chromium 启动失败（含带沙箱时沙箱不可用）。 */
+export class RenderUnavailableError extends Error {
+  override name = 'RenderUnavailableError';
 }
 
 /** 渲染步骤超时：底层 CDP 调用仍挂着，这一代浏览器随之关掉（见 withPage）。 */
@@ -108,8 +116,16 @@ function route(request: HTTPRequest, resources: ReadonlyMap<string, RenderResour
 
 const clampHeight = (h: number, max: number): number => Math.max(1, Math.min(Math.ceil(h) || 1, Math.floor(max)));
 
+const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+const NETWORK_ARGS = [
+  '--host-resolver-rules=MAP * 127.0.0.1:1',
+  '--proxy-server=http://127.0.0.1:1',
+  '--proxy-bypass-list=<-loopback>',
+];
+
 export class OfflineRenderer {
-  private readonly launcher: Launcher;
+  private readonly launchOptions: ChromiumLaunchOptions;
   private readonly logger: OfflineRendererOptions['logger'];
   private readonly stepTimeoutMs: number;
   private readonly maxConcurrency: number;
@@ -126,13 +142,15 @@ export class OfflineRenderer {
     this.stepTimeoutMs = opts.stepTimeoutMs ?? 15_000;
     this.maxConcurrency = opts.maxConcurrency ?? 2;
     this.idleShutdownMs = (opts.idleShutdownSec ?? 300) * 1000;
-    this.launcher = new Launcher({
-      sandbox: opts.sandbox,
+    this.launchOptions = {
       headless: opts.headless ?? true,
       executablePath: opts.executablePath,
-      stepTimeoutMs: this.stepTimeoutMs,
-      logger: opts.logger,
-    });
+      args: NETWORK_ARGS,
+      // 单条 CDP 命令的时限（puppeteer 默认 180 秒）。取步骤时限的两倍：套了步骤时限的调用总由步骤计时器先判超时；
+      // 没套的调用（开上下文与页面、设视口、动画的时长探测与逐帧定格、关上下文、关浏览器）阻塞时以它为上限
+      protocolTimeout: this.stepTimeoutMs * 2,
+      sandbox: opts.sandbox,
+    };
   }
 
   /** 渲染一张 PNG。 */
@@ -169,11 +187,24 @@ export class OfflineRenderer {
     return req.signal ? abortable(work, req.signal) : work;
   }
 
+  private async launch(): Promise<Browser> {
+    const { sandbox } = this.launchOptions;
+    try {
+      const browser = await launchChromium(this.launchOptions);
+      this.logger.info(`离线渲染 Chromium 已启动（${sandbox ? '带沙箱' : '不带沙箱'}）`);
+      return browser;
+    } catch (err) {
+      const launchFailed = sandbox ? 'Chromium 带沙箱启动失败' : 'Chromium 启动失败';
+      const failed = err instanceof ChromiumLaunchError ? launchFailed : '加载 puppeteer 失败';
+      throw new RenderUnavailableError(`离线渲染不可用：${failed}（${errorText(err)}）`, { cause: err });
+    }
+  }
+
   private async ensureBrowser(): Promise<Browser> {
     if (this.disposed) throw new Error('离线渲染已停用');
     if (this.browser?.connected) return this.browser;
     if (!this.launching) {
-      this.launching = this.launcher.launch().finally(() => {
+      this.launching = this.launch().finally(() => {
         this.launching = null;
       });
       this.browser = await this.launching;

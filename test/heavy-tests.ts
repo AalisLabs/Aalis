@@ -12,7 +12,7 @@ export const BROWSER_TESTS = [
   '**/test/plugins/tool-browser-login-isolation.test.ts',
   '**/test/plugins/tool-browser-screenshot.test.ts',
   '**/test/plugins/tool-browser-screenshot-timeout.test.ts',
-  '**/test/utils/offline-render-*.test.ts',
+  '**/test/utils/util-chromium-*.test.ts',
   '**/test/smoke/**',
   '**/test/e2e-webui/**',
 ];

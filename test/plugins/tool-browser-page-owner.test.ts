@@ -11,7 +11,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 // - 每个根会话的页面开在它自己的浏览器上下文里；没有会话的调用（sessionId 为空）共用一个，不在会话表里的会话按它自己算。
 //   浏览器重启后上下文随之作废，按需重建。登录态确实不跨上下文，由 tool-browser-login-isolation（真浏览器）守着。
 // - 会话删除时关掉它的上下文与页面，别的会话的不动；开页途中被删的，不登记；关上下文卡住时不拖住删除。
-// puppeteer 换成替身（按插件自己的依赖路径 mock），不启动真浏览器；不起网络闸（blockPrivate=false）。
+// puppeteer 换成替身（按 util-chromium 的依赖路径 mock），不启动真浏览器；不启动网络闸（blockPrivate=false）。
 // ════════════════════════════════════════════════════════════
 
 type Handler = (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string | ToolExecutionResult>;
@@ -92,7 +92,7 @@ const fake = vi.hoisted(() => {
   });
   return { launch, newPage, pages, contexts, browsers, ctl };
 });
-vi.mock('../../packages/plugin-tool-browser/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js', () => ({
+vi.mock('../../packages/util-chromium/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js', () => ({
   default: { launch: fake.launch },
   launch: fake.launch,
 }));

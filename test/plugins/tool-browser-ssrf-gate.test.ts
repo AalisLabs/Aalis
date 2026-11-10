@@ -28,25 +28,22 @@ type Handler = (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<
 // 除 127.0.0.1 与 localhost 外的主机一律映射到 127.0.0.1:1（只作用于浏览器自己解析的连接，经闸的连接由闸解析）；
 // WebRTC 不用 mDNS 主机名（否则会向局域网发组播）。
 // 不映射成「解析不到」：导航因解析失败出错时，Chrome 会拿公网域名做一次 DNS 探测
-vi.mock(
-  '../../packages/plugin-tool-browser/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js',
-  async importOriginal => {
-    // 根目录不直接依赖 puppeteer：只声明用到的部分，不经类型导入引用它
-    type Launch = (options?: { args?: string[] } & Record<string, unknown>) => Promise<unknown>;
-    const actual = await importOriginal<{ launch: Launch; default: Record<string, unknown> }>();
-    const launch: Launch = options =>
-      actual.launch({
-        ...options,
-        args: [
-          ...(options?.args ?? []),
-          ...(options?.args?.some(a => a.startsWith('--proxy-server=')) ? [] : ['--no-proxy-server']),
-          '--host-resolver-rules=MAP * 127.0.0.1:1, EXCLUDE 127.0.0.1, EXCLUDE localhost',
-          '--disable-features=WebRtcHideLocalIpsWithMdns',
-        ],
-      });
-    return { ...actual, default: { ...actual.default, launch }, launch };
-  },
-);
+vi.mock('../../packages/util-chromium/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js', async importOriginal => {
+  // 根目录不直接依赖 puppeteer：只声明用到的部分，不经类型导入引用它
+  type Launch = (options?: { args?: string[] } & Record<string, unknown>) => Promise<unknown>;
+  const actual = await importOriginal<{ launch: Launch; default: Record<string, unknown> }>();
+  const launch: Launch = options =>
+    actual.launch({
+      ...options,
+      args: [
+        ...(options?.args ?? []),
+        ...(options?.args?.some(a => a.startsWith('--proxy-server=')) ? [] : ['--no-proxy-server']),
+        '--host-resolver-rules=MAP * 127.0.0.1:1, EXCLUDE 127.0.0.1, EXCLUDE localhost',
+        '--disable-features=WebRtcHideLocalIpsWithMdns',
+      ],
+    });
+  return { ...actual, default: { ...actual.default, launch }, launch };
+});
 
 const RUN_JS = `
 const q = new URLSearchParams(location.search);

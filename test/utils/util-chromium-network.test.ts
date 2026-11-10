@@ -1,6 +1,6 @@
 import { createServer, type Server, type Socket } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { OfflineRenderer } from '../../packages/util-offline-render/src/index.js';
+import { OfflineRenderer } from '../../packages/util-chromium/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 零网络（真 Chromium）：渲染期间没有连接到达「死端口」之外的任何地方，文档引用的资源没有一个被真正请求出去。
@@ -17,7 +17,7 @@ import { OfflineRenderer } from '../../packages/util-offline-render/src/index.js
 //   这些请求都在拦截里被中止，根本不出浏览器。
 // - 框的导航（iframe、框里的 meta refresh）：Chrome 在导航开始时先按目标预连接，早于拦截（与入口导航出现的
 //   render.invalid:443 同理），所以它们的主机允许出现，但只能是建连（经代理的 CONNECT，或直连时的 TLS 握手），
-//   不能是明文请求行。建连本身看不出里面有没有请求；导航请求确实被拦截中止，由 offline-render-isolation 按
+//   不能是明文请求行。建连本身看不出里面有没有请求；导航请求确实被拦截中止，由 util-chromium-isolation 按
 //   requestfailed 的错误码断言。
 // - 预连接与 DNS 预取是投机连接、不经拦截，允许落在死端口上（生产里那里没有服务），只记录。
 // - Chrome 自己的后台请求（审查与本机实测：clients2.google.com/time、accounts.google.com:443、www.google.com:443）
@@ -40,28 +40,25 @@ const probe = vi.hoisted(() => ({
   proxyPort: 0,
 }));
 
-vi.mock(
-  '../../packages/util-offline-render/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js',
-  async importOriginal => {
-    type Launch = (options?: { args?: string[] } & Record<string, unknown>) => Promise<unknown>;
-    const actual = await importOriginal<{ launch: Launch; default: Record<string, unknown> }>();
-    const launch: Launch = async options => {
-      const args = options?.args ?? [];
-      probe.originalArgs.push([...args]);
-      let rewritten = args.map(a =>
-        a === '--host-resolver-rules=MAP * 127.0.0.1:1'
-          ? `--host-resolver-rules=MAP * 127.0.0.1:${probe.resolverPort}`
-          : a === '--proxy-server=http://127.0.0.1:1'
-            ? `--proxy-server=http://127.0.0.1:${probe.proxyPort}`
-            : a,
-      );
-      // 测试保底：被测代码没给代理（变异时）就直连，不走本机的系统代理
-      if (!rewritten.some(a => a.startsWith('--proxy-server='))) rewritten = [...rewritten, '--no-proxy-server'];
-      return actual.launch({ ...options, args: rewritten });
-    };
-    return { ...actual, default: { ...actual.default, launch }, launch };
-  },
-);
+vi.mock('../../packages/util-chromium/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js', async importOriginal => {
+  type Launch = (options?: { args?: string[] } & Record<string, unknown>) => Promise<unknown>;
+  const actual = await importOriginal<{ launch: Launch; default: Record<string, unknown> }>();
+  const launch: Launch = async options => {
+    const args = options?.args ?? [];
+    probe.originalArgs.push([...args]);
+    let rewritten = args.map(a =>
+      a === '--host-resolver-rules=MAP * 127.0.0.1:1'
+        ? `--host-resolver-rules=MAP * 127.0.0.1:${probe.resolverPort}`
+        : a === '--proxy-server=http://127.0.0.1:1'
+          ? `--proxy-server=http://127.0.0.1:${probe.proxyPort}`
+          : a,
+    );
+    // 测试保底：被测代码没给代理（变异时）就直连，不走本机的系统代理
+    if (!rewritten.some(a => a.startsWith('--proxy-server='))) rewritten = [...rewritten, '--no-proxy-server'];
+    return actual.launch({ ...options, args: rewritten });
+  };
+  return { ...actual, default: { ...actual.default, launch }, launch };
+});
 
 interface Counter {
   server: Server;
@@ -184,7 +181,7 @@ describe('零网络（真浏览器）', () => {
     const seen = [...resolver.lines, ...proxy.lines];
     const hints = HINT_HOSTS.filter(host => seen.some(line => line.includes(host)));
     console.info(
-      `[offline-render] 死端口上的连接：解析 ${JSON.stringify(resolver.lines)}；代理 ${JSON.stringify(proxy.lines)}；` +
+      `[util-chromium] 死端口上的连接：解析 ${JSON.stringify(resolver.lines)}；代理 ${JSON.stringify(proxy.lines)}；` +
         `其中投机连接向量 ${JSON.stringify(hints)}`,
     );
     expect(external.lines).toEqual([]);

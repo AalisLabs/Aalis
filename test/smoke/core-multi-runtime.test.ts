@@ -87,10 +87,8 @@ describe('core 多运行时冒烟', () => {
     let page: Page;
 
     beforeAll(async () => {
-      // 根目录不直接依赖 puppeteer，从 util-offline-render 的依赖里取
-      const puppeteer = createRequire(join(ROOT, 'packages/util-offline-render/package.json'))(
-        'puppeteer',
-      ) as Puppeteer;
+      // 根目录不直接依赖 puppeteer，从 util-chromium 的依赖里取
+      const puppeteer = createRequire(join(ROOT, 'packages/util-chromium/package.json'))('puppeteer') as Puppeteer;
       browser = await puppeteer.launch({
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],

@@ -1,11 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  OfflineRenderer,
-  type RenderRequest,
-  RenderUnavailableError,
-} from '../../packages/util-offline-render/src/index.js';
+import { OfflineRenderer, type RenderRequest, RenderUnavailableError } from '../../packages/util-chromium/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 启动与沙箱（真 Chromium）：
@@ -13,8 +9,8 @@ import {
 //   优雅停机），浏览器由调用方的生命周期关。
 // - sandbox 为假：带 --no-sandbox --disable-setuid-sandbox 启动。
 // - sandbox 为真：不带这两项启动，启动失败就抛 RenderUnavailableError，不加 --no-sandbox 再启动，下次渲染照样带沙箱启动。
-// - 宿主这一侧的连接一断，浏览器随之退出：宿主不经停机退出（kill -9、内存耗尽、终端关闭的 SIGHUP）时 exit 钩子不跑，
-//   系统关掉宿主持有的全部句柄，浏览器不能整组留下。用例照此关掉与浏览器的连接和子进程的全部管道来模拟。
+// - 宿主这一侧的连接一断，浏览器随之退出：宿主不经停机退出（崩溃、被 SIGKILL、未捕获异常）时系统关掉宿主持有的
+//   全部句柄，浏览器不能整组留下（崩溃与 SIGKILL 时 exit 钩子也不跑）。用例照此关掉与浏览器的连接和子进程的全部管道来模拟。
 // 「沙箱起不来」由外包的 launch 模拟：参数里没有 --no-sandbox 就抛错。
 // ════════════════════════════════════════════════════════════
 
@@ -26,28 +22,25 @@ const probe = vi.hoisted(() => ({
   browsers: [] as Array<{ process(): ChildProcess | null; disconnect(): Promise<void> }>,
 }));
 
-vi.mock(
-  '../../packages/util-offline-render/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js',
-  async importOriginal => {
-    type Launch = (options?: { args?: string[] } & Record<string, unknown>) => Promise<unknown>;
-    const actual = await importOriginal<{ launch: Launch; default: Record<string, unknown> }>();
-    const launch: Launch = async (options = {}) => {
-      const args = options.args ?? [];
-      probe.launches.push({ args: [...args], options: { ...options } });
-      if (probe.failSandboxed && !args.includes('--no-sandbox')) {
-        throw new Error('Failed to launch the browser process! No usable sandbox!（模拟）');
-      }
-      // 测试保底：被测代码没给代理（变异时）就直连，不走本机的系统代理
-      const browser = await actual.launch({
-        ...options,
-        args: args.some(a => a.startsWith('--proxy-server=')) ? args : [...args, '--no-proxy-server'],
-      });
-      probe.browsers.push(browser as (typeof probe.browsers)[number]);
-      return browser;
-    };
-    return { ...actual, default: { ...actual.default, launch }, launch };
-  },
-);
+vi.mock('../../packages/util-chromium/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js', async importOriginal => {
+  type Launch = (options?: { args?: string[] } & Record<string, unknown>) => Promise<unknown>;
+  const actual = await importOriginal<{ launch: Launch; default: Record<string, unknown> }>();
+  const launch: Launch = async (options = {}) => {
+    const args = options.args ?? [];
+    probe.launches.push({ args: [...args], options: { ...options } });
+    if (probe.failSandboxed && !args.includes('--no-sandbox')) {
+      throw new Error('Failed to launch the browser process! No usable sandbox!（模拟）');
+    }
+    // 测试保底：被测代码没给代理（变异时）就直连，不走本机的系统代理
+    const browser = await actual.launch({
+      ...options,
+      args: args.some(a => a.startsWith('--proxy-server=')) ? args : [...args, '--no-proxy-server'],
+    });
+    probe.browsers.push(browser as (typeof probe.browsers)[number]);
+    return browser;
+  };
+  return { ...actual, default: { ...actual.default, launch }, launch };
+});
 
 const ENTRY = 'https://render.invalid/';
 const req: RenderRequest = {
@@ -153,10 +146,10 @@ describe('带沙箱真实启动（真浏览器）', () => {
       (err: unknown) => ({ ok: false as const, err }),
     );
     if (result.ok) {
-      console.info('[offline-render] 带沙箱真实启动：渲染成功（本环境 Chrome 沙箱可用）');
+      console.info('[util-chromium] 带沙箱真实启动：渲染成功（本环境 Chrome 沙箱可用）');
       expect(Buffer.from(result.png).subarray(1, 4).toString('ascii')).toBe('PNG');
     } else {
-      console.info(`[offline-render] 带沙箱真实启动：抛 RenderUnavailableError（${String(result.err)}）`);
+      console.info(`[util-chromium] 带沙箱真实启动：抛 RenderUnavailableError（${String(result.err)}）`);
       expect(result.err).toBeInstanceOf(RenderUnavailableError);
     }
   }, 60_000);

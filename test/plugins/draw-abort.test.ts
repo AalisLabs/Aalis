@@ -5,7 +5,7 @@ import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import type { LifecycleCap } from '../../packages/core/src/index.js';
 import { framesToGif } from '../../packages/plugin-draw/src/gif.js';
 import drawPlugin from '../../packages/plugin-draw/src/index.js';
-import type { RenderRequest } from '../../packages/util-offline-render/src/index.js';
+import type { RenderRequest } from '../../packages/util-chromium/src/index.js';
 import { silentLogger } from '../fixtures/authority.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';
 import { fixedRef, ref } from '../fixtures/service-ref.js';
@@ -17,7 +17,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 // ════════════════════════════════════════════════════════════
 
 const renders = vi.hoisted(() => ({ requests: [] as RenderRequest[] }));
-vi.mock(import('../../packages/util-offline-render/src/index.js'), async importOriginal => {
+vi.mock(import('../../packages/util-chromium/src/index.js'), async importOriginal => {
   const hang = (req: RenderRequest) => {
     renders.requests.push(req);
     return new Promise<never>((_, reject) => {

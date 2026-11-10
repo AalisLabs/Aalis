@@ -1,18 +1,18 @@
 {
-  "name": "@aalis/util-offline-render",
-  "version": "0.1.1",
+  "name": "@aalis/util-chromium",
+  "version": "0.1.0",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/AalisLabs/Aalis.git",
-    "directory": "packages/util-offline-render"
+    "directory": "packages/util-chromium"
   },
   "author": "Ace Nyan <ace@acenyan.com>",
   "bugs": {
     "url": "https://github.com/AalisLabs/Aalis/issues"
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
-  "description": "离线渲染：无头浏览器只响应调用方给定的资源、不连网，每次渲染新建上下文，截图或逐帧定格",
+  "description": "启动 Chromium：浏览器工具与绘图共用的启动器，与离线渲染（无头浏览器只响应调用方给定的资源、不连网，每次渲染新建上下文，截图或逐帧定格）",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -24,7 +24,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "puppeteer": "^24.0.0"
+    "puppeteer": "^24.40.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -57,7 +57,7 @@ const owner = { platform: 'onebot', userId: OWNER_QQ };
 const webuiConsole = { platform: 'webui', userId: 'console' };
 
 const renders = vi.hoisted(() => ({ png: new Uint8Array(0) }));
-vi.mock(import('../../packages/util-offline-render/src/index.js'), async importOriginal => ({
+vi.mock(import('../../packages/util-chromium/src/index.js'), async importOriginal => ({
   ...(await importOriginal()),
   OfflineRenderer: class {
     renderPng = async () => renders.png;

@@ -119,7 +119,7 @@
 ### 浏览器自动化
 
 - **`plugin-tool-browser/src/index.ts`** — `node:fs`（`existsSync`）+ `node:path` + `node:url`（`fileURLToPath`）+ `node:crypto`（`createHash`）+ `node:net`（`createServer` / `connect` / `isIP`）
-  动态 `import('puppeteer')` 后需要对 puppeteer 包做包内文件探测（找到内置 `cli.js`、检测 Chrome 是否已下载），属于 puppeteer 包的本地资产管理需求，storage 服务覆盖不到。**Chrome 安装本身**（原先的 `execFileSync`）已迁移到 `ProcessService.execFile`。`node:net` 用于浏览器网络闸：在 `127.0.0.1` 起 SOCKS5 服务接收浏览器的全部 TCP 连接，判定通过后由插件进程连接目标。`node:crypto` 的 `createHash` 取截图 PNG 内容的 sha256 作文件名。
+  从 `@aalis/util-chromium` 取得 puppeteer 包入口与自带 Chrome 的路径后，需要对 puppeteer 包做包内文件探测（找到内置 `cli.js`、检测 Chrome 是否已下载），属于 puppeteer 包的本地资产管理需求，storage 服务覆盖不到。**Chrome 安装本身**（原先的 `execFileSync`）已迁移到 `ProcessService.execFile`。`node:net` 用于浏览器网络闸：在 `127.0.0.1` 起 SOCKS5 服务接收浏览器的全部 TCP 连接，判定通过后由插件进程连接目标。`node:crypto` 的 `createHash` 取截图 PNG 内容的 sha256 作文件名。
 
 ### 记忆后端
 

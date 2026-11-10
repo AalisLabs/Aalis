@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { OfflineRenderer, type RenderRequest, StepTimeoutError } from '../../packages/util-offline-render/src/index.js';
+import { OfflineRenderer, type RenderRequest, StepTimeoutError } from '../../packages/util-chromium/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 渲染步骤卡住时（真 Chromium）：
@@ -21,61 +21,58 @@ const probe = vi.hoisted(() => ({
   hangNextProbe: false,
 }));
 
-vi.mock(
-  '../../packages/util-offline-render/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js',
-  async importOriginal => {
-    // 根目录不直接依赖 puppeteer：只声明用到的部分，不经类型导入引用它
-    type Page = {
-      evaluate(expr: unknown, ...args: unknown[]): Promise<unknown>;
-      screenshot(opts: unknown): Promise<Uint8Array>;
-    };
-    type Context = { newPage(): Promise<Page>; close(): Promise<void> };
-    type Browser = { connected: boolean; createBrowserContext(...a: unknown[]): Promise<Context> };
-    type Launch = (options?: { args?: string[] } & Record<string, unknown>) => Promise<Browser>;
-    const actual = await importOriginal<{ launch: Launch; default: Record<string, unknown> }>();
-    const launch: Launch = async options => {
-      const args = options?.args ?? [];
-      const browser = await actual.launch({
-        ...options,
-        // 测试保底：被测代码没给代理（变异时）就直连，不走本机的系统代理
-        args: args.some(a => a.startsWith('--proxy-server=')) ? args : [...args, '--no-proxy-server'],
-      });
-      probe.browsers.push(browser);
-      const createBrowserContext = browser.createBrowserContext.bind(browser);
-      browser.createBrowserContext = async (...a: unknown[]) => {
-        const context = await createBrowserContext(...a);
-        const newPage = context.newPage.bind(context);
-        context.newPage = async () => {
-          const page = await newPage();
-          const screenshot = page.screenshot.bind(page);
-          const evaluate = page.evaluate.bind(page);
-          page.screenshot = async opts => {
-            if (probe.hangNextScreenshot) {
-              probe.hangNextScreenshot = false;
-              probe.hungAt = Date.now();
-              // 卡住的上下文也关不掉：真实的关闭要等截图锁，这里让它永不落定
-              context.close = () => new Promise<void>(() => {});
-              evaluate('for(;;){}').catch(() => {});
-              await new Promise(r => setTimeout(r, 300));
-            }
-            return screenshot(opts);
-          };
-          page.evaluate = (expr: unknown, ...rest: unknown[]) => {
-            if (probe.hangNextProbe && typeof expr === 'string' && expr.includes('pauseAnimations')) {
-              probe.hangNextProbe = false;
-              return evaluate('new Promise(() => {})');
-            }
-            return evaluate(expr, ...rest);
-          };
-          return page;
+vi.mock('../../packages/util-chromium/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js', async importOriginal => {
+  // 根目录不直接依赖 puppeteer：只声明用到的部分，不经类型导入引用它
+  type Page = {
+    evaluate(expr: unknown, ...args: unknown[]): Promise<unknown>;
+    screenshot(opts: unknown): Promise<Uint8Array>;
+  };
+  type Context = { newPage(): Promise<Page>; close(): Promise<void> };
+  type Browser = { connected: boolean; createBrowserContext(...a: unknown[]): Promise<Context> };
+  type Launch = (options?: { args?: string[] } & Record<string, unknown>) => Promise<Browser>;
+  const actual = await importOriginal<{ launch: Launch; default: Record<string, unknown> }>();
+  const launch: Launch = async options => {
+    const args = options?.args ?? [];
+    const browser = await actual.launch({
+      ...options,
+      // 测试保底：被测代码没给代理（变异时）就直连，不走本机的系统代理
+      args: args.some(a => a.startsWith('--proxy-server=')) ? args : [...args, '--no-proxy-server'],
+    });
+    probe.browsers.push(browser);
+    const createBrowserContext = browser.createBrowserContext.bind(browser);
+    browser.createBrowserContext = async (...a: unknown[]) => {
+      const context = await createBrowserContext(...a);
+      const newPage = context.newPage.bind(context);
+      context.newPage = async () => {
+        const page = await newPage();
+        const screenshot = page.screenshot.bind(page);
+        const evaluate = page.evaluate.bind(page);
+        page.screenshot = async opts => {
+          if (probe.hangNextScreenshot) {
+            probe.hangNextScreenshot = false;
+            probe.hungAt = Date.now();
+            // 卡住的上下文也关不掉：真实的关闭要等截图锁，这里让它永不落定
+            context.close = () => new Promise<void>(() => {});
+            evaluate('for(;;){}').catch(() => {});
+            await new Promise(r => setTimeout(r, 300));
+          }
+          return screenshot(opts);
         };
-        return context;
+        page.evaluate = (expr: unknown, ...rest: unknown[]) => {
+          if (probe.hangNextProbe && typeof expr === 'string' && expr.includes('pauseAnimations')) {
+            probe.hangNextProbe = false;
+            return evaluate('new Promise(() => {})');
+          }
+          return evaluate(expr, ...rest);
+        };
+        return page;
       };
-      return browser;
+      return context;
     };
-    return { ...actual, default: { ...actual.default, launch }, launch };
-  },
-);
+    return browser;
+  };
+  return { ...actual, default: { ...actual.default, launch }, launch };
+});
 
 const STEP_MS = 1500;
 const ENTRY = 'https://render.invalid/';

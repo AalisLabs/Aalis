@@ -12,20 +12,28 @@ import { toolContext } from '../fixtures/tool-call.js';
 // - 不配（默认 false）：带 --no-sandbox --disable-setuid-sandbox 启动。
 // - 配 true：不带这两项启动；启动失败就回工具错误，写明可以在配置里关掉沙箱，不加 --no-sandbox 再启动，
 //   下次调用照样带沙箱启动（不记住失败）。
-// puppeteer 换成替身（按离线渲染库的依赖路径 mock）：每次启动都失败，只记下参数，不启动真浏览器。
+// puppeteer 换成替身（按 util-chromium 的依赖路径 mock）：每次启动都失败，只记下参数，不启动真浏览器。
 // ════════════════════════════════════════════════════════════
 
-const probe = vi.hoisted(() => ({ launches: [] as string[][] }));
-vi.mock('../../packages/util-offline-render/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js', () => {
+const probe = vi.hoisted(() => ({ launches: [] as string[][], loadFails: false }));
+vi.mock('../../packages/util-chromium/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js', () => {
   const launch = async (options: { args: string[] }) => {
     probe.launches.push(options.args);
     throw new Error('No usable sandbox!（模拟）');
   };
-  return { default: { launch }, launch };
+  return {
+    // loadFails 时取默认导出就抛：模拟 puppeteer 本身加载失败，Chromium 还未启动过
+    get default() {
+      if (probe.loadFails) throw new Error('zz-puppeteer 装坏了');
+      return { launch };
+    },
+    launch,
+  };
 });
 
 afterEach(() => {
   probe.launches.length = 0;
+  probe.loadFails = false;
 });
 
 const SVG = '<svg viewBox="0 0 10 10" xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>';
@@ -79,5 +87,14 @@ describe('绘图的 Chromium 沙箱', () => {
       [false, false],
       [false, false],
     ]);
+  });
+
+  it('配 true、puppeteer 本身加载失败：报加载失败，不说成启动失败，不提沙箱', async () => {
+    probe.loadFails = true;
+    const call = await drawImage({ sandbox: true });
+    const failed = await call();
+    expect(failed.error).toContain('加载 puppeteer 失败');
+    expect(failed.error).not.toContain('沙箱');
+    expect(probe.launches).toEqual([]);
   });
 });

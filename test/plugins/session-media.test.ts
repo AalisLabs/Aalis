@@ -50,7 +50,7 @@ const { WebSocketServer } = createRequire(
 )('ws') as { WebSocketServer: new (opts: { host: string; port: number }) => WsServer };
 
 const renders = vi.hoisted(() => ({ png: new Uint8Array(0) }));
-vi.mock(import('../../packages/util-offline-render/src/index.js'), async importOriginal => ({
+vi.mock(import('../../packages/util-chromium/src/index.js'), async importOriginal => ({
   ...(await importOriginal()),
   OfflineRenderer: class {
     renderPng = async () => renders.png;

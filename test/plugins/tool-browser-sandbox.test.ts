@@ -9,7 +9,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 // - 不配（默认 false）：带 --no-sandbox --disable-setuid-sandbox 启动。
 // - 配 true：不带这两项启动；无法启动就报启动失败，报错写明可以在配置里关掉沙箱，不加 --no-sandbox 再启动，
 //   下次调用照样带沙箱启动（不记住失败）。
-// puppeteer 换成替身（按插件自己的依赖路径 mock），不启动真浏览器；不起网络闸（blockPrivate=false）。
+// puppeteer 换成替身（按 util-chromium 的依赖路径 mock），不启动真浏览器；不起网络闸（blockPrivate=false）。
 // ════════════════════════════════════════════════════════════
 
 type Handler = (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string | ToolExecutionResult>;
@@ -33,8 +33,9 @@ const fake = vi.hoisted(() => {
   });
   return { launch };
 });
-vi.mock('../../packages/plugin-tool-browser/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js', () => ({
-  default: { launch: fake.launch },
+vi.mock('../../packages/util-chromium/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js', () => ({
+  // 自带的 Chrome 没装：不配 executablePath 时先走自动下载
+  default: { launch: fake.launch, executablePath: () => '/zz-missing-chrome' },
   launch: fake.launch,
 }));
 
@@ -98,6 +99,14 @@ describe('Chromium 沙箱', () => {
       [false, false],
       [false, false],
     ]);
+  });
+
+  it('配 true、启动之前就失败（自带的 Chrome 没装、下载不成）：报错不提沙箱', async () => {
+    const call = await navigate({ sandbox: true, executablePath: '' });
+    const failed = await call();
+    expect(failed.error).toContain('浏览器启动失败');
+    expect(failed.error).not.toContain('沙箱');
+    expect(fake.launch).not.toHaveBeenCalled();
   });
 
   it('不配时启动失败：报错不提沙箱', async () => {

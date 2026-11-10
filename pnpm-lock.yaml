@@ -1484,9 +1484,9 @@ importers:
       '@aalis/schema-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
-      '@aalis/util-offline-render':
+      '@aalis/util-chromium':
         specifier: workspace:>=0.1.0 <1.0.0
-        version: link:../util-offline-render
+        version: link:../util-chromium
     devDependencies:
       '@aalis/api-memory':
         specifier: workspace:*
@@ -3004,12 +3004,12 @@ importers:
       '@aalis/schema-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
+      '@aalis/util-chromium':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../util-chromium
       '@aalis/util-network-guard':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../util-network-guard
-      puppeteer:
-        specifier: ^24.40.0
-        version: 24.40.0(typescript@5.9.3)
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -3976,6 +3976,19 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/util-chromium:
+    dependencies:
+      puppeteer:
+        specifier: ^24.40.0
+        version: 24.40.0(typescript@5.9.3)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/util-cron:
     dependencies:
       '@aalis/schema-i18n':
@@ -4009,19 +4022,6 @@ importers:
       undici:
         specifier: ^6.0.0
         version: 6.28.0
-    devDependencies:
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/util-offline-render:
-    dependencies:
-      puppeteer:
-        specifier: ^24.0.0
-        version: 24.40.0(typescript@5.9.3)
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

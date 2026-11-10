@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { type DrawCaps, renderRequest, resolveCanvas } from '../../packages/plugin-draw/src/plan.js';
-import { OfflineRenderer } from '../../packages/util-offline-render/src/index.js';
+import { OfflineRenderer } from '../../packages/util-chromium/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 真 Chromium 集成锚：draw 的渲染计划经离线渲染库出图（本机已有 puppeteer 缓存的 Chrome）。
 // 要实证的事：
 //   1) 渲染出真 PNG 且尺寸 = 画布×scale（定界生效）；HTML 按内容量高、受像素上限限高、最低 16；
 //   2) 标记里的 <script> 不执行、外联被拦而渲染不挂死（走 draw 的完整请求，不只看库本身）。
-// 库层的隔离（宿主文件、零网络、上下文、并发槽、步骤超时）见 test/utils/offline-render-*.test.ts。
+// 库层的隔离（宿主文件、零网络、上下文、并发槽、步骤超时）见 test/utils/util-chromium-*.test.ts。
 // ════════════════════════════════════════════════════════════
 
 const caps: DrawCaps = { defaultWidth: 800, maxWidth: 1600, maxPixels: 4_000_000, maxSourceBytes: 262144, scale: 2 };

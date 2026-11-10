@@ -1,7 +1,7 @@
 // ============================================================
 // @aalis/plugin-draw — 让纯文本模型画图
 //
-// LLM 写标记（SVG 或 HTML+内联 CSS），本插件经离线渲染库（@aalis/util-offline-render：
+// LLM 写标记（SVG 或 HTML+内联 CSS），本插件经离线渲染（@aalis/util-chromium 的 OfflineRenderer：
 // 禁脚本、零网络、每次渲染全新上下文，见该包头注释；带不带 Chromium 沙箱看配置 sandbox）渲染成 PNG，或把声明式动画
 // （CSS/SMIL）逐帧截图合成 GIF（draw_animation），落盘到本插件在会话媒体目录里的子目录
 // data:/images/<会话目录>/draw/（@aalis/api-media 的目录约定，/clear 与删会话时由本插件清理）后由 send_attachment 投递进聊天。
@@ -23,7 +23,7 @@ import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, lifecycle, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { textOf } from '@aalis/schema-i18n';
-import { OfflineRenderer, RenderUnavailableError } from '@aalis/util-offline-render';
+import { ChromiumLaunchError, OfflineRenderer, RenderUnavailableError } from '@aalis/util-chromium';
 import { framesToGif } from './gif.js';
 import { type DrawCaps, renderRequest, resolveCanvas } from './plan.js';
 import { t } from './texts.js';
@@ -203,10 +203,10 @@ function registerDraw(caps: Caps): void {
   });
   caps.lifecycle.use.onDispose(() => renderer.dispose());
 
-  /** 工具报错的说明；带沙箱起不来时接上修法 */
+  /** 工具报错的说明；带沙箱时 Chromium 本身启动失败，接上修法 */
   const failureText = (err: unknown): string => {
     const message = err instanceof Error ? err.message : String(err);
-    return cfg.sandbox && err instanceof RenderUnavailableError
+    return cfg.sandbox && err instanceof RenderUnavailableError && err.cause instanceof ChromiumLaunchError
       ? `${message}。若是沙箱不可用（如 Linux 上以 root 运行、容器里），可在绘图的配置里关掉「Chromium 沙箱」（sandbox）`
       : message;
   };

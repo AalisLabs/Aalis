@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { inflateSync } from 'node:zlib';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { OfflineRenderer, type RenderRequest } from '../../packages/util-offline-render/src/index.js';
+import { OfflineRenderer, type RenderRequest } from '../../packages/util-chromium/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 离线渲染的隔离（真 Chromium）：
@@ -27,54 +27,51 @@ const probe = vi.hoisted(() => ({
   requests: [] as Array<{ url: string; outcome: 'finished' | 'failed'; errorText?: string }>,
 }));
 
-vi.mock(
-  '../../packages/util-offline-render/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js',
-  async importOriginal => {
-    // 根目录不直接依赖 puppeteer：只声明用到的部分，不经类型导入引用它
-    type Req = { url(): string; failure(): { errorText: string } | null };
-    type Page = { on(event: string, handler: (r: Req) => void): void };
-    type Context = { closed: boolean; newPage(): Promise<Page>; close(): Promise<void> };
-    type Browser = { createBrowserContext(...a: unknown[]): Promise<Context> };
-    type Launch = (options?: { args?: string[] } & Record<string, unknown>) => Promise<Browser>;
-    const actual = await importOriginal<{ launch: Launch; default: Record<string, unknown> }>();
-    const launch: Launch = async options => {
-      probe.launches++;
-      const args = options?.args ?? [];
-      const browser = await actual.launch({
-        ...options,
-        args: args.some(a => a.startsWith('--proxy-server=')) ? args : [...args, '--no-proxy-server'],
-      });
-      const createBrowserContext = browser.createBrowserContext.bind(browser);
-      browser.createBrowserContext = async (...a: unknown[]) => {
-        const context = await createBrowserContext(...a);
-        probe.contexts.push(context);
-        probe.open++;
-        probe.peak = Math.max(probe.peak, probe.open);
-        const close = context.close.bind(context);
-        let counted = true;
-        context.close = async () => {
-          if (counted) {
-            counted = false;
-            probe.open--;
-          }
-          await close();
-        };
-        const newPage = context.newPage.bind(context);
-        context.newPage = async () => {
-          const page = await newPage();
-          page.on('requestfinished', r => probe.requests.push({ url: r.url(), outcome: 'finished' }));
-          page.on('requestfailed', r =>
-            probe.requests.push({ url: r.url(), outcome: 'failed', errorText: r.failure()?.errorText }),
-          );
-          return page;
-        };
-        return context;
+vi.mock('../../packages/util-chromium/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js', async importOriginal => {
+  // 根目录不直接依赖 puppeteer：只声明用到的部分，不经类型导入引用它
+  type Req = { url(): string; failure(): { errorText: string } | null };
+  type Page = { on(event: string, handler: (r: Req) => void): void };
+  type Context = { closed: boolean; newPage(): Promise<Page>; close(): Promise<void> };
+  type Browser = { createBrowserContext(...a: unknown[]): Promise<Context> };
+  type Launch = (options?: { args?: string[] } & Record<string, unknown>) => Promise<Browser>;
+  const actual = await importOriginal<{ launch: Launch; default: Record<string, unknown> }>();
+  const launch: Launch = async options => {
+    probe.launches++;
+    const args = options?.args ?? [];
+    const browser = await actual.launch({
+      ...options,
+      args: args.some(a => a.startsWith('--proxy-server=')) ? args : [...args, '--no-proxy-server'],
+    });
+    const createBrowserContext = browser.createBrowserContext.bind(browser);
+    browser.createBrowserContext = async (...a: unknown[]) => {
+      const context = await createBrowserContext(...a);
+      probe.contexts.push(context);
+      probe.open++;
+      probe.peak = Math.max(probe.peak, probe.open);
+      const close = context.close.bind(context);
+      let counted = true;
+      context.close = async () => {
+        if (counted) {
+          counted = false;
+          probe.open--;
+        }
+        await close();
       };
-      return browser;
+      const newPage = context.newPage.bind(context);
+      context.newPage = async () => {
+        const page = await newPage();
+        page.on('requestfinished', r => probe.requests.push({ url: r.url(), outcome: 'finished' }));
+        page.on('requestfailed', r =>
+          probe.requests.push({ url: r.url(), outcome: 'failed', errorText: r.failure()?.errorText }),
+        );
+        return page;
+      };
+      return context;
     };
-    return { ...actual, default: { ...actual.default, launch }, launch };
-  },
-);
+    return browser;
+  };
+  return { ...actual, default: { ...actual.default, launch }, launch };
+});
 
 const logger = { debug: () => {}, info: () => {}, warn: () => {} };
 const ENTRY = 'https://render.invalid/w/';
@@ -180,7 +177,7 @@ describe('宿主文件取不到（真浏览器）', () => {
   let fileDoc: string;
 
   beforeAll(() => {
-    dir = mkdtempSync(join(tmpdir(), 'works-offline-render-'));
+    dir = mkdtempSync(join(tmpdir(), 'works-util-chromium-'));
     writeFileSync(join(dir, 'sentinel.png'), MAGENTA_PNG);
     writeFileSync(join(dir, 'sentinel.css'), 'html,body{background:#ff00ff !important}');
     writeFileSync(join(dir, 'sentinel.html'), '<body style="margin:0;background:#ff00ff"></body>');

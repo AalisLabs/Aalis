@@ -7,7 +7,7 @@
 // 本文件零 IO 零浏览器依赖，全部可单测。
 // ============================================================
 
-import type { RenderRequest } from '@aalis/util-offline-render';
+import type { RenderRequest } from '@aalis/util-chromium';
 
 export interface DrawCaps {
   /** HTML 模式与无宽度 SVG 的默认画布宽（px） */
