@@ -42,11 +42,9 @@ export default defineLocale<Source>()({
   installedPending: 'Installed {target}; not active yet, waiting for its required dependencies',
   installedLoaded: 'Installed and loaded: {target}',
   installedNotLoaded:
-    'Installed into {where}, but although it declares itself a plugin it was not loaded; check its keywords and entry export',
-  installedNameTaken:
-    'Installed {target}, but the plugin name {name} it declares is already taken by {holder}, so it was not loaded',
+    'Installed into {where}, but although it declares itself a plugin it was not loaded; check its keywords, its entry export, and that the name in its definition matches the package name',
   installedNameTakenByHost:
-    'Installed {target}, but the plugin name {name} it declares is already taken by a plugin the host registered directly, so it was not loaded',
+    'Installed {target}, but the host has already registered a plugin of the same name directly, so this package was not loaded',
   installedNonPlugin: 'Installed {target} (not a plugin package, so it does not appear in the plugin list)',
   workspaceInstall:
     'The root dependencies use the workspace: protocol, so npm install is refused here (it would write package-lock.json and break the pnpm workspace)',
@@ -87,6 +85,8 @@ export default defineLocale<Source>()({
     'Plugin {name} was uninstalled (removed from the root dependencies and node_modules). Its config was deleted from the config file, along with the secrets only it used; data written under state/ in the data directory and elsewhere is not deleted, so clean it up by hand if needed.',
   uninstalledConfigKept:
     'Plugin {name} was uninstalled (removed from the root dependencies and node_modules). Its config stays in the config file, so it starts with the same config if reinstalled; data written under state/ in the data directory and elsewhere is not deleted, so clean it up by hand if needed.',
+  uninstalledNameTakenByHost:
+    '{name} was uninstalled (removed from the root dependencies and node_modules). The host registered a plugin of the same name directly, so this package was never loaded; that plugin and the config file were left unchanged.',
   kindCore: 'core',
   kindRuntime: 'host',
   kindApi: 'service contract',

@@ -88,13 +88,8 @@ describe('金丝雀密钥不进主配置文件', () => {
     const app = new App({ name: store.get('name'), logLevel: store.get('logLevel') as LogLevel, logger: silent });
     apps.push(app);
     installHostConfig(app, store);
-    const prepared = withPluginConfigSync(app, store);
-    const discovery = createPluginDiscovery(app, loader, store, prepared);
-    try {
-      await discovery.loadAll();
-    } finally {
-      prepared.finishInitialLoad();
-    }
+    const discovery = createPluginDiscovery(app, loader, store, withPluginConfigSync(app, store));
+    await discovery.loadAll();
     installConfigHotReload(app, store, discovery);
 
     const canaries = () => readFileSync(configPath, 'utf-8').match(/CANARY-\d/g) ?? [];

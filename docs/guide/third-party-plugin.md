@@ -18,7 +18,8 @@ export default definePlugin({
 });
 ```
 
-加载器只认这份 default 定义。具名导出、函数 default、类 default 都会出声并跳过。
+加载器只认这份 default 定义。具名导出、函数 default、类 default 都会出声并跳过。定义的 `name` 必须与 `package.json` 的 `name` 相同：
+插件名即包名，配置键、实例 id、热扫描与卸载都按它认，不一致的包在发现时报错拒载。
 
 最小 `package.json`：
 

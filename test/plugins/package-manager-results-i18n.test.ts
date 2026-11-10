@@ -100,11 +100,11 @@ describe('包管理自己的失败原因按全局层的语言', () => {
           return result;
         },
       } as never,
-      log: { info() {}, error() {}, warn() {} },
+      log: { info() {}, error() {} },
       projectRoot: () => ROOT,
       readText: async path => (path in files ? JSON.stringify(files[path]) : undefined),
       rescanPlugins: async () => [],
-      loadedFrom: () => undefined,
+      loaded: () => false,
       isPluginRegistered: () => false,
       unloadPlugin: async () => {},
       restartApp: () => {},

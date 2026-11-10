@@ -50,8 +50,12 @@ describe('加载前配置同步', () => {
         },
       },
     );
-    const prepared = withPluginConfigSync(app, store, { trimUnknownFields });
-    const discovery = createPluginDiscovery(app, loader, store, prepared);
+    const discovery = createPluginDiscovery(
+      app,
+      loader,
+      store,
+      withPluginConfigSync(app, store, { trimUnknownFields }),
+    );
     function add(name: string) {
       definitions.push(
         definePlugin({
@@ -70,7 +74,7 @@ describe('加载前配置同步', () => {
       store.setPluginConfig(name, { known: 2, unknown: true, nested: { typo: 'x' } });
       store.setPluginConfig(`${name}:other`, { known: 3, unknown: true });
     }
-    return { app, store, discovery, prepared, loader, add, seen, saved };
+    return { app, store, discovery, loader, add, seen, saved };
   }
 
   it('首次 apply、实例记录与持久化一致，主实例和后缀实例均只激活一次；首批只保存一次', async () => {
@@ -78,9 +82,6 @@ describe('加载前配置同步', () => {
     f.add('one');
     f.add('two');
     await f.discovery.loadAll();
-    expect(f.saved).toHaveLength(0);
-    f.prepared.finishInitialLoad();
-    f.prepared.finishInitialLoad();
     expect(f.seen).toHaveLength(4);
     expect(f.seen).toEqual(
       expect.arrayContaining([
@@ -105,7 +106,6 @@ describe('加载前配置同步', () => {
     const f = fixture(false);
     f.add('one');
     await f.discovery.loadAll();
-    f.prepared.finishInitialLoad();
     expect(f.seen[0]).toEqual({ known: 2, unknown: true, nested: { typo: 'x', filled: 7 } });
     expect(f.seen[1]).toEqual({ known: 3, unknown: true, nested: { filled: 7 } });
     await f.app.stop();
@@ -121,7 +121,6 @@ describe('加载前配置同步', () => {
       return load(d);
     };
     await f.discovery.loadAll();
-    f.prepared.finishInitialLoad();
     expect(f.app.plugins.getPlugin('broken')).toBeUndefined();
     expect(f.seen).toHaveLength(2);
     expect(f.saved).toHaveLength(1);
@@ -131,6 +130,29 @@ describe('加载前配置同步', () => {
         broken: { known: 2, unknown: true, nested: { typo: 'x' } },
       },
     });
+    await f.app.stop();
+  });
+
+  it('某个定义同步配置时抛错：只记该条、不登记它，同一批其余的照常同步、登记并落盘', async () => {
+    const f = fixture();
+    f.add('one');
+    f.add('bad');
+    const errors: string[] = [];
+    f.app.logger.error = (...args: unknown[]) => void errors.push(args.map(String).join(' '));
+    // 默认值写成了函数：补进配置后写进文档时拷贝不了
+    const bad = definePlugin({
+      name: 'bad',
+      configSchema: { f: { type: 'string', label: 'F', default: (() => 'x') as never } },
+      apply() {},
+    });
+    const load = f.loader.load;
+    f.loader.load = async d => (d.name === 'bad' ? bad : load(d));
+    await f.discovery.loadAll();
+    expect(f.app.plugins.getPlugin('bad')).toBeUndefined();
+    expect(f.app.plugins.getPlugin('one')?.state).toBe('active');
+    expect(errors.filter(line => line.includes('"bad"'))).toHaveLength(1);
+    expect(f.saved).toHaveLength(1);
+    expect(f.saved[0]).toMatchObject({ plugins: { one: { known: 2, nested: { filled: 7 } } } });
     await f.app.stop();
   });
 
@@ -155,8 +177,6 @@ describe('加载前配置同步', () => {
       store,
       prepared,
     ).loadAll();
-    prepared.finishInitialLoad();
-    prepared.finishInitialLoad();
     // 落盘是异步的，拒绝在后续微任务里才到：等一个宏任务再看告警
     await new Promise(r => setTimeout(r, 0));
     expect(writes).toBe(1);
@@ -166,7 +186,7 @@ describe('加载前配置同步', () => {
     await app.stop();
   });
 
-  it('同步 provider 落盘抛错（如只读配置）：首批收尾不抛，记一笔 warn，已激活实例不受影响', async () => {
+  it('同步 provider 落盘抛错（如只读配置）：冷启动不抛，记一笔 warn，已激活实例不受影响', async () => {
     const { app, store } = hostedApp(
       { plugins: { p1: { known: 1, unknown: true } } },
       {
@@ -185,7 +205,6 @@ describe('加载前配置同步', () => {
       store,
       prepared,
     ).loadAll();
-    expect(() => prepared.finishInitialLoad()).not.toThrow();
     await new Promise(r => setTimeout(r, 0));
     expect(warns.filter(w => w.includes('配置同步落盘失败'))).toHaveLength(1);
     expect(app.plugins.getPlugin('p1')?.state).toBe('active');
@@ -221,7 +240,6 @@ describe('加载前配置同步', () => {
       store,
       prepared,
     ).loadAll();
-    prepared.finishInitialLoad();
     await new Promise(r => setTimeout(r, 0));
     expect(warns.filter(([msg]) => String(msg).includes('落盘'))).toEqual([
       ['配置同步未落盘：配置文件有尚未生效的外部修改，为免覆盖已拒绝本次保存（/x/aalis.config.yaml）'],
@@ -232,7 +250,6 @@ describe('加载前配置同步', () => {
   it.each([true, false])('启动后 rescan 在首次 apply 前同步新定义和复用实例（reload=%s）', async reload => {
     const f = fixture(true, reload);
     await f.discovery.loadAll();
-    f.prepared.finishInitialLoad();
     expect(f.saved).toHaveLength(0);
     f.add('later');
     await f.discovery.rescan();
@@ -484,7 +501,6 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
       prepared,
     );
     await discovery.loadAll();
-    prepared.finishInitialLoad();
     installConfigHotReload(app, store, discovery);
 
     // 模拟外部编辑：给已登记的 reusable 模块加一个只写了半块嵌套组的实例

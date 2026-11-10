@@ -1,5 +1,5 @@
 import type { PluginSourceService } from '@aalis/api-plugin-source';
-import { type App, definePlugin, type PluginDefinition, type PluginRegistration, parseInstanceId } from '@aalis/core';
+import { type App, type PluginDefinition, type PluginRegistration, parseInstanceId } from '@aalis/core';
 import type { ConfigStore } from './config-store.js';
 import { describeDangling } from './secrets.js';
 
@@ -18,7 +18,7 @@ import { describeDangling } from './secrets.js';
  * （fs loader 用绝对路径，URL loader 用 URL，内存 loader 用 module 别名）。
  */
 export interface PluginDescriptor {
-  /** 条目名，通常是包名，可与定义的 `name` 不同；热扫描按它认出已从这个条目登记过的包，告警时也用它点名 */
+  /** 插件名，等于包名：这个条目导出的定义 `name` 必须与它相同，不一致的拒载；按它去重、认出已登记的 */
   name: string;
   /** 给 loader 自己用的不透明定位串 */
   source: string;
@@ -41,10 +41,10 @@ export interface PluginLoader {
 
 export interface PluginDiscoveryOptions {
   /**
-   * 发现驱动定下要登记的定义后、交给 core 之前逐个调用（宿主的配置同步政策 withPluginConfigSync 挂在这里）；
-   * 插件名已被占下而跳过的定义不经过它
+   * 每一批（冷启动一批、每次热扫描一批）定下要登记的定义后、交给 core 之前调用一次（宿主的配置同步政策 withPluginConfigSync
+   * 挂在这里），返回其中准备好的；没准备好的由它记下，不登记。被拒载、去重或已登记而跳过的不经过它
    */
-  prepare(definition: PluginDefinition): void;
+  prepare(definitions: PluginDefinition[]): PluginDefinition[];
 }
 
 export interface PluginDiscovery extends PluginSourceService {
@@ -90,62 +90,66 @@ export function createPluginDiscovery(
     return { definition, instanceId, config, disabled: doc.isPluginDisabled(instanceId) };
   };
 
-  /** 经本驱动交给 core 的定义 → 导出它的包（描述符名）：插件名已登记时据此说出是哪个包占下的 */
-  const packageOf = new WeakMap<PluginDefinition, string>();
+  /** 经本驱动交给 core 的定义：插件来源据此回答注册表里以某个名字登记的是不是经它登记的 */
+  const ours = new WeakSet<PluginDefinition>();
 
-  /** 以 name 登记的主实例是从哪个包加载的，没登记或不是经本驱动登记的为 undefined；热扫描据此认出已加载的包 */
-  const loadedFrom = (name: string): string | undefined => {
+  /** 以 name 登记的主实例是不是经本驱动登记的；没登记或宿主直接登记的为 false */
+  const isOurs = (name: string): boolean => {
     const registered = app.plugins.getPlugin(name)?.definition;
-    return registered ? packageOf.get(registered) : undefined;
+    return registered !== undefined && ours.has(registered);
   };
 
   /**
    * 导入一批描述符并备好各自的登记项；单个失败（含 id 撞上危险键、文档拒取）只记该条，不拖累其余。
-   * 插件名是登记的身份：名字已登记或已被同一批里先发现的包占下时，后来的包跳过，占下它的是别的包就告警点名两个包。
-   * 跳过要在 prepare 与备登记项之前：留给 core 去拒收为时已晚——后来者的 schema 已同步进先到者的配置段
-   * （裁掉先到者的字段并落盘），配置里的后缀实例也按后来者的定义登记。
+   * 插件名即包名，是登记的身份：名字已登记的、同一批里已导入过同名一份的，在导入之前跳过；导入后定义名与包名不同的拒载。
+   * 只有导入成了的那份占名：前面的没导入成（导入失败、拒载）时照常导入后面同名的。
+   * 跳过与拒载都在 prepare 之前：留给 core 去拒收为时已晚，它们的 schema 已同步进同名的配置段。prepare 整批调用一次
    */
-  async function importAll(descriptors: PluginDescriptor[], fresh: boolean) {
-    const loaded: PluginRegistration[] = [];
-    /** 本批已占下的插件名 → 占下它的包（描述符名） */
-    const claimed = new Map<string, string>();
-    /** 加载器交回的全部定义名，含随后校验不过、被跳过的：冷启动据此不把它们的配置段当孤儿 */
-    const declared = new Set<string>();
+  async function importAll(descriptors: PluginDescriptor[], fresh: boolean): Promise<PluginRegistration[]> {
+    const imported: PluginDefinition[] = [];
+    const seen = new Map<string, PluginDescriptor>();
     for (const desc of descriptors) {
+      if (app.plugins.getPlugin(desc.name)) {
+        // 经本驱动登记过的是已加载的包，不再导入；宿主直接登记的占着这个名字
+        if (!isOurs(desc.name)) log.warn(`插件 "${desc.name}" 已由宿主直接登记，跳过发现到的同名包`);
+        continue;
+      }
+      const first = seen.get(desc.name);
+      if (first) {
+        log.warn(`插件 "${desc.name}" 发现了两份（${first.source} 与 ${desc.source}），只加载前一份`);
+        continue;
+      }
       try {
-        // 加载器已按入口约定判定（pluginDefinitionOf），不是插件返回 null。定义在占名之前按 core 的规则校验：
-        // 名字只让给 core 会收下的定义，先到的过不了校验（如包里自带一份 core，描述符不是宿主的）时同名的后来者照常登记
+        // 加载器已按入口约定判定（pluginDefinitionOf），不是插件返回 null
         const definition = fresh && loader.reload ? await loader.reload(desc) : await loader.load(desc);
         if (!definition) continue;
-        declared.add(definition.name);
-        definePlugin(definition);
-        const registered = app.plugins.getPlugin(definition.name)?.definition;
-        const holder = claimed.get(definition.name) ?? (registered ? packageOf.get(registered) : undefined);
-        // 占下名字的就是这个包自己（并发的另一次热扫描已登记了它，或它在发现结果里出现了两次）：不算冲突
-        if (holder === desc.name) continue;
-        if (holder !== undefined) {
-          log.warn(`包 "${desc.name}" 与 "${holder}" 声明了同一个插件名 "${definition.name}"，只加载 "${holder}"`);
+        if (definition.name !== desc.name) {
+          log.error(`插件包 "${desc.name}" 的定义 name 是 "${definition.name}"，必须与包名相同，已拒绝加载`);
           continue;
         }
-        // 已登记、但不是经本驱动登记的（宿主直接登记），说不出包名
-        if (registered) {
-          log.warn(`包 "${desc.name}" 声明的插件名 "${definition.name}" 已登记，跳过`);
-          continue;
-        }
-        options?.prepare(definition);
-        loaded.push(registration(definition));
-        claimed.set(definition.name, desc.name);
-        packageOf.set(definition, desc.name);
+        // 导入途中并发的另一次热扫描已登记了它
+        if (app.plugins.getPlugin(desc.name)) continue;
+        seen.set(desc.name, desc);
+        imported.push(definition);
       } catch (err) {
         log.error(`加载插件 "${desc.name}" 失败:`, err);
       }
     }
-    return { loaded, declared };
+    const loaded: PluginRegistration[] = [];
+    for (const definition of options ? options.prepare(imported) : imported) {
+      try {
+        loaded.push(registration(definition));
+        ours.add(definition);
+      } catch (err) {
+        log.error(`加载插件 "${definition.name}" 失败:`, err);
+      }
+    }
+    return loaded;
   }
 
   /**
    * 配置键里的 `name:suffix` 实例：模块查得到定义才登记，已在注册表的跳过。模块的定义取这一批新登记的（`batch`），
-   * 没有就取注册表里该模块在册实例的（{@link moduleDefinitionOf}）：插件名已登记的包在导入后即被跳过，
+   * 没有就取注册表里该模块在册实例的（{@link moduleDefinitionOf}）：插件名已登记的包不再导入，
    * 它的后缀实例跟已登记的定义走，与主实例跑同一份代码。
    * 冷启动、热扫描与热重载共用，任何一处都不得少收
    */
@@ -163,14 +167,13 @@ export function createPluginDiscovery(
 
   /**
    * 单实例配置段找不到对应插件（多为直接 `npm uninstall` 后残留）：冷启动时逐段告警一次。
-   * 发现到却没登记上的（导入失败、定义校验不过）已有加载错误，不重复报，按描述符名与加载器交回的定义名两样认；
-   * 多实例键由 {@link configuredInstances} 报。
+   * 发现到却没登记上的（导入失败、定义校验不过）已有加载错误，不重复报；多实例键由 {@link configuredInstances} 报。
    */
-  function warnOrphanedConfig(declared: ReadonlySet<string>, discovered: PluginDescriptor[]): void {
+  function warnOrphanedConfig(discovered: PluginDescriptor[]): void {
     const attempted = new Set(discovered.map(d => d.name));
     for (const configKey of Object.keys(doc.get('plugins') ?? {})) {
       if (parseInstanceId(configKey).suffix) continue;
-      if (declared.has(configKey) || attempted.has(configKey) || app.plugins.getPlugin(configKey)) continue;
+      if (attempted.has(configKey) || app.plugins.getPlugin(configKey)) continue;
       log.warn(`配置段 "${configKey}" 对应的插件未找到，已忽略；若已卸载可删除该段（其中可能含密钥）`);
     }
   }
@@ -179,24 +182,19 @@ export function createPluginDiscovery(
     async loadAll() {
       const discovered = await loader.discover();
       log.info(`发现 ${discovered.length} 个插件`);
-      const { loaded, declared } = await importAll(discovered, false);
+      const loaded = await importAll(discovered, false);
       const known = new Map(loaded.map(item => [item.definition.name, item.definition]));
-      warnOrphanedConfig(declared, discovered);
+      warnOrphanedConfig(discovered);
       await app.pluginAll([...loaded, ...configuredInstances(known)]);
       // app:ready / app:started 的发出时机依赖「返回即全部收敛」；引导路径不在任何 apply 内，无自等死锁面。
       await app.plugins.idle();
     },
 
     async rescan() {
-      const discovered = await loader.discover();
-      // 按包认已加载的（包名与插件名可以不同）：从这个包登记的定义此刻是主实例就不再导入；主实例卸载了的照旧导入登记
-      const held = new Set(app.plugins.getStatus().map(status => loadedFrom(status.name)));
-      const fresh = discovered.filter(desc => !held.has(desc.name));
-      const { loaded } = await importAll(fresh, true);
+      const loaded = await importAll(await loader.discover(), true);
       const known = new Map(loaded.map(item => [item.definition.name, item.definition]));
       const results = await app.pluginAll([...loaded, ...configuredInstances(known)]);
-      // core 拒收的（定义校验不过、已在停机等）不算热加载，不报进名单。
-      // 报的是登记进注册表的主实例名（定义名），不是加载器给的描述符名（通常是包名，二者可以不同）。
+      // core 拒收的（定义校验不过、已在停机等）不算热加载，不报进名单
       const names = loaded.filter((_, i) => results[i]).map(item => item.definition.name);
       for (const name of names) log.info(`热加载插件: ${name}`);
       return names;
@@ -207,7 +205,6 @@ export function createPluginDiscovery(
       await app.pluginAll(configuredInstances());
     },
 
-    // 与 importAll 判「插件名已被哪个包占下」读同一份记录（packageOf）
-    loadedFrom,
+    loaded: isOurs,
   };
 }

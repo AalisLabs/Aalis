@@ -112,7 +112,7 @@ describe('冷启动：先全部登记、再统一激活', () => {
     expect(app.plugins.getPlugin('rs-scan:work')?.state).toBe('active');
   });
 
-  it('找不到插件的单实例配置段逐段告警一次；已发现（含导入失败、描述符名与定义名不同、定义校验不过）、已登记与多实例键不报', async () => {
+  it('找不到插件的单实例配置段逐段告警一次；已发现（含导入失败、定义校验不过）、已登记与多实例键不报', async () => {
     const warns: string[] = [];
     const logger: Logger = {
       debug() {},
@@ -127,7 +127,6 @@ describe('冷启动：先全部登记、再统一激活', () => {
           present: {},
           'present:work': {},
           broken: {},
-          'def-name': {},
           'bad-def': { apiKey: 'sk-PLACEHOLDER' },
           'pre-registered': {},
           'gone-plugin': { apiKey: 'sk-PLACEHOLDER' },
@@ -142,16 +141,13 @@ describe('冷启动：先全部登记、再统一激活', () => {
         return [
           { name: 'present', source: 'stub' },
           { name: 'broken', source: 'stub' },
-          // 描述符名（包名）与定义名不同：配置键按定义名写
-          { name: 'pkg-alias', source: 'stub' },
-          // 装着但定义坏了（如包里自带一份 core），名字又与包名不同：它的配置段不是孤儿，不能引导去删
-          { name: '@zz/bad-pkg', source: 'stub' },
+          // 装着但定义坏了（如包里自带一份 core）：它的配置段不是孤儿，不能引导去删
+          { name: 'bad-def', source: 'stub' },
         ];
       },
       async load(desc) {
         if (desc.name === 'broken') throw new Error('import failed');
-        if (desc.name === 'pkg-alias') return definePlugin({ name: 'def-name', apply() {} });
-        if (desc.name === '@zz/bad-pkg') return { name: 'bad-def', uses: { x: {} }, apply() {} } as never;
+        if (desc.name === 'bad-def') return { name: 'bad-def', uses: { x: {} }, apply() {} } as never;
         return definePlugin({ name: desc.name, reusable: true, apply() {} });
       },
     };
@@ -197,24 +193,6 @@ describe('热扫描', () => {
     await discovery.rescan();
     await app.plugins.idle();
     expect(app.plugins.getPlugin('rs-scan:late')?.state).toBe('active');
-  });
-
-  it('描述符名与模块自报名不同、而自报名已注册时，不计入热加载名单', async () => {
-    const { app, discovery } = world();
-    const real = definePlugin({ name: 'real', apply() {} });
-    await app.plugin(real);
-    const loader: PluginLoader = {
-      async discover() {
-        return [
-          { name: 'alias-of-real', source: 'stub' },
-          { name: 'fresh', source: 'stub' },
-        ];
-      },
-      async load(desc) {
-        return desc.name === 'alias-of-real' ? real : definePlugin({ name: desc.name, apply() {} });
-      },
-    };
-    expect(await discovery(loader).rescan()).toEqual(['fresh']);
   });
 
   it('插件在 apply 里触发热扫描不自锁', async () => {
@@ -285,21 +263,6 @@ describe('热扫描', () => {
     defs.set('hot', definePlugin({ name: 'hot', apply() {} }));
     await d.rescan();
     expect(calls).toEqual(['load:cold', 'reload:hot']);
-  });
-
-  it('返回的是登记进注册表的主实例名（定义名），不是描述符名', async () => {
-    const { app, discovery } = world();
-    const loader: PluginLoader = {
-      async discover() {
-        return [{ name: '@scope/pkg-name', source: 'stub' }];
-      },
-      async load() {
-        return definePlugin({ name: 'def-name', apply() {} });
-      },
-    };
-    const names = await discovery(loader).rescan();
-    expect(names).toEqual(['def-name']);
-    expect(app.plugins.getPlugin(names[0])).toBeDefined();
   });
 });
 
@@ -433,160 +396,131 @@ describe('按配置文档登记', () => {
   });
 });
 
-describe('两个包声明了同一个插件名', () => {
+describe('插件名即包名', () => {
   function recording() {
     const warnings: string[] = [];
+    const errors: string[] = [];
     const logger: Logger = {
       debug() {},
       info() {},
       warn: (...args: unknown[]) => void warnings.push(args.map(String).join(' ')),
-      error() {},
+      error: (...args: unknown[]) => void errors.push(args.map(String).join(' ')),
       child: () => logger,
     };
-    return { logger, warnings };
+    return { logger, warnings, errors };
   }
-  /** 包名 → 它的入口导出的定义；发现序即 Map 的插入序 */
-  function packages(definitions: Map<string, PluginDefinition>): PluginLoader {
-    return {
+  /** 依次发现的条目：[描述符名（包名）, 来源, 它的入口导出的定义]；记下每个来源被导入的次数 */
+  function entries(list: Array<[string, string, PluginDefinition]>) {
+    const imports = new Map<string, number>();
+    const loader: PluginLoader = {
       async discover() {
-        return [...definitions.keys()].map(name => ({ name, source: 'mem' }));
+        return list.map(([name, source]) => ({ name, source }));
       },
       async load(desc) {
-        return definitions.get(desc.name) ?? null;
+        imports.set(desc.source, (imports.get(desc.source) ?? 0) + 1);
+        return list.find(([, source]) => source === desc.source)?.[2] ?? null;
       },
     };
+    return { loader, imports };
   }
-  const SCHEMA_A = { apiKey: { type: 'string', label: 'K' } } as const;
-  const SCHEMA_B = { token: { type: 'string', label: 'T', default: 'from-b' } } as const;
 
-  it('冷启动：先发现的那个登记，主实例与后缀实例都用它；后一个跳过，告警点名两个包', async () => {
-    const { logger, warnings } = recording();
-    const { app, discovery } = world({ plugins: { 'zz-same:2': {} } }, logger);
-    const ran: string[] = [];
-    const copy = (from: string) => definePlugin({ name: 'zz-same', reusable: true, apply: () => void ran.push(from) });
-    await discovery(
-      packages(
-        new Map([
-          ['zz-same', copy('zz-same')],
-          ['@zz/fork', copy('@zz/fork')],
-        ]),
-      ),
-    ).loadAll();
-    expect(app.plugins.getPlugin('zz-same:2')?.state).toBe('active');
-    expect(ran).toEqual(['zz-same', 'zz-same']);
-    expect(warnings.filter(line => line.includes('zz-same'))).toEqual([
-      '包 "@zz/fork" 与 "zz-same" 声明了同一个插件名 "zz-same"，只加载 "zz-same"',
-    ]);
-  });
-
-  it('冷启动：先发现的那个定义过不了 core 的校验，名字让给后一个，不告警同名', async () => {
-    const { logger, warnings } = recording();
-    const { app, discovery } = world({}, logger);
-    // 例如包里自带一份 core 或契约包：自己的 definePlugin 放行，宿主的 core 不认它的描述符
-    const broken = { name: 'zz-same', uses: { x: {} }, apply() {} } as unknown as PluginDefinition;
-    const fork = definePlugin({ name: 'zz-same', apply() {} });
-    await discovery(
-      packages(
-        new Map([
-          ['zz-same', broken],
-          ['@zz/fork', fork],
-        ]),
-      ),
-    ).loadAll();
-    expect(app.plugins.getPlugin('zz-same')?.state).toBe('active');
-    expect(app.plugins.getPlugin('zz-same')?.definition).toBe(fork);
-    expect(warnings.filter(line => line.includes('声明了同一个插件名'))).toEqual([]);
-  });
-
-  it('冷启动：先发现的那个备登记项时抛错，名字让给后一个，不告警同名', async () => {
-    const { logger, warnings } = recording();
-    const { app, discovery } = world({}, logger);
-    // 配置表单一读就抛：core 的校验不读它，备登记项（按表单取配置）时才抛
-    const first = {
-      name: 'zz-same',
+  it('定义名与描述符名（包名）不同：报错点名两样、拒载，不同步它的配置', async () => {
+    const { logger, errors } = recording();
+    const { app, store } = world({ plugins: { 'zz-other': { keep: 1 } } }, logger);
+    const definition = definePlugin({
+      name: 'zz-other',
+      configSchema: { x: { type: 'number', label: 'X', default: 1 } },
       apply() {},
-      get configSchema(): never {
-        throw new Error('zz-表单坏了');
-      },
-    } as unknown as PluginDefinition;
-    const fork = definePlugin({ name: 'zz-same', apply() {} });
-    await discovery(
-      packages(
-        new Map([
-          ['zz-same', first],
-          ['@zz/fork', fork],
-        ]),
-      ),
-    ).loadAll();
-    expect(app.plugins.getPlugin('zz-same')?.definition).toBe(fork);
-    expect(warnings.filter(line => line.includes('声明了同一个插件名'))).toEqual([]);
+    });
+    const { loader } = entries([['@zz/pkg', 'mem', definition]]);
+    await createPluginDiscovery(app, loader, store, withPluginConfigSync(app, store)).loadAll();
+    expect(app.plugins.getPlugin('zz-other')).toBeUndefined();
+    expect(store.getPluginConfig('zz-other')).toEqual({ keep: 1 });
+    expect(errors).toEqual(['插件包 "@zz/pkg" 的定义 name 是 "zz-other"，必须与包名相同，已拒绝加载']);
   });
 
-  it('冷启动：配置段只按登记的那个的 schema 同步，后一个的 schema 不裁它的字段', async () => {
-    const { app, store } = world({ plugins: { 'zz-same': { apiKey: 'k' } } });
-    const sync = withPluginConfigSync(app, store);
-    const loader = packages(
-      new Map([
-        ['zz-same', definePlugin({ name: 'zz-same', configSchema: SCHEMA_A, apply() {} })],
-        ['@zz/fork', definePlugin({ name: 'zz-same', configSchema: SCHEMA_B, apply() {} })],
-      ]),
-    );
-    try {
-      await createPluginDiscovery(app, loader, store, sync).loadAll();
-    } finally {
-      sync.finishInitialLoad();
-    }
-    expect(store.getPluginConfig('zz-same')).toEqual({ apiKey: 'k' });
-  });
-
-  it('热扫描：新装的包声明了已登记的插件名，跳过它（后缀实例用已登记的定义、配置段不按它同步），告警点名两个包', async () => {
+  it('冷启动同一个名字发现了两份：只导入前一份，主实例与后缀实例都用它，配置段只按它的 schema 同步；告警点名两处来源', async () => {
     const { logger, warnings } = recording();
-    const { app, store } = world({ plugins: { 'zz-same': { apiKey: 'k' } } }, logger);
+    const { app, store } = world({ plugins: { 'zz-same': { apiKey: 'k' }, 'zz-same:2': {} } }, logger);
     const ran: string[] = [];
-    const copy = (from: string, configSchema: typeof SCHEMA_A | typeof SCHEMA_B) =>
+    const copy = (from: string, configSchema: PluginDefinition['configSchema']) =>
       definePlugin({ name: 'zz-same', reusable: true, configSchema, apply: () => void ran.push(from) });
-    const definitions = new Map([['zz-same', copy('zz-same', SCHEMA_A)]]);
-    const sync = withPluginConfigSync(app, store);
-    const discovery = createPluginDiscovery(app, packages(definitions), store, sync);
-    await discovery.loadAll();
-    sync.finishInitialLoad();
-    definitions.set('@zz/fork', copy('@zz/fork', SCHEMA_B));
-    store.setPluginConfig('zz-same:2', {});
-    expect(await discovery.rescan()).toEqual([]);
-    await app.plugins.idle();
+    const { loader, imports } = entries([
+      ['zz-same', '/a', copy('a', { apiKey: { type: 'string', label: 'K' } })],
+      ['zz-same', '/b', copy('b', { token: { type: 'string', label: 'T', default: 'from-b' } })],
+    ]);
+    await createPluginDiscovery(app, loader, store, withPluginConfigSync(app, store)).loadAll();
     expect(app.plugins.getPlugin('zz-same:2')?.state).toBe('active');
-    expect(ran).toEqual(['zz-same', 'zz-same']);
+    expect(ran).toEqual(['a', 'a']);
+    expect(imports.get('/b')).toBeUndefined();
     expect(store.getPluginConfig('zz-same')).toEqual({ apiKey: 'k' });
     expect(warnings.filter(line => line.includes('zz-same'))).toEqual([
-      '包 "@zz/fork" 与 "zz-same" 声明了同一个插件名 "zz-same"，只加载 "zz-same"',
+      '插件 "zz-same" 发现了两份（/a 与 /b），只加载前一份',
     ]);
   });
 
-  it('热扫描：包名与插件名不同的包已从这个包登记，不再导入，不告警，后缀实例用已登记的定义', async () => {
+  it('同一个名字的两份里前面的没导入成（导入失败、定义名与包名不同）：照常导入后面那份，不告警两份', async () => {
+    const { logger, warnings } = recording();
+    const w = world({}, logger);
+    const good = definePlugin({ name: 'zz-dup', apply() {} });
+    const { loader } = entries([
+      ['zz-dup', '/broken', definePlugin({ name: 'zz-dup', apply() {} })],
+      ['zz-dup', '/renamed', definePlugin({ name: 'zz-renamed', apply() {} })],
+      ['zz-dup', '/good', good],
+    ]);
+    const load = loader.load;
+    loader.load = async desc => {
+      if (desc.source === '/broken') throw new Error('入口坏了');
+      return load(desc);
+    };
+    await w.discovery(loader).loadAll();
+    expect(w.app.plugins.getPlugin('zz-dup')?.definition).toBe(good);
+    expect(warnings.filter(line => line.includes('两份'))).toEqual([]);
+  });
+
+  it('热扫描：名字已由宿主直接登记，不导入同名包、告警；后缀实例用已登记的定义，loaded 为 false', async () => {
+    const { logger, warnings } = recording();
+    const w = world({ plugins: { 'zz-host:2': {} } }, logger);
+    const ran: string[] = [];
+    const copy = (from: string) => definePlugin({ name: 'zz-host', reusable: true, apply: () => void ran.push(from) });
+    await w.app.plugin(copy('host'));
+    const { loader, imports } = entries([['zz-host', 'mem', copy('pkg')]]);
+    const discovery = w.discovery(loader);
+    expect(await discovery.rescan()).toEqual([]);
+    await w.app.plugins.idle();
+    expect(imports.size).toBe(0);
+    expect(w.app.plugins.getPlugin('zz-host:2')?.state).toBe('active');
+    expect(ran).toEqual(['host', 'host']);
+    expect(discovery.loaded('zz-host')).toBe(false);
+    expect(warnings).toEqual(['插件 "zz-host" 已由宿主直接登记，跳过发现到的同名包']);
+  });
+
+  it('热扫描：已从这个包登记的不再导入，不告警，后缀实例用已登记的定义', async () => {
     const { logger, warnings } = recording();
     const w = world({}, logger);
     let version = 0;
     const ran: number[] = [];
     const discovery = w.discovery({
       async discover() {
-        return [{ name: '@zz/alias', source: 'mem' }];
+        return [{ name: 'zz-loaded', source: 'mem' }];
       },
       async load() {
         const v = ++version;
-        return definePlugin({ name: 'zz-alias', reusable: true, apply: () => void ran.push(v) });
+        return definePlugin({ name: 'zz-loaded', reusable: true, apply: () => void ran.push(v) });
       },
     });
     await discovery.loadAll();
-    w.store.setPluginConfig('zz-alias:2', {});
+    w.store.setPluginConfig('zz-loaded:2', {});
     expect(await discovery.rescan()).toEqual([]);
     await w.app.plugins.idle();
     expect(version, '热扫描没有再导入').toBe(1);
-    expect(w.app.plugins.getPlugin('zz-alias:2')?.state).toBe('active');
+    expect(w.app.plugins.getPlugin('zz-loaded:2')?.state).toBe('active');
     expect(ran).toEqual([1, 1]);
+    expect(discovery.loaded('zz-loaded')).toBe(true);
     expect(warnings).toEqual([]);
   });
 
-  it('两次热扫描并发：后一次导入时前一次已从同一个包登记，不算冲突，不告警', async () => {
+  it('两次热扫描并发：后一次导入完时前一次已登记，不交给 core，不告警', async () => {
     const { logger, warnings } = recording();
     const w = world({}, logger);
     let release!: () => void;
@@ -596,7 +530,7 @@ describe('两个包声明了同一个插件名', () => {
     let imports = 0;
     const discovery = w.discovery({
       async discover() {
-        return [{ name: '@zz/twice', source: 'mem' }];
+        return [{ name: 'zz-twice', source: 'mem' }];
       },
       async load() {
         if (++imports === 2) await late;
@@ -613,27 +547,16 @@ describe('两个包声明了同一个插件名', () => {
   });
 
   it('热扫描：从这个包登记的主实例卸载后（后缀实例还在册），照旧重新导入登记', async () => {
-    const w = world({ plugins: { 'zz-alias:2': {} } });
-    const discovery = w.discovery(
-      packages(new Map([['@zz/alias', definePlugin({ name: 'zz-alias', reusable: true, apply() {} })]])),
-    );
+    const w = world({ plugins: { 'zz-unloaded:2': {} } });
+    const { loader } = entries([
+      ['zz-unloaded', 'mem', definePlugin({ name: 'zz-unloaded', reusable: true, apply() {} })],
+    ]);
+    const discovery = w.discovery(loader);
     await discovery.loadAll();
-    await w.app.plugins.unload('zz-alias');
-    expect(w.app.plugins.getPlugin('zz-alias:2')?.state).toBe('active');
-    expect(await discovery.rescan()).toEqual(['zz-alias']);
-    expect(discovery.loadedFrom('zz-alias')).toBe('@zz/alias');
-  });
-
-  it('热扫描：包声明的插件名已由宿主直接登记，跳过它并告警，后缀实例用已登记的定义', async () => {
-    const { logger, warnings } = recording();
-    const w = world({ plugins: { 'zz-host:2': {} } }, logger);
-    const ran: string[] = [];
-    const copy = (from: string) => definePlugin({ name: 'zz-host', reusable: true, apply: () => void ran.push(from) });
-    await w.app.plugin(copy('host'));
-    expect(await w.discovery(packages(new Map([['@zz/pkg', copy('@zz/pkg')]]))).rescan()).toEqual([]);
-    await w.app.plugins.idle();
-    expect(w.app.plugins.getPlugin('zz-host:2')?.state).toBe('active');
-    expect(ran).toEqual(['host', 'host']);
-    expect(warnings).toEqual(['包 "@zz/pkg" 声明的插件名 "zz-host" 已登记，跳过']);
+    await w.app.plugins.unload('zz-unloaded');
+    expect(w.app.plugins.getPlugin('zz-unloaded:2')?.state).toBe('active');
+    expect(discovery.loaded('zz-unloaded')).toBe(false);
+    expect(await discovery.rescan()).toEqual(['zz-unloaded']);
+    expect(discovery.loaded('zz-unloaded')).toBe(true);
   });
 });

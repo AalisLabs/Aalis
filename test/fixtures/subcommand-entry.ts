@@ -143,14 +143,14 @@ if (mode === 'restart' && gen === 1) {
   (app.bind({ services }).services.use.get('app') as { restart(): void }).restart();
 }
 // 守护路径：startAalis 已挂好信号处理器，自发一次走优雅退出（app.stop → flush → exit 0）。
-// 退出前经宿主提供的插件来源重扫一次，记下返回的新登记名单（插件都已注册，应为空）与 e2e-probe 是从哪个包加载的；
+// 退出前经宿主提供的插件来源重扫一次，记下返回的新登记名单（插件都已注册，应为空）与 e2e-probe 是不是经它加载的；
 // 再记下宿主装配的配置文档：host-config 是否在根上、文档里的服务偏好是否已应用。
 if (mode === 'daemon' || (mode === 'restart' && gen === 2)) {
   const host = app.bind({ services }).services.use;
   const rescanned = await host.get(pluginSource)?.rescan();
   writeFileSync(resolve(process.cwd(), 'rescan.json'), JSON.stringify(rescanned ?? null));
-  const loadedFrom = host.get(pluginSource)?.loadedFrom('e2e-probe');
-  writeFileSync(resolve(process.cwd(), 'loaded-from.json'), JSON.stringify(loadedFrom ?? null));
+  const loaded = host.get(pluginSource)?.loaded('e2e-probe');
+  writeFileSync(resolve(process.cwd(), 'loaded.json'), JSON.stringify(loaded ?? null));
   // 实例锁：交接令牌已从环境里删掉；守护期间 run/ 里只有本进程这一代锁
   const run = host.get(hostPaths)?.run;
   const locks = run ? readdirSync(run).filter(n => n.endsWith('.lock')) : [];

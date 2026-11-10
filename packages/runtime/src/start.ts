@@ -313,29 +313,23 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   host.provide.use(hostPaths, paths, { exclusive: true });
   host.provide.use(hostLogs, createHostLogs(LogHub.default, fileLogger, app.logger), { exclusive: true });
   installHostConfig(app, store, opts.configSync);
-  // 默认值从 configSchema 派生（唯一声明来源），发现驱动定下要登记的定义后、登记前深合并进文档；登记时原样交给 core
-  const configSync = withPluginConfigSync(app, store, opts.configSync);
+  // 默认值从 configSchema 派生（唯一声明来源），发现驱动每批定下要登记的定义后、登记前深合并进文档；登记时原样交给 core
   const discovery = createPluginDiscovery(
     app,
     opts.pluginLoader ?? createNodeModulesPluginLoader(paths.app),
     store,
-    configSync,
+    withPluginConfigSync(app, store, opts.configSync),
   );
   host.provide.use(
     pluginSource,
-    { rescan: () => discovery.rescan(), loadedFrom: name => discovery.loadedFrom(name) },
+    { rescan: () => discovery.rescan(), loaded: name => discovery.loaded(name) },
     { exclusive: true },
   );
   // 不变量①：App 构造完成后再让 sink 监听终端归属事件——此前没有事件总线可订阅。
   consoleHandle.bindEvents(host.events.use);
 
-  try {
-    // 每个定义交给 Core 前已经规范化；首次 apply 与配置快照用同一份字段。
-    await discovery.loadAll();
-  } finally {
-    // 即使后续加载失败，也保存本批已完成的规范化；不启动第二轮 bounce。
-    configSync.finishInitialLoad();
-  }
+  // 每个定义交给 Core 前已经规范化；首次 apply 与配置快照用同一份字段。
+  await discovery.loadAll();
 
   // ── 不变量②：子命令短路在 app.start 之前 ──
   // `aalis <name> [args...]` 等价于聊天里 `/<name> args...`：命中则执行返回串，未命中则报错，

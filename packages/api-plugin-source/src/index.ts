@@ -16,10 +16,10 @@ export interface PluginSourceService {
    */
   rescan(): Promise<string[]>;
   /**
-   * 以 name 登记的主实例是从哪个包加载的：经本来源登记的回包名，没有登记或不是经本来源登记的（宿主直接登记）回 undefined。
-   * 插件名是登记的身份：名字已登记时，本来源跳过之后声明同一个名字的包，注册表里那个插件不是它们，判某个包装没装上看这里
+   * 以 name 登记的主实例是不是经本来源加载的（插件名即包名，即名为 name 的包加载上了没有）：没有登记或宿主绕过插件来源直接
+   * 登记的为 false。名字已登记时本来源不再加载同名的包，名字已登记不等于这个包加载上了，判某个包装没装上看这里
    */
-  loadedFrom(name: string): string | undefined;
+  loaded(name: string): boolean;
 }
 
 export const pluginSource = defineService<PluginSourceService>('plugin-source');

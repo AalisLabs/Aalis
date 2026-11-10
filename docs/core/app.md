@@ -129,7 +129,7 @@ App 本身不注册指令。基础指令由插件提供，例如 `@aalis/plugin-
 
 插件发现、配置文档与配置同步都属**宿主政策**。Node 宿主 `@aalis/runtime` 提供：
 
-- `createPluginDiscovery(app, loader, store)`：`loadAll()` 在冷启动时发现并导入全部插件，按配置存储取各实例的配置（解析密钥引用后）与禁用标记（含配置键里的 `name:suffix` 实例），整批交给 `app.pluginAll`，返回时已静置；`rescan()` 热扫描新出现的插件，返回本次新登记的主实例名，不等静置；`registerConfiguredInstances()` 只登记配置里尚未注册的 `name:suffix` 实例，供配置热重载调用。`loadedFrom(name)` 回以 `name` 登记的主实例是从哪个包加载的（经本驱动登记的才有）。`startAalis` 把 `rescan` 与 `loadedFrom` 作为 `plugin-source` 服务独占提供在根上（契约 `@aalis/api-plugin-source`），市场与 WebUI 经 `optional(pluginSource)` 调用。
+- `createPluginDiscovery(app, loader, store)`：`loadAll()` 在冷启动时发现并导入全部插件，按配置存储取各实例的配置（解析密钥引用后）与禁用标记（含配置键里的 `name:suffix` 实例），整批交给 `app.pluginAll`，返回时已静置；`rescan()` 热扫描新出现的插件，返回本次新登记的主实例名，不等静置；`registerConfiguredInstances()` 只登记配置里尚未注册的 `name:suffix` 实例，供配置热重载调用。`loaded(name)` 回以 `name` 登记的主实例是不是经本驱动登记的。`startAalis` 把 `rescan` 与 `loaded` 作为 `plugin-source` 服务独占提供在根上（契约 `@aalis/api-plugin-source`），市场与 WebUI 经 `optional(pluginSource)` 调用。
 - `createConfigStore` / `installHostConfig`：配置文档与 `host-config` 服务，见 [运行态与配置文档](config.md)。
 - config-sync：默认值回填、按 configSchema 裁剪未知字段、配置外部变更的热重载编排（`withPluginConfigSync` / `syncPluginDefaults` / `installConfigHotReload`，`startAalis` 默认接线；`configSync.trimUnknownFields=false` 可保留未知字段）。
 

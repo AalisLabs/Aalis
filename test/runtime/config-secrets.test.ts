@@ -525,12 +525,12 @@ describe('登记、同步与热重载', () => {
       plugins: { p: { apiKey: 'sk-PLACEHOLDER-HAND', conns: [{ url: 'u', token: 'tok-PLACEHOLDER' }] } },
     });
     const p = probe('p');
-    const prepared = withPluginConfigSync(w.app, w.store);
-    try {
-      await createPluginDiscovery(w.app, loaderOf([p.definition]), w.store, prepared).loadAll();
-    } finally {
-      prepared.finishInitialLoad();
-    }
+    await createPluginDiscovery(
+      w.app,
+      loaderOf([p.definition]),
+      w.store,
+      withPluginConfigSync(w.app, w.store),
+    ).loadAll();
     await w.app.plugins.idle();
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(p.seen).toEqual([
@@ -550,16 +550,48 @@ describe('登记、同步与热重载', () => {
     expect(w.lines.join('\n')).not.toContain('PLACEHOLDER');
   });
 
+  it('同步时抛错的实例不记「已移进 secrets.yaml」、明文照旧留在文档里；同一定义里已写进文档的实例照记', async () => {
+    const w = world({
+      plugins: {
+        p: { apiKey: 'sk-PLACEHOLDER-P' },
+        bad: { apiKey: 'sk-PLACEHOLDER-BAD', f: 'set' },
+        'bad:x': { apiKey: 'sk-PLACEHOLDER-X' },
+      },
+    });
+    // 默认值写成了函数：没写 f 的实例，密钥字段先拆出来，补好默认值写进文档时拷贝不了
+    const bad = definePlugin({
+      name: 'bad',
+      reusable: true,
+      configSchema: { ...SCHEMA, f: { type: 'string', label: 'F', default: (() => 'x') as never } },
+      apply() {},
+    });
+    await createPluginDiscovery(
+      w.app,
+      loaderOf([probe('p').definition, bad]),
+      w.store,
+      withPluginConfigSync(w.app, w.store),
+    ).loadAll();
+    await w.app.plugins.idle();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(w.app.plugins.getPlugin('bad')).toBeUndefined();
+    expect(w.store.getPluginConfig('bad:x')).toEqual({ apiKey: 'sk-PLACEHOLDER-X' });
+    expect(w.store.getPluginConfig('bad').apiKey).toEqual({ $secret: 'bad.apiKey' });
+    expect(w.lines.filter(l => l.includes('移进 secrets.yaml'))).toEqual([
+      'info 配置同步：已把 p 的 apiKey 移进 secrets.yaml（键 p.apiKey）',
+      'info 配置同步：已把 bad 的 apiKey 移进 secrets.yaml（键 bad.apiKey）',
+    ]);
+  });
+
   it('配置同步落盘被拒或写失败：不记「已移进 secrets.yaml」，只记没落盘', async () => {
     // 首次加载批次：密钥文件拒写
     const w = world({ plugins: { p: { apiKey: 'sk-PLACEHOLDER-HAND' } } });
     w.failSecretsSave.times = 1;
-    const prepared = withPluginConfigSync(w.app, w.store);
-    try {
-      await createPluginDiscovery(w.app, loaderOf([probe('p').definition]), w.store, prepared).loadAll();
-    } finally {
-      prepared.finishInitialLoad();
-    }
+    await createPluginDiscovery(
+      w.app,
+      loaderOf([probe('p').definition]),
+      w.store,
+      withPluginConfigSync(w.app, w.store),
+    ).loadAll();
     await w.app.plugins.idle();
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(w.savedConfigs).toEqual([]);
@@ -584,13 +616,13 @@ describe('登记、同步与热重载', () => {
   it('首次加载之后热扫描新装的插件：同步把明文移进密钥存储，落盘写成之后记「已移进 secrets.yaml」', async () => {
     const w = world({ plugins: { p: {}, q: { apiKey: 'sk-PLACEHOLDER-LATE' } } });
     const definitions = [probe('p').definition];
-    const prepared = withPluginConfigSync(w.app, w.store);
-    const discovery = createPluginDiscovery(w.app, loaderOf(definitions), w.store, prepared);
-    try {
-      await discovery.loadAll();
-    } finally {
-      prepared.finishInitialLoad();
-    }
+    const discovery = createPluginDiscovery(
+      w.app,
+      loaderOf(definitions),
+      w.store,
+      withPluginConfigSync(w.app, w.store),
+    );
+    await discovery.loadAll();
     await w.app.plugins.idle();
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(w.lines.filter(l => l.includes('移进 secrets.yaml'))).toEqual([]);

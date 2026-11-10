@@ -37,9 +37,9 @@ const SOURCE = {
   installedActivating: '已安装 {target}，仍在激活（超过慢激活阈值，已转入后台），结果以插件列表为准',
   installedPending: '已安装 {target}，尚未激活，正在等待 required 依赖满足',
   installedLoaded: '已安装并加载：{target}',
-  installedNotLoaded: '已装到 {where}，但它声明为插件却未被加载——请检查其 keywords 与入口导出',
-  installedNameTaken: '已安装 {target}，但它声明的插件名 {name} 已被 {holder} 占用，未加载',
-  installedNameTakenByHost: '已安装 {target}，但它声明的插件名 {name} 已被宿主直接登记的插件占用，未加载',
+  installedNotLoaded:
+    '已装到 {where}，但它声明为插件却未被加载——请检查其 keywords、入口导出，以及定义的 name 是否与包名相同',
+  installedNameTakenByHost: '已安装 {target}，但宿主已直接登记了同名的插件，这个包未加载',
   installedNonPlugin: '已安装 {target}（非插件包，不进入插件列表）',
   workspaceInstall: '根依赖含 workspace: 协议，拒绝在此运行 npm install（会写出 package-lock.json 并搅坏 pnpm 工作区）',
   workspaceUpdate: '根依赖含 workspace: 协议，拒绝在此运行 npm install',
@@ -74,6 +74,8 @@ const SOURCE = {
     '插件 {name} 已卸载（已从根依赖与 node_modules 移除）。它的配置已从配置文件删除，只有它用的密钥一并删除；写在数据目录 state/ 等处的数据不会删除，需要时请手动清理。',
   uninstalledConfigKept:
     '插件 {name} 已卸载（已从根依赖与 node_modules 移除）。它的配置留在配置文件里，重装后照原配置启动；写在数据目录 state/ 等处的数据不会删除，需要时请手动清理。',
+  uninstalledNameTakenByHost:
+    '{name} 已卸载（已从根依赖与 node_modules 移除）。宿主直接登记了同名的插件，这个包没有加载过，那个插件与配置文件都没有改动。',
   kindCore: '内核',
   kindRuntime: '宿主',
   kindApi: '服务契约',

@@ -7,7 +7,7 @@
 //   - createPluginDiscovery：把加载器发现的插件整批交给 core，并提供热扫描（plugin-source 服务的实现）
 //   - createConfigStore / installHostConfig：配置文档与 host-config 服务（core 只持运行态）
 //   - createHostLogs：host-logs 服务（读日志：文件日志里的历史 + 中枢的实时）
-//   - withPluginConfigSync：发现驱动定下要登记的定义后、登记前把 schema 派生默认值深合并进文档（经 createPluginDiscovery 的 prepare）
+//   - withPluginConfigSync：发现驱动每批定下要登记的定义后、登记前把 schema 派生默认值深合并进文档（经 createPluginDiscovery 的 prepare）
 //   - createFsYamlConfigProvider / createFsSecretsProvider / createProcessRespawnStrategy：YAML 配置与密钥文件 + 进程级重启
 //   - startAalis：组装以上 + 宿主件为实例并启动（带 options 开关，默认独立部署）
 //   - install*/setup*/tryDispatchSubcommand：宿主件，供高级 opt-in 组装

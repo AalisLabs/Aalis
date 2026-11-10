@@ -217,9 +217,9 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     expect(readFileSync(join(dir, 'logs', 'latest.1.log'), 'utf-8')).toBe(SENTINEL);
     expect(log).toContain('启动完成');
     expect(log).toContain('已停止');
-    // 宿主在根上提供了 plugin-source：重扫可调，插件都已注册，新登记名单为空；经它登记的插件说得出从哪个包（描述符）加载
+    // 宿主在根上提供了 plugin-source：重扫可调，插件都已注册，新登记名单为空；经它登记的插件答得出是经它加载的
     expect(JSON.parse(readFileSync(join(dir, 'rescan.json'), 'utf8'))).toEqual([]);
-    expect(JSON.parse(readFileSync(join(dir, 'loaded-from.json'), 'utf8'))).toBe('e2e-probe');
+    expect(JSON.parse(readFileSync(join(dir, 'loaded.json'), 'utf8'))).toBe(true);
     // 宿主在根上提供了 host-config（插件读到的是规范化后的文档），并应用了文档里的服务偏好
     expect(JSON.parse(readFileSync(join(dir, 'host.json'), 'utf8'))).toEqual({
       probeConfig: { known: 3, nested: { filled: 9 } },

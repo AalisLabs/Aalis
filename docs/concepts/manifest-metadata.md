@@ -25,7 +25,7 @@
 
 两加载器共用 `@aalis/api-plugin-source` 的 `pluginDefinitionOf`：入口的 **default 导出**须是 `definePlugin` 的产物（带非空 `name` 与函数 `apply` 的对象）。具名导出、函数 default、类 default、普通对象都会 warn 并跳过——「装了没反应」必须出声。default 为函数或类不算：它们天然继承 `Function.prototype.apply`，只查 `.apply` 会把函数误当插件。
 
-runtime 的发现驱动（`createPluginDiscovery`）拿到定义后整批交给 `app.pluginAll` 注册。定义 `name` 与包名不一致会 warn：配置键 / 热扫描 / 卸载均以定义的 `name` 为准。
+runtime 的发现驱动（`createPluginDiscovery`）拿到定义后整批交给 `app.pluginAll` 注册。定义的 `name` 必须与包名（`package.json` 的 `name`）相同：插件名即包名，配置键、实例 id、热扫描与卸载都按它认；不一致的包在发现时报错拒载。
 
 典型入口（以 `@aalis/plugin-tools` 为准）：
 

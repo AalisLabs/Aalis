@@ -1,4 +1,3 @@
-import { createRequire } from 'node:module';
 import { failureText, unmetDependencies } from '@aalis/api-doctor';
 import { hostConfig } from '@aalis/api-host-config';
 import { hostPaths } from '@aalis/api-host-paths';
@@ -10,7 +9,7 @@ import {
   type UpdateResult,
   type UpdateTarget,
 } from '@aalis/api-package-manager';
-import { pluginDefinitionOf, pluginSource } from '@aalis/api-plugin-source';
+import { pluginSource } from '@aalis/api-plugin-source';
 import { type ExecResult, type ProcessService, processService } from '@aalis/api-process';
 import {
   type AppService,
@@ -177,18 +176,6 @@ export function findServiceDependents(
   return [...dependents];
 }
 
-/** 从项目 node_modules 解析已装包入口并取出定义 name；解析失败返回 undefined。 */
-async function resolveInstalledDefinitionName(root: string, pkgName: string): Promise<string | undefined> {
-  try {
-    const req = createRequire(`${root}/package.json`);
-    const entry = req.resolve(pkgName);
-    const ns: unknown = await import(new URL(`file://${entry}`).href);
-    return pluginDefinitionOf(ns)?.name;
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * 合法 npm 包 spec：包名（可选 scope）+ 可选 `@version` 后缀。
  *
@@ -258,7 +245,7 @@ function createService(caps: Caps): PackageManagerService {
     // 宿主不提供插件来源（打包宿主）时视同本次没有新插件
     rescanPlugins: async () => (await (caps.source.present ? caps.source.use.rescan() : undefined)) ?? [],
     // 宿主不提供插件来源时没有经它登记的插件：已登记的同名插件一律不是这次装的包
-    loadedFrom: name => (caps.source.present ? caps.source.use.loadedFrom(name) : undefined),
+    loaded: name => caps.source.present && caps.source.use.loaded(name),
     // 与发现驱动跳过声明了已登记插件名的包同一判据：看主实例。plugins 服务缺席时视同没有登记
     isPluginRegistered: name => (caps.plugins.present ? caps.plugins.use.getPlugin(name) !== undefined : false),
     pluginStatus: () => (caps.plugins.present ? caps.plugins.use.getStatus() : []),
@@ -266,7 +253,6 @@ function createService(caps: Caps): PackageManagerService {
     idle: async () => {
       if (caps.plugins.present) await caps.plugins.use.idle();
     },
-    resolveDefinitionName: pkgName => resolveInstalledDefinitionName(caps.paths.use.app, pkgName),
     listPluginInstanceIds: definitionName =>
       (caps.plugins.present ? caps.plugins.use.getStatus() : [])
         .filter(p => p.name === definitionName)
@@ -322,26 +308,25 @@ function createService(caps: Caps): PackageManagerService {
 /** install/uninstall 的显式依赖（从服务选择解耦，便于集成测试） */
 export interface PackageManagerDeps {
   proc: ProcessService;
-  log: { info(msg: string): void; error(msg: string): void; warn?(msg: string): void };
+  log: { info(msg: string): void; error(msg: string): void };
   /** 项目根绝对路径（= `<cwd>`）：根 package.json 读取、npm 的 cwd。 */
   projectRoot(): string;
   /** 读文本文件；不存在或读失败返回 undefined。注入以便单测。 */
   readText(absPath: string): Promise<string | undefined>;
   rescanPlugins(): Promise<string[]>;
   /**
-   * 以这个插件名登记的主实例是从哪个包加载的（插件来源的 `loadedFrom`）；没有登记或不是经插件来源登记的为 undefined。
+   * 以这个插件名登记的主实例是不是经插件来源加载的（插件来源的 `loaded`）；没有登记或不是经插件来源登记的为 false。
    *
    * 这是判定「本次安装是否就位」的**唯一正确判据**：此刻注册表里的这个插件是从目标包加载的。不能用 `rescanPlugins()` 的返回值：
    * 它是全局副作用的产物——宿主的 rescan 对已注册插件直接跳过，返回的是「本次扫描新
    * 加载的**全部**插件」，与本次目标无对应关系。用它会在两个场景下给出错误结论：
    * 重装已注册插件时恒返回空（误报失败）；两个安装并发时先跑完的那个会把对方的战果
-   * 一并算作自己的（谎报），后跑的则拿到空数组（误报失败）。也不能只看插件名已登记：名字被别的包或宿主占着时，
+   * 一并算作自己的（谎报），后跑的则拿到空数组（误报失败）。也不能只看插件名已登记：名字被宿主直接登记的插件占着时，
    * 发现驱动跳过目标包，注册表里那个插件不是它。
    *
-   * 传入的是**定义 name**（经 {@link PackageManagerDeps.resolveDefinitionName} 解析），
-   * 不是 npm 包名——二者可以不同。
+   * 插件名即包名，传入的就是 npm 包名。
    */
-  loadedFrom(name: string): string | undefined;
+  loaded(name: string): boolean;
   /** 以这个插件名登记的主实例此刻是否在注册表里：不是从目标包加载的，就是插件名被占着、目标包被跳过 */
   isPluginRegistered(name: string): boolean;
   /**
@@ -368,11 +353,6 @@ export interface PackageManagerDeps {
    * 落盘后只有这些段引用的密钥由宿主一并删掉。落盘失败以拒绝传出。缺省则不整理
    */
   cleanupConfig?(instanceIds: string[], removeConfig: boolean): Promise<void>;
-  /**
-   * 解析已装 npm 包的插件定义 name（与 `@aalis/api-plugin-source` 的 `pluginDefinitionOf` 同一口径：入口 default.name）。
-   * 解析不到则返回 undefined，调用方回退到包名。name≠包名时由 createPackageManager warn。
-   */
-  resolveDefinitionName?(pkgName: string): Promise<string | undefined>;
   /**
    * 按定义 name 列出注册表里全部 instanceId（主实例 + `name:suffix`）。
    * 缺省则只对传入的定义 name 做一次 unload / cleanup。
@@ -716,16 +696,21 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     }
   }
 
-  /** 加载器口径的定义 name；解析不到则回退包名。name≠包名时 warn（与 runtime 加载包装同文案）。 */
-  async function definitionNameFor(pkgName: string): Promise<string> {
-    const resolved = await deps.resolveDefinitionName?.(pkgName);
-    const defName = typeof resolved === 'string' && resolved.length > 0 ? resolved : pkgName;
-    if (defName !== pkgName) {
-      deps.log.warn?.(
-        `插件包 "${pkgName}" 的定义 name 为 "${defName}"——配置键/热扫描/卸载均以定义的 name 为准，二者应一致`,
-      );
-    }
-    return defName;
+  /**
+   * 插件名即包名。这个名字被不是从这个包加载的插件占着（宿主直接登记的）时，那些实例、配置与它提供的服务都不是这个包的：
+   * 卸这个包只卸包
+   */
+  function heldByHost(name: string): boolean {
+    return deps.isPluginRegistered(name) && !deps.loaded(name);
+  }
+
+  /**
+   * 卸载 name 会打断的插件（{@link findServiceDependents}）；名字被宿主直接登记的插件占着时卸的只是包，断不了谁。
+   * 卸载闸与市场的卸载前预警共用这一份
+   */
+  function dependentsOf(name: string): string[] {
+    if (heldByHost(name)) return [];
+    return findServiceDependents(name, deps.pluginStatus?.() ?? [], deps.availableServices?.() ?? []);
   }
 
   /** 注册表里该定义的全部 instanceId；没有枚举函数时只卸定义 name 本身。 */
@@ -753,20 +738,18 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
   /**
    * 装完的统一判定：rescan 出新插件即成功；没出新插件时按目标是否**声明自己是插件**分流。
    * 「声明了插件却没被发现」正是那条静默假成功——必须报失败，否则用户看到 ok 却什么也没装上。
-   * 就位查的是以加载器解析出的定义 name 登记的主实例是不是从目标包加载的，不是 npm 包名，也不只看名字已登记：名字被别的包或
-   * 宿主占着时发现驱动跳过目标包，同样报失败并说出占着名字的是谁。就位但主实例没有激活时仍回 ok：包确实装上、已进插件列表；
+   * 插件名即包名。就位查的是以包名登记的主实例是不是从目标包加载的，不只看名字已登记：名字被宿主直接登记的插件占着时
+   * 发现驱动跳过目标包，同样报失败并写明。就位但主实例没有激活时仍回 ok：包确实装上、已进插件列表；
    * message 按重算落定后的状态说明——激活失败（如缺配置，改好配置即可重试）、慢激活转入后台仍在进行、等待 required 依赖。
    */
   async function settleInstall(npmPkg: string, installedPkgJsonPath: string, where: string): Promise<InstallResult> {
     const target = stripVersion(npmPkg);
     // rescan 只当副作用用（让加载器发现新包），**不看返回值**——判据是目标自身是否就位。
     await deps.rescanPlugins();
-    const defName = await definitionNameFor(target);
-    const holder = deps.loadedFrom(defName);
-    if (holder === target) {
+    if (deps.loaded(target)) {
       await deps.idle?.();
-      const main = deps.pluginStatus?.().find(p => p.instanceId === defName);
-      const settled = (message: TextRef): InstallResult => ({ ok: true, message, plugin: defName });
+      const main = deps.pluginStatus?.().find(p => p.instanceId === target);
+      const settled = (message: TextRef): InstallResult => ({ ok: true, message, plugin: target });
       switch (main?.state) {
         case 'error':
           return settled(t('installedErrored', { target, error: failureText(main) ?? t('seeLogs') }));
@@ -779,12 +762,8 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     }
     const meta = await readJson(installedPkgJsonPath);
     if (!declaresPlugin(meta)) return { ok: true, message: t('installedNonPlugin', { target }) };
-    if (!deps.isPluginRegistered(defName)) return { ok: false, message: t('installedNotLoaded', { where }) };
-    const taken =
-      holder === undefined
-        ? t('installedNameTakenByHost', { target, name: defName })
-        : t('installedNameTaken', { target, name: defName, holder });
-    return { ok: false, message: taken };
+    if (!deps.isPluginRegistered(target)) return { ok: false, message: t('installedNotLoaded', { where }) };
+    return { ok: false, message: t('installedNameTakenByHost', { target }) };
   }
 
   /**
@@ -1041,8 +1020,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     uninstall: (pluginName, options) =>
       exclusive(t('opUninstall', { name: pluginName }), () => uninstallOne(pluginName, options)),
 
-    serviceDependents: name =>
-      findServiceDependents(name, deps.pluginStatus?.() ?? [], deps.availableServices?.() ?? []),
+    serviceDependents: dependentsOf,
 
     registry,
   };
@@ -1119,14 +1097,14 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
       return { ok: false, message: t('notFromMarket', { name: pluginName, why: why[origin] }) };
     }
 
-    // 先解析定义 name 并枚举实例：npm uninstall 会拆掉 node_modules，之后就读不到入口了。
-    const defName = await definitionNameFor(pluginName);
-    const instanceIds = instanceIdsFor(defName);
+    // 名字被宿主直接登记的插件占着时只卸包：不卸实例、不过服务依赖者闸、不整理配置
+    const held = heldByHost(pluginName);
+    const instanceIds = held ? [] : instanceIdsFor(pluginName);
 
     // ── 闸三：服务依赖者 ──
     // 某服务没有别的插件正在提供时，卸掉它的提供者会打断 required 该服务的插件（已禁用的不算）。
-    // 与市场卸载前的预警同一份判定（serviceDependents），按加载器解析出的定义 name 查。
-    const dependents = findServiceDependents(defName, deps.pluginStatus?.() ?? [], deps.availableServices?.() ?? []);
+    // 与市场卸载前的预警同一份判定（serviceDependents）。
+    const dependents = dependentsOf(pluginName);
     if (dependents.length > 0) {
       return { ok: false, message: t('breaksDependents', { dependents }) };
     }
@@ -1139,6 +1117,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
       return { ok: false, message: textOf(err) };
     }
     log.info(`${pluginName}: 已从根依赖与 node_modules 移除`);
+    if (held) return { ok: true, message: t('uninstalledNameTakenByHost', { name: pluginName }) };
     // 包已经卸掉了，配置文件没写成不改变这一点：回执照样 ok，写明原因与残留
     try {
       await deps.cleanupConfig?.(instanceIds, removeConfig);

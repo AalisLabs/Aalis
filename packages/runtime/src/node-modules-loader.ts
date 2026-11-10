@@ -41,7 +41,7 @@ export function isLoadablePlugin(meta: Record<string, unknown>): boolean {
 }
 
 /**
- * 从已导入模块取出定义，并按加载器政策出声：形状不对必须 warn；定义 name 与包名不一致也必须点名。
+ * 从已导入模块取出定义，形状不对必须 warn（定义 name 与包名不一致由发现驱动拒载）。
  * 判定本身在 `@aalis/api-plugin-source` 的 `pluginDefinitionOf`；两加载器共用本包装，告警文案只有这一份。
  */
 export function loadPluginDefinition(ns: unknown, pkgName: string, logger: Logger): PluginDefinition | null {
@@ -51,9 +51,6 @@ export function loadPluginDefinition(ns: unknown, pkgName: string, logger: Logge
       `插件 "${pkgName}" 的入口没有默认导出插件定义，将被跳过——入口须 \`export default definePlugin({ … })\``,
     );
     return null;
-  }
-  if (def.name !== pkgName) {
-    logger.warn(`插件包 "${pkgName}" 的定义 name 为 "${def.name}"——配置键/热扫描/卸载均以定义的 name 为准，二者应一致`);
   }
   return def;
 }

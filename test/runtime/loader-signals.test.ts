@@ -150,21 +150,6 @@ describe('加载链信号', () => {
     expect(def).toBeNull();
     expect(warns.some(w => w.includes('plugin-fn') && w.includes('没有默认导出插件定义'))).toBe(true);
   });
-
-  it('pluginDefinitionOf：定义 name 与包名不一致 → warn 点名（配置键/热扫描/卸载以定义 name 为准）', async () => {
-    const { logger, warns: local } = capturingLogger();
-    const def = pluginDefinitionOf({ default: { name: 'other-name', apply() {} } });
-    expect(def?.name).toBe('other-name');
-    expect(loadPluginDefinition({ default: { name: 'other-name', apply() {} } }, 'plugin-mismatch', logger)?.name).toBe(
-      'other-name',
-    );
-    expect(local.some(w => w.includes('plugin-mismatch') && w.includes('定义 name'))).toBe(true);
-
-    const loader = createNodeModulesPluginLoader(proj);
-    const desc = (await loader.discover()).find(d => d.name === 'plugin-mismatch');
-    await loader.load?.(desc as never);
-    expect(warns.some(w => w.includes('plugin-mismatch') && w.includes('定义 name'))).toBe(true);
-  });
 });
 
 // 入口与宿主 import() 包名解析到的是同一个文件：exports 取 "." 的 import 条件目标，没有 exports 按 legacy main 规则。
