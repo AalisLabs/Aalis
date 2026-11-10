@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   App,
+  appService,
   definePlugin,
   defineService,
+  events,
   LogHub,
   lifecycle,
   optional,
@@ -65,5 +67,33 @@ describe('取消信号的监听器里调 stop()', () => {
     void app.plugins.disable('zz-provider');
     expect(await stopWithin(app, 2000)).toBe('ok');
     expect(disposed.sort()).toEqual(['zz-outside', 'zz-provider', 'zz-starting']);
+  });
+});
+
+describe('停机冻结时取消信号的监听器里调 stop()', () => {
+  it('仍在初始化的插件被 abort，监听器里经 app 服务调 stop()：拿到同一次停机，app:stopping 只发一次', async () => {
+    const app = new App({ name: 'T', logHub: new LogHub(), disposeTimeoutMs: 50 });
+    apps.push(app);
+    let stopping = 0;
+    app.bind({ events }).events.use.on('app:stopping', () => void stopping++);
+    let again: Promise<void> | undefined;
+    let entered!: () => void;
+    const inApply = new Promise<void>(resolve => (entered = resolve));
+    void app.plugin(
+      definePlugin({
+        name: 'zz-slow',
+        uses: { lifecycle, app: appService },
+        apply({ lifecycle, app }) {
+          lifecycle.use.signal.addEventListener('abort', () => (again = app.use.stop()));
+          entered();
+          return new Promise<void>(() => {});
+        },
+      }),
+    );
+    await inApply;
+    const first = app.stop();
+    expect(again).toBe(first);
+    expect(await stopWithin(app, 2000)).toBe('ok');
+    expect(stopping).toBe(1);
   });
 });

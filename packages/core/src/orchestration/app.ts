@@ -90,6 +90,22 @@ export function createApp(options: AppOptions): App {
 }
 
 /**
+ * 单飞：先经 publish 交出完成对象，再同步启动 run。run 的同步段里会执行外部代码（宿主日志器、abort 监听器），
+ * 那里重入只能拿到这次的完成对象，不会再启动一次
+ */
+function singleFlight(publish: (done: Promise<void>) => void, run: () => Promise<void>): Promise<void> {
+  let resolve!: () => void;
+  let reject!: (reason: unknown) => void;
+  const done = new Promise<void>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  publish(done);
+  void run().then(resolve, reject);
+  return done;
+}
+
+/**
  * Aalis 应用主容器
  *
  * core 的"内核"——只持有内存中的抽象（events / services / plugins 与各实例的运行配置），
@@ -224,8 +240,7 @@ export class App {
       this.logger.warn('应用已开始停机，忽略 start()');
       return Promise.resolve();
     }
-    this.#starting ??= this.#runStart();
-    return this.#starting;
+    return this.#starting ?? singleFlight(done => (this.#starting = done), this.#runStart.bind(this));
   }
 
   async #runStart(): Promise<void> {
@@ -276,17 +291,8 @@ export class App {
    * 仍在初始化的插件在 `beginShutdown()` 冻结时即 abort，flight 不再等它；两个上限都非 0 时停机总能结束。
    */
   stop(): Promise<void> {
-    if (this.#stopping) return this.#stopping;
-    let resolve!: () => void;
-    let reject!: (reason: unknown) => void;
-    // 在调用宿主 logger 前发布完成对象，同步重入也只能加入本次停机。
-    this.#stopping = new Promise<void>((res, rej) => {
-      resolve = res;
-      reject = rej;
-    });
-    // 同步启动：不能延后一轮微任务，否则 bounce 可能抢在 beginShutdown 前过闸。
-    void this.#runStop().then(resolve, reject);
-    return this.#stopping;
+    // 同步启动：不能延后一轮微任务，否则 bounce 可能抢在 beginShutdown 前过闸
+    return this.#stopping ?? singleFlight(done => (this.#stopping = done), this.#runStop.bind(this));
   }
 
   async #runStop(): Promise<void> {

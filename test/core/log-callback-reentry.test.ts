@@ -3,6 +3,7 @@ import {
   App,
   definePlugin,
   defineService,
+  events,
   type Logger,
   lifecycle,
   provide,
@@ -186,5 +187,19 @@ describe('排序告警的日志回调里登记插件', () => {
     expect(await late).toBe(true);
     await app.plugins.idle();
     expect(state(app, 'zz-late')).toBe('active');
+  });
+});
+
+describe('日志回调里调 start()：只启动一次', () => {
+  it('记「正在启动」时再调 start()：拿到同一次启动，app:ready 只发一次', async () => {
+    let app!: App;
+    let again: Promise<void> | undefined;
+    app = makeApp(hooked('info', '正在启动', () => (again = app.start())));
+    let ready = 0;
+    app.bind({ events }).events.use.on('app:ready', () => void ready++);
+    const first = app.start();
+    expect(again).toBe(first);
+    await first;
+    expect(ready).toBe(1);
   });
 });
