@@ -86,12 +86,8 @@ describe('配置文件原子写', () => {
     const { provider } = createFsYamlConfigProvider(cfgPath);
     save(provider, { name: 'Aalis', logLevel: 'debug', plugins: {} });
 
-    expect(existsSync(cfgPath)).toBe(true);
     expect(readFileSync(cfgPath, 'utf-8')).toContain('logLevel: debug');
-    expect(
-      readdirSync(dir).filter(f => f.includes('.tmp.')),
-      '临时文件必须被 rename 掉，不能留在配置目录里',
-    ).toEqual([]);
+    expect(readdirSync(dir), '临时文件必须被 rename 掉，不能留在配置目录里').toEqual(['aalis.config.yaml']);
   });
 
   it('是原子替换而非原地截断——inode 必须变', () => {
@@ -104,24 +100,6 @@ describe('配置文件原子写', () => {
     // writeFileSync 原地覆盖走 O_CREAT|O_TRUNC，inode 不变——截断先发生、写入后失败时
     // 盘上就留下 0 字节或半截 YAML。tmp+rename 则是换 inode 的原子替换，不存在中间态。
     expect(statSync(cfgPath).ino, '原地截断会保留 inode，说明写不是原子的').not.toBe(before);
-  });
-
-  it('沿用原文件权限位——配置里是密钥，不能因一次保存从 600 退回 644', () => {
-    writeFileSync(cfgPath, 'name: Aalis\nplugins: {}\n', { encoding: 'utf-8', mode: 0o600 });
-    const before = statSync(cfgPath).mode & 0o777;
-    expect(before).toBe(0o600);
-
-    const { provider } = createFsYamlConfigProvider(cfgPath);
-    save(provider, { name: 'Aalis', logLevel: 'info', plugins: {} });
-
-    expect(statSync(cfgPath).mode & 0o777, 'rename 让目标继承 tmp 的 mode——必须先 chmod tmp').toBe(before);
-  });
-
-  it('文件原本不存在时也能创建', () => {
-    const { provider } = createFsYamlConfigProvider(cfgPath);
-    save(provider, { name: 'Aalis', logLevel: 'info', plugins: {} });
-    expect(existsSync(cfgPath)).toBe(true);
-    expect(readdirSync(dir).filter(f => f.includes('.tmp.'))).toEqual([]);
   });
 });
 
@@ -145,12 +123,13 @@ describe('临时文件建出时即是收紧的权限', () => {
     expect(statSync(cfgPath).mode & 0o777).toBe(0o600);
   });
 
-  it('原文件不存在：按 600 建，保存出来的配置文件也是 600', () => {
+  it('原文件不存在：按 600 建，保存出来的配置文件也是 600，不留临时文件', () => {
     const { provider } = createFsYamlConfigProvider(cfgPath);
     withUmask(0o022, () => save(provider, { name: 'Aalis', logLevel: 'info', plugins: {} }));
 
     expect(tmpCreated.mode).toBe(0o600);
     expect(statSync(cfgPath).mode & 0o777).toBe(0o600);
+    expect(readdirSync(dir)).toEqual(['aalis.config.yaml']);
   });
 
   it('umask 比原文件权限更严：建出时更窄，改名前仍对齐回原文件的权限位', () => {
@@ -179,7 +158,7 @@ describe('写入或改名失败时删掉临时文件', () => {
 
     expect(fsFault.tmp, '前置：失败发生在临时文件建出之后').toContain('.tmp.');
     expect(existsSync(fsFault.tmp), '含密钥的临时文件必须删掉').toBe(false);
-    expect(readdirSync(dir).filter(f => f.includes('.tmp.'))).toEqual([]);
+    expect(readdirSync(dir)).toEqual(['aalis.config.yaml']);
     expect(readFileSync(cfgPath, 'utf-8')).toBe(original);
   });
 });

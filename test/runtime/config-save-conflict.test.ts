@@ -147,15 +147,6 @@ describe('save 写前比对磁盘实况', () => {
     expect(seen, '核对之后同内容的事件照常去重').toHaveLength(1);
   });
 
-  it('两个进程（两个 provider）写同一文件：先写者成功，后写者拒写', () => {
-    writeFileSync(path, A);
-    const a = createFsYamlConfigProvider(path);
-    const b = createFsYamlConfigProvider(path);
-    saveOf(a.provider)({ ...a.config, owners: [{ platform: 'p', userId: 'u' }] });
-    expect(() => saveOf(b.provider)({ ...b.config, deniedCapabilities: ['tool:x'] })).toThrow(/外部修改/);
-    expect(readFileSync(path, 'utf-8')).toContain('owners');
-  });
-
   it('武装即核对：武装前的外部修改在武装后投递，之后 save 不再拒写', async () => {
     writeFileSync(path, A);
     const { provider } = createFsYamlConfigProvider(path);

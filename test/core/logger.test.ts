@@ -80,6 +80,18 @@ describe('LogHub', () => {
     }
   });
 
+  it('多 hub 隔离（订阅者互不串台）', () => {
+    const hubA = new LogHub();
+    const hubB = new LogHub();
+    const a: string[] = [];
+    const b: string[] = [];
+    hubA.onEntry(e => a.push(e.message));
+    hubB.onEntry(e => b.push(e.message));
+    new DefaultLogger('a', 'debug', hubA).info('only-a');
+    expect(a).toEqual(['only-a']);
+    expect(b).toEqual([]);
+  });
+
   it('onEntry 返回 dispose 函数解除订阅', () => {
     const hub = new LogHub();
     const seen: string[] = [];

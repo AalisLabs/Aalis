@@ -175,11 +175,11 @@ describe('runtime file-logger', () => {
 
   it('appendCrashLog 写入 Error 堆栈', async () => {
     const file = join(dir, 'crash.log');
-    await appendCrashLog('test-crash', new Error('crashy'), file);
-    const content = readFileSync(file, 'utf-8');
-    expect(content).toContain('test-crash');
-    expect(content).toContain('crashy');
-    expect(parseLogLine(content.trimEnd())?.level).toBe('error');
+    const err = new Error('crashy');
+    await appendCrashLog('test-crash', err, file);
+    const entry = parseLogLine(readFileSync(file, 'utf-8').trimEnd());
+    expect(entry?.level).toBe('error');
+    expect(entry?.message).toBe(`test-crash: ${err.stack}`);
   });
 
   it('appendCrashLog 处理非 Error 值', async () => {

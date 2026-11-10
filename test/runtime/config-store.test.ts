@@ -196,25 +196,11 @@ describe('FsYamlConfigProvider（集成）', () => {
 });
 
 describe('插件 id 走危险键闸', () => {
-  it('D1 getPluginConfig("__proto__") 抛可定位错误，不得返回 Object.prototype', () => {
-    const store = emptyStore();
-    try {
-      expectIllegalPluginId(() => store.getPluginConfig('__proto__'), '__proto__');
-      expect(({} as { pollutedS5?: string }).pollutedS5).toBeUndefined();
-    } finally {
-      delete (Object.prototype as { pollutedS5?: string }).pollutedS5;
-    }
-  });
-
   it('D2 setPluginConfig("__proto__") 抛错且不得改 plugins 原型', () => {
     const store = emptyStore();
     expectIllegalPluginId(() => store.setPluginConfig('__proto__', { injected: 1 }), '__proto__');
     expect(Object.getPrototypeOf(store.getAll().plugins)).toBe(Object.prototype);
     expect((store.getAll().plugins as { injected?: number }).injected).toBeUndefined();
-  });
-
-  it('D3 getPluginConfig("constructor") 抛错，不得返回 Object', () => {
-    expectIllegalPluginId(() => emptyStore().getPluginConfig('constructor'), 'constructor');
   });
 
   it('D13 三危险键在按插件 id 取放的全部方法上都抛同一文案', () => {
@@ -506,28 +492,22 @@ describe('host-config 的 save 契约（installHostConfig 交给插件的那一�
     expect(unhandled).toEqual([]);
   });
 
-  it('交给插件的只有文档读写、applyPluginConfig、save 与裁剪政策：宿主的 persist / watch / 密钥换算不外露', () => {
-    const { app } = track(hostedApp());
+  it('交给插件的那一份不带宿主的 persist / watch / 密钥换算', () => {
+    const { app, store } = track(hostedApp());
     // 看提供者交出的实例本身：业务句柄是转发句柄，列不出成员
     const doc = app.bind({ services }).services.use.get(hostConfig) as unknown as Record<string, unknown>;
-    expect(Object.keys(doc).sort()).toEqual(
-      [
-        'trimUnknownFields',
-        'get',
-        'getAll',
-        'set',
-        'getPluginConfig',
-        'setPluginConfig',
-        'applyPluginConfig',
-        'removePluginConfig',
-        'isPluginDisabled',
-        'setPluginEnabled',
-        'getServicePreferences',
-        'setServicePreference',
-        'removeServicePreference',
-        'save',
-      ].sort(),
-    );
+    const hostOnly = [
+      'persist',
+      'watch',
+      'unwatch',
+      'hasSecretStore',
+      'resolvePluginConfig',
+      'splitPluginSecrets',
+      'commitSecrets',
+    ];
+    // 名单里的确实都是宿主文档上的成员：改名之后这条断言不至于空过
+    expect(hostOnly.filter(key => !(key in store))).toEqual([]);
+    expect(hostOnly.filter(key => key in doc)).toEqual([]);
     expect(app.bind({ services }).services.use.inspect('host-config')).toMatchObject([
       { contextId: 'root', exclusive: true },
     ]);

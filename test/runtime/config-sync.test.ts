@@ -8,6 +8,7 @@ import {
   withPluginConfigSync,
 } from '../../packages/runtime/src/config-sync.js';
 import { createPluginDiscovery, type PluginLoader } from '../../packages/runtime/src/plugin-discovery.js';
+import { validateConfig } from '../../packages/schema-config/src/index.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 
 // ════════════════════════════════════════════════════════════
@@ -675,8 +676,9 @@ describe('配置结构校验（validateConfig 接线：只告警不拒载）', (
     await app.plugin(badMod);
     syncPluginDefaults(app, store);
     const hit = warned.find(w => w.includes('配置校验'));
+    const [issue] = validateConfig(badMod.configSchema, { port: 'abc', mode: 'a' });
     expect(hit).toContain('pv');
-    expect(hit).toContain('port: 期望有限数值，得到 string');
+    expect(hit).toContain(`port: ${issue?.message}`);
     // 只告警不改值：坏值原样保留（校验器绝不参与取值链路）
     expect(store.getPluginConfig('pv').port).toBe('abc');
     expect(app.plugins.getStatus().find(s => s.instanceId === 'pv')?.state).toBe('active');
@@ -715,7 +717,9 @@ describe('配置结构校验（validateConfig 接线：只告警不拒载）', (
     const warned = captureWarnsOf(app);
     await app.plugin(mod);
     syncPluginDefaults(app, store);
-    expect(warned.find(w => w.includes('配置校验'))).toContain('apiKey: 必填字段缺失');
+    const [issue] = validateConfig(mod.configSchema, {});
+    expect(issue?.kind).toBe('missing');
+    expect(warned.find(w => w.includes('配置校验'))).toContain(`apiKey: ${issue?.message}`);
     await app.stop();
   });
 });
