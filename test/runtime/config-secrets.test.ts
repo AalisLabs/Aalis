@@ -525,9 +525,9 @@ describe('登记、同步与热重载', () => {
       plugins: { p: { apiKey: 'sk-PLACEHOLDER-HAND', conns: [{ url: 'u', token: 'tok-PLACEHOLDER' }] } },
     });
     const p = probe('p');
-    const prepared = withPluginConfigSync(loaderOf([p.definition]), w.app, w.store);
+    const prepared = withPluginConfigSync(w.app, w.store);
     try {
-      await createPluginDiscovery(w.app, prepared.loader, w.store).loadAll();
+      await createPluginDiscovery(w.app, loaderOf([p.definition]), w.store, prepared).loadAll();
     } finally {
       prepared.finishInitialLoad();
     }
@@ -554,9 +554,9 @@ describe('登记、同步与热重载', () => {
     // 首次加载批次：密钥文件拒写
     const w = world({ plugins: { p: { apiKey: 'sk-PLACEHOLDER-HAND' } } });
     w.failSecretsSave.times = 1;
-    const prepared = withPluginConfigSync(loaderOf([probe('p').definition]), w.app, w.store);
+    const prepared = withPluginConfigSync(w.app, w.store);
     try {
-      await createPluginDiscovery(w.app, prepared.loader, w.store).loadAll();
+      await createPluginDiscovery(w.app, loaderOf([probe('p').definition]), w.store, prepared).loadAll();
     } finally {
       prepared.finishInitialLoad();
     }
@@ -584,8 +584,8 @@ describe('登记、同步与热重载', () => {
   it('首次加载之后热扫描新装的插件：同步把明文移进密钥存储，落盘写成之后记「已移进 secrets.yaml」', async () => {
     const w = world({ plugins: { p: {}, q: { apiKey: 'sk-PLACEHOLDER-LATE' } } });
     const definitions = [probe('p').definition];
-    const prepared = withPluginConfigSync(loaderOf(definitions), w.app, w.store);
-    const discovery = createPluginDiscovery(w.app, prepared.loader, w.store);
+    const prepared = withPluginConfigSync(w.app, w.store);
+    const discovery = createPluginDiscovery(w.app, loaderOf(definitions), w.store, prepared);
     try {
       await discovery.loadAll();
     } finally {

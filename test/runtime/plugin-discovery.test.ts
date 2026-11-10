@@ -524,18 +524,15 @@ describe('两个包声明了同一个插件名', () => {
 
   it('冷启动：配置段只按登记的那个的 schema 同步，后一个的 schema 不裁它的字段', async () => {
     const { app, store } = world({ plugins: { 'zz-same': { apiKey: 'k' } } });
-    const sync = withPluginConfigSync(
-      packages(
-        new Map([
-          ['zz-same', definePlugin({ name: 'zz-same', configSchema: SCHEMA_A, apply() {} })],
-          ['@zz/fork', definePlugin({ name: 'zz-same', configSchema: SCHEMA_B, apply() {} })],
-        ]),
-      ),
-      app,
-      store,
+    const sync = withPluginConfigSync(app, store);
+    const loader = packages(
+      new Map([
+        ['zz-same', definePlugin({ name: 'zz-same', configSchema: SCHEMA_A, apply() {} })],
+        ['@zz/fork', definePlugin({ name: 'zz-same', configSchema: SCHEMA_B, apply() {} })],
+      ]),
     );
     try {
-      await createPluginDiscovery(app, sync.loader, store).loadAll();
+      await createPluginDiscovery(app, loader, store, sync).loadAll();
     } finally {
       sync.finishInitialLoad();
     }
@@ -549,8 +546,8 @@ describe('两个包声明了同一个插件名', () => {
     const copy = (from: string, configSchema: typeof SCHEMA_A | typeof SCHEMA_B) =>
       definePlugin({ name: 'zz-same', reusable: true, configSchema, apply: () => void ran.push(from) });
     const definitions = new Map([['zz-same', copy('zz-same', SCHEMA_A)]]);
-    const sync = withPluginConfigSync(packages(definitions), app, store);
-    const discovery = createPluginDiscovery(app, sync.loader, store);
+    const sync = withPluginConfigSync(app, store);
+    const discovery = createPluginDiscovery(app, packages(definitions), store, sync);
     await discovery.loadAll();
     sync.finishInitialLoad();
     definitions.set('@zz/fork', copy('@zz/fork', SCHEMA_B));

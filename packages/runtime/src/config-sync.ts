@@ -14,7 +14,7 @@ import { type AalisConfig, isConfigSaveRefused } from '@aalis/api-host-config';
 import { type App, events, type PluginDefinition, parseInstanceId, services } from '@aalis/core';
 import { deepMergeDefaults, defaultsFrom, removeExtraFields, validateConfig } from '@aalis/schema-config';
 import { applyServicePreferences, type ConfigStore } from './config-store.js';
-import { moduleDefinitionOf, type PluginDiscovery, type PluginLoader } from './plugin-discovery.js';
+import { moduleDefinitionOf, type PluginDiscovery } from './plugin-discovery.js';
 import { describeDangling } from './secrets.js';
 
 export interface ConfigSyncOptions {
@@ -66,20 +66,19 @@ export function syncPluginDefaults(
 }
 
 /**
- * 宿主加载政策：发现驱动定下要登记的定义后、交给 Core 注册前（加载器的 prepare）规范化主实例与已配置的复用实例。
+ * 宿主加载政策：发现驱动定下要登记的定义后、交给 Core 注册前（交给 createPluginDiscovery 的 prepare）规范化主实例与已配置的复用实例。
  * 不在导入时做：导入了不等于要登记，插件名已被别的包占下的定义按它的 schema 同步，会裁掉先到者的配置字段。
  * 首次加载批次只落盘一次；随后市场 rescan 登记的新插件也走同一政策。
  * 发现驱动随后按文档取每个实例的配置交给 core，首次 apply 拿到的就是规范化后的这一份。
  * 配置段被改了的实例各发一次 host-config:changed（带 instanceId）。
  */
-export function withPluginConfigSync(loader: PluginLoader, app: App, store: ConfigStore, opts?: ConfigSyncOptions) {
+export function withPluginConfigSync(app: App, store: ConfigStore, opts?: ConfigSyncOptions) {
   const host = app.bind({ events });
   let initialLoad = true;
   let initialChanged = false;
   // 首次加载批次里移进密钥存储的字段：合并的那次保存写成之后再记
   const initialMoved: string[] = [];
   const prepare = (definition: PluginDefinition): void => {
-    loader.prepare?.(definition);
     const ids = [definition.name];
     if (definition.reusable) {
       for (const id of Object.keys(store.get('plugins'))) {
@@ -99,12 +98,7 @@ export function withPluginConfigSync(loader: PluginLoader, app: App, store: Conf
     else if (changed) saveSyncedConfig(app, store, moved);
   };
   return {
-    loader: {
-      discover: () => loader.discover(),
-      load: descriptor => loader.load(descriptor),
-      ...(loader.reload ? { reload: descriptor => loader.reload!(descriptor) } : {}),
-      prepare,
-    } satisfies PluginLoader,
+    prepare,
     finishInitialLoad() {
       initialLoad = false;
       if (initialChanged) saveSyncedConfig(app, store, initialMoved.splice(0));

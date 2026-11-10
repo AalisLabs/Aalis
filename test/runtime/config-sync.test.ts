@@ -50,8 +50,8 @@ describe('加载前配置同步', () => {
         },
       },
     );
-    const prepared = withPluginConfigSync(loader, app, store, { trimUnknownFields });
-    const discovery = createPluginDiscovery(app, prepared.loader, store);
+    const prepared = withPluginConfigSync(app, store, { trimUnknownFields });
+    const discovery = createPluginDiscovery(app, loader, store, prepared);
     function add(name: string) {
       definitions.push(
         definePlugin({
@@ -134,16 +134,6 @@ describe('加载前配置同步', () => {
     await f.app.stop();
   });
 
-  it('被包装的加载器自带的 prepare 照常调用', async () => {
-    const seen: string[] = [];
-    const { app, store } = hostedApp({ plugins: { p1: { unknown: true } } });
-    const prepared = withPluginConfigSync({ ...NO_PLUGINS, prepare: d => void seen.push(d.name) }, app, store);
-    prepared.loader.prepare(p1Module);
-    expect(seen).toEqual(['p1']);
-    expect(store.getPluginConfig('p1')).toEqual({ known: 0 });
-    await app.stop();
-  });
-
   it('异步落盘失败被记录，不重试整批或撤销已激活实例', async () => {
     let writes = 0;
     const { app, store } = hostedApp(
@@ -157,16 +147,14 @@ describe('加载前配置同步', () => {
         },
       },
     );
-    const prepared = withPluginConfigSync(
-      {
-        discover: async () => [{ name: p1Module.name, source: 'memory' }],
-        load: async () => p1Module,
-      },
-      app,
-      store,
-    );
+    const prepared = withPluginConfigSync(app, store);
     const warns = captureWarnsOf(app);
-    await createPluginDiscovery(app, prepared.loader, store).loadAll();
+    await createPluginDiscovery(
+      app,
+      { discover: async () => [{ name: p1Module.name, source: 'memory' }], load: async () => p1Module },
+      store,
+      prepared,
+    ).loadAll();
     prepared.finishInitialLoad();
     prepared.finishInitialLoad();
     // 落盘是异步的，拒绝在后续微任务里才到：等一个宏任务再看告警
@@ -189,13 +177,14 @@ describe('加载前配置同步', () => {
         },
       },
     );
-    const prepared = withPluginConfigSync(
-      { discover: async () => [{ name: p1Module.name, source: 'memory' }], load: async () => p1Module },
-      app,
-      store,
-    );
+    const prepared = withPluginConfigSync(app, store);
     const warns = captureWarnsOf(app);
-    await createPluginDiscovery(app, prepared.loader, store).loadAll();
+    await createPluginDiscovery(
+      app,
+      { discover: async () => [{ name: p1Module.name, source: 'memory' }], load: async () => p1Module },
+      store,
+      prepared,
+    ).loadAll();
     expect(() => prepared.finishInitialLoad()).not.toThrow();
     await new Promise(r => setTimeout(r, 0));
     expect(warns.filter(w => w.includes('配置同步落盘失败'))).toHaveLength(1);
@@ -225,12 +214,13 @@ describe('加载前配置同步', () => {
         },
       },
     );
-    const prepared = withPluginConfigSync(
-      { discover: async () => [{ name: p1Module.name, source: 'memory' }], load: async () => p1Module },
+    const prepared = withPluginConfigSync(app, store);
+    await createPluginDiscovery(
       app,
+      { discover: async () => [{ name: p1Module.name, source: 'memory' }], load: async () => p1Module },
       store,
-    );
-    await createPluginDiscovery(app, prepared.loader, store).loadAll();
+      prepared,
+    ).loadAll();
     prepared.finishInitialLoad();
     await new Promise(r => setTimeout(r, 0));
     expect(warns.filter(([msg]) => String(msg).includes('落盘'))).toEqual([
@@ -486,12 +476,13 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
         seen.push(structuredClone(value.use));
       },
     });
-    const prepared = withPluginConfigSync(
-      { discover: async () => [{ name: 'multi', source: 'memory' }], load: async () => multi },
+    const prepared = withPluginConfigSync(app, store);
+    const discovery = createPluginDiscovery(
       app,
+      { discover: async () => [{ name: 'multi', source: 'memory' }], load: async () => multi },
       store,
+      prepared,
     );
-    const discovery = createPluginDiscovery(app, prepared.loader, store);
     await discovery.loadAll();
     prepared.finishInitialLoad();
     installConfigHotReload(app, store, discovery);

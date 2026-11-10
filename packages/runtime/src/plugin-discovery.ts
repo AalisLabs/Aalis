@@ -32,14 +32,19 @@ export interface PluginDescriptor {
  * - `discover()` 列出当前可用的插件条目
  * - `load(descriptor)` 把条目导入成插件定义（模块默认导出的 definePlugin 产物）；不是插件返回 null
  * - `reload(descriptor)` 可选——热扫描时用（fs loader 用 mtime 做 cache buster），不提供时退化为 `load()`
- * - `prepare(definition)` 可选——发现驱动定下要登记的定义后、交给 core 之前逐个调用（宿主的配置同步政策挂在这里）；
- *   插件名已被别的包占下而跳过的定义不经过它
  */
 export interface PluginLoader {
   discover(): Promise<PluginDescriptor[]>;
   load(descriptor: PluginDescriptor): Promise<PluginDefinition | null>;
   reload?(descriptor: PluginDescriptor): Promise<PluginDefinition | null>;
-  prepare?(definition: PluginDefinition): void;
+}
+
+export interface PluginDiscoveryOptions {
+  /**
+   * 发现驱动定下要登记的定义后、交给 core 之前逐个调用（宿主的配置同步政策 withPluginConfigSync 挂在这里）；
+   * 插件名已被占下而跳过的定义不经过它
+   */
+  prepare(definition: PluginDefinition): void;
 }
 
 export interface PluginDiscovery extends PluginSourceService {
@@ -69,12 +74,13 @@ export function moduleDefinitionOf(app: App, moduleName: string): PluginDefiniti
 
 /**
  * @param doc 配置文档：登记时按实例 id 取配置（解析密钥引用后交给 core）与禁用标记，并从中枚举 `name:suffix` 实例。
- *   默认值回填与密钥拆出由加载器一侧的政策（withPluginConfigSync）先写进文档。
+ *   默认值回填与密钥拆出由 `options.prepare`（宿主的配置同步政策）先写进文档。
  */
 export function createPluginDiscovery(
   app: App,
   loader: PluginLoader,
   doc: Pick<ConfigStore, 'get' | 'isPluginDisabled' | 'resolvePluginConfig'>,
+  options?: PluginDiscoveryOptions,
 ): PluginDiscovery {
   const log = app.logger;
 
@@ -120,7 +126,7 @@ export function createPluginDiscovery(
           log.warn(`包 "${desc.name}" 声明的插件名 "${definition.name}" 已登记，跳过`);
           continue;
         }
-        loader.prepare?.(definition);
+        options?.prepare(definition);
         loaded.push(registration(definition));
         claimed.set(definition.name, desc.name);
         packageOf.set(definition, desc.name);

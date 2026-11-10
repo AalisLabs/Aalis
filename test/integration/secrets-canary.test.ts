@@ -88,8 +88,8 @@ describe('金丝雀密钥不进主配置文件', () => {
     const app = new App({ name: store.get('name'), logLevel: store.get('logLevel') as LogLevel, logger: silent });
     apps.push(app);
     installHostConfig(app, store);
-    const prepared = withPluginConfigSync(loader, app, store);
-    const discovery = createPluginDiscovery(app, prepared.loader, store);
+    const prepared = withPluginConfigSync(app, store);
+    const discovery = createPluginDiscovery(app, loader, store, prepared);
     try {
       await discovery.loadAll();
     } finally {
