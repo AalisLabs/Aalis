@@ -262,6 +262,25 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
     { timeout: 5_000 },
   );
 
+  it('调用方没给信号，embed 途中停用插件：在飞请求随之关闭，以中止原因拒绝，不重试', async () => {
+    const fake = await startFake('ok');
+    servers.push(fake.server);
+    const { host } = await boot(fake, 'nomic-embed-text', { timeoutMs: 30_000, retries: 1 });
+    const svc = host.services.use.get(embedding)!;
+    fake.mode = 'hang';
+    fake.embeddingRequests = 0;
+    fake.abortedEmbeddingRequests = 0;
+    const failure = svc.embed('provider goes away').then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    await waitFor(() => fake.embeddingRequests === 1);
+    await apps[0].plugins.disable(embeddingOllama.name);
+    await waitFor(() => fake.abortedEmbeddingRequests > 0);
+    expect(await failure).toMatchObject({ name: 'AbortError' });
+    expect(fake.embeddingRequests, '停用中止不得进入 retry').toBe(1);
+  });
+
   it(
     'provider 自身 timeout 仍按 retries 重试',
     async () => {
@@ -277,6 +296,23 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
     },
     { timeout: 5_000 },
   );
+
+  it('诊断探测途中停用：探测的 embedding 请求随之断开，检查以中止原因抛出，不报不可用', async () => {
+    const fake = await startFake('ok');
+    servers.push(fake.server);
+    const { doctor } = await boot(fake, 'nomic-embed-text', { timeoutMs: 30_000 });
+    fake.mode = 'hang';
+    fake.embeddingRequests = 0;
+    fake.abortedEmbeddingRequests = 0;
+    const failure = Promise.resolve(doctor.specs.get('embedding.ollama')!.run()).then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    await waitFor(() => fake.embeddingRequests === 1);
+    await apps[0].plugins.disable(embeddingOllama.name);
+    await waitFor(() => fake.abortedEmbeddingRequests > 0);
+    expect(await failure).toMatchObject({ name: 'AbortError' });
+  });
 
   // 特征化用例（非回归钉子）：按名筛 embedding 已判否——混合场景会把 bge-m3 这类
   // 合法嵌入模型从下拉里剔掉，而 select 没有自由输入。这条钉住「不筛」这个决定。

@@ -12,7 +12,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 // ════════════════════════════════════════════════════════════
 // 两个向量化提供者各经贡献点 webui:options 交自己的可选项来源，配置里「Embedding 模型」的下拉指向它：来源只列本实例连着的
 // 那一家的模型。两家都装时各自的下拉只列自己的模型，不按服务名把别家的混进来。插件在 baseUrl 后面拼路径，带查询串或片段的
-// baseUrl 读配置时就报错，不发请求。
+// baseUrl 读配置时就报错，不发请求。取模型列表接本插件这次激活的中止信号，停用时到上游的请求随之断开。
 // ════════════════════════════════════════════════════════════
 
 /** 本地假服务：Ollama 的 /api/tags 与 OpenAI 的 /models 各答一份模型名，嵌入请求一律答一个向量 */
@@ -108,5 +108,42 @@ describe('向量化提供者的 baseUrl 带查询串或片段：读配置时报�
     expect(instance?.state).toBe('error');
     expect(instance?.error).toContain('baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径');
     expect(requested, '不该发出请求').toEqual([]);
+  });
+});
+
+describe('向量化提供者取模型列表随停用中止', () => {
+  it.each([
+    { name: 'embedding-ollama', plugin: embeddingOllama, path: '/api/tags', extra: { retries: 0 }, suffix: '' },
+  ])('$name：取模型列表途中停用，到上游的请求随之断开', async ({ name, plugin, path, extra, suffix }) => {
+    const seen = { requested: false, closed: false };
+    const server = createServer((req, res) => {
+      if (req.url === path) {
+        seen.requested = true;
+        req.on('close', () => {
+          seen.closed = true;
+        });
+        return; // 只收不回
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(req.url === '/api/embed' ? { embeddings: [[0.1]] } : { data: [{ embedding: [0.1] }] }));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    servers.push(server);
+    const app = new App({ name: 'T', logLevel: 'error' });
+    apps.push(app);
+    await registerHubs(app);
+    const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}${suffix}`;
+    await app.plugins.register(plugin, { ...extra, baseUrl, model: 'zz-model' });
+    await app.plugins.idle();
+    const source = app
+      .bind({ contributions })
+      .contributions.use.collect('webui:options')
+      .find(({ spec }) => spec.id === name);
+    if (!source) throw new Error(`没有来源 ${name}`);
+    const pending = source.spec.list();
+    await expect.poll(() => seen.requested).toBe(true);
+    await app.plugins.disable(plugin.name);
+    await expect.poll(() => seen.closed).toBe(true);
+    await pending;
   });
 });

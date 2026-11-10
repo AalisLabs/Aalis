@@ -80,7 +80,17 @@ class OllamaEmbeddingService implements EmbeddingService {
   /** 缓存新旧 API 检测结果：true=新版 /api/embed，false=旧版 /api/embeddings */
   private useNewApi: boolean | null = null;
 
-  constructor(baseUrl: string, model: string, timeoutMs: number, retries: number) {
+  /**
+   * activation 是本插件这次激活的中止信号：embed 把它与调用方的合起来；取模型列表的调用方（可选项来源、webui-server 合并各
+   * 提供者的取值）都不带信号，只用它。停用、重启、停机时请求随之停下
+   */
+  constructor(
+    baseUrl: string,
+    model: string,
+    timeoutMs: number,
+    retries: number,
+    private readonly activation: AbortSignal,
+  ) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.model = model;
     this.modelId = `ollama:${model}`;
@@ -99,10 +109,10 @@ class OllamaEmbeddingService implements EmbeddingService {
   private async postJson(
     path: string,
     body: Record<string, unknown>,
-    options?: EmbeddingRequestOptions,
+    signal: AbortSignal,
   ): Promise<{ ok: boolean; status: number; statusText: string; text: string }> {
     for (let attempt = 0; ; attempt++) {
-      options?.signal?.throwIfAborted();
+      signal.throwIfAborted();
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
       try {
@@ -110,7 +120,7 @@ class OllamaEmbeddingService implements EmbeddingService {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
-          signal: options?.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal,
+          signal: AbortSignal.any([controller.signal, signal]),
         });
         if (res.ok || res.status < 500 || attempt >= this.retries) {
           return { ok: res.ok, status: res.status, statusText: res.statusText, text: await res.text() };
@@ -118,7 +128,7 @@ class OllamaEmbeddingService implements EmbeddingService {
         // 要重试：主动取消被丢弃的响应体，否则 undici 侧套接字被钉住到 GC
         await res.body?.cancel().catch(() => undefined);
       } catch (err) {
-        options?.signal?.throwIfAborted();
+        signal.throwIfAborted();
         if (attempt >= this.retries) throw err;
       } finally {
         clearTimeout(timer);
@@ -127,7 +137,9 @@ class OllamaEmbeddingService implements EmbeddingService {
   }
 
   async embed(text: string, options?: EmbeddingRequestOptions): Promise<number[]> {
-    options?.signal?.throwIfAborted();
+    // 调用方的中止信号与本插件这次激活的合起来：调用方没中止、本插件停用或重启时请求同样停下，不再重试
+    const signal = options?.signal ? AbortSignal.any([options.signal, this.activation]) : this.activation;
+    signal.throwIfAborted();
     // 如果还没检测过，先尝试新版 API。
     // 只有明确的 404/405（端点不存在）才值得试旧端点：网络不通/超时/5xx 是瞬态故障
     // （典型场景是 Ollama 晚于 Aalis 起来，启动探测正好撞上），原样抛出并保持 null，
@@ -136,23 +148,23 @@ class OllamaEmbeddingService implements EmbeddingService {
     // 所以结论只在旧端点真答上来之后才钉成「旧版」，否则连同错误一起抛出、保持 null。
     if (this.useNewApi === null) {
       try {
-        const vec = await this.embedNew(text, options);
+        const vec = await this.embedNew(text, signal);
         this.useNewApi = true;
         return vec;
       } catch (err) {
-        options?.signal?.throwIfAborted();
+        signal.throwIfAborted();
         if (!isEndpointMissing(err)) throw err;
-        const vec = await this.embedLegacy(text, options);
+        const vec = await this.embedLegacy(text, signal);
         this.useNewApi = false;
         return vec;
       }
     }
-    return this.useNewApi ? this.embedNew(text, options) : this.embedLegacy(text, options);
+    return this.useNewApi ? this.embedNew(text, signal) : this.embedLegacy(text, signal);
   }
 
   /** 新版 Ollama API: POST /api/embed */
-  private async embedNew(text: string, options?: EmbeddingRequestOptions): Promise<number[]> {
-    const res = await this.postJson('/api/embed', { model: this.model, input: text }, options);
+  private async embedNew(text: string, signal: AbortSignal): Promise<number[]> {
+    const res = await this.postJson('/api/embed', { model: this.model, input: text }, signal);
     if (!res.ok) {
       throw statusError(res, '/api/embed');
     }
@@ -161,8 +173,8 @@ class OllamaEmbeddingService implements EmbeddingService {
   }
 
   /** 旧版 Ollama API: POST /api/embeddings */
-  private async embedLegacy(text: string, options?: EmbeddingRequestOptions): Promise<number[]> {
-    const res = await this.postJson('/api/embeddings', { model: this.model, prompt: text }, options);
+  private async embedLegacy(text: string, signal: AbortSignal): Promise<number[]> {
+    const res = await this.postJson('/api/embeddings', { model: this.model, prompt: text }, signal);
     if (!res.ok) {
       throw statusError(res, '/api/embeddings');
     }
@@ -170,10 +182,12 @@ class OllamaEmbeddingService implements EmbeddingService {
     return data.embedding;
   }
 
-  /** 本机 Ollama 的全部模型：本插件的可选项来源 embedding-ollama 用它 */
+  /** 本机 Ollama 的全部模型：本插件的可选项来源 embedding-ollama 用它。取不到（含停用时中止）为空列表 */
   async listModels(): Promise<string[]> {
     try {
-      const res = await fetch(`${this.baseUrl}/api/tags`, { signal: AbortSignal.timeout(this.timeoutMs) });
+      const res = await fetch(`${this.baseUrl}/api/tags`, {
+        signal: AbortSignal.any([AbortSignal.timeout(this.timeoutMs), this.activation]),
+      });
       if (!res.ok) return [];
       const data = (await res.json()) as { models: { name: string }[] };
       // 原样返回本机全部模型，不按名字筛。曾改成「筛出名称含 embed 的、筛空回退全量」，
@@ -225,7 +239,7 @@ async function startOllamaEmbedding({
     throw configError(t('baseUrlQuery'));
   }
   const { baseUrl, model, timeoutMs } = cfg;
-  const service = new OllamaEmbeddingService(baseUrl, model, timeoutMs, cfg.retries);
+  const service = new OllamaEmbeddingService(baseUrl, model, timeoutMs, cfg.retries, lifecycle.use.signal);
 
   // 启动时检查连通性（失败不阻塞，只警告）；停用或停机时中止
   try {
@@ -269,7 +283,8 @@ async function startOllamaEmbedding({
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         await Promise.race([
-          service.embed('ping', { signal: controller.signal }),
+          // 停用、停机时探测随之停下
+          service.embed('ping', { signal: AbortSignal.any([controller.signal, lifecycle.use.signal]) }),
           new Promise<never>((_, reject) => {
             timer = setTimeout(() => {
               const error = new TextError(t('probeTimeout', { ms: probeTimeoutMs }));
@@ -286,6 +301,8 @@ async function startOllamaEmbedding({
           message: t('checkOk', { model, baseUrl }),
         };
       } catch (err) {
+        // 中止不是不可用：抛中止原因
+        lifecycle.use.signal.throwIfAborted();
         return {
           id: checkId,
           category: 'service',
