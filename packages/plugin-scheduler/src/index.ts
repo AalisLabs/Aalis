@@ -835,28 +835,28 @@ async function run(caps: Caps): Promise<void> {
   }
 
   /**
-   * 一次性任务到点（过期分支与未到点分支同一判据，暂停态不执行）：配置里的先记下「任务名 + runAt」、排进写盘，再执行。
-   * 执行途中重载本插件或停机，拆卸等这次写盘落定，之后激活见到记录不再执行
+   * 一次性任务到点（过期分支与未到点分支同一判据，暂停态不执行）：先记下、排进写盘，再执行——配置里的记下「任务名 + runAt」，
+   * 动态的从持久化任务里删掉。执行要等投递、可能很久，途中重载本插件或停机，拆卸等这次写盘落定，之后激活不再执行
    */
   function fireOneShot(rt: JobRuntime): void {
     if (rt.paused) return;
     const { name, runAt } = rt.config;
-    if (configJobNames.has(name) && runAt) {
-      onceFired.set(name, runAt);
-      saveDynamicJobs();
-    }
+    if (!configJobNames.has(name)) dynamicJobs.delete(name);
+    else if (runAt) onceFired.set(name, runAt);
+    saveDynamicJobs();
     executeJob(rt).finally(() => disableOneShot(rt));
   }
 
-  /** 一次性任务执行完后的清理：动态任务直接删除；静态 yaml 任务仅标记 enabled=false */
+  /**
+   * 一次性任务执行完：动态任务执行前已删掉并落盘，这里只撤调度表里的这一条（执行途中同名重建的那条不动），不再写盘；
+   * 静态 yaml 任务仅标记 enabled=false
+   */
   function disableOneShot(rt: JobRuntime): void {
     const jobName = rt.config.name;
-    if (dynamicJobs.has(jobName)) {
+    if (!configJobNames.has(jobName)) {
       if (rt.timer) clearTimeout(rt.timer as unknown as ReturnType<typeof setTimeout>);
       if (rt.cronDispose) rt.cronDispose();
-      runtimes.delete(jobName);
-      dynamicJobs.delete(jobName);
-      saveDynamicJobs();
+      if (runtimes.get(jobName) === rt) runtimes.delete(jobName);
       jobsPage.invalidate();
       logger.use.info(`一次性任务已执行完毕并删除: ${jobName}`);
       return;
