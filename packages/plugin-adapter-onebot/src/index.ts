@@ -1158,10 +1158,10 @@ function runAdapter(caps: Caps): void {
 
   // ----- 版本自动检测 -----
 
-  async function detectProtocol(state: ConnectionState): Promise<OneBotProtocol> {
+  async function detectProtocol(state: ConnectionState): Promise<OneBotProtocol | undefined> {
     // 策略: 先尝试 v11 的 get_version_info，成功则为 v11
     // 失败则尝试 v12 的 get_version，成功则为 v12
-    // 都失败则默认 v11（更常见）
+    // 都失败则为 undefined，由调用方定
     try {
       const data = await sendAction(state, 'get_version_info', {});
       const info = data as Record<string, unknown>;
@@ -1185,9 +1185,7 @@ function runAdapter(caps: Caps): void {
     } catch {
       // 也不可用
     }
-
-    logger.use.warn('OneBot 版本自动检测失败，默认使用 v11 协议');
-    return protocolV11;
+    return undefined;
   }
 
   // ----- PlatformAdapter 实现 -----
@@ -1577,13 +1575,15 @@ function runAdapter(caps: Caps): void {
   async function onConnected(state: ConnectionState): Promise<void> {
     // 1. 如果协议未确定（auto），先检测
     if (!state.protocol) {
-      try {
-        state.protocol = await detectProtocol(state);
-        logger.use.info(`OneBot 协议版本: ${state.protocol.version} (${state.config.url})`);
-      } catch (err) {
-        logger.use.warn(`OneBot 协议检测异常: ${err}，默认使用 v11`);
-        state.protocol = protocolV11;
-      }
+      const ws = state.ws;
+      const detected = await detectProtocol(state);
+      // 检测途中这条连接断了（如实现端回完拒绝回执就断开）：检测失败只因连接已关，不据此定成 v11，下次连上重新检测。
+      // state.ws 只在这条连接关闭之后才换成新连接，看它还开着就够
+      if (ws?.readyState !== WebSocket.OPEN) return;
+      // 连接还在、两种都不认：按更常见的 v11
+      if (!detected) logger.use.warn('OneBot 版本自动检测失败，默认使用 v11 协议');
+      state.protocol = detected ?? protocolV11;
+      logger.use.info(`OneBot 协议版本: ${state.protocol.version} (${state.config.url})`);
     }
 
     // 2. 获取 self info（即使配置已给 selfId，也尝试补齐昵称）

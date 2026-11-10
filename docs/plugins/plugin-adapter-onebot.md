@@ -81,7 +81,7 @@ export default definePlugin({
 
 - **v11**: `post_type`/`message_type`，ID 为 number 类型，`send_private_msg`/`send_group_msg`
 - **v12**: `type`/`detail_type`，ID 为 string 类型，统一 `send_message`，支持 channel/guild
-- **auto**: 连接建立后主动探测，先调用 v11 的 `get_version_info`，成功即采用 v11；失败再调用 v12 的 `get_version`，成功则采用 v12；两者都失败时回退为 v11。协议确定前收到的事件会被丢弃
+- **auto**: 连接建立后主动探测，先调用 v11 的 `get_version_info`，成功即采用 v11；失败再调用 v12 的 `get_version`，成功则采用 v12；连接还在而两者都失败时回退为 v11。探测途中连接断开（如实现端回完拒绝回执就断开）时不定下协议，下次连上重新探测。协议确定前收到的事件会被丢弃
 
 出站消息带 `replyTo`（被引用消息的平台消息 id，见 [schema-message](../api/schema-message.md#outgoingmessage)）时，只给第一条分条加引用段：v11 写作 `{ type: 'reply', data: { id } }`（id 能转成数字的按数字给），v12 写作 `{ type: 'reply', data: { message_id } }`；正文里模型自己写了 `<reply id>` 标记的，以它为准，不加第二个。现在只有 plugin-agent 回复后台任务的结束通知时带它，引用起那次工具调用的消息。
 

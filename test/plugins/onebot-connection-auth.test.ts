@@ -18,6 +18,7 @@ import contributionsPlugin from '../../packages/plugin-contributions/src/index.j
 interface WsSocket {
   send(data: string): void;
   close(): void;
+  on(event: 'message', listener: (raw: Buffer) => void): void;
 }
 type VerifyClient = (
   info: { req: IncomingMessage },
@@ -132,6 +133,52 @@ describe('onebot 连接鉴权', () => {
     expect(w.lines.filter(line => line.includes('1403'))).toEqual([
       `OneBot 实现端报错: ${w.url}，返回码 1403，token验证失败`,
     ]);
+  });
+
+  it('协议为 auto 时首连回完失败回执就断开：检测途中连接断了不定死 v11，下次连上重新检测', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    cleanups.push(() => void vi.useRealTimers());
+    /** 每条连接收到的动作，按连上的先后 */
+    const actions: string[][] = [];
+    const w = await world(url => [{ url }], {
+      onConnection: socket => {
+        const received: string[] = [];
+        actions.push(received);
+        if (actions.length === 1) {
+          socket.send(
+            JSON.stringify({ status: 'failed', retcode: 1403, data: null, message: 'token验证失败', echo: null }),
+          );
+          socket.close();
+          return;
+        }
+        // 之后连上的是 v12 实现：只认 get_version 与 get_self_info
+        socket.on('message', raw => {
+          const { action, echo } = JSON.parse(String(raw)) as { action: string; echo: string };
+          received.push(action);
+          const data =
+            action === 'get_version'
+              ? { impl: 'zz', onebot_version: '12' }
+              : action === 'get_self_info'
+                ? { user_id: '10001', user_name: 'zz-bot' }
+                : undefined;
+          socket.send(
+            JSON.stringify(
+              data
+                ? { status: 'ok', retcode: 0, data, message: '', echo }
+                : { status: 'failed', retcode: 10002, data: null, message: 'unsupported', echo },
+            ),
+          );
+        });
+      },
+    });
+    await until(() => w.lines.some(line => line.startsWith('OneBot 连接断开')), '首连断开');
+    await vi.advanceTimersByTimeAsync(5_000);
+    // 取 self info 是连上后的最后一个动作：v11 叫 get_login_info，v12 叫 get_self_info
+    const selfInfo = () => actions[1]?.some(action => action === 'get_self_info' || action === 'get_login_info');
+    await until(() => selfInfo() ?? false, '重连后取 self info');
+    expect(actions[1]).toEqual(['get_version_info', 'get_version', 'get_self_info']);
+    expect(w.lines).toContain(`OneBot 协议版本: v12 (${w.url})`);
+    expect(w.lines.filter(line => line.includes('版本自动检测失败'))).toEqual([]);
   });
 
   it('握手被拒（如 HTTP 401）：记下状态码后立即断开，不等连接超时', async () => {
