@@ -131,9 +131,6 @@ export interface SecretStoreInit {
 }
 
 /**
- * @param secrets 宿主的密钥存储；不给时没有密钥存储（嵌入式宿主、只在内存里的配置），密钥照旧以明文留在文档里
- */
-/**
  * 写进文档的值（set 与 setPluginConfig 共用）：整份深复制，调用方之后改入参写不穿文档，函数这类复制不了的值在这里就抛给
  * 写入方；再按配置拷贝规则滤掉落到原型链的键，外来对象（WebUI 请求体、工具参数）里 JSON 解出的 __proto__ 等不进文档
  */
@@ -141,6 +138,9 @@ function intoDocument<T>(value: T): T {
   return cloneConfigObject({ value: structuredClone(value) }).value as T;
 }
 
+/**
+ * @param secrets 宿主的密钥存储；不给时没有密钥存储（嵌入式宿主、只在内存里的配置），密钥照旧以明文留在文档里
+ */
 export function createConfigStore(
   initial: Partial<AalisConfig>,
   provider?: ConfigProvider,

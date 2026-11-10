@@ -117,13 +117,11 @@ export default definePlugin({
 
 ## 消费方式：用宽区间，别用 caret
 
-仓内五十余个包这样依赖本包（与 `@aalis/core` 的 peerDep 同一风格）：
+依赖本包时写宽区间（与 `@aalis/core` 的 peerDep 同一风格），下界写用到的功能最早出现的版本：
 
 ```jsonc
-"dependencies": { "@aalis/schema-config": "workspace:>=0.9.0 <1.0.0" }
+"dependencies": { "@aalis/schema-config": ">=0.16.0 <1.0.0" }
 ```
-
-发布时该区间**原样保留**（实测 `pnpm pack` 产物即 `>=0.9.0 <1.0.0`），本地仍照常 link 到 workspace。
 
 **不要用 caret。** 0.x 的 caret（`^0.9.0` = `>=0.9.0 <0.10.0`）锁死 minor：本包加一个字段类型
 就是一次 minor，届时所有已发布消费者的范围会拒收新版，node_modules 里出现两份副本——而

@@ -88,7 +88,7 @@ export interface StartAalisOptions {
   /** 覆盖 dev/prod 判定，默认按 NODE_ENV !== 'production' */
   devMode?: boolean;
   /**
-   * 插件配置同步政策（defaultConfig 回填 / schema 裁剪 / 热重载）。
+   * 插件配置同步政策（schema 默认值回填 / 未知字段裁剪 / 热重载）。
    * `trimUnknownFields=false` 时保留 configSchema 之外的未知字段（默认裁剪）。
    */
   configSync?: ConfigSyncOptions;

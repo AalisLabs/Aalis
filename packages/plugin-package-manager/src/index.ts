@@ -241,10 +241,6 @@ function createService(caps: Caps): PackageManagerService {
     idle: () => caps.plugins.use.idle(),
     // 重启并交付回滚凭据。core 只透传 rollback（不解释形状），由 runtime 的重启策略
     // 在「新实例 ready 前夭折」时消费——触发者与执行者同为父进程，全程内存不落盘。
-    //
-    // `restart(opts)` 收参数是 core **0.10.0** 才有的；0.9.x 的 `restart()` 不收参数，
-    // 多传的对象被静默丢弃 —— 不报错、不告警，只是更新失败后重启起来的是坏版本，
-    // 回滚安全网整个不存在。故 peerDependencies 下界必须是 `>=0.10.0`，不能沿用 0.2.0。
     restartApp: rollback => caps.app.use.restart({ rollback }),
     // 彻底卸载：dispose 上下文并从注册表移除。
     // 区别于 disable（仅置禁用态，仍滞留在插件列表里）。
@@ -291,7 +287,7 @@ function createService(caps: Caps): PackageManagerService {
 export interface PackageManagerDeps {
   proc: ProcessService;
   log: { info(msg: string): void; error(msg: string): void };
-  /** 项目根绝对路径（= `<cwd>`）：根 package.json 读取、npm 的 cwd。 */
+  /** 安装集目录的绝对路径（宿主 host-paths 的 `app`）：根 package.json 读取、npm 的 cwd。 */
   projectRoot(): string;
   /** 读文本文件；不存在或读失败返回 undefined。注入以便单测。 */
   readText(absPath: string): Promise<string | undefined>;
@@ -831,9 +827,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     const { specs } = built;
 
     const root = deps.projectRoot();
-    // 没有「项目形态」这一层判断了：能不能更新是**每个包自己的来源**说了算（下面的
-    // isRegistryDep 闸），不是整个项目的属性。旧写法拿 `pnpm-workspace.yaml` 是否存在
-    // 当整体开关，既挡掉了工作区项目里合法的 npm 依赖，也与真正生效的加载器无因果关系。
+    // 能不能更新是**每个包自己的来源**说了算（下面的 isRegistryDep 闸），不是整个项目的属性。
     const rootPkgPath = `${root}/package.json`;
     const rootPkgText = await deps.readText(rootPkgPath);
     if (rootPkgText === undefined) return { ok: false, message: t('noRootPackage', { path: rootPkgPath }) };

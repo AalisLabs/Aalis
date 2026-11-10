@@ -141,7 +141,7 @@ profile 只由 `--profile` 与 `AALIS_PROFILE` 给出：经 `--data` 或 `AALIS_
 0. **数据目录与安装集**：解析数据目录（见「数据目录」），处理 `--init`，没初始化就退出；没传插件加载器而安装集里没有 `package.json` 时也退出。
 1. **实例锁**：守护模式取实例锁（见「实例锁」），被占用就退出。之后才装日志 sink、写日志：第二个实例不会把正在用的 `latest.log` 轮转走。
 2. **文档与密钥**：`createFsYamlConfigProvider(<数据目录>/aalis.config.yaml)` 读 YAML，`createFsSecretsProvider(<数据目录>/secrets.yaml)` 读密钥，`createConfigStore(config, provider, secrets)` 建配置文档。任一文件写坏或读不了时一行报错退出（exit 1），报错不含文件内容。
-3. **App**：`new App({ name, logLevel, restartStrategy, devMode, now, version })`，`name` 与 `logLevel` 取自文档。子命令模式不注入重启策略。
+3. **App**：`new App({ name, logLevel, slowThresholdMs, restartStrategy, devMode, version })`，`name`、`logLevel` 与 `slowThresholdMs` 取自文档，后两个按 `CORE_CONFIG_SCHEMA` 判定、不合法的告警后交给 core 默认。子命令模式不注入重启策略。
 4. **host-paths、host-logs 与 host-config**：在根上独占提供 `host-paths` 与 `host-logs`（`createHostLogs`：历史读本轮的 `logs/latest.log`，实时接默认日志中枢；子命令模式不写文件日志，没有历史），再 `installHostConfig(app, store, opts.configSync)`。文档里的服务偏好在全部提供者上线之前生效。
 5. **加载政策**：`withPluginConfigSync(app, store, opts.configSync)` 建配置同步。
 6. **发现**：`createPluginDiscovery(app, loader, store, <配置同步>)` 建发现驱动（加载器缺省 `createNodeModulesPluginLoader(<安装集>)`，配置同步经 `prepare` 挂上），`startAalis` 以它的 `rescan` 与 `loaded` 在根上独占提供 `plugin-source`；`loadAll()` 整批登记全部插件，首批规范化结果在登记前落盘一次。子命令模式在此分发并退出，否则 `app.start()`。

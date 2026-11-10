@@ -11,9 +11,7 @@ import type { TextRef } from '@aalis/schema-i18n';
 /**
  * 包管理服务：在项目根 `dependencies` 里装卸插件。
  *
- * 根 `dependencies` 是加载器**唯一**的发现来源，所以装卸都落在那里——不再有「解包到
- * packages/ 目录」那条路径（它按 `pnpm-workspace.yaml` 猜部署形态，而那个文件与真正
- * 生效的加载器无因果关系，猜错时会把包装进加载器永不查看的地方并静默失败）。
+ * 根 `dependencies` 是加载器**唯一**的发现来源，所以装卸都落在那里。
  *
  * 这些操作涉及子进程（npm），不属于 core 内核职责，因此从 App 抽出到独立插件；
  * 底层子进程统一走 api-process。
