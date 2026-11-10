@@ -161,8 +161,8 @@ function cssSize(png: Uint8Array, scale: number): { width: number; height: numbe
 /** 本插件在会话媒体目录里的子目录名（写入方） */
 const MEDIA_WRITER = 'draw';
 
-// 四项服务都是 optional：缺 tools、hooks 时登记排队，缺 storage/process 时落盘与编码在调用点报错、清理不出回执，
-// 插件本身照常激活（离线渲染不依赖它们启动）。
+// 五项服务都是 optional：缺 tools、hooks、contributions 时登记排队，缺 storage/process 时落盘与编码在调用点报错、
+// 清理不出回执，插件本身照常激活（离线渲染不依赖它们启动）。
 const uses = {
   tools: optional(tools),
   storage: optional(storage),
