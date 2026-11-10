@@ -35,8 +35,9 @@
 - @aalis/runtime（破坏性）：删掉退出时的终端复原（`installTerminalStateRestorer`、`restoreTerminalState` 与 `startAalis` 的 `terminalRestore`），改终端模式的插件（终端界面）在停用与进程退出时自己复原。
 - @aalis/runtime：关掉所在的终端（SIGHUP）时走完停机、以 0 退出；以 `--service` 运行时 `kill -HUP` 同样走完停机、以 0 退出。按 Ctrl+C 开始停机时在 stderr 提示改按 Ctrl+\（Windows 为 Ctrl+Break）当场退出；停机途中再按 Ctrl+C 不打断停机。
 - @aalis/runtime：stdout、stderr 写出错 EIO 或 EPIPE（终端已挂断、管道的读端已走）时与 SIGHUP 一样走完停机，此后的写不再报错；以 `--service` 运行时以 75 退出、由服务管理器重新启动进程，否则以 0 退出。respawn 出来的后代自成会话，关掉终端时收不到 SIGHUP，原来之后写日志得到 EIO 就以 1 退出、不经停机。
-- @aalis/plugin-package-manager（破坏性）：插件 id 就是包名，不再为取定义名另外 import 插件入口，`declaresPlugin` 移到 `@aalis/api-plugin-source`、本包不再导出；`PackageManagerDeps` 去掉 `resolveDefinitionName` 与 `log.warn`，其余成员一律必填（原来可选的 `pluginStatus`、`availableServices`、`idle`、`recoveryChannelProviders`、`cleanupConfig`、`listPluginInstanceIds`、`restartApp` 各带一段缺省兜底）。插件名被宿主直接登记的插件占着时，安装回执写明、未加载（`ok` 为 false），不再报已安装并加载；卸载这样的包只卸包，不卸那个插件、不动它的配置。新增 peerDependencies `@aalis/runtime >=0.20.0`：runtime 低于 0.20.0 时装不上、也更新不到本版。
+- @aalis/plugin-package-manager（破坏性）：插件 id 就是包名，不再为取定义名另外 import 插件入口，`declaresPlugin` 移到 `@aalis/api-plugin-source`、本包不再导出；`PackageManagerDeps` 去掉 `resolveDefinitionName`，新增必填的 `signal`（本插件这次激活的中止信号），其余成员一律必填（原来可选的 `pluginStatus`、`availableServices`、`idle`、`recoveryChannelProviders`、`cleanupConfig`、`listPluginInstanceIds`、`restartApp` 各带一段缺省兜底）。插件名被宿主直接登记的插件占着时，安装回执写明、未加载（`ok` 为 false），不再报已安装并加载；卸载这样的包只卸包，不卸那个插件、不动它的配置。新增 peerDependencies `@aalis/runtime >=0.20.0`：runtime 低于 0.20.0 时装不上、也更新不到本版。
 - @aalis/plugin-package-manager：安装、卸载与更新认同一套包名与版本写法，带构建元数据的版本（如 `foo@1.0.0+build`）能装了，原来只能更新、安装时报非法包名。
+- @aalis/plugin-package-manager：本插件停用、重启或停机时打断在途的 npm（装、卸、更新与更新的预检）。已经动过文件的，等 npm 退出后把 package.json 与锁文件还原到操作前（原本没有锁文件的删掉），回执 `ok` 为 false，写明没有生效、node_modules 可能不一致时在安装目录执行 `npm install` 即可对齐；收尾等还原做完，新实例在此之前不起，不再与旧实例的 npm 同时改这两份文件。原来停用、重启时 npm 照常跑到完，新实例可以另起一个；停机时 npm 被结束，两份文件不还原。
 - @aalis/plugin-package-manager：更新装完而宿主不能重启（没有重启策略、或应用已开始停机）时，回执写明已更新、不能自动重启的原因，手动重启后生效（`restarting` 为 false），之后的装卸照常受理；原来更新以错误结束，包管理一直报「正在进行中」，直到重启。
 
 ### 计划任务与工作流

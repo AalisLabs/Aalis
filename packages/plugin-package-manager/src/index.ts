@@ -15,6 +15,7 @@ import {
   appService,
   type BoundOf,
   definePlugin,
+  lifecycle,
   logger,
   optional,
   type PluginStatusEntry,
@@ -49,9 +50,9 @@ async function execProc(
   cmd: string,
   args: string[],
   cwd: string,
-  timeout: number = QUICK_TIMEOUT_MS,
+  signal: AbortSignal,
 ): Promise<string> {
-  return (await execProcBoth(proc, cmd, args, cwd, timeout)).stdout;
+  return (await execProcBoth(proc, cmd, args, cwd, QUICK_TIMEOUT_MS, undefined, signal)).stdout;
 }
 
 /** 同 {@link execProc}，但同时给出 stderr——npm 的诊断（含 peer 告警）都写在 stderr。 */
@@ -61,12 +62,14 @@ async function execProcBoth(
   args: string[],
   cwd: string,
   timeout: number = QUICK_TIMEOUT_MS,
-  extraEnv?: Record<string, string>,
+  extraEnv: Record<string, string> | undefined,
+  signal: AbortSignal,
 ): Promise<{ stdout: string; stderr: string }> {
   try {
     const result: ExecResult = await proc.execFile(cmd, args, {
       cwd,
       timeout,
+      signal,
       ...(extraEnv ? { env: { ...process.env, ...extraEnv } } : {}),
     });
     return { stdout: result.stdout, stderr: result.stderr ?? '' };
@@ -201,6 +204,7 @@ export function validatePackageSpec(spec: unknown): TextRef | undefined {
 const uses = {
   proc: processService,
   paths: hostPaths,
+  lifecycle,
   logger,
   provide,
   services,
@@ -215,9 +219,10 @@ function createService(caps: Caps): PackageManagerService {
   const log = caps.logger.use;
   const proc = caps.proc.use;
 
-  return createPackageManager({
+  const { settled, ...service } = createPackageManager({
     proc,
     log: log,
+    signal: caps.lifecycle.use.signal,
     // 装到宿主的安装集：与插件加载器读的是同一份 package.json，否则装了永远不加载
     projectRoot: () => caps.paths.use.app,
     // 经 process 服务的 readExternalFile 读，而非 node:fs：目标（项目根 package.json、
@@ -281,12 +286,20 @@ function createService(caps: Caps): PackageManagerService {
       await doc.save();
     },
   });
+  // 停用、重启与停机时中止信号已打断在途的 npm：等它退出、被打断的把 package.json 与锁文件还原之后才算收尾完。超过清理宽限
+  // 还没落定时 core 把本实例记为未停下，落定之前不启动新实例，新实例的 npm 不会与旧实例的 npm 或还原同时改这两份文件
+  caps.lifecycle.use.onDrain(settled, '等在途的 npm 退出，被打断的还原 package.json 与锁文件');
+  return service;
 }
 
 /** install/uninstall 的显式依赖（从服务选择解耦，便于集成测试） */
 export interface PackageManagerDeps {
   proc: ProcessService;
-  log: { info(msg: string): void; error(msg: string): void };
+  log: { info(msg: string): void; warn(msg: string): void; error(msg: string): void };
+  /**
+   * 本插件这次激活的中止信号：停用、重启与停机时断开，交给 npm，打断在途的操作。断开之后不再受理新操作
+   */
+  signal: AbortSignal;
   /** 安装集目录的绝对路径（宿主 host-paths 的 `app`）：根 package.json 读取、npm 的 cwd。 */
   projectRoot(): string;
   /** 读文本文件；不存在或读失败返回 undefined。注入以便单测。 */
@@ -552,8 +565,8 @@ export function findUnmetPeers(output: string, targetNames: readonly string[]): 
  * node_modules——不经 storage 沙盒。
  * 能力组装层见 createService。
  */
-export function createPackageManager(deps: PackageManagerDeps): PackageManagerService {
-  const { proc, log } = deps;
+export function createPackageManager(deps: PackageManagerDeps): PackageManagerService & { settled(): Promise<void> } {
+  const { proc, log, signal } = deps;
 
   /**
    * 当前占用的操作描述；`null` = 空闲。
@@ -575,25 +588,52 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
    * 它会被 `process.exit` 腰斩在半路，留下半装状态。
    */
   let terminal = false;
+  /** 在途操作落定（npm 退出，被打断的已还原两份文件）；本激活收尾时等它，见 settled */
+  let current: Promise<void> = Promise.resolve();
 
   /**
    * 串行闸：占用中直接**拒绝**而非排队。
    *
    * 拒绝而非排队的决定性理由：update 成功后进程立即重启，排在它后面的操作必然被腰斩。
    * 排队在这里是错的语义——「一次一个」才是这三个操作的真实约束。
+   * 本激活已开始关闭时同样拒绝：收尾段里服务还登记着，这时进来的请求不再启动 npm。
    */
   async function exclusive<T extends Pick<InstallResult, 'ok' | 'message'>>(
     what: TextRef,
     run: () => Promise<T>,
   ): Promise<T> {
+    if (signal.aborted) return { ok: false, message: t('closing') } as T;
     if (inflight) {
       return { ok: false, message: t('busy', { operation: inflight }) } as T;
     }
     inflight = what;
+    const running = run();
+    current = running.then(
+      () => {},
+      () => {},
+    );
     try {
-      return await run();
+      return await running;
     } finally {
       if (!terminal) inflight = null;
+    }
+  }
+
+  /**
+   * 等 work 落定，本激活一开始关闭就不再等（work 照常往下走）。收尾在等本操作落定（onDrain），而 idle、卸载本插件选中的
+   * 提供者都要等这次收尾所在的计划走完：不这样两边互等到清理宽限。等完摘掉监听，不挂在长寿的信号上
+   */
+  async function untilClosing(work: Promise<unknown>): Promise<void> {
+    if (signal.aborted) return;
+    let stopWaiting!: () => void;
+    const aborted = new Promise<void>(resolve => {
+      stopWaiting = resolve;
+    });
+    signal.addEventListener('abort', stopWaiting, { once: true });
+    try {
+      await Promise.race([work, aborted]);
+    } finally {
+      signal.removeEventListener('abort', stopWaiting);
     }
   }
 
@@ -605,8 +645,10 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     extraEnv?: Record<string, string>,
   ): Promise<string> {
     try {
-      return (await execProcBoth(proc, 'npm', args, cwd, timeout, extraEnv)).stdout;
+      return (await execProcBoth(proc, 'npm', args, cwd, timeout, extraEnv, signal)).stdout;
     } catch (err) {
+      // 随本激活关闭被中止的不算失败：调用方按中止回执
+      if (signal.aborted) throw err;
       const output = err instanceof Error ? err.message : String(err);
       log.error(`npm ${args.join(' ')} 失败: ${output}`);
       throw new TextError(describeNpmFailure(output));
@@ -618,7 +660,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
   function registry(): Promise<string> {
     if (!registryUrl) {
       // 与 install / update 同一 cwd：项目根的 .npmrc 一并生效
-      registryUrl = execProc(proc, 'npm', ['config', 'get', 'registry'], deps.projectRoot()).then(out => {
+      registryUrl = execProc(proc, 'npm', ['config', 'get', 'registry'], deps.projectRoot(), signal).then(out => {
         const url = out.trim().replace(/\/+$/, '');
         if (!/^https?:\/\/\S+$/i.test(url)) {
           throw new Error(`npm config get registry 的输出不是 http(s) 地址: ${JSON.stringify(out.trim())}`);
@@ -632,12 +674,15 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     return registryUrl;
   }
 
-  /** 路径存在性：`test -d|-f <abs>`（不存在 → exit 1 → 抛 → false）。绝对路径，cwd 无关。 */
+  /**
+   * 路径存在性：`test -d|-f <abs>`（不存在 → exit 1 → 抛 → false）。绝对路径，cwd 无关。被本激活中止时照抛，不读成「没有」
+   */
   async function pathExists(absPath: string, kind: 'd' | 'f'): Promise<boolean> {
     try {
-      await proc.execFile('test', [`-${kind}`, absPath], { cwd: deps.projectRoot(), timeout: 10_000 });
+      await proc.execFile('test', [`-${kind}`, absPath], { cwd: deps.projectRoot(), timeout: 10_000, signal });
       return true;
-    } catch {
+    } catch (err) {
+      if (signal.aborted) throw err;
       return false;
     }
   }
@@ -651,6 +696,83 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * 操作前的 package.json 与锁文件（RestartRollback 的 restore 形状）：被打断时由本插件写回，更新成功时原样交给重启策略作回滚。
+   * 原本没有的记为「写回时删掉」：npm install 会新建锁文件，回滚只写回不删的话，留着它会让 postRestore 判定新版仍满足
+   * 还原后的范围、`up to date` 什么都不做；用空内容占位也不行（会得到坏 JSON）。readText 不分不存在与读失败：读不到的再看
+   * 在不在，在而读不出的不启动 npm，免得记成「原本没有」、还原时把它删掉。取不到快照（在而读不出，或查在不在时被中止）时交回
+   * 回执，与 npmOnTree 同一口径：都还没动文件
+   */
+  async function snapshotProject(root: string): Promise<RestartRollback['restore'] | TextRef> {
+    const files: RestartRollback['restore'] = [];
+    for (const path of [`${root}/package.json`, `${root}/package-lock.json`]) {
+      const content = await deps.readText(path);
+      if (content !== undefined) {
+        files.push({ path, content });
+        continue;
+      }
+      // pathExists 只在被中止时抛
+      const exists = await pathExists(path, 'f').catch(() => null);
+      if (exists === null) return t('abortedNoChange');
+      if (exists) return t('snapshotUnreadable', { path });
+      files.push({ path, content: '', deleteIfEmpty: true });
+    }
+    return files;
+  }
+
+  /**
+   * 把 snapshot 写回（npm 已退出，不会在写回之后再写一遍）。经 process 服务：先 tee 到临时文件再 mv 换上，写到一半出错时
+   * 目标仍是 npm 留下的那份、不是半截。这几条命令不接中止信号：写回本身就是中止之后的收尾。返回没还原成的那几份与原因
+   */
+  async function restoreProject(
+    snapshot: RestartRollback['restore'],
+    root: string,
+  ): Promise<Array<{ path: string; error: string }>> {
+    const run = (cmd: string, args: string[], input?: string) =>
+      proc.execFile(cmd, args, { cwd: root, timeout: 10_000, ...(input === undefined ? {} : { input }) });
+    const failed: Array<{ path: string; error: string }> = [];
+    for (const file of snapshot) {
+      const tmp = `${file.path}.aalis-restore`;
+      try {
+        if (file.deleteIfEmpty && file.content === '') await run('rm', ['-f', file.path]);
+        else {
+          await run('tee', [tmp], file.content);
+          await run('mv', ['-f', tmp, file.path]);
+        }
+      } catch (err) {
+        failed.push({ path: file.path, error: err instanceof Error ? err.message : String(err) });
+        await run('rm', ['-f', tmp]).catch(() => {});
+      }
+    }
+    return failed;
+  }
+
+  /**
+   * 跑一条会改安装树的 npm（install、uninstall）。本激活关闭时随中止信号打断：等它退出后把 package.json 与锁文件写回
+   * snapshot，返回中止的回执（warn 日志同样写明）；执行完毕返回 undefined，npm 自己失败照常抛出。开始执行之前已中止的不跑
+   */
+  async function npmOnTree(
+    args: string[],
+    root: string,
+    snapshot: RestartRollback['restore'],
+    extraEnv?: Record<string, string>,
+  ): Promise<TextRef | undefined> {
+    if (signal.aborted) return t('abortedNoChange');
+    try {
+      await npm(args, root, INSTALL_TIMEOUT_MS, extraEnv);
+      return undefined;
+    } catch (err) {
+      if (!signal.aborted) throw err;
+    }
+    const failed = await restoreProject(snapshot, root);
+    const message =
+      failed.length === 0
+        ? t('interrupted')
+        : t('interruptedRestoreFailed', { items: failed.map(f => t('restoreFailedItem', f)) });
+    log.warn(`npm ${args.join(' ')} 随本插件停用被中止：${toSource(message)}（安装目录 ${root}）`);
+    return message;
   }
 
   /**
@@ -706,7 +828,8 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // rescan 只当副作用用（让加载器发现新包），**不看返回值**——判据是目标自身是否就位。
     await deps.rescanPlugins();
     if (deps.loaded(target)) {
-      await deps.idle();
+      // 回执按等完（或不再等）时读到的状态写
+      await untilClosing(deps.idle());
       const main = deps.pluginStatus().find(p => p.instanceId === target);
       const settled = (message: TextRef): InstallResult => ({ ok: true, message, plugin: target });
       switch (main?.state) {
@@ -742,7 +865,14 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     if (hasWorkspaceProtocol(rootPkg)) {
       return { ok: false, message: t('workspaceInstall') };
     }
-    const refused = await installKindRefusal(npmPkg, root);
+    let refused: TextRef | undefined;
+    try {
+      refused = await installKindRefusal(npmPkg, root);
+    } catch (err) {
+      // 查类型的 npm view 被中止：还没动文件
+      if (signal.aborted) return { ok: false, message: t('abortedNoChange') };
+      throw err;
+    }
     if (refused) return { ok: false, message: refused };
     log.info(`正在安装: ${npmPkg} → 根依赖 + node_modules`);
     // **刻意不加 `--ignore-scripts`**：依赖树的 preinstall/install/postinstall 会照常执行。
@@ -753,7 +883,10 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     //
     // peer 护栏与更新预检相同（STRICT_PEERS_ENV）。代价：本就靠 legacy-peer-deps 容忍既有
     // peer 冲突的项目，市场安装会整体失败，故失败文案要点明原因（见 describeNpmFailure）。
-    await npm(['install', npmPkg, '--no-audit', '--no-fund'], root, INSTALL_TIMEOUT_MS, STRICT_PEERS_ENV);
+    const snapshot = await snapshotProject(root);
+    if (!Array.isArray(snapshot)) return { ok: false, message: snapshot };
+    const stopped = await npmOnTree(['install', npmPkg, '--no-audit', '--no-fund'], root, snapshot, STRICT_PEERS_ENV);
+    if (stopped) return { ok: false, message: stopped };
     const bare = stripVersion(npmPkg);
     return settleInstall(npmPkg, `${root}/node_modules/${bare}/package.json`, 'node_modules');
   }
@@ -787,10 +920,10 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     try {
       // 直接 cp 现有文件，不重新写内容——与本插件其余文件操作同一路子（走 process 服务的
       // POSIX 命令），也省掉一个只为此处存在的写原语。
-      await execProc(proc, 'cp', [`${root}/package.json`, `${tmp.path}/package.json`], tmp.path);
+      await execProc(proc, 'cp', [`${root}/package.json`, `${tmp.path}/package.json`], tmp.path, signal);
       const lock = `${root}/package-lock.json`;
       if (await pathExists(lock, 'f')) {
-        await execProc(proc, 'cp', [lock, `${tmp.path}/package-lock.json`], tmp.path);
+        await execProc(proc, 'cp', [lock, `${tmp.path}/package-lock.json`], tmp.path, signal);
       }
       let output: { stdout: string; stderr: string };
       try {
@@ -801,8 +934,10 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
           tmp.path,
           INSTALL_TIMEOUT_MS,
           STRICT_PEERS_ENV,
+          signal,
         );
       } catch (err) {
+        if (signal.aborted) throw err;
         // 非零退出：npm 判定 peer 无解（ERESOLVE 等）时报冲突要点；别的失败（连不上源等）不是冲突，抛出原因与修法
         const raw = err instanceof Error ? err.message : String(err);
         const conflicts = extractPeerConflicts(raw);
@@ -881,24 +1016,15 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     try {
       verdict = await preflightInSandbox(specs, root);
     } catch (err) {
+      if (signal.aborted) return { ok: false, message: t('abortedNoChange') };
       return { ok: false, message: t('preflightFailed', { error: textOf(err) }) };
     }
     if (verdict) return reject(verdict);
 
     // ── 快照：预检过了才有必要 ──
-    // lockfile 与 package.json 必须一起回退，否则还原后的树是「声明旧版、锁定新版」。
-    const restore: RestartRollback['restore'] = [{ path: rootPkgPath, content: rootPkgText }];
-    const lockPath = `${root}/package-lock.json`;
-    const lockText = await deps.readText(lockPath);
-    if (lockText !== undefined) {
-      restore.push({ path: lockPath, content: lockText });
-    } else {
-      // 原本没有 lockfile（pnpm/yarn 装的工程），而 npm install 会**新建**一个锁到新版。
-      // 回滚只能写回文件、不能删除新增文件，留着它会让 postRestore 判定新版仍满足还原后的
-      // 范围 → `up to date` → node_modules 纹丝不动。用空内容占位不行（会得到坏 JSON），
-      // 故记为「回滚时删掉它」，把工程还原成它原本无锁的样子。
-      restore.push({ path: lockPath, content: '', deleteIfEmpty: true });
-    }
+    // lockfile 与 package.json 必须一起回退，否则还原后的树是「声明旧版、锁定新版」。被打断时本插件按它写回，装完交给重启策略
+    const restore = await snapshotProject(root);
+    if (!Array.isArray(restore)) return { ok: false, message: restore };
 
     // 装之前记下整棵树的实装版本。回滚不能只钉被点名的包：npm 会顺带把**传递依赖**升上去
     // （新版把某个依赖的下界抬高了），而回滚时 `npm install <被点名的包>@<旧版>` 只会
@@ -914,7 +1040,8 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // ── 提交 ──
     // 预检在副本里做，live tree 此刻**未被任何 dry-run 触碰**，可以直接装。
     try {
-      await npm(['install', ...specs, '--no-audit', '--no-fund'], root, INSTALL_TIMEOUT_MS);
+      const stopped = await npmOnTree(['install', ...specs, '--no-audit', '--no-fund'], root, restore);
+      if (stopped) return { ok: false, message: stopped };
     } catch (err) {
       return { ok: false, message: t('installFailedRetry', { error: textOf(err) }) };
     }
@@ -982,6 +1109,8 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     serviceDependents: dependentsOf,
 
     registry,
+
+    settled: () => current,
   };
 
   /**
@@ -1069,9 +1198,12 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     }
 
     try {
-      await npm(['uninstall', pluginName, '--no-audit', '--no-fund'], root, INSTALL_TIMEOUT_MS);
-      // 从运行时注册表彻底移除（dispose + delete），幂等
-      for (const id of instanceIds) await deps.unloadPlugin(id);
+      const snapshot = await snapshotProject(root);
+      if (!Array.isArray(snapshot)) return { ok: false, message: snapshot };
+      const stopped = await npmOnTree(['uninstall', pluginName, '--no-audit', '--no-fund'], root, snapshot);
+      if (stopped) return { ok: false, message: stopped };
+      // 从运行时注册表彻底移除（dispose + delete），幂等。卸的可能正是本插件选中的提供者，本激活随之关闭时不再等
+      for (const id of instanceIds) await untilClosing(deps.unloadPlugin(id));
     } catch (err) {
       return { ok: false, message: textOf(err) };
     }

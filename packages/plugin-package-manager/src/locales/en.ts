@@ -31,6 +31,15 @@ export default defineLocale<Source>()({
     'npm failed: {error}. The full output is in the logs; see https://aalis.acenyan.com/guide/troubleshooting for common causes and fixes',
   needsPeer: '{dependent} needs {peer}',
   busy: 'A package operation is in progress ({operation}); retry in a moment',
+  closing: 'The package manager is shutting down',
+  abortedNoChange: 'Stopped; nothing was changed',
+  interrupted:
+    'Stopped before it took effect: package.json and the lockfile were restored to how they were before; node_modules may not match them, so run npm install in the install directory to bring it in line (any later install, uninstall or update from the market does that too)',
+  interruptedRestoreFailed:
+    'Stopped, but these files could not be restored to how they were before and must be restored by hand: {items, list}; node_modules may not match package.json and the lockfile, so after restoring them run npm install in the install directory to bring it in line',
+  restoreFailedItem: '{path} ({error})',
+  snapshotUnreadable:
+    'Nothing changed: {path} exists but could not be read; npm is not run without its pre-operation copy',
   opUpdate: 'updating {names, list}',
   opInstall: 'installing {name}',
   opUninstall: 'uninstalling {name}',

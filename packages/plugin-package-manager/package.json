@@ -51,6 +51,7 @@
       "required": [
         "app",
         "host-paths",
+        "lifecycle",
         "logger",
         "plugins",
         "process",

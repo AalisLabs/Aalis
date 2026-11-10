@@ -100,7 +100,8 @@ describe('包管理自己的失败原因按全局层的语言', () => {
           return result;
         },
       } as never,
-      log: { info() {}, error() {} },
+      log: { info() {}, warn() {}, error() {} },
+      signal: new AbortController().signal,
       projectRoot: () => ROOT,
       readText: async path => (path in files ? JSON.stringify(files[path]) : undefined),
       rescanPlugins: async () => [],

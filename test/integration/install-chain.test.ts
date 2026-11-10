@@ -104,7 +104,8 @@ function passKindGate(keywords: string[]): PackageManagerDeps['proc'] {
 function makePm(projectRoot: string, restarts: unknown[] = [], proc: PackageManagerDeps['proc'] = realProc) {
   return createPackageManager({
     proc,
-    log: { info: () => {}, error: () => {} },
+    log: { info: () => {}, warn: () => {}, error: () => {} },
+    signal: new AbortController().signal,
     projectRoot: () => projectRoot,
     readText: async p => {
       try {

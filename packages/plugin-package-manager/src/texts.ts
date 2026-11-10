@@ -28,6 +28,14 @@ const SOURCE = {
   npmOther: 'npm 出错：{error}。完整输出在日志里，常见原因与修法见 https://aalis.acenyan.com/guide/troubleshooting',
   needsPeer: '{dependent} 需要 {peer}',
   busy: '有包管理操作正在进行中（{operation}），请稍候重试',
+  closing: '包管理正在停用',
+  abortedNoChange: '已中止，没有改动',
+  interrupted:
+    '已中止，没有生效：package.json 与锁文件已还原到操作前；node_modules 可能与它们不一致，在安装目录执行 npm install 即可对齐（之后任何一次市场的装、卸、更新也会顺带对齐）',
+  interruptedRestoreFailed:
+    '已中止，但这些文件没能还原到操作前，需要手动恢复：{items, list}；node_modules 可能与 package.json、锁文件不一致，恢复之后在安装目录执行 npm install 即可对齐',
+  restoreFailedItem: '{path}（{error}）',
+  snapshotUnreadable: '没有改动：{path} 在却读不出，取不到操作前的那份就不启动 npm',
   opUpdate: '更新 {names, list}',
   opInstall: '安装 {name}',
   opUninstall: '卸载 {name}',

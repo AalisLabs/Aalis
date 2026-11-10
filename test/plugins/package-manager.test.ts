@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { getEventListeners } from 'node:events';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -9,6 +10,7 @@ import {
   type App,
   definePlugin,
   defineService,
+  type Logger,
   lifecycle,
   type PluginState,
   provide,
@@ -133,10 +135,12 @@ function makeHarness(
     proc,
     log: {
       info: () => {},
+      warn: () => {},
       error: (msg: string) => {
         opts.errors?.push(msg);
       },
     },
+    signal: new AbortController().signal,
     projectRoot: () => ROOT,
     readText: async abs => {
       if (opts.text && abs in opts.text) return opts.text[abs];
@@ -1386,6 +1390,13 @@ afterEach(async () => {
   for (const app of productionApps.splice(0)) await app.stop().catch(() => {});
 });
 
+/** 读真实文件的 process 替身里，test -f 按真实文件系统答（不在时以 1 退出），与 readExternalFile 读到的一致 */
+function testOnDisk(cmd: string, args: readonly string[]): void {
+  if (cmd === 'test' && !existsSync(args[1] ?? '')) {
+    throw Object.assign(new Error('test: 不存在'), { result: { stdout: '', stderr: '', code: 1 } });
+  }
+}
+
 /** 插件来源替身：注册表里的插件都当作经它从同名的包加载的，与发现驱动登记的插件一样 */
 function provideLoadedSource(app: App) {
   app.bind({ provide }).provide.use(pluginSource, {
@@ -1401,7 +1412,13 @@ function mockProcess(files: Record<string, string>) {
       if (text === undefined) throw new Error(`ENOENT ${abs}`);
       return new TextEncoder().encode(text);
     },
-    execFile: async () => ({ stdout: '', stderr: '', code: 0 }),
+    // test -f 按同一张文件表答（不在时以 1 退出），其余命令一律成功
+    execFile: async (cmd: string, args: readonly string[]) => {
+      if (cmd === 'test' && files[args[1] ?? ''] === undefined) {
+        throw Object.assign(new Error('test: 不存在'), { result: { stdout: '', stderr: '', code: 1 } });
+      }
+      return { stdout: '', stderr: '', code: 0 };
+    },
     makeTempDir: async () => ({ path: '/tmp/fake-pm', cleanup: async () => undefined }),
   };
 }
@@ -1668,11 +1685,10 @@ describe('生产接线：装卸按插件名（即包名），卸载清理全部�
       });
       host.provide.use(defineService<object>('process'), {
         readExternalFile: async (abs: string) => readFileSync(abs),
-        execFile: async (_cmd: string, args: readonly string[]) => ({
-          stdout: args[0] === 'view' ? '["aalis-plugin"]' : '',
-          stderr: '',
-          code: 0,
-        }),
+        execFile: async (cmd: string, args: readonly string[]) => {
+          testOnDisk(cmd, args);
+          return { stdout: args[0] === 'view' ? '["aalis-plugin"]' : '', stderr: '', code: 0 };
+        },
         makeTempDir: async () => ({ path: '/tmp/fake-pm', cleanup: async () => undefined }),
       });
       await discovery.rescan();
@@ -1732,8 +1748,9 @@ describe('生产接线：装卸按插件名（即包名），卸载清理全部�
       const npmCalls: string[][] = [];
       host.provide.use(defineService<object>('process'), {
         readExternalFile: async (abs: string) => readFileSync(abs),
-        execFile: async (_cmd: string, args: readonly string[]) => {
+        execFile: async (cmd: string, args: readonly string[]) => {
           npmCalls.push([...args]);
+          testOnDisk(cmd, args);
           return { stdout: '', stderr: '', code: 0 };
         },
         makeTempDir: async () => ({ path: '/tmp/fake-pm', cleanup: async () => undefined }),
@@ -1794,11 +1811,10 @@ describe('生产接线：装卸按插件名（即包名），卸载清理全部�
       });
       host.provide.use(defineService<object>('process'), {
         readExternalFile: async (abs: string) => readFileSync(abs),
-        execFile: async (_cmd: string, args: readonly string[]) => ({
-          stdout: args[0] === 'view' ? '["aalis-plugin"]' : '',
-          stderr: '',
-          code: 0,
-        }),
+        execFile: async (cmd: string, args: readonly string[]) => {
+          testOnDisk(cmd, args);
+          return { stdout: args[0] === 'view' ? '["aalis-plugin"]' : '', stderr: '', code: 0 };
+        },
         makeTempDir: async () => ({ path: '/tmp/fake-pm', cleanup: async () => undefined }),
       });
       provideHostPaths(app, proj);
@@ -1904,10 +1920,496 @@ describe('registry()：安装实际使用的 npm 源', () => {
     expect(calls).toHaveLength(2);
   });
 
+  it('接本激活的中止信号：中止即拒绝，缓存随之清掉', async () => {
+    const activation = new AbortController();
+    const seen: Array<AbortSignal | undefined> = [];
+    const proc = {
+      makeTempDir: vi.fn(),
+      execFile: vi.fn(
+        (_cmd: string, _args: readonly string[], o?: { signal?: AbortSignal }) =>
+          new Promise((_, reject) => {
+            seen.push(o?.signal);
+            if (o?.signal?.aborted) reject(o.signal.reason);
+            o?.signal?.addEventListener('abort', () => reject(o.signal?.reason), { once: true });
+          }),
+      ),
+    } as unknown as ProcessService;
+    const pm = createPackageManager({ ...makeHarness().deps, proc, signal: activation.signal });
+    const first = pm.registry().then(
+      () => 'resolved',
+      () => 'rejected',
+    );
+    activation.abort();
+    expect(await Promise.race([first, new Promise(r => setTimeout(() => r('2 秒后仍在跑'), 2000))])).toBe('rejected');
+    expect(seen).toEqual([activation.signal]);
+    void pm.registry().catch(() => {});
+    expect(seen, '没有缓存被中止的那次：再查一遍').toHaveLength(2);
+  });
+
   it('输出不是 http(s) 地址：拒绝并说明，同样不缓存', async () => {
     const { pm, calls } = withNpmConfig(['undefined\n', 'https://registry.npmjs.org']);
     await expect(pm.registry()).rejects.toThrow('npm config get registry 的输出不是 http(s) 地址: "undefined"');
     expect(await pm.registry()).toBe('https://registry.npmjs.org');
     expect(calls).toHaveLength(2);
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 停用、重启与停机时打断在途的 npm
+//
+// npm 替身：会改安装树的那几条（install、uninstall，不带 --dry-run）先把 package.json 与锁文件改掉，再挂起到交给它的中止
+// 信号断开；断开后过 exitMs 毫秒才以非零退出，退出前可以再写一遍 package.json（lateWrite）。点名的一条命令可以同样挂起
+// （hangOn，整行比对），会改安装树的那几条也可以照常执行完毕（npmSucceeds）。tee、mv、rm 作用于同一张文件表，每一步记进 log 核对次序；每条命令按整行记进 commands
+// ════════════════════════════════════════════════════════════
+
+const PKG_BEFORE = '{"dependencies":{"foo":"^1.0.0"}}';
+const LOCK_BEFORE = '{"lockfileVersion":3}';
+const STOPPED =
+  '已中止，没有生效：package.json 与锁文件已还原到操作前；node_modules 可能与它们不一致，在安装目录执行 npm install 即可对齐' +
+  '（之后任何一次市场的装、卸、更新也会顺带对齐）';
+
+function interruptibleNpm(
+  root: string,
+  opts: {
+    lock?: boolean;
+    exitMs?: number;
+    lateWrite?: boolean;
+    hangOn?: string;
+    npmSucceeds?: boolean;
+    failMv?: string;
+  } = {},
+) {
+  const pkgPath = `${root}/package.json`;
+  const lockPath = `${root}/package-lock.json`;
+  const files = new Map<string, string>([
+    [pkgPath, PKG_BEFORE],
+    [`${root}/node_modules/foo/package.json`, '{"name":"foo","version":"1.0.0","keywords":["aalis","aalis-plugin"]}'],
+  ]);
+  if (opts.lock !== false) files.set(lockPath, LOCK_BEFORE);
+  const log: string[] = [];
+  const commands: string[] = [];
+  const signals: Array<AbortSignal | undefined> = [];
+  const ok = (stdout = ''): ExecResult => ({ stdout, stderr: '', code: 0, signal: null });
+  /** 挂起到 signal 断开，断开后过 exitMs 毫秒以非零退出（先跑 beforeExit）；没给 signal 就一直挂起 */
+  const untilAborted = (signal: AbortSignal | undefined, beforeExit?: () => void) =>
+    new Promise<never>((_, reject) => {
+      signal?.addEventListener(
+        'abort',
+        () =>
+          setTimeout(() => {
+            beforeExit?.();
+            reject(Object.assign(new Error('npm 被中止'), { result: { ...ok(), code: null, signal: 'SIGTERM' } }));
+          }, opts.exitMs ?? 20),
+        { once: true },
+      );
+    });
+  const proc = {
+    readExternalFile: async (abs: string) => {
+      const text = files.get(abs);
+      if (text === undefined) throw new Error(`ENOENT ${abs}`);
+      return new TextEncoder().encode(text);
+    },
+    makeTempDir: async () => ({ path: '/tmp/fake-pm', uri: 'tmp:/fake-pm', cleanup: async () => {} }),
+    execFile: async (
+      cmd: string,
+      args: readonly string[],
+      o: { signal?: AbortSignal; input?: string | Uint8Array } = {},
+    ): Promise<ExecResult> => {
+      const line = [cmd, ...args].join(' ');
+      commands.push(line);
+      if (line === opts.hangOn) {
+        signals.push(o.signal);
+        return untilAborted(o.signal);
+      }
+      if (cmd === 'npm' && args[0] === 'view') return ok('["aalis","aalis-plugin"]');
+      if (cmd === 'npm' && (args[0] === 'install' || args[0] === 'uninstall') && !args.includes('--dry-run')) {
+        o.signal?.throwIfAborted();
+        signals.push(o.signal);
+        log.push(`npm ${args[0]} ${args[1]}`);
+        files.set(pkgPath, 'npm 改过的 package.json');
+        files.set(lockPath, 'npm 改过的锁文件');
+        if (opts.npmSucceeds) return ok();
+        return untilAborted(o.signal, () => {
+          if (opts.lateWrite) files.set(pkgPath, 'npm 退出之前又写了一遍的 package.json');
+          log.push('npm 退出');
+        });
+      }
+      if (cmd === 'tee') {
+        files.set(args[0] ?? '', String(o.input));
+        return ok();
+      }
+      if (cmd === 'mv') {
+        const [, from = '', to = ''] = args;
+        if (to === opts.failMv) throw new Error(`mv: ${to}: Permission denied`);
+        files.set(to, files.get(from) ?? '');
+        files.delete(from);
+        log.push(`还原 ${to}`);
+        return ok();
+      }
+      if (cmd === 'rm') {
+        const target = args[args.length - 1] ?? '';
+        if (files.delete(target)) log.push(`删掉 ${target}`);
+        return ok();
+      }
+      if (cmd === 'test' && !files.has(args[1] ?? '')) {
+        throw Object.assign(new Error('test: 不存在'), { result: { ...ok(), code: 1 } });
+      }
+      return ok(); // cp、在的文件的 test、npm 的预检与 config
+    },
+  };
+  return { proc: proc as unknown as ProcessService, files, log, commands, signals, pkgPath, lockPath };
+}
+
+describe('停用、重启与停机时打断在途的 npm（中止信号接本插件这次激活）', () => {
+  /** 本插件这次激活的中止信号由用例手动断开；readText 读同一张文件表 */
+  function pmWith(fake: ReturnType<typeof interruptibleNpm>, overrides: Partial<PackageManagerDeps> = {}) {
+    const activation = new AbortController();
+    const h = makeHarness();
+    const deps: PackageManagerDeps = {
+      ...h.deps,
+      proc: fake.proc,
+      readText: async abs => fake.files.get(abs),
+      signal: activation.signal,
+      ...overrides,
+    } as PackageManagerDeps;
+    return { pm: createPackageManager(deps), deps, signal: activation.signal, abort: () => activation.abort() };
+  }
+  /** 等替身里启动了 n 条会改安装树的 npm */
+  const npmRuns = async (fake: ReturnType<typeof interruptibleNpm>, n: number) =>
+    vi.waitFor(() => expect(fake.log.filter(line => line.startsWith('npm ') && line !== 'npm 退出')).toHaveLength(n));
+  /** 2 秒还没落定就算阻塞：改前 npm 拿不到中止信号，会一直跑下去 */
+  const settleWithin = <T>(work: Promise<T>) =>
+    Promise.race([work, new Promise<string>(r => setTimeout(() => r('2 秒后仍在跑'), 2000))]);
+
+  it('取快照时锁文件在却读不出：不启动 npm，回执写明没有改动，不把它当成原本没有、被打断时删掉', async () => {
+    const fake = interruptibleNpm(ROOT);
+    const { pm } = pmWith(fake, { readText: async abs => (abs === fake.lockPath ? undefined : fake.files.get(abs)) });
+    const result = await settleWithin(pm.install('bar'));
+    expect(fake.log).toEqual([]);
+    expect(toSource(result)).toEqual({
+      ok: false,
+      message: `没有改动：${fake.lockPath} 在却读不出，取不到操作前的那份就不启动 npm`,
+    });
+    expect(fake.files.get(fake.lockPath)).toBe(LOCK_BEFORE);
+  });
+
+  it('取快照时查锁文件在不在途中中止：回执已中止、没有改动，不启动 npm，不记安装失败', async () => {
+    const fake = interruptibleNpm(ROOT, { lock: false, hangOn: `test -f ${ROOT}/package-lock.json` });
+    const errors: string[] = [];
+    const { pm, abort } = pmWith(fake, {
+      log: { info: () => {}, warn: () => {}, error: msg => void errors.push(msg) },
+    });
+    const installing = pm.install('bar');
+    await vi.waitFor(() => expect(fake.signals).toHaveLength(1));
+    abort();
+    expect(toSource(await settleWithin(installing))).toEqual({ ok: false, message: '已中止，没有改动' });
+    expect(fake.log).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+
+  it('更新：取快照时锁文件在却读不出，回执写明没有改动，不启动 npm', async () => {
+    const fake = interruptibleNpm(ROOT);
+    const { pm } = pmWith(fake, { readText: async abs => (abs === fake.lockPath ? undefined : fake.files.get(abs)) });
+    const result = await settleWithin(pm.update([{ name: 'foo', version: '1.0.1' }]).catch(err => `拒绝: ${err}`));
+    expect(toSource(result)).toEqual({
+      ok: false,
+      message: `没有改动：${fake.lockPath} 在却读不出，取不到操作前的那份就不启动 npm`,
+    });
+    expect(fake.log).toEqual([]);
+  });
+
+  it('安装：npm 改过两份文件后被打断，等它退出再还原；回执 ok 为 false，写明没有生效、怎样对齐 node_modules', async () => {
+    const fake = interruptibleNpm(ROOT);
+    const logged = { warn: [] as string[], error: [] as string[] };
+    const { pm, abort } = pmWith(fake, {
+      log: { info: () => {}, warn: msg => void logged.warn.push(msg), error: msg => void logged.error.push(msg) },
+    });
+    const installing = pm.install('bar');
+    await npmRuns(fake, 1);
+    abort();
+    expect(toSource(await settleWithin(installing))).toEqual({ ok: false, message: STOPPED });
+    expect(fake.signals.every(s => s?.aborted)).toBe(true);
+    expect(fake.files.get(fake.pkgPath)).toBe(PKG_BEFORE);
+    expect(fake.files.get(fake.lockPath)).toBe(LOCK_BEFORE);
+    expect(fake.log).toEqual(['npm install bar', 'npm 退出', `还原 ${fake.pkgPath}`, `还原 ${fake.lockPath}`]);
+    // 中止不是 npm 失败：不记失败，记一条 warn 写明结果
+    expect(logged.error).toEqual([]);
+    expect(logged.warn).toEqual([
+      `npm install bar --no-audit --no-fund 随本插件停用被中止：${STOPPED}（安装目录 ${ROOT}）`,
+    ]);
+  });
+
+  it('npm 退出之前又写了一遍 package.json：还原在它退出之后，留下的是操作前那份', async () => {
+    const fake = interruptibleNpm(ROOT, { lateWrite: true, exitMs: 100 });
+    const { pm, abort } = pmWith(fake);
+    const installing = pm.install('bar');
+    await npmRuns(fake, 1);
+    abort();
+    await settleWithin(installing);
+    expect(fake.files.get(fake.pkgPath)).toBe(PKG_BEFORE);
+  });
+
+  it('原本没有锁文件：npm 新建的那份删掉', async () => {
+    const fake = interruptibleNpm(ROOT, { lock: false });
+    const { pm, abort } = pmWith(fake);
+    const installing = pm.install('bar');
+    await npmRuns(fake, 1);
+    abort();
+    expect(toSource(await settleWithin(installing))).toEqual({ ok: false, message: STOPPED });
+    expect(fake.files.has(fake.lockPath)).toBe(false);
+    expect(fake.files.get(fake.pkgPath)).toBe(PKG_BEFORE);
+  });
+
+  it('卸载：npm uninstall 被打断，两份文件还原，实例不卸', async () => {
+    const fake = interruptibleNpm(ROOT);
+    const { pm, deps, abort } = pmWith(fake);
+    const removing = pm.uninstall('foo');
+    await npmRuns(fake, 1);
+    abort();
+    expect(toSource(await settleWithin(removing))).toEqual({ ok: false, message: STOPPED });
+    expect(fake.files.get(fake.pkgPath)).toBe(PKG_BEFORE);
+    expect(fake.files.get(fake.lockPath)).toBe(LOCK_BEFORE);
+    expect(deps.unloadPlugin).not.toHaveBeenCalled();
+  });
+
+  it('更新：真装被打断，两份文件还原，不重启', async () => {
+    const fake = interruptibleNpm(ROOT);
+    const { pm, deps, abort } = pmWith(fake);
+    const updating = pm.update([{ name: 'foo', version: '1.0.1' }]);
+    await npmRuns(fake, 1);
+    abort();
+    expect(toSource(await settleWithin(updating))).toEqual({ ok: false, message: STOPPED });
+    expect(fake.files.get(fake.pkgPath)).toBe(PKG_BEFORE);
+    expect(fake.files.get(fake.lockPath)).toBe(LOCK_BEFORE);
+    expect(deps.restartApp).not.toHaveBeenCalled();
+  });
+
+  it('还没动文件就中止（npm view 途中）：回执写已中止、没有改动，不碰两份文件', async () => {
+    const fake = interruptibleNpm(ROOT, { hangOn: 'npm view bar keywords --json' });
+    const { pm, abort } = pmWith(fake);
+    const installing = pm.install('bar');
+    await vi.waitFor(() => expect(fake.signals).toHaveLength(1));
+    abort();
+    expect(toSource(await settleWithin(installing))).toEqual({ ok: false, message: '已中止，没有改动' });
+    expect(fake.log).toEqual([]);
+    expect(fake.files.get(fake.pkgPath)).toBe(PKG_BEFORE);
+  });
+
+  it('更新的预检途中中止：回执写已中止、没有改动，不当成预检失败', async () => {
+    const fake = interruptibleNpm(ROOT, { hangOn: 'npm install foo@1.0.1 --dry-run --no-audit --no-fund' });
+    const { pm, abort } = pmWith(fake);
+    const updating = pm.update([{ name: 'foo', version: '1.0.1' }]);
+    await vi.waitFor(() => expect(fake.signals).toHaveLength(1));
+    abort();
+    expect(toSource(await settleWithin(updating))).toEqual({ ok: false, message: '已中止，没有改动' });
+    expect(fake.log).toEqual([]);
+  });
+
+  // 中止之后 test 读不出「有没有这个文件」：报成没有的话预检会接着往下跑
+  it.each([
+    ['复制 package.json 的 cp', `cp ${ROOT}/package.json /tmp/fake-pm/package.json`],
+    ['查有没有锁文件的 test', `test -f ${ROOT}/package-lock.json`],
+    ['复制锁文件的 cp', `cp ${ROOT}/package-lock.json /tmp/fake-pm/package-lock.json`],
+  ])('更新的预检里%s 接中止信号：中止即回已中止、没有改动，之后不再跑别的命令', async (_, line) => {
+    const fake = interruptibleNpm(ROOT, { hangOn: line });
+    const { pm, abort } = pmWith(fake);
+    const updating = pm.update([{ name: 'foo', version: '1.0.1' }]);
+    await vi.waitFor(() => expect(fake.signals).toHaveLength(1));
+    abort();
+    expect(toSource(await settleWithin(updating))).toEqual({ ok: false, message: '已中止，没有改动' });
+    expect(fake.commands.at(-1)).toBe(line);
+  });
+
+  it('本激活已开始关闭：新来的操作回执包管理正在停用，不跑 npm', async () => {
+    const fake = interruptibleNpm(ROOT);
+    const { pm, abort } = pmWith(fake);
+    abort();
+    for (const op of [
+      () => pm.install('bar'),
+      () => pm.uninstall('foo'),
+      () => pm.update([{ name: 'foo', version: '1.0.1' }]),
+    ]) {
+      expect(toSource(await settleWithin(op()))).toEqual({ ok: false, message: '包管理正在停用' });
+    }
+    expect(fake.log).toEqual([]);
+    expect(fake.signals).toEqual([]);
+  });
+
+  it('还原本身失败：回执照实写哪份没还原、原因，日志同样写明', async () => {
+    const fake = interruptibleNpm(ROOT, { failMv: `${ROOT}/package-lock.json` });
+    const warned: string[] = [];
+    const h = makeHarness();
+    const { pm, abort } = pmWith(fake, { log: { ...h.deps.log, warn: msg => void warned.push(msg) } });
+    const installing = pm.install('bar');
+    await npmRuns(fake, 1);
+    abort();
+    expect(toSource(await settleWithin(installing))).toEqual({
+      ok: false,
+      message:
+        `已中止，但这些文件没能还原到操作前，需要手动恢复：${ROOT}/package-lock.json（mv: ${ROOT}/package-lock.json: ` +
+        'Permission denied）；node_modules 可能与 package.json、锁文件不一致，恢复之后在安装目录执行 npm install 即可对齐',
+    });
+    expect(fake.files.get(fake.pkgPath)).toBe(PKG_BEFORE);
+    expect(fake.files.has(`${ROOT}/package-lock.json.aalis-restore`), '没换上的临时文件删掉').toBe(false);
+    expect(warned.join('\n')).toContain(`${ROOT}/package-lock.json`);
+  });
+
+  it('装后回执等插件静置时挂在本激活信号上的监听，等完即摘掉', async () => {
+    const fake = interruptibleNpm(ROOT, { npmSucceeds: true });
+    const { pm, signal } = pmWith(fake, { loaded: () => true, isPluginRegistered: () => true });
+    expect(toSource(await settleWithin(pm.install('bar')))).toMatchObject({ ok: true, plugin: 'bar' });
+    expect(getEventListeners(signal, 'abort')).toEqual([]);
+  });
+
+  // 已断开的信号不会再发 abort：走到等插件静置时信号已断，就不能再等 idle
+  it('npm 已经执行完毕之后才中止：装上就是装上了，不还原，不等 idle，照常回执', async () => {
+    const fake = interruptibleNpm(ROOT, { npmSucceeds: true });
+    let abort = () => {};
+    const { pm, abort: doAbort } = pmWith(fake, {
+      rescanPlugins: async () => {
+        abort();
+        return [];
+      },
+      idle: () => new Promise(() => {}),
+      loaded: () => true,
+      isPluginRegistered: () => true,
+    });
+    abort = doAbort;
+    const r = await settleWithin(pm.install('bar'));
+    expect(toSource(r)).toEqual({ ok: true, message: '已安装并加载：bar', plugin: 'bar' });
+    expect(fake.files.get(fake.pkgPath)).toBe('npm 改过的 package.json');
+  });
+
+  describe('生产接线（App 真装载本插件）', () => {
+    const PM = '@aalis/plugin-package-manager';
+    const ROOT_DIR = '/abs-pm-abort';
+
+    async function bootPm(
+      fake: ReturnType<typeof interruptibleNpm>,
+      appOptions: Parameters<typeof hostedApp>[1] = {},
+      setup?: (app: App) => void,
+    ) {
+      const { app } = hostedApp({ name: 'PM' }, appOptions);
+      productionApps.push(app);
+      const host = app.bind({ provide, services });
+      host.provide.use(defineService<object>('process'), fake.proc);
+      provideHostPaths(app, ROOT_DIR);
+      setup?.(app);
+      await app.plugins.register(packageManagerPlugin, {});
+      await app.plugins.idle();
+      const svc = () => {
+        const s = host.services.use.get(packageManager);
+        if (!s) throw new Error('package-manager 未就绪');
+        return s;
+      };
+      return { app, svc };
+    }
+
+    /** 宿主日志器：warn 收进 warnings，其余丢掉 */
+    function warnLog() {
+      const warnings: string[] = [];
+      const logger: Logger = {
+        debug() {},
+        info() {},
+        warn: msg => void warnings.push(msg),
+        error() {},
+        child: () => logger,
+      };
+      return { warnings, logger };
+    }
+
+    // 清理宽限只给 50ms、npm 200ms 才退：收尾超时之后靠 core 记下的未停下实例挡住新实例
+    it('安装在途时 bounce 本插件：新实例的第一次 npm 晚于旧实例把两份文件还原完', async () => {
+      const fake = interruptibleNpm(ROOT_DIR, { exitMs: 200 });
+      const { app, svc } = await bootPm(fake, { disposeTimeoutMs: 50 });
+      const first = svc().install('bar');
+      await npmRuns(fake, 1);
+      await app.plugins.bounce(PM);
+      await vi.waitFor(() => expect(app.plugins.getPlugin(PM)?.state).toBe('active'), { timeout: 3000 });
+      void svc().install('baz');
+      await npmRuns(fake, 2);
+      expect(fake.log).toEqual([
+        'npm install bar',
+        'npm 退出',
+        `还原 ${fake.pkgPath}`,
+        `还原 ${fake.lockPath}`,
+        'npm install baz',
+      ]);
+      expect(toSource(await first)).toEqual({ ok: false, message: STOPPED });
+    });
+
+    // 装后回执先进了 idle()，之后才赶上 bounce：idle 要等这次关闭的计划走完，计划又在等本操作落定（onDrain）
+    it('npm 已执行完毕、装后回执正等插件静置时 bounce 本插件：收尾在清理宽限内落定，不记为未停下、不告警', async () => {
+      const fake = interruptibleNpm(ROOT_DIR, { npmSucceeds: true });
+      const { warnings, logger } = warnLog();
+      const gate = deferred();
+      const applying = deferred();
+      // 新装的包登记之后激活得慢：装后回执调 idle() 时状态机还在重算
+      const slow = definePlugin({
+        name: 'bar',
+        async apply() {
+          applying.resolve();
+          await gate.promise;
+        },
+      });
+      const { app, svc } = await bootPm(fake, { disposeTimeoutMs: 300, logger }, host =>
+        host.bind({ provide }).provide.use(pluginSource, {
+          rescan: async () => {
+            void host.plugins.register(slow);
+            return ['bar'];
+          },
+          loaded: name => host.plugins.getPlugin(name) !== undefined,
+        }),
+      );
+      const installing = svc().install('bar');
+      await applying.promise;
+      await new Promise(r => setTimeout(r, 20));
+      const bouncing = app.plugins.bounce(PM);
+      setTimeout(() => gate.resolve(), 50);
+      await bouncing;
+      expect(app.plugins.getStatus().find(p => p.instanceId === PM)?.lingering).toBeFalsy();
+      expect(warnings.filter(w => w.includes('超过'))).toEqual([]);
+      expect(toSource(await installing)).toMatchObject({ ok: true, plugin: 'bar' });
+    });
+
+    // 卸载的正是本插件选中的 process 提供者：core 卸它要连同选中它的本插件一起关，本插件的收尾又在等这次卸载落定
+    it('卸载本插件选中的 process 提供者（另有一家）：收尾在清理宽限内落定，不记为未停下、不告警，卸载照常回执', async () => {
+      const fake = interruptibleNpm(ROOT_DIR, { npmSucceeds: true });
+      const { warnings, logger } = warnLog();
+      const proc = defineService<object>('process');
+      const provider = (name: string, priority: number) =>
+        definePlugin({
+          name,
+          provides: [proc],
+          uses: { provide },
+          apply: ({ provide }) => void provide.use(proc, fake.proc, { priority }),
+        });
+      const { app, svc } = await bootPm(fake, { disposeTimeoutMs: 300, logger }, host => {
+        void host.plugins.register(provider('foo', 10));
+        void host.plugins.register(provider('zz-proc-other', 0));
+        host.bind({ provide }).provide.use(pluginSource, {
+          rescan: async () => [],
+          loaded: name => host.plugins.getPlugin(name) !== undefined,
+        });
+      });
+      const result = await svc().uninstall('foo');
+      await app.plugins.idle();
+      expect(app.plugins.getPlugin('foo')).toBeUndefined();
+      expect(app.plugins.getStatus().find(p => p.instanceId === PM)).toMatchObject({ state: 'active' });
+      expect(app.plugins.getStatus().find(p => p.instanceId === PM)?.lingering).toBeFalsy();
+      expect(warnings.filter(w => w.includes('超过'))).toEqual([]);
+      expect(result.ok).toBe(true);
+    });
+
+    it('安装在途时 app.stop()：npm 被打断，stop 兑现时两份文件已还原', async () => {
+      const fake = interruptibleNpm(ROOT_DIR);
+      const { app, svc } = await bootPm(fake);
+      const installing = svc().install('bar');
+      await npmRuns(fake, 1);
+      await app.stop();
+      expect(fake.files.get(fake.pkgPath)).toBe(PKG_BEFORE);
+      expect(fake.files.get(fake.lockPath)).toBe(LOCK_BEFORE);
+      expect(toSource(await installing)).toEqual({ ok: false, message: STOPPED });
+    });
   });
 });
