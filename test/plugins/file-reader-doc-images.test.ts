@@ -62,16 +62,44 @@ describe('recognizeImages', () => {
     expect(peak).toBeGreaterThanOrEqual(2); // 确有并发
   });
 
-  it('整体超时 → 返回已完成的部分（不卡在慢调用上）', async () => {
-    const out = await recognizeImages(
-      ['fast', 'slow'],
-      async u => {
-        if (u === 'slow') await new Promise(r => setTimeout(r, 1000));
-        return `d-${u}`;
-      },
-      { maxImages: 10, concurrency: 1, timeoutMs: 50 },
-    );
-    expect(out).toEqual(['d-fast']); // slow 未在预算内完成，被丢弃
+  /** 识别替身：slow 一直不回、只在收到的信号断开时按中止原因落定，记下它收到的信号；其余即回描述 */
+  function stallingSlow() {
+    const signals: Array<AbortSignal | undefined> = [];
+    const describe = vi.fn(async (u: string, signal?: AbortSignal) => {
+      if (u !== 'slow') return `d-${u}`;
+      signals.push(signal);
+      return new Promise<string>((_, reject) =>
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true }),
+      );
+    });
+    return { describe, signals };
+  }
+
+  it('整体超时：在飞的识别收到的信号到时断开，返回已完成的部分，之后不再开始新的识别', async () => {
+    const { describe, signals } = stallingSlow();
+    const out = await recognizeImages(['fast', 'slow', 'later'], describe, {
+      maxImages: 10,
+      concurrency: 1,
+      timeoutMs: 50,
+    });
+    expect(signals[0]?.aborted).toBe(true);
+    expect(out).toEqual(['d-fast']);
+    expect(describe).toHaveBeenCalledTimes(2);
+  });
+
+  it('调用方的信号断开：在飞的识别随之停下，返回已完成的部分，之后不再开始新的识别', async () => {
+    const { describe, signals } = stallingSlow();
+    const ac = new AbortController();
+    const pending = recognizeImages(['fast', 'slow', 'later'], describe, {
+      maxImages: 10,
+      concurrency: 1,
+      signal: ac.signal,
+    });
+    await vi.waitFor(() => expect(signals).toHaveLength(1));
+    ac.abort();
+    expect(signals[0]?.aborted).toBe(true);
+    expect(await pending).toEqual(['d-fast']);
+    expect(describe).toHaveBeenCalledTimes(2);
   });
 });
 

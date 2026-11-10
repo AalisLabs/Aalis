@@ -10,19 +10,22 @@ interface RecognizeOptions {
   maxImages: number;
   /** 并发上限（默认 3）；控制同时在飞的视觉调用，平衡时延与速率限制 */
   concurrency?: number;
-  /** 整体时间预算（毫秒，可选）；超时则返回已得到的描述，不再等待剩余 */
+  /** 整体时间预算（毫秒，可选）；到时在飞的识别随之中止，返回已得到的描述 */
   timeoutMs?: number;
+  /** 调用方的中止信号（可选）：断开时在飞的识别随之中止，返回已得到的描述 */
+  signal?: AbortSignal;
 }
 
 /**
- * 识别图片：按 maxImages 截断、按 concurrency 并发、可选整体超时。
+ * 识别图片：按 maxImages 截断、按 concurrency 并发、可选整体超时与调用方的中止信号。
  * 保持原顺序、丢弃空描述、单张失败不影响整体（best-effort，绝不抛错）。
+ * 时限与调用方的信号合成一个交给每次识别：断开后在飞的识别随之中止（按单张失败跳过），也不再开始新的识别。
  * @param imageUris data URI 或图片 URL 列表
- * @param describe 注入的识别函数（失败可抛错或返回空串）
+ * @param describe 注入的识别函数（失败可抛错或返回空串；收到的信号断开时应中止并抛错）
  */
 export async function recognizeImages(
   imageUris: string[],
-  describe: (uri: string) => Promise<string>,
+  describe: (uri: string, signal: AbortSignal | undefined) => Promise<string>,
   opts: RecognizeOptions,
 ): Promise<string[]> {
   const targets = imageUris.slice(0, Math.max(0, Math.floor(opts.maxImages)));
@@ -30,14 +33,16 @@ export async function recognizeImages(
   const concurrency = Math.max(1, Math.floor(opts.concurrency ?? 3));
   // 按原始下标写入，最终 filter 掉空位以保序
   const slots: Array<string | undefined> = new Array(targets.length);
+  const deadline = opts.timeoutMs && opts.timeoutMs > 0 ? AbortSignal.timeout(opts.timeoutMs) : undefined;
+  const signal = deadline && opts.signal ? AbortSignal.any([deadline, opts.signal]) : (deadline ?? opts.signal);
 
   let next = 0;
   const worker = async (): Promise<void> => {
-    while (true) {
+    while (!signal?.aborted) {
       const i = next++;
       if (i >= targets.length) return;
       try {
-        const desc = await describe(targets[i]);
+        const desc = await describe(targets[i], signal);
         if (desc?.trim()) slots[i] = desc.trim();
       } catch {
         // 单张识别失败：跳过，不影响其余
@@ -45,13 +50,7 @@ export async function recognizeImages(
     }
   };
 
-  const work = Promise.all(Array.from({ length: Math.min(concurrency, targets.length) }, () => worker()));
-  if (opts.timeoutMs && opts.timeoutMs > 0) {
-    // 超时仅停止「等待」，已在飞的调用结果若赶在 race 前写入 slots 仍会被收集
-    await Promise.race([work, new Promise<void>(resolve => setTimeout(resolve, opts.timeoutMs))]);
-  } else {
-    await work;
-  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, targets.length) }, () => worker()));
   return slots.filter((d): d is string => !!d);
 }
 

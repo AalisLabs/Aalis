@@ -531,14 +531,15 @@ async function run(caps: Caps): Promise<void> {
 
     // 关键：不传 hint —— 传 hint 会绕过 media 的 24h 描述缓存（同图重复读会重复识别）；
     // 显式 detailLevel:'detailed'：文档内嵌图要的是 OCR 完整性，不适合让模型自判详略。
-    // 并发 3 + 整体 30s 预算：避免多图 DOCX 在上传预处理阶段长时间阻塞首个回复。
+    // 并发 3 + 整体 30s 预算：避免多图 DOCX 在上传预处理阶段长时间阻塞首个回复；到时在飞的识图随之中止。
     const descriptions = await recognizeImages(
       uris,
-      uri => mediaService.describeImage(uri, { detailLevel: 'detailed', signal }),
+      (uri, stop) => mediaService.describeImage(uri, { detailLevel: 'detailed', signal: stop }),
       {
         maxImages: maxDocImages,
         concurrency: 3,
         timeoutMs: 30_000,
+        signal,
       },
     );
     // 中止时 recognizeImages 回的是缺了描述的部分结果：抛中止原因，这份正文不缓存
