@@ -8,7 +8,7 @@ const DOWNLOAD_TIMEOUT_MS = 15_000;
 
 /**
  * 从 URL 或存储地址加载图片，格式按文件头认（不看扩展名与 Content-Type），内容不是图片的抛错。
- * - http/https URL：safeFetch 下载，带超时，按流式累计限额读取响应体
+ * - http/https URL：safeFetch 下载，带超时，按流式累计限额读取响应体；signal（这次工具调用的）中止时随之停下，抛中止原因
  * - 其它：与文件工具同一判定求值（resolveAgainstCwd：存储地址原样，相对路径落在 baseUri 下，宿主机绝对路径拒绝），
  *   经 storage.readFile 读
  */
@@ -16,9 +16,10 @@ export async function loadImage(
   storage: StorageService,
   source: string,
   baseUri: string,
+  signal?: AbortSignal,
 ): Promise<{ buffer: Buffer; format: MediaFormat }> {
   const buffer = isWebUrl(source)
-    ? await downloadImage(source)
+    ? await downloadImage(source, signal)
     : Buffer.from((await storage.readFile(resolveAgainstCwd(source, baseUri))) as Uint8Array);
   const format = detectMediaFormat(buffer.subarray(0, FILE_HEAD_BYTES));
   if (format?.kind !== 'image') throw new Error(`不是图片: ${source}`);
@@ -29,8 +30,9 @@ export async function loadImage(
  * safeFetch 只管 SSRF 与重定向，不带超时也不限体积：源地址来自模型或用户，慢速对端会挂住整轮工具调用，超大响应整块读进
  * 内存。体积按流式累计判定——无 Content-Length 的响应要全部读完才看得到大小。
  */
-async function downloadImage(source: string): Promise<Buffer> {
-  const resp = await safeFetch(source, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+async function downloadImage(source: string, signal: AbortSignal | undefined): Promise<Buffer> {
+  const timeout = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
+  const resp = await safeFetch(source, { signal: signal ? AbortSignal.any([timeout, signal]) : timeout });
   if (!resp.ok) {
     // 响应体不读也要取消，释放底层连接
     await resp.body?.cancel().catch(() => {});

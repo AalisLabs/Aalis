@@ -551,10 +551,10 @@ export function registerPptTools(
         },
       },
     },
-    async handler(args) {
+    async handler(args, callCtx) {
       const state = requireState(String(args.docId));
       const slide = getSlide(state, args.slideNumber as number | undefined);
-      const { buffer, format } = await loadImage(storage, String(args.source), outputUri);
+      const { buffer, format } = await loadImage(storage, String(args.source), outputUri, callCtx.signal);
       if (!PPTX_IMAGE_FORMATS.has(format.format)) throw new Error(`PPT 不支持 ${format.format} 图片`);
 
       const bounds = clampBounds(state, args.x as number, args.y as number, args.w as number, args.h as number, {

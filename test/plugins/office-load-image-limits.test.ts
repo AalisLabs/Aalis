@@ -14,7 +14,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 // ════════════════════════════════════════════════════════════
 // doc_add_image / ppt_add_image 的图片：
 //   - 远程下载与 plugin-media、ASR 同口径：带 15 秒超时信号、20 MiB 流式限额（慢速对端不挂住整轮工具调用，超大响应
-//     不整块读进内存）
+//     不整块读进内存）；另接这次工具调用的中止信号，回合中止时下载随之断开
 //   - 格式按文件头认，不看扩展名与 Content-Type；不是图片的拒绝，Word 与 PPT 嵌不进的格式明确报错，不产出打不开的文档
 //   - 来源按文件工具的同一判定求值：存储地址原样，相对路径落在输出目录下，宿主机绝对路径（含 C:/）拒绝
 // ════════════════════════════════════════════════════════════
@@ -28,10 +28,19 @@ const BMP = Buffer.from('424d3a0000000000000036000000280000000000', 'hex');
 
 let server: Server;
 let base: string;
+/** /hang 只收不回：收到与断开了的次数 */
+const hang = { requested: 0, closed: 0 };
 
 beforeAll(async () => {
   setNetworkPolicy({ blockPrivate: false }); // 只为连本机测试服务；afterAll 复原
   server = createServer((req, res) => {
+    if (req.url === '/hang') {
+      hang.requested++;
+      req.on('close', () => {
+        hang.closed++;
+      });
+      return;
+    }
     if (req.url === '/ok.png') {
       res.writeHead(200, { 'content-type': 'image/png' });
       res.end(PNG);
@@ -211,5 +220,29 @@ describe('doc_add_image / ppt_add_image：嵌不进的格式明确报错', () =>
     );
     await ppt.ppt_add_image.handler({ docId, source: 'data:/docs/pic.png' }, ctx);
     expect(added.mock.calls.map(([o]) => o.data.slice(0, 18))).toEqual(['image/jpeg;base64,']);
+  });
+});
+
+describe('doc_add_image / ppt_add_image：下载随这次调用中止', () => {
+  it.each([
+    ['doc_add_image', registerDocxTools, 'doc_create', 'a.docx'],
+    ['ppt_add_image', registerPptTools, 'ppt_create', 'a.pptx'],
+  ] as const)('%s 下载途中中止：到上游的请求随之断开，调用以中止原因拒绝', async (name, register, create, filename) => {
+    const out: Record<string, Omit<RegisteredTool, 'pluginName'>> = {};
+    const sessions = new DocSessionManager();
+    const onRegister = (t: Omit<RegisteredTool, 'pluginName'>) => {
+      out[t.definition.function.name] = t;
+    };
+    register(stubBoundTools({ onRegister }), sessions, noStorage, 'data:/docs');
+    const ctx = toolContext({ sessionId: 's' });
+    const { docId } = JSON.parse((await out[create].handler({ filename }, ctx)) as string);
+    if (name === 'ppt_add_image') await out.ppt_add_slide.handler({ docId }, ctx);
+    const ac = new AbortController();
+    const before = { ...hang };
+    const pending = out[name].handler({ docId, source: `${base}/hang` }, { ...ctx, signal: ac.signal });
+    await expect.poll(() => hang.requested).toBe(before.requested + 1);
+    ac.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await expect.poll(() => hang.closed).toBe(before.closed + 1);
   });
 });

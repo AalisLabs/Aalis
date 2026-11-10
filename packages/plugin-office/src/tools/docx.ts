@@ -446,9 +446,9 @@ export function registerDocxTools(
         },
       },
     },
-    async handler(args) {
+    async handler(args, callCtx) {
       const { state } = sessions.require(String(args.docId), 'docx').doc as { state: DocState };
-      const { buffer, format } = await loadImage(storage, String(args.source), outputUri);
+      const { buffer, format } = await loadImage(storage, String(args.source), outputUri, callCtx.signal);
       const imgType = DOCX_IMAGE_TYPES[format.format];
       if (!imgType) throw new Error(`Word 文档不支持 ${format.format} 图片`);
       const width = Number(args.width || 400);
