@@ -10,7 +10,7 @@ import {
   type WorkflowService,
   workflow,
 } from '../../packages/api-workflow/src/index.js';
-import { App, provide, services } from '../../packages/core/src/index.js';
+import { App, events, provide, services } from '../../packages/core/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
@@ -18,6 +18,7 @@ import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
 // 拆卸时在飞 run 必须真被取消：只清掉登记表的话，在飞 run 手里仍握着自己的取消信号，
@@ -51,8 +52,11 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
   let base: string;
   let app: App;
 
-  /** 装好 storage / tools / cron-engine / workflow 与网关的替身；测试工具在 workflow 装载前由宿主登记（归属根激活） */
-  async function boot(testTools: TestTool[]): Promise<WorkflowService> {
+  /**
+   * 装好 storage / tools / cron-engine / workflow 与网关的替身；测试工具在 workflow 装载前由宿主登记（归属根激活）。
+   * onIngress：网关替身收到 agent 节点的指令时调
+   */
+  async function boot(testTools: TestTool[], onIngress?: () => void): Promise<WorkflowService> {
     app = new App({ name: 'T', logLevel: 'error', disposeTimeoutMs: GRACE_MS });
     await registerHubs(app);
     provideHostPaths(app, base);
@@ -76,7 +80,12 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
     const { tools, provide: root } = app.bind({ tools: toolsService, provide });
     for (const t of testTools) tools.use.register(t);
     // 网关的替身收下 agent 节点的指令，它开的那一轮迟迟不结束
-    root.use(gateway, { ingressMessage: () => new Promise<void>(() => {}) } as never);
+    root.use(gateway, {
+      ingressMessage: () => {
+        onIngress?.();
+        return new Promise<void>(() => {});
+      },
+    } as never);
     await app.plugin(workflowPlugin, { enableTools: false });
     await app.plugins.idle();
     // 插件停在 pending（required 依赖缺席）时会让整条用例悄悄空转，装载后当场判死
@@ -86,6 +95,12 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
     }
     return app.bind({ services }).services.use.get(workflow)!;
   }
+
+  /** wait 节点的同步点：运行开始到 wait 节点挂上定时器之间只有微任务，运行开始之后让出一轮宏任务时已挂上 */
+  const waitArmed = () =>
+    new Promise<void>(resolve => {
+      app.bind({ events }).events.use.on('workflow:run:start', () => void setImmediate(resolve));
+    });
 
   /** runsFile 里该 workflow 的那条记录 */
   const recorded = (workflowId: string): WorkflowRun | undefined =>
@@ -154,15 +169,21 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
   ];
 
   it.each(blocking)('%s 节点阻塞中被 bounce：等待被打断，新实例照常上线', async (_, node) => {
-    const svc = await boot([
-      tool(
-        'zz_until_abort',
-        (_args, ctx) => new Promise(resolve => ctx.signal?.addEventListener('abort', () => resolve('aborted'))),
-      ),
-    ]);
+    // 节点已进入阻塞的同步点：tool 节点是工具被调用，agent 节点是指令送到网关，wait 节点见 waitArmed
+    const entered = deferred();
+    const svc = await boot(
+      [
+        tool('zz_until_abort', (_args, ctx) => {
+          entered.resolve();
+          return new Promise(resolve => ctx.signal?.addEventListener('abort', () => resolve('aborted')));
+        }),
+      ],
+      entered.resolve,
+    );
     await svc.defineWorkflow({ id: 'zz-block', trigger: { type: 'manual' }, nodes: [node] }, { persist: false });
+    const blocked = node.type === 'wait' ? waitArmed() : entered.promise;
     const runPromise = svc.runWorkflow('zz-block');
-    await new Promise(r => setTimeout(r, 50)); // 节点已进入阻塞
+    await blocked;
 
     expect(await app.plugins.bounce(WORKFLOW)).toBe(true);
     await app.plugins.idle();
@@ -174,23 +195,17 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
   });
 
   it('拆卸等在飞 run 时定义的工作流不挂触发器：卸载之后旧实例不再触发', async () => {
-    let entered!: () => void;
-    const blocked = new Promise<void>(r => {
-      entered = r;
-    });
-    let aborted!: () => void;
-    const disposing = new Promise<void>(r => {
-      aborted = r;
-    });
+    const entered = deferred();
+    const disposing = deferred();
     let release!: () => void;
     const svc = await boot([
       // 收到中止后不立即返回：拆卸停在等它收尾的那一段
       tool('zz_hold', (_args, ctx) => {
-        entered();
+        entered.resolve();
         return new Promise(resolve =>
           ctx.signal?.addEventListener('abort', () => {
             release = () => resolve('released');
-            aborted();
+            disposing.resolve();
           }),
         );
       }),
@@ -201,10 +216,10 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
       { persist: false },
     );
     const held = svc.runWorkflow('zz-hold');
-    await blocked;
+    await entered.promise;
 
     const unloading = app.plugins.unload(WORKFLOW);
-    await disposing;
+    await disposing.promise;
     await svc.defineWorkflow(
       {
         id: 'zz-late',
@@ -231,8 +246,9 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
       { id: 'zz-wait', trigger: { type: 'manual' }, nodes: [{ id: 'a', type: 'wait', seconds: 3600 }] },
       { persist: false },
     );
+    const armed = waitArmed();
     const runPromise = svc.runWorkflow('zz-wait');
-    await new Promise(r => setTimeout(r, 50));
+    await armed;
 
     expect(svc.cancelRun(svc.listRuns(1, 'zz-wait')[0].runId)).toBe(true);
     const run = await runPromise;
