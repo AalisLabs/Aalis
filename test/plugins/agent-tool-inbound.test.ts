@@ -49,7 +49,7 @@ async function agentTurn(incoming: IncomingMessage): Promise<ToolCallContext | u
   return (await observedAgentTurn(incoming)).ctx;
 }
 
-/** 同 agentTurn，另记下 agent:llm:before 看到的入站身份与本会话归档的消息 */
+/** 同 agentTurn，另记下 agent:llm:before 看到的入站身份、中止信号与本会话归档的消息 */
 async function observedAgentTurn(incoming: IncomingMessage) {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
@@ -78,14 +78,16 @@ async function observedAgentTurn(incoming: IncomingMessage) {
     },
   });
   const llmBeforeSources: Array<string | undefined> = [];
+  const llmBeforeSignals: Array<AbortSignal | undefined> = [];
   host.hooks.use.middleware('agent:llm:before', async (data, next) => {
     llmBeforeSources.push(data.source);
+    llmBeforeSignals.push(data.signal);
     await next();
   });
   await host.agent.use.handleMessage(incoming);
   expect(seen, '探针工具应在本回合被调用').toBeDefined();
   const history = (await host.memory.use.getHistory(incoming.sessionId, 20)) as Message[];
-  return { ctx: seen, llmBeforeSources, history };
+  return { ctx: seen, llmBeforeSources, llmBeforeSignals, history };
 }
 
 describe('ToolCallContext.inbound：agent 工具循环填写本回合的入站来源', () => {
@@ -114,6 +116,21 @@ describe('ToolCallContext.inbound：agent 工具循环填写本回合的入站�
     });
     expect(ctx?.inbound?.source).toBe('scheduler');
     expect(ctx?.participants).toEqual([{ platform: 'test', userId: 'u1' }]);
+  });
+});
+
+describe('agent:llm:before 带这一轮的中止信号', () => {
+  it('工具调用之后再跑的那次带同一个信号', async () => {
+    const { llmBeforeSignals } = await observedAgentTurn({
+      content: '帮我查一下',
+      sessionId: SESSION,
+      platform: 'test',
+      userId: 'u1',
+      sessionType: 'private',
+    });
+    expect(llmBeforeSignals).toHaveLength(2);
+    expect(llmBeforeSignals[0]).toBeInstanceOf(AbortSignal);
+    expect(llmBeforeSignals[1]).toBe(llmBeforeSignals[0]);
   });
 });
 

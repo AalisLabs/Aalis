@@ -186,6 +186,8 @@ declare module '@aalis/api-hooks' {
        * 与 IncomingMessage.source 同义，供钩子区分内部注入与真人回合。
        */
       source?: IncomingMessage['source'];
+      /** 这一轮的中止信号：这一轮被停下时，钩子里替它做的下载、抽帧等随之停下，抛中止原因；不在回合里的干跑不带 */
+      signal?: AbortSignal;
       /**
        * 干跑标记:本次只为估算上下文体积(token:request 快照),不会真正调用 LLM。
        * 昂贵/有副作用的注入者(向量检索、档案加载)据此跳过——代价是快照略微

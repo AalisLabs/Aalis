@@ -409,9 +409,10 @@ function run(caps: Caps): void {
         if (m.role !== 'user' || !m.images?.length || transformed.has(m)) continue;
         transformed.add(m);
         try {
-          m.images = await svc.transformModelImages(m.images, svc.resolveDelivery(data.acceptsImages));
+          m.images = await svc.transformModelImages(m.images, svc.resolveDelivery(data.acceptsImages), data.signal);
         } catch (err) {
-          // 抽帧与下载只在中止时抛出：本插件停用或重启时这条的图不再交出，这一轮照常往下，不因停用让整轮失败
+          // 抽帧与下载只在中止时抛出：本插件停用或重启时这条的图不再交出，这一轮照常往下，不因停用让整轮失败；
+          // 这一轮被停下时照抛中止原因，这一轮按中止收尾
           if (!caps.lifecycle.use.signal.aborted) throw err;
           m.images = [];
         }

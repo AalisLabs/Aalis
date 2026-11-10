@@ -177,6 +177,29 @@ describe('开轮的输入在 agent:turn:before 的默认动作开头归档', () 
   });
 });
 
+describe('agent:llm:before 带这一轮的中止信号', () => {
+  it('停下这一轮时 data.signal 随之断开，这一轮按中止收尾', async () => {
+    const { host } = await start();
+    const sessionId = 'test:llm-before-signal';
+    const signals: Array<AbortSignal | undefined> = [];
+    const outcomes: string[] = [];
+    host.hooks.use.middleware('agent:turn:after', async (data, next) => {
+      outcomes.push(data.outcome);
+      await next();
+    });
+    host.hooks.use.middleware('agent:llm:before', async (data, next) => {
+      signals.push(data.signal);
+      host.agent.use.abort(sessionId);
+      await next();
+    });
+
+    await host.agent.use.handleMessage(message(sessionId));
+
+    expect(signals.map(signal => signal?.aborted)).toEqual([true]);
+    expect(outcomes).toEqual(['aborted']);
+  });
+});
+
 describe('回合结束与提示词贡献带这一轮的输入', () => {
   it('agent:turn:after 与贡献的视图带 inputs：inputs[0].message 是入站的那条，archived 是归档的那一条；不带旧的几项', async () => {
     const { host, history } = await start();

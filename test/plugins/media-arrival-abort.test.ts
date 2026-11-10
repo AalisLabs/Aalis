@@ -138,13 +138,13 @@ async function boot(hang: Hang, frames = 2) {
     heard,
     warns,
     disable: () => app.plugins.disable(mediaPlugin.name),
-    /** 主模型能看图时发出前的一次 agent:llm:before；passed 为是否交给了下一步 */
-    llmBefore: async (images: string[]) => {
+    /** 主模型能看图时发出前的一次 agent:llm:before，signal 是这一轮的中止信号；passed 为是否交给了下一步 */
+    llmBefore: async (images: string[], signal?: AbortSignal) => {
       const message = { role: 'user' as const, content: '看看', images };
       let passed = false;
       await bound.hooks.use.run(
         'agent:llm:before',
-        { messages: [message], tools: [], acceptsImages: true },
+        { messages: [message], tools: [], acceptsImages: true, signal },
         async () => {
           passed = true;
         },
@@ -260,6 +260,16 @@ describe('来消息即识别随停用中止', () => {
     const { message, passed } = await pending;
     expect(passed).toBe(true);
     expect(message.images).toEqual([]);
+  });
+
+  it('主模型直通时动图抽帧途中这一轮被停下：交给 ffprobe 的中止信号随之断开，钩子抛中止原因，不交给下一步', async () => {
+    const t = await boot({ cmd: 'ffprobe' });
+    const turn = new AbortController();
+    const pending = t.llmBefore([VIDEO.data], turn.signal);
+    await expect.poll(() => t.execs.length).toBe(1);
+    turn.abort();
+    expect(t.execs[0].signal?.aborted).toBe(true);
+    await expect(pending).rejects.toBe(turn.signal.reason);
   });
 
   it.each([

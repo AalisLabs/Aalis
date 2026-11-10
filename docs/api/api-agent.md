@@ -100,7 +100,7 @@ type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void>) => P
 |---|---|---|
 | `agent:input:before` | 每条输入一次，在它进入一轮之前（预处理器挂在这里）。`next` 之前可以改写这条，不调 `next` 即丢掉它（不进一轮、不归档，agent 照发流结束标记）；`next` 返回时这条已落定 | `{ message }` |
 | `agent:turn:before` | 一轮开始。默认动作从按先后归档这一轮的输入开始，是这一轮的全部：中间件里输入还没归档（没有 `archived`），读历史也读不到它们。不调 `next` 即这一轮不跑、输入不归档、不发 `agent:turn:after`，实现者照发流结束标记 | `{ turnId, sessionId, inputs }`；`inputs` 是这一轮的输入（`TurnInput[]`，见下文），同一轮的输入会话与来源相同；它是活的：插进来的输入在送进模型之前追加到末尾 |
-| `agent:llm:before` | 调用 LLM 之前（含工具调用后的下一次请求） | `{ messages, tools, acceptsImages, sessionId, source?, ... }`；`acceptsImages` 是这一轮的主模型能不能亲眼看图，与工具上下文的 `acceptsImages` 同一个值（媒体按它决定当轮附件交原图还是交描述）。第一方 agent 按模型服务给这个模型登记的能力填：端点报告了视觉能力，或在模型服务的「单模型能力覆盖」（`modelCapabilities`）里写了 `vision`；第三方 agent 要按同一事实填。`source` 与本回合 `IncomingMessage.source` 相同，真人消息缺省 |
+| `agent:llm:before` | 调用 LLM 之前（含工具调用后的下一次请求） | `{ messages, tools, acceptsImages, sessionId, source?, ... }`；`acceptsImages` 是这一轮的主模型能不能亲眼看图，与工具上下文的 `acceptsImages` 同一个值（媒体按它决定当轮附件交原图还是交描述）。第一方 agent 按模型服务给这个模型登记的能力填：端点报告了视觉能力，或在模型服务的「单模型能力覆盖」（`modelCapabilities`）里写了 `vision`；第三方 agent 要按同一事实填。`source` 与本回合 `IncomingMessage.source` 相同，真人消息缺省；`signal` 是这一轮的中止信号，钩子里替这一轮做的下载、抽帧等交给它，这一轮被停下时随之停下、抛中止原因（回应 `token:request` 的估算不在回合里，不带） |
 | `agent:llm:after` | LLM 返回之后 | `{ response, messages }` |
 | `agent:tool:before` | 工具调用之前 | `{ name, args, toolCallContext }` |
 | `agent:tool:after` | 工具调用之后；`result` 可以改写，写进 `metadata` 的键随这次工具结果落库（tool 消息的元数据，`turnId`、`callId` 由 agent 写），供回看历史的一方还原调用的结局 | `{ name, result, toolCallContext, metadata }` |

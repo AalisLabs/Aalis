@@ -790,7 +790,7 @@ class DefaultAgent implements AgentService {
       const originalTools = [...tools];
 
       // Hook: agent:llm:before — 插件可以修改消息或工具列表
-      const llmBeforeData = { messages, tools, acceptsImages, sessionId, platform, source: first.source };
+      const llmBeforeData = { messages, tools, acceptsImages, sessionId, platform, source: first.source, signal };
       // 组装先于链：贡献块（档案/技能/记忆/即时提示）先物化，拦截者审完整成品
       await assemblePromptContributions(this.caps, llmBeforeData, inputs, {
         buildTimeoutMs: this.promptBuildTimeoutMs,
@@ -1175,6 +1175,7 @@ class DefaultAgent implements AgentService {
           sessionId,
           platform,
           source: first.source,
+          signal,
         };
         // 已物化的贡献按全局键跳过；本轮工具调用新注册的贡献（如新激活技能）增量落位
         await assemblePromptContributions(this.caps, nextLlmData, inputs, {
