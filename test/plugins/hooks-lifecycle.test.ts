@@ -156,7 +156,7 @@ describe('hooks 门面：插件登记随卸载清扫', () => {
     expect(typeof host.hooks.use.middleware).toBe('function');
   });
 
-  it('middleware 不进清理链：登记与退订都不改变链长，登记随激活关闭整体切断', async () => {
+  it('middleware 不逐条进撤回链：登记与退订都不改变链长，登记随激活关闭整体切断', async () => {
     const root = createActivationFixture();
     root.caps.provide.use(hooks, new HookTable());
     const child = root.host.create('plugin-a');
@@ -171,12 +171,12 @@ describe('hooks 门面：插件登记随卸载清扫', () => {
         data.trail.push(tag);
         await next();
       });
-    // 首次登记挂上一条跟随提供者的清理（归属表随提供者换人重挂），基线取在它之后
+    // 首次登记挂上一条跟随提供者的撤回（归属表随提供者换人重挂），基线取在它之后
     push('warm')();
-    const before = child.resources.disposables.labels();
+    const before = child.resources.withdrawals.labels();
     for (let i = 0; i < 5; i++) push(`kept-${i}`);
     for (let i = 0; i < 5; i++) push(`gone-${i}`)();
-    expect(child.resources.disposables.labels()).toEqual(before);
+    expect(child.resources.withdrawals.labels()).toEqual(before);
     expect(await trace()).toEqual(['kept-0', 'kept-1', 'kept-2', 'kept-3', 'kept-4']);
     await child.disposeAsync();
     expect(await trace()).toEqual([]);
