@@ -612,7 +612,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
    */
   let inflight: TextRef | null = null;
   /**
-   * 进程即将重启（update 成功后置位），此后**永不释放**锁。
+   * 进程即将重启（update 装完、重启已受理后置位），此后**永不释放**锁。
    *
    * 重启不是立刻发生的（延迟 500ms + stop + spawn），这段窗口里若放新操作进来，
    * 它会被 `process.exit` 腰斩在半路，留下半装状态。
@@ -968,9 +968,6 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // ── 重启接管 ──
     // 回滚凭据交给重启策略：只有它能观察到「新实例 ready 前夭折」。插件级失败不在此列
     // ——插件起不来会停在 error 态且 WebUI 可见，自动回滚反而会掩盖问题。
-    log.info(`更新完成，正在重启接管: ${specs.join(' ')}`);
-    // 置位后锁不再释放：重启是延迟发生的，这段窗口放新操作进来会被 process.exit 腰斩。
-    terminal = true;
     // postRestore 钉**精确旧版**，不用裸 `npm install`。
     // 裸 install 只能按还原后的 package.json 重解析，而声明通常是 caret 范围（`^1.0.0`），
     // 刚崩掉的新版（1.1.0）本身就满足它——于是 npm 又把它装回来，node_modules 分毫未变，
@@ -993,11 +990,19 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
       const after = treeAfter.get(name);
       if (after !== undefined && after !== before) pinned.push(`${name}@${before}`);
     }
-    deps.restartApp({
-      reason: `marketplace-update:${specs.join(',')}`,
-      restore,
-      postRestore: { cmd: 'npm', args: ['install', ...pinned, '--no-save', '--no-audit', '--no-fund'], cwd: root },
-    });
+    try {
+      deps.restartApp({
+        reason: `marketplace-update:${specs.join(',')}`,
+        restore,
+        postRestore: { cmd: 'npm', args: ['install', ...pinned, '--no-save', '--no-audit', '--no-fund'], cwd: root },
+      });
+    } catch (err) {
+      // 宿主没有重启策略（嵌入宿主）或应用已开始停机时 core 同步抛错：包已装好、不会重启，锁照常放开，回执照实说
+      return { ok: true, restarting: false, message: t('updatedRestartUnavailable', { specs, error: textOf(err) }) };
+    }
+    log.info(`更新完成，正在重启接管: ${specs.join(' ')}`);
+    // 重启受理之后锁不再释放：重启是延迟发生的，这段窗口放新操作进来会被 process.exit 腰斩。
+    terminal = true;
     return { ok: true, restarting: true, message: t('updated', { specs }) };
   }
 

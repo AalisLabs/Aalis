@@ -54,6 +54,7 @@ const SOURCE = {
   preflightFailed: '依赖预检没跑成：{error}',
   installFailedRetry: '安装失败（工程未重启，可重试）：{error}',
   updated: '已更新 {specs, list}，正在重启…',
+  updatedRestartUnavailable: '已更新 {specs, list}，但应用无法自己重启（{error}），手动重启后生效',
   noPackageJson:
     '读不到 {name} 的 package.json，无法确认它是什么，市场不卸；确认要卸就在项目目录执行 npm uninstall {name} 后重启',
   lifeline:

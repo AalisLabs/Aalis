@@ -1845,6 +1845,32 @@ describe('生产接线：装卸按插件名（即包名），卸载清理全部�
       rmSync(proj, { recursive: true, force: true });
     }
   });
+
+  it('宿主没有重启策略：更新装完，回执写明 app.restart() 给的原因，包管理照常可用', async () => {
+    const ROOT_DIR = '/abs-pm-norestart';
+    const { app } = hostedApp({ name: 'PM' });
+    productionApps.push(app);
+    const host = app.bind({ provide, services });
+    host.provide.use(
+      defineService<object>('process'),
+      mockProcess({
+        [`${ROOT_DIR}/package.json`]: JSON.stringify({ dependencies: { foo: '^1.0.0' } }),
+        [`${ROOT_DIR}/node_modules/foo/package.json`]: JSON.stringify({ name: 'foo', version: '1.0.0' }),
+      }),
+    );
+    provideHostPaths(app, ROOT_DIR);
+    await app.plugins.register(packageManagerPlugin, {});
+    await app.plugins.idle();
+    const svc = host.services.use.get(packageManager);
+    if (!svc) throw new Error('package-manager 未就绪');
+    const r = await svc.update([{ name: 'foo', version: '1.0.1' }]);
+    expect(toSource(r)).toEqual({
+      ok: true,
+      restarting: false,
+      message: '已更新 foo@1.0.1，但应用无法自己重启（App.restart() 不可用：未注入 restartStrategy。），手动重启后生效',
+    });
+    expect(toSource((await svc.update([{ name: 'foo', version: '1.0.1' }])).message)).not.toContain('正在进行中');
+  });
 });
 
 describe('registry()：安装实际使用的 npm 源', () => {

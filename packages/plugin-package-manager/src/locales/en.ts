@@ -62,6 +62,8 @@ export default defineLocale<Source>()({
   preflightFailed: 'The dependency dry run could not run: {error}',
   installFailedRetry: 'Installation failed (the project was not restarted; you can retry): {error}',
   updated: 'Updated {specs, list}; restarting…',
+  updatedRestartUnavailable:
+    'Updated {specs, list}, but the app cannot restart itself ({error}); restart it by hand for the update to take effect',
   noPackageJson:
     'Cannot read the package.json of {name}, so the market cannot tell what it is and will not uninstall it; if you are sure, run npm uninstall {name} in the project directory and restart',
   lifeline:
