@@ -15,11 +15,6 @@ const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_MAX_MS = 60_000;
 /** 就绪后连续运行这么久再退出，算新一轮故障：重启间隔回到起点 */
 const STABLE_MS = 60_000;
-/**
- * 停侧车时先发 SIGTERM，这么久还没退出再发 SIGKILL。明显短于 core 单项清理的上限（disposeTimeoutMs，默认 5s）：
- * 侧车不理 SIGTERM 时 SIGKILL 之后还来得及在上限内退出，旧实例不至于超过宽限仍没停下、拖住重启
- */
-const STOP_GRACE_MS = 3_000;
 /** 退出原因里附带的标准错误最后一行的长度上限 */
 const TAIL_MAX = 200;
 /** 单行输出的长度上限：没有换行的超长输出只留开头，行缓冲不无限增长 */
@@ -127,7 +122,8 @@ export function superviseSidecar(o: SidecarOptions): Sidecar {
   ];
 
   let state: SidecarState = { kind: 'starting', since: Date.now(), restarts: 0 };
-  let stopping = false;
+  /** 停侧车就是中止它：每次启动都带上这个 signal，process 服务按中止契约整组 SIGTERM、宽限后 SIGKILL，wait() 照常落定 */
+  const stopping = new AbortController();
   let child: SpawnHandle | undefined;
   /** 当前子进程退出（含拉起失败）时落定 */
   let exited: Promise<void> = Promise.resolve();
@@ -138,7 +134,7 @@ export function superviseSidecar(o: SidecarOptions): Sidecar {
   /** 首次拉起：地址上已有侧车（系统服务、手动启动的）就不拉起，再拉一个只会绑定端口失败 */
   async function boot(): Promise<void> {
     const taken = await o.probe();
-    if (stopping) return;
+    if (stopping.signal.aborted) return;
     if (taken) {
       state = { kind: 'external' };
       o.log.warn(
@@ -154,7 +150,7 @@ export function superviseSidecar(o: SidecarOptions): Sidecar {
   /** 意外退出（含没能拉起）：记下原因，隔一段时间重启；readyAt = 这次就绪的时刻，没就绪过为 undefined */
   function crashed(reason: TextRef, readyAt: number | undefined): void {
     child = undefined;
-    if (stopping) return;
+    if (stopping.signal.aborted) return;
     if (readyAt !== undefined && Date.now() - readyAt >= STABLE_MS) {
       restarts = 0;
       backoff = BACKOFF_BASE_MS;
@@ -180,7 +176,7 @@ export function superviseSidecar(o: SidecarOptions): Sidecar {
     let handle: SpawnHandle;
     try {
       // 只用 wait() 的退出码与信号，输出按行读：wait() 不必替常驻进程攒输出
-      handle = o.process.use.spawn(python, args, { cwd: o.dir, maxBuffer: 1 });
+      handle = o.process.use.spawn(python, args, { cwd: o.dir, maxBuffer: 1, signal: stopping.signal });
     } catch (err) {
       crashed(t('spawnFailed', { error: textOf(err) }), undefined);
       return;
@@ -243,19 +239,11 @@ export function superviseSidecar(o: SidecarOptions): Sidecar {
       return state;
     },
     async stop() {
-      if (!stopping) {
-        stopping = true;
+      if (!stopping.signal.aborted) {
+        stopping.abort();
         clearTimeout(restartTimer);
         state = { kind: 'stopped' };
-        const running = child;
-        if (running) {
-          running.kill('SIGTERM');
-          const killTimer = setTimeout(() => running.kill('SIGKILL'), STOP_GRACE_MS);
-          exited = exited.finally(() => {
-            clearTimeout(killTimer);
-            o.log.info('[laya] 已停掉侧车');
-          });
-        }
+        if (child) exited = exited.finally(() => o.log.info('[laya] 已停掉侧车'));
       }
       await exited;
     },

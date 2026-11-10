@@ -7,7 +7,7 @@ import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-trigger-laya 的托管侧车（sidecar.ts）：拉起参数、就绪行、退出后退避重启、首次拉起前地址已被占用、
-// 没有 process 服务、启动超时、停止时先 SIGTERM 再 SIGKILL。process 服务是假的（不拉真进程），时钟用假时钟；
+// 没有 process 服务、启动超时、停止即中止 spawn 的 signal 并等它退出。process 服务是假的（不启动真进程），时钟用假时钟；
 // 接进插件后的行为见 trigger-laya.test.ts「托管侧车」。
 // ════════════════════════════════════════════════════════════
 
@@ -151,7 +151,8 @@ describe('托管侧车：拉起与就绪', () => {
       '--parent-pid',
       '999',
     ]);
-    expect(c.opts, 'wait() 只用退出码，不替常驻进程攒输出').toEqual({ cwd: DIR, maxBuffer: 1 });
+    expect(c.opts?.cwd).toBe(DIR);
+    expect(c.opts?.maxBuffer, 'wait() 只用退出码，不替常驻进程暂存输出').toBe(1);
     expect(h.sc.state).toMatchObject({ kind: 'starting', restarts: 0 });
     expect(infos(h)).toEqual([`[laya] 正在拉起侧车（${DIR}，端口 17878），就绪前判定按兜底只回点名`]);
   });
@@ -364,38 +365,30 @@ describe('托管侧车：退出与重启', () => {
 });
 
 describe('托管侧车：停止', () => {
-  it('先 SIGTERM，3s 内退出就不再 SIGKILL；等到退出才返回并记「已停掉」；之后不重启、不回调', async () => {
+  it('停止就是中止 spawn 的 signal：等到退出才返回并记「已停掉」；自己不发信号，之后不重启、不回调', async () => {
     const h = start();
     await settle();
     h.children[0].ready();
     await settle();
+    const signal = h.children[0].opts?.signal;
+    expect(signal?.aborted).toBe(false);
     let stopped = false;
     const stopping = h.sc.stop().then(() => {
       stopped = true;
     });
-    expect(h.children[0].signals).toEqual(['SIGTERM']);
+    expect(signal?.aborted).toBe(true);
     expect(h.sc.state).toEqual({ kind: 'stopped' });
-    await vi.advanceTimersByTimeAsync(2_000);
-    expect(stopped).toBe(false);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(stopped, '侧车还没退出').toBe(false);
     h.children[0].exit(null, 'SIGTERM');
     await stopping;
     expect(infos(h).at(-1)).toBe('[laya] 已停掉侧车');
     await vi.advanceTimersByTimeAsync(120_000);
-    expect(h.children[0].signals).toEqual(['SIGTERM']);
+    expect(h.children[0].signals, '先 SIGTERM、宽限后 SIGKILL 归 process 服务的中止').toEqual([]);
     expect(h.children).toHaveLength(1);
     expect(h.exits).toEqual([]);
     await h.sc.stop(); // 可重复调用
     expect(infos(h).filter(m => m === '[laya] 已停掉侧车')).toHaveLength(1);
-  });
-
-  it('SIGTERM 后 3s 还没退出：补 SIGKILL', async () => {
-    const h = start();
-    await settle();
-    const stopping = h.sc.stop();
-    await vi.advanceTimersByTimeAsync(3_000);
-    expect(h.children[0].signals).toEqual(['SIGTERM', 'SIGKILL']);
-    h.children[0].exit(null, 'SIGKILL');
-    await stopping;
   });
 
   it('等重启期间停止：取消重启；探地址期间停止：不拉起；两者都没有子进程，不记「已停掉」', async () => {

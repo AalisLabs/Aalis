@@ -10,7 +10,12 @@ import { media } from '../../packages/api-media/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { type PersonaService, type PersonaSessionOptions, persona } from '../../packages/api-persona/src/index.js';
-import { type ExecResult, type ProcessService, processService } from '../../packages/api-process/src/index.js';
+import {
+  type ExecResult,
+  type ProcessService,
+  processService,
+  type SpawnOptions,
+} from '../../packages/api-process/src/index.js';
 import {
   type SessionInfo,
   type SessionManagerService,
@@ -1209,23 +1214,22 @@ describe('plugin-trigger-laya：托管侧车', () => {
   /**
    * process 替身：拉起的「侧车」不是真进程。ready() 让假侧车的 /health 转为在线并打出就绪行；
    * exit() 让它退出（/health 随之下线），与真实子进程一样到下一轮事件循环才报告。
-   * exitOnKill（默认 true）：收到信号即退出；false 时由用例调 exit()
+   * exitOnAbort（默认 true）：spawn 的 signal 一中止即以 SIGTERM 退出；false 时由用例调 exit()
    */
-  function fakeProcess({ exitOnKill = true } = {}) {
+  function fakeProcess({ exitOnAbort = true } = {}) {
     const children: Array<{
       args: readonly string[];
-      signals: NodeJS.Signals[];
+      signal: AbortSignal | undefined;
       ready(): void;
       exit(code: number | null, signal?: NodeJS.Signals): void;
-      kill(signal?: NodeJS.Signals): boolean;
     }> = [];
     const service = {
-      spawn(_cmd: string, args: readonly string[]) {
+      spawn(_cmd: string, args: readonly string[], opts?: SpawnOptions) {
         const done = deferred<ExecResult>();
         const stdout = new PassThrough();
         const child = {
           args,
-          signals: [] as NodeJS.Signals[],
+          signal: opts?.signal,
           ready() {
             sidecar.health = UP;
             stdout.write(`${JSON.stringify({ ready: true, version: 'v-test', startup_s: 10.8 })}\n`);
@@ -1234,12 +1238,8 @@ describe('plugin-trigger-laya：托管侧车', () => {
             sidecar.health = DOWN;
             setImmediate(() => done.resolve({ code, signal: signal ?? null, stdout: '', stderr: '' }));
           },
-          kill(signal: NodeJS.Signals = 'SIGTERM') {
-            child.signals.push(signal);
-            if (exitOnKill) child.exit(null, signal);
-            return true;
-          },
         };
+        if (exitOnAbort) opts?.signal?.addEventListener('abort', () => child.exit(null, 'SIGTERM'));
         children.push(child);
         return {
           pid: 4242,
@@ -1247,7 +1247,6 @@ describe('plugin-trigger-laya：托管侧车', () => {
           stdout,
           stderr: new PassThrough(),
           wait: () => done.promise,
-          kill: child.kill,
           unref() {},
         };
       },
@@ -1258,7 +1257,7 @@ describe('plugin-trigger-laya：托管侧车', () => {
   const logged = (logs: LogEntry[], prefix: string) => logs.filter(e => e.message.startsWith(prefix)).length;
 
   /** 托管侧车、Laya 生效、应用已就绪；返回时侧车已拉起、还没就绪 */
-  async function managed(opts: { exitOnKill?: boolean } = {}) {
+  async function managed(opts: { exitOnAbort?: boolean } = {}) {
     sidecar.health = DOWN;
     const proc = fakeProcess(opts);
     const t = await setup({ laya: { sidecarDir: DIR }, process: proc.service });
@@ -1404,12 +1403,12 @@ describe('plugin-trigger-laya：托管侧车', () => {
     );
   }, 10_000);
 
-  it('不再是生效的触发插件：停掉侧车（SIGTERM）并记「已停掉」；切回来重新拉起', async () => {
+  it('不再是生效的触发插件：中止侧车并记「已停掉」；切回来重新启动侧车进程', async () => {
     const { host, logs, diagnose, proc } = await managed();
     proc.children[0].ready();
     preferRule(host);
     await vi.waitFor(() => expect(logged(logs, '[laya] 已停掉侧车')).toBe(1));
-    expect(proc.children[0].signals).toEqual(['SIGTERM']);
+    expect(proc.children[0].signal?.aborted).toBe(true);
     expect((await diagnose()).level).toBe('ok');
 
     preferLaya(host);
@@ -1418,15 +1417,15 @@ describe('plugin-trigger-laya：托管侧车', () => {
     await vi.waitFor(() => expect(logged(logs, '[laya] 侧车就绪')).toBe(2));
   });
 
-  it('停用本插件：先 SIGTERM，等侧车退出后停用才完成', async () => {
-    const { app, logs, proc } = await managed({ exitOnKill: false });
+  it('停用本插件：中止侧车，等它退出后停用才完成', async () => {
+    const { app, logs, proc } = await managed({ exitOnAbort: false });
     proc.children[0].ready();
     await vi.waitFor(() => expect(logged(logs, '[laya] 侧车就绪')).toBe(1));
     let disabled = false;
     const disabling = app.plugins.disable(layaPlugin.name).then(() => {
       disabled = true;
     });
-    await vi.waitFor(() => expect(proc.children[0].signals).toEqual(['SIGTERM']));
+    await vi.waitFor(() => expect(proc.children[0].signal?.aborted).toBe(true));
     await new Promise(r => setTimeout(r, 50));
     expect(disabled, '侧车还没退出').toBe(false);
     proc.children[0].exit(null, 'SIGTERM');
@@ -1435,13 +1434,13 @@ describe('plugin-trigger-laya：托管侧车', () => {
     expect(byLevel(logs, 'error')).toEqual([]);
   });
 
-  it('正常停机：随本插件的拆卸先 SIGTERM 关掉侧车，记「已停掉」，不当成意外退出（不记 error、不排重启）', async () => {
+  it('正常停机：随本插件的拆卸中止侧车，记「已停掉」，不当成意外退出（不记 error、不排重启）', async () => {
     const { app, logs, proc } = await managed();
     proc.children[0].ready();
     await vi.waitFor(() => expect(logged(logs, '[laya] 侧车就绪')).toBe(1));
 
     await app.stop();
-    expect(proc.children[0].signals).toEqual(['SIGTERM']);
+    expect(proc.children[0].signal?.aborted).toBe(true);
     expect(logged(logs, '[laya] 已停掉侧车')).toBe(1);
     expect(byLevel(logs, 'error')).toEqual([]);
     expect(logs.filter(e => e.message.includes('后重启'))).toEqual([]);
