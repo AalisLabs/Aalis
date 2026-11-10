@@ -672,7 +672,8 @@ function validateFields(
   for (const [key, entry] of Object.entries(schema ?? {})) {
     if (!entry || typeof entry !== 'object') continue;
     const path = prefix + key;
-    const value = config[key];
+    // 只认自有属性，与 parseConfig 同一口径：原型上的同名键（toString 等）不算已配置
+    const value = Object.hasOwn(config, key) ? config[key] : undefined;
 
     if ('fields' in entry) {
       if (value === undefined || value === null) continue;

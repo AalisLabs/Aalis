@@ -193,6 +193,11 @@ describe('validateConfig required 与缺失语义', () => {
       { path: 'model', message: '必填字段缺失', kind: 'missing' },
     ]);
   });
+
+  it('只认自有属性：原型上的同名键（valueOf、toString）不算已配置（与 parseConfig 一致）', () => {
+    const schema: ConfigSchema = { valueOf: field('string', { required: true }), toString: field('string') };
+    expect(issuesOf(schema, {})).toEqual([{ path: 'valueOf', message: '必填字段缺失', kind: 'missing' }]);
+  });
 });
 
 describe("validateConfig onInvalid: 'error'", () => {
