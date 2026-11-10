@@ -9,6 +9,7 @@ import {
   assertOwnCopy,
   type BoundOf,
   type CheckedUses,
+  dependencies,
   isOptional,
   optional,
   type ServiceDescriptor,
@@ -128,7 +129,6 @@ export function validateDefinition(definition: PluginDefinition): DefinitionSpec
     throw new Error(`插件 "${name}" 的 uses 必须是纯对象（不能是数组或原始值）`);
   }
   const copy: Uses = {};
-  const deps: Dep[] = [];
   for (const [key, use] of Object.entries(uses)) {
     assertOwnCopy(use, `插件 "${name}" 的 uses.${key} `);
     const descriptor: unknown = isOptional(use) ? use.optional : use;
@@ -136,10 +136,11 @@ export function validateDefinition(definition: PluginDefinition): DefinitionSpec
     if (!isServiceDescriptor(descriptor)) {
       throw new Error(`插件 "${name}" 的 uses.${key} 不是服务描述符（应为 defineService 的结果）`);
     }
-    const kind = descriptor === use ? 'required' : 'optional';
-    copy[key] = kind === 'optional' ? optional(descriptor) : descriptor;
-    deps.push({ key, service: descriptor.name, kind });
+    copy[key] = descriptor === use ? descriptor : optional(descriptor);
   }
+  const deps = dependencies(copy).map(({ key, descriptor, required }): Dep => {
+    return { key, service: descriptor.name, kind: required ? 'required' : 'optional' };
+  });
   if (typeof apply !== 'function') {
     throw new Error(`插件 "${name}" 的 apply 必须是函数`);
   }

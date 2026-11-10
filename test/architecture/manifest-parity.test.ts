@@ -9,7 +9,7 @@ import {
   provide,
   services,
 } from '../../packages/core/src/composition/core-services.js';
-import { optionalNames, requiredNames, type Uses } from '../../packages/core/src/composition/descriptors.js';
+import { dependencies, type Uses } from '../../packages/core/src/composition/descriptors.js';
 import type { PluginDefinition } from '../../packages/core/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -18,11 +18,17 @@ import type { PluginDefinition } from '../../packages/core/src/index.js';
 // 真相。手工双源不核对就会漂移（漂移=元数据说谎，下游按谎言行动）。
 //
 // 核对源是 definePlugin 的产物：provides 取描述符 .name；uses 经
-// core 自己的 requiredNames / optionalNames 展开（optional() 包装
-// 也走同一套归一化，不在测试里猜结构）。
+// core 自己的 dependencies 展开（optional() 包装也走同一套归一化，
+// 不在测试里猜结构）。
 // ════════════════════════════════════════════════════════════
 
 const PACKAGES = join(__dirname, '../../packages');
+
+/** 声明表里 required（或 optional）依赖的服务名 */
+const depNames = (uses: Uses, required: boolean): string[] =>
+  dependencies(uses)
+    .filter(dep => dep.required === required)
+    .map(dep => dep.descriptor.name);
 
 /**
  * core 内置六项的描述符集合，和第三方共同参与依赖声明。增删内置能力必须同步更新本清单。
@@ -44,7 +50,7 @@ describe('manifest 双源核对', () => {
   it('核心服务均进入与第三方相同的 required / optional 提取', () => {
     const fromModule = [config, events, lifecycle, logger, provide, services].map(d => d.name).sort();
     expect([...CORE_SERVICE_NAMES].sort()).toEqual(fromModule);
-    expect(requiredNames({ config, events, lifecycle, logger, provide, services }).sort()).toEqual(fromModule);
+    expect(depNames({ config, events, lifecycle, logger, provide, services }, true).sort()).toEqual(fromModule);
   });
 
   it('全部 aalis-plugin 包的 aalis.service 与 default 定义的 provides/uses 一致', async () => {
@@ -77,8 +83,8 @@ describe('manifest 双源核对', () => {
       const svc = meta.aalis?.service ?? {};
       const pairs: Array<[string, string[], string[]]> = [
         ['provides', names(svc.provides), names(def.provides?.map(d => d.name))],
-        ['required', names(svc.required), names(requiredNames(uses))],
-        ['optional', names(svc.optional), names(optionalNames(uses))],
+        ['required', names(svc.required), names(depNames(uses, true))],
+        ['optional', names(svc.optional), names(depNames(uses, false))],
       ];
       for (const [field, manifest, code] of pairs) {
         if (JSON.stringify(manifest) !== JSON.stringify(code)) {

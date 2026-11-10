@@ -198,19 +198,14 @@ export function isOptional(use: unknown): use is OptionalUse<any, any> {
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: 与 Uses 的 any 载体一致
-function unwrapDescriptor(use: Uses[string]): ServiceDescriptor<any, any> {
-  return isOptional(use) ? use.optional : use;
-}
+type Dependency = { key: string; descriptor: ServiceDescriptor<any, any>; required: boolean };
 
-/** 声明表里的依赖服务名。所有服务共用激活闸与关停边 */
-function dependencyNames(uses: Uses, wantOptional: boolean): string[] {
-  return Object.values(uses)
-    .filter(use => isOptional(use) === wantOptional)
-    .map(use => unwrapDescriptor(use))
-    .map(descriptor => descriptor.name);
+/**
+ * 声明表里的各项依赖：apply 里的键、描述符、是否 required（参与激活闸）。所有服务共用激活闸与关停边
+ * @internal
+ */
+export function dependencies(uses: Uses): Dependency[] {
+  return Object.entries(uses).map(([key, use]) =>
+    isOptional(use) ? { key, descriptor: use.optional, required: false } : { key, descriptor: use, required: true },
+  );
 }
-
-/** 参与激活闸的依赖 */
-export const requiredNames = (uses: Uses): string[] => dependencyNames(uses, false);
-/** 不参与激活闸的依赖 */
-export const optionalNames = (uses: Uses): string[] => dependencyNames(uses, true);

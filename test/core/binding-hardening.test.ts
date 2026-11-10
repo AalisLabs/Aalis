@@ -9,6 +9,7 @@ import {
   services,
 } from '../../packages/core/src/index.js';
 import { ServiceContainer } from '../../packages/core/src/primitives/services.js';
+import { createActivationFixture } from '../helpers/activation.js';
 import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
 
 const OWNER = Symbol('owner');
@@ -380,5 +381,50 @@ describe('defineService：name 须 trim 后非空', () => {
   it('空串与空白拒绝', () => {
     expect(() => defineService('')).toThrow('服务 name 不能为空');
     expect(() => defineService('   ')).toThrow('服务 name 不能为空');
+  });
+});
+
+describe('uses 里同一服务既 required 又 optional：按 required 连关停边', () => {
+  it('同一份 uses 里或先后两次绑定，required 与 optional 不论谁在前，对提供者都记 required', async () => {
+    const { host } = createActivationFixture();
+    const svc = defineService<{ v: number }>('t:dual-use');
+    const provider = host.create('provider');
+    host.bind(provider, { provide }).provide.use(svc, { v: 1 });
+    const both = host.create('both');
+    host.bind(both, { a: svc, b: optional(svc) });
+    const bothOptionalFirst = host.create('both-optional-first');
+    host.bind(bothOptionalFirst, { b: optional(svc), a: svc });
+    const rebound = host.create('rebound');
+    host.bind(rebound, { a: svc });
+    host.bind(rebound, { b: optional(svc) });
+    const reboundOptionalFirst = host.create('rebound-optional-first');
+    host.bind(reboundOptionalFirst, { b: optional(svc) });
+    host.bind(reboundOptionalFirst, { a: svc });
+    for (const consumer of [both, bothOptionalFirst, rebound, reboundOptionalFirst]) {
+      expect(consumer.providers().get(provider), consumer.id).toBe(true);
+    }
+    await host.root.disposeAsync();
+  });
+
+  // 绑定函数可以当场建归属表（创建即跟随，绑定时就连上跟随边）：依赖要先记下，这条边才按 required 记
+  it('绑定时当场连上的跟随边：提供者撤下服务、撤回还没落定时只剩这条边，它也按 required 记', async () => {
+    const { host } = createActivationFixture();
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    const hub = defineService<{ add(x: string): () => Promise<void> }, { add(x: string): void }>('t:dual-hub', port => {
+      const registry = port.registrar({ key: (x: string) => x, register: (p, x: string) => p.add(x) });
+      return { add: (x: string) => void registry.add(x) };
+    });
+    const provider = host.create('provider');
+    const off = host.bind(provider, { provide }).provide.use(hub, { add: () => () => pending });
+    const consumer = host.create('consumer');
+    host.bind(consumer, { h: hub }).h.use.add('k');
+    off();
+    await Promise.resolve();
+    expect(consumer.providers().get(provider)).toBe(true);
+    release();
+    await host.root.disposeAsync();
   });
 });

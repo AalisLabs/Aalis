@@ -11,7 +11,7 @@
 | **A. 运行时定义** | `export default definePlugin({ provides, uses, … })` | **core**（`PluginManager`） | 插件**已安装并加载进进程后** | 拓扑排序、激活门控、provides 校验 |
 | **B. 安装前披露源** | `package.json` 的 `aalis.service.{provides,required,optional}` | **webui-server 的市场路由** | 插件**还在 npm 上、尚未安装时** | 给用户看「装它会引入/需要哪些服务」 |
 
-关键事实是：**core 永远不读 `package.json`，市场永远不读运行时定义。** 作为作者，你需要把两边写成一致。本仓库用 `test/architecture/manifest-parity.test.ts` 守第一方插件：核对源是 default 导出的定义对象——`provides` 取描述符 `.name`；`uses` 经 core 的 `requiredNames` / `optionalNames` 展开（`optional()` 包装走同一套归一化，内置能力与其余服务同样计入）。
+关键事实是：**core 永远不读 `package.json`，市场永远不读运行时定义。** 作为作者，你需要把两边写成一致。本仓库用 `test/architecture/manifest-parity.test.ts` 守第一方插件：核对源是 default 导出的定义对象——`provides` 取描述符 `.name`；`uses` 经 core 的 `dependencies` 展开、按每项是否 required 分开（`optional()` 包装走同一套归一化，内置能力与其余服务同样计入）。
 
 除了这两套服务元数据，`package.json` 上还有几个纯关键词或标记门：`keywords` 里的类型词（如 `aalis-plugin`）决定一个包能不能被当插件加载、在市场归到哪一类；`aalis.client` 决定它能不能被当前端发现。
 

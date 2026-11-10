@@ -8,7 +8,7 @@ import { ownHostConfig } from '../../packages/api-host-config/src/index.js';
 import { sessionFields } from '../../packages/api-session-settings/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { type FramePageDefinition, type PageHandle, webuiServer } from '../../packages/api-webui/src/index.js';
-import { optionalNames, requiredNames } from '../../packages/core/src/composition/descriptors.js';
+import { dependencies } from '../../packages/core/src/composition/descriptors.js';
 import * as core from '../../packages/core/src/index.js';
 import {
   generate,
@@ -124,8 +124,9 @@ describe('create-aalis-plugin README 与 index 同源', () => {
         expect(exports.default).toBeDefined();
         const declared = JSON.parse(renderPackageJson(a, VERSIONS)).aalis.service;
         expect(declared.required).toEqual(a.features.sessionSetting ? ['logger', 'config'] : ['logger']);
-        expect(declared.required).toEqual(requiredNames(exports.default!.uses ?? {}));
-        expect(declared.optional ?? []).toEqual(optionalNames(exports.default!.uses ?? {}));
+        const deps = dependencies(exports.default!.uses ?? {});
+        expect(declared.required).toEqual(deps.filter(dep => dep.required).map(dep => dep.descriptor.name));
+        expect(declared.optional ?? []).toEqual(deps.filter(dep => !dep.required).map(dep => dep.descriptor.name));
       }
     }
   });

@@ -1,7 +1,7 @@
 import { Activation } from './activation.js';
 import { createSelection } from '../composition/binding.js';
 import { coreProviders, provide } from '../composition/core-services.js';
-import { type BoundOf, isOptional, optionalNames, requiredNames, type Uses } from '../composition/descriptors.js';
+import { type BoundOf, dependencies, type Uses } from '../composition/descriptors.js';
 import type { ServiceRuntime } from '../composition/runtime.js';
 import type { Logger } from '../infrastructure/logger.js';
 import { Resources } from '../infrastructure/resources.js';
@@ -75,9 +75,10 @@ export class ActivationHost {
   }
 
   bind<U extends Uses>(activation: Activation, uses: U): BoundOf<U> {
-    // 必须先记依赖：binder 可以当场建立需要保留到撤回落定的绑定。
-    for (const name of optionalNames(uses)) if (!activation.declared.has(name)) activation.declared.set(name, false);
-    for (const name of requiredNames(uses)) activation.declared.set(name, true);
+    const deps = dependencies(uses);
+    // 必须先记依赖：binder 可以当场建立需要保留到撤回落定的绑定。同一服务既 required 又 optional 时记 required
+    for (const { descriptor, required } of deps)
+      if (required || !activation.declared.has(descriptor.name)) activation.declared.set(descriptor.name, required);
     const binding = {
       id: activation.id,
       owner: activation.owner,
@@ -88,9 +89,7 @@ export class ActivationHost {
       retainBinding: (owner: symbol, name: string, pump: () => void) => activation.retainBinding(owner, name, pump),
     };
     const caps: Record<string, unknown> = {};
-    for (const [key, use] of Object.entries(uses)) {
-      caps[key] = createSelection(binding, isOptional(use) ? use.optional : use, !isOptional(use));
-    }
+    for (const { key, descriptor, required } of deps) caps[key] = createSelection(binding, descriptor, required);
     return caps as BoundOf<U>;
   }
 
