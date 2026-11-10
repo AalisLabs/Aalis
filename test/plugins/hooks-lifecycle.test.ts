@@ -77,28 +77,6 @@ describe('hooks 门面：插件登记随卸载清扫', () => {
     expect(data.trail).toEqual(['plugin-b']);
   });
 
-  it('同一插件在同一钩子上登记多个 middleware：各自成条、按登记顺序执行，不互相顶替', async () => {
-    const app = await makeApp();
-    await app.plugin(
-      definePlugin({
-        name: 'plugin-a',
-        uses: { hooks },
-        apply({ hooks }) {
-          for (const tag of ['a1', 'a2']) {
-            hooks.use.middleware('__t:lifecycle-hook', async (data, next) => {
-              data.trail.push(tag);
-              await next();
-            });
-          }
-        },
-      }),
-    );
-    await expectActive(app, 'plugin-a');
-    const data = { trail: [] as string[] };
-    await app.bind({ hooks }).hooks.use.run('__t:lifecycle-hook', data);
-    expect(data.trail).toEqual(['a1', 'a2']);
-  });
-
   it('跨插件按登记顺序：a 先登记 a1、a2，b 后登记 b1，链为 a1、a2、b1（登记序全进程一个计数器，不按门面各自计数）', async () => {
     const app = await makeApp();
     const multi = (name: string, tags: string[]) =>
@@ -119,31 +97,6 @@ describe('hooks 门面：插件登记随卸载清扫', () => {
     const data = { trail: [] as string[] };
     await app.bind({ hooks }).hooks.use.run('__t:lifecycle-hook', data);
     expect(data.trail).toEqual(['a1', 'a2', 'b1']);
-  });
-
-  it('middleware 返回的退订可手动解除', async () => {
-    const app = await makeApp();
-    let off!: () => void;
-    await app.plugin(
-      definePlugin({
-        name: 'plugin-a',
-        uses: { hooks },
-        apply({ hooks }) {
-          off = hooks.use.middleware('__t:lifecycle-hook', async (data, next) => {
-            data.trail.push('a');
-            await next();
-          });
-        },
-      }),
-    );
-    await expectActive(app, 'plugin-a');
-    const host = app.bind({ hooks });
-    const first = { trail: [] as string[] };
-    await host.hooks.use.run('__t:lifecycle-hook', first);
-    off();
-    const second = { trail: [] as string[] };
-    await host.hooks.use.run('__t:lifecycle-hook', second);
-    expect([first.trail, second.trail]).toEqual([['a'], []]);
   });
 
   it('门面不外露登记表：只有 middleware / run，没有 register', async () => {

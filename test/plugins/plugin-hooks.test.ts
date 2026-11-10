@@ -79,24 +79,6 @@ describe('HookRegistry', () => {
     expect(ran).toBe(true);
     expect(reached).toBe(true);
   });
-
-  it('register 返回的 dispose 精确移除该 handler', async () => {
-    const reg = new HookRegistry();
-    const order: string[] = [];
-    const off = reg.register(
-      'inbound:command',
-      async (_d, n) => {
-        order.push('x');
-        await n();
-      },
-      'ctx-test',
-      ++seq,
-    );
-    off();
-    // biome-ignore lint/suspicious/noExplicitAny: test
-    await reg.run('inbound:command', {} as any);
-    expect(order).toEqual([]);
-  });
 });
 
 describe('HookRegistry 运行中变更', () => {

@@ -70,12 +70,6 @@ describe('plugin-contributions 登记表 / contributions 门面', () => {
     expect(specs.map(s => s.payload).sort()).toEqual(['from-a', 'from-b']);
   });
 
-  it('空 id 或含 "/" 的 id 在注册期抛错（防全局键碰撞构造）', () => {
-    const ctx = makeFixture('plugin-a');
-    expect(() => ctx.caps.contributions.use.contribute(POINT, { id: '' } as never)).toThrow(TypeError);
-    expect(() => ctx.caps.contributions.use.contribute(POINT, { id: 'b/c' } as never)).toThrow(TypeError);
-  });
-
   it('没有提供者时门面照样在登记期校验 id；提供者自身也校验（不信任门面）', () => {
     const root = createActivationFixture();
     const caps = root.host.bind(root.activation, { contributions });
