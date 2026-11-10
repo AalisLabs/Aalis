@@ -833,15 +833,11 @@ function runBrowserTools(caps: Caps): void {
   lifecycle.use.onDispose(async () => {
     // 在途的启动先落定：它看到信号已断会自己关掉那一代浏览器；它的失败已经交给发起它的那次工具调用
     await launching?.catch(() => {});
-    // 闸先关，不排在页面与浏览器的关闭后面（那两步没有时限，挂住时闸就一直开着）。
+    // 闸先关，不排在浏览器的关闭后面（那一步没有时限，阻塞时闸就一直开着）。
     // 浏览器固定经闸连网，闸关了连接即失败，不会改为直连
     await gate?.close();
     gate = null;
-    for (const [, slot] of pages) {
-      try {
-        await slot.page.close();
-      } catch {}
-    }
+    // 不逐页关页面：browser.close() 本身关掉全部页面；浏览器无响应时逐页关闭每页都要等到 CDP 命令的时限，串起来远超清理的宽限
     pages.clear();
     if (browser) {
       try {

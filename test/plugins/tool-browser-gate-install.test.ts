@@ -37,6 +37,8 @@ const fake = vi.hoisted(() => {
   const goto = vi.fn(async () => {});
   /** 替身浏览器 close() 的结果：默认立即落定，用例可换成挂住或失败 */
   const closeResult = vi.fn(async () => {});
+  /** 替身页面的 close()：默认立即落定，用例可换成一直阻塞 */
+  const pageClose = vi.fn(async () => {});
   const launch = vi.fn(async () => {
     const state = { closed: false };
     instances.push(state);
@@ -47,7 +49,7 @@ const fake = vi.hoisted(() => {
       url: () => 'http://example.zz-test/',
       title: async () => 'zz',
       evaluate: async () => 'zz-body',
-      close: async () => {},
+      close: pageClose,
     };
     return {
       get connected() {
@@ -61,7 +63,7 @@ const fake = vi.hoisted(() => {
       createBrowserContext: async () => ({ newPage: async () => page }),
     };
   });
-  return { launch, goto, closeResult, instances };
+  return { launch, goto, closeResult, pageClose, instances };
 });
 vi.mock('../../packages/util-chromium/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js', () => ({
   default: { launch: fake.launch },
@@ -262,6 +264,17 @@ describe('停用时浏览器关闭挂住或失败', () => {
     await app.stop();
     expect(fake.instances).toEqual([{ closed: true }]);
     expect(gateNet.servers.map(s => s.listening)).toEqual([false]);
+  });
+
+  it('页面关闭一直阻塞：清理不逐页关页面，直接关浏览器（页面随之关闭），宽限之内关完', async () => {
+    const { app, handlers } = await startBrowserTools(true, { disposeTimeoutMs: 500 });
+    expect((await navigate(handlers)).error).toBeUndefined();
+    fake.pageClose.mockReturnValueOnce(new Promise<void>(() => {}));
+    await app.plugins.disable(browserPlugin.name);
+    expect(app.plugins.getStatus().find(entry => entry.instanceId === browserPlugin.name)?.lingering).toBeUndefined();
+    expect(fake.instances).toEqual([{ closed: true }]);
+    expect(fake.pageClose).not.toHaveBeenCalled();
+    await app.stop();
   });
 
   it('启动途中停用、关闭这一代浏览器挂住：闸照样关闭，调用报「浏览器工具已停用」', async () => {
