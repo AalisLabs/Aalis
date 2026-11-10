@@ -472,7 +472,9 @@ class OllamaClient {
     stream: boolean,
   ): Promise<{ body: Record<string, unknown>; messages: OllamaMessage[]; tools?: OllamaTool[] }> {
     const messages = await Promise.all(
-      prepareLLMMessages(request.messages).map(m => this.toOllamaMessage(m, request.requireImages === true)),
+      prepareLLMMessages(request.messages).map(m =>
+        this.toOllamaMessage(m, request.requireImages === true, request.signal),
+      ),
     );
     const tools = request.tools?.map(t => this.toOllamaTool(t));
 
@@ -802,8 +804,9 @@ class OllamaClient {
    * 支持 data URI、HTTP(S) URL、纯 base64、文件路径。返回 null 表示图片无法获取。
    * 所有返回都会去除空白字符（Ollama 校验时不容忍 base64 内的换行/空格，
    * 否则会返回 `illegal base64 data at input byte N` 错误）。
+   * 网址的下载随 signal（这次模型调用的）停下，中止时抛中止原因。
    */
-  private async resolveImage(img: string): Promise<string | null> {
+  private async resolveImage(img: string, signal: AbortSignal | undefined): Promise<string | null> {
     const sanitize = (b64: string) => b64.replace(/[\s\r\n]+/g, '');
     const trimmed = img.trim();
 
@@ -815,7 +818,8 @@ class OllamaClient {
     // 附件缓存侧有 maxBytes 上限，但缓存失败回退原 URL 时会走到这里，此前这一侧不限量）
     if (/^https?:\/\//i.test(trimmed)) {
       try {
-        const res = await safeFetch(trimmed, { signal: AbortSignal.timeout(30000) });
+        const timeout = AbortSignal.timeout(30000);
+        const res = await safeFetch(trimmed, { signal: signal ? AbortSignal.any([timeout, signal]) : timeout });
         if (!res.ok) {
           this.logger.warn(`下载图片失败 (${res.status}): ${trimmed}`);
           return null;
@@ -827,6 +831,8 @@ class OllamaClient {
         }
         return buf.toString('base64');
       } catch (err) {
+        // 中止不是图片取不到：抛中止原因，这次调用随之停下
+        signal?.throwIfAborted();
         this.logger.warn(`下载图片异常: ${trimmed}`, err);
         return null;
       }
@@ -856,8 +862,12 @@ class OllamaClient {
    * 而调用方拿到非空内容便记成识别成功——失败被伪装成幻觉，比报错难查得多。
    * 为假时（顺手带图）保持宽松，warn 后按剩余的继续，不打断这一轮。
    */
-  private async resolveImages(images: string[], requireImages: boolean): Promise<string[]> {
-    const resolved = await Promise.all(images.map(img => this.resolveImage(img)));
+  private async resolveImages(
+    images: string[],
+    requireImages: boolean,
+    signal: AbortSignal | undefined,
+  ): Promise<string[]> {
+    const resolved = await Promise.all(images.map(img => this.resolveImage(img, signal)));
     const valid = resolved.filter((r): r is string => r !== null);
     if (valid.length === images.length) return valid;
     if (valid.length === 0 && requireImages) {
@@ -872,7 +882,11 @@ class OllamaClient {
    * Ollama 的图片通过 images 字段传递 base64 数据（或 URL）
    * 工具调用结果通过 role: tool 传递
    */
-  private async toOllamaMessage(msg: Message, requireImages = false): Promise<OllamaMessage> {
+  private async toOllamaMessage(
+    msg: Message,
+    requireImages: boolean,
+    signal: AbortSignal | undefined,
+  ): Promise<OllamaMessage> {
     // 调用方已经 prepareLLMMessages 处理过：role 已是 WellKnownRole，自定义 role / kind
     // 对应的前缀已拼接进 content。这里只需透传。
     const ollamaMsg: OllamaMessage = {
@@ -887,7 +901,7 @@ class OllamaClient {
 
     // 多模态：Ollama 支持 images 字段（base64 或文件路径）
     if (msg.images && msg.images.length > 0 && msg.role === 'user') {
-      const valid = await this.resolveImages(msg.images, requireImages);
+      const valid = await this.resolveImages(msg.images, requireImages, signal);
       if (valid.length > 0) ollamaMsg.images = valid;
     }
 
@@ -933,7 +947,7 @@ class OllamaClient {
         // Modality order：Ollama 官方 best practice 要求 image/audio content
         // 必须在 text 之前。
         if (m.images && m.images.length > 0 && m.role === 'user') {
-          for (const b64 of await this.resolveImages(m.images, request.requireImages === true)) {
+          for (const b64 of await this.resolveImages(m.images, request.requireImages === true, request.signal)) {
             blocks.push({ type: 'image_url', image_url: { url: `data:image/png;base64,${b64}` } });
           }
         }
