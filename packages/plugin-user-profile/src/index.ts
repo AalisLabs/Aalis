@@ -9,7 +9,7 @@ import { persona } from '@aalis/api-persona';
 import { tools } from '@aalis/api-tools';
 import { userRelation } from '@aalis/api-user-relation';
 import { webuiServer } from '@aalis/api-webui';
-import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
+import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { TextError, type TextRef, textClauses, textLines, textOf } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
@@ -291,6 +291,7 @@ const uses = {
   contributions,
   config,
   logger,
+  lifecycle,
   tools: optional(tools),
   commands: optional(commands),
   userRelation: optional(userRelation),
@@ -320,6 +321,7 @@ function registerUserProfile({
   contributions,
   config,
   logger,
+  lifecycle,
   tools,
   commands,
   userRelation,
@@ -738,11 +740,13 @@ function registerUserProfile({
         { role: 'system', content: sys },
         { role: 'user', content: user },
       ];
+      // 提取是本插件自己发起的：停用、停机时随之停下（出错照旧只记 debug、这一批不写）
       const resp = await extractLlm.chat({
         messages: baseMessages,
         temperature: 0.2,
         maxTokens: 800,
         think: lightestThinking(extractLlm),
+        signal: lifecycle.use.signal,
       });
       const text = (resp.content ?? '').trim();
       let reply = readExtractReply(resp);
@@ -766,6 +770,7 @@ function registerUserProfile({
           temperature: 0.2,
           maxTokens: 800,
           think: lightestThinking(extractLlm),
+          signal: lifecycle.use.signal,
         });
         reply = readExtractReply(retryResp);
         if ('why' in reply) {

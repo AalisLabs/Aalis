@@ -60,6 +60,7 @@
         "contributions",
         "events",
         "hooks",
+        "lifecycle",
         "llm",
         "logger",
         "memory"
