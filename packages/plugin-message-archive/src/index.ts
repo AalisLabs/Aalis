@@ -5,7 +5,7 @@ import type { ArchiveNoticeOptions, MessageArchiveService } from '@aalis/api-mes
 import { messageArchive, outboundAddress, speakerOf, unaddressedText } from '@aalis/api-message-archive';
 import { sessionManager } from '@aalis/api-session-manager';
 import { isStorageUri, isWebUrl, parseUriRoot, storage } from '@aalis/api-storage';
-import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { isTextRef, type TextRef, textOf, toSource, truncateParams } from '@aalis/schema-i18n';
 import type { ArchivedAttachment, IncomingMessage, Message, OutgoingMessage } from '@aalis/schema-message';
@@ -128,6 +128,7 @@ const uses = {
   authority: optional(authority),
   events,
   logger,
+  lifecycle,
   config,
   provide,
 };
@@ -163,7 +164,7 @@ export default definePlugin({
 });
 
 function createArchiveService(
-  { memory, media, storage, sessionManager, authority, events, logger }: Caps,
+  { memory, media, storage, sessionManager, authority, events, logger, lifecycle }: Caps,
   debugLogs: boolean,
 ): MessageArchiveService {
   // 经 memory 的业务句柄调用：一次激活内胜者也可能换人（偏好变更、更高优先级的提供者登场），
@@ -198,7 +199,9 @@ function createArchiveService(
     const mem = memory.use;
     if (!mem.updateMessageContent || !media.present) return;
     const service = media.use;
-    const described = kind === 'image' ? service.describeImage(url) : service.describeVideo(url);
+    // 补描述是本插件自己发起的：识图接本插件这次激活的信号，停用、停机时随之停下（describeVideo 的契约不带信号）
+    const described =
+      kind === 'image' ? service.describeImage(url, { signal: lifecycle.use.signal }) : service.describeVideo(url);
     const desc = (await withTimeout(described, DESCRIBE_TIMEOUT_MS[kind])).trim();
     if (!desc) return;
     const before = outboundMediaMessage(kind, url, { source: 'agent' }).content;
@@ -232,7 +235,11 @@ function createArchiveService(
         if (!pending) return;
         announced[i]
           .then(() => describeLater(sessionId, message, pending))
-          .catch(err => logger.use.warn('[message-archive] 发出的附件没能补上描述，这一条不带描述:', err));
+          .catch(err => {
+            // 停用、停机时中止不是补不上：不告警
+            if (!lifecycle.use.signal.aborted)
+              logger.use.warn('[message-archive] 发出的附件没能补上描述，这一条不带描述:', err);
+          });
       });
     },
 

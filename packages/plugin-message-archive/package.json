@@ -51,6 +51,7 @@
       "required": [
         "config",
         "events",
+        "lifecycle",
         "logger",
         "memory",
         "provide"

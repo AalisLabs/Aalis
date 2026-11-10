@@ -39,8 +39,8 @@ interface SetupOptions {
   memory?: MemoryService;
   /** 会话表：给了才登记会话管理 */
   sessions?: Array<Record<string, unknown>>;
-  /** 识图：缺省不登记媒体服务 */
-  describe?: (url: string) => Promise<string>;
+  /** 识图（signal 是交给识图的中止信号）：缺省不登记媒体服务 */
+  describe?: (url: string, signal?: AbortSignal) => Promise<string>;
   /** 存储里的文件（存储地址 → 内容）：给了才登记存储与 image-sender */
   files?: Map<string, Uint8Array>;
 }
@@ -72,9 +72,9 @@ async function setup(opts: SetupOptions = {}) {
   if (opts.describe) {
     const describe = opts.describe;
     host.provide.use(media, {
-      describeImage: async (url: string) => {
+      describeImage: async (url: string, opts?: { signal?: AbortSignal }) => {
         described.push(url);
-        return describe(url);
+        return describe(url, opts?.signal);
       },
       describeVideo: async (url: string) => {
         described.push(url);
@@ -211,6 +211,31 @@ describe('IM 房间的出站在送达之后记进历史', () => {
     const after = await history(ROOM);
     expect(after).toHaveLength(1);
     expect(after[0].timestamp).toBe(first.timestamp);
+  });
+
+  it('识图途中存档停用：交给识图的中止信号随之断开，不记补不上描述的 warn', async () => {
+    const signals: Array<AbortSignal | undefined> = [];
+    const { app, host, history, warns } = await setup({
+      describe: (_url, signal) =>
+        new Promise<string>((_, reject) => {
+          signals.push(signal);
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+        }),
+    });
+    const url = 'https://example.invalid/cat.png';
+    await host.events.use.emit('outbound:message', {
+      sessionId: ROOM,
+      platform: 'onebot',
+      content: '',
+      source: 'agent',
+      attachments: [{ kind: 'image', data: url, ref: url }],
+    });
+    await vi.waitFor(async () => expect(await history(ROOM)).toHaveLength(1));
+    await vi.waitFor(() => expect(signals).toHaveLength(1));
+    await app.plugins.disable(messageArchivePlugin.name);
+    expect(signals[0]?.aborted).toBe(true);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(warns.filter(line => line.includes('补上描述'))).toEqual([]);
   });
 
   it('识图超时：这一条保持不带描述，记一条 warn', async () => {
