@@ -38,7 +38,7 @@ export default definePlugin({
   `code-sandbox` 服务，而非给所有子进程共享的 `ProcessService` 加字段。
 - **经 `caps.processService.use` spawn**：把命令包成 `bwrap …` / `sandbox-exec …` 后交给现有 `process` 服务执行——
   沙箱相关的逻辑不进 api-process / process-local；也不直接 import `node:child_process`/`node:fs`（后端探测用经 process 服务的功能性试跑）。
-  调用方的中止信号（`SandboxRunRequest.signal`）原样交给 `execFile`，由 process 服务按进程组停掉。
+  调用方的中止信号（`SandboxRunRequest.signal`）与本插件这次激活的合起来交给 `execFile`，由 process 服务按进程组停掉：调用方没中止、本插件停用或重启时同样停下，与调用方中止一样按非零退出拒绝、错误对象挂 `.result`，已有的输出不丢。
 - **功能性探测**：启动时真跑一次最小沙箱命令（超时 5000ms），退出码为 0 才 `available=true`——一次覆盖「存在性」+「Linux userns 是否真能用」。
   Linux 的探测命令是 `bwrap --ro-bind / / --dev /dev --proc /proc --unshare-all true`，与正式运行一样挂 `/dev` 与 `/proc`：只放开 seccomp、挂不了 `/proc` 的容器里探测即失败、按无后端，不会探测报可用、之后每次运行都失败。
   探测带本次激活的 `lifecycle.use.signal`：启动器挂住时停用或停机会中止探测，激活随之落定，不必等满探测超时，也不会超过宽限仍没停下、拖住重新激活。

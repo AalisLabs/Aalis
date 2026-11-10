@@ -98,7 +98,7 @@ interface TempDirHandle {
 
 `plugin-tool-system`、`plugin-tool-code-runner`、`plugin-code-sandbox-os`、`plugin-media`、`plugin-office`、`plugin-adapter-onebot`、`plugin-asr-*`、`plugin-llm-ollama`、`plugin-package-manager`、`plugin-tool-browser`、`plugin-webui-server`。
 
-传 `signal` 的消费点：`plugin-tool-system` 的 `exec`、`plugin-tool-code-runner` 的无沙箱路径、`plugin-office` 的 `pdf_convert` 与 `plugin-draw` 的动图编码传工具执行器给这次调用的中止信号（这些工具都声明可转后台：在前台时随回合中止，停止键即停掉命令；转到后台之后随停止、工具撤回登记与执行器停用中止，见 [plugin-tools](../plugins/plugin-tools.md#转后台与后台任务)），不另设超时；`plugin-code-sandbox-os` 的沙箱内运行转交调用方的信号、启动探测传本次激活的 `lifecycle.use.signal`。
+传 `signal` 的消费点：`plugin-tool-system` 的 `exec`、`plugin-tool-code-runner` 的无沙箱路径、`plugin-office` 的 `pdf_convert` 与 `plugin-draw` 的动图编码传工具执行器给这次调用的中止信号（这些工具都声明可转后台：在前台时随回合中止，停止键即停掉命令；转到后台之后随停止、工具撤回登记与执行器停用中止，见 [plugin-tools](../plugins/plugin-tools.md#转后台与后台任务)），不另设超时；`plugin-code-sandbox-os` 的沙箱内运行交调用方的信号与本次激活的 `lifecycle.use.signal` 合成的那个（调用方不给时只交后者）、启动探测传本次激活的。
 
 ---
 

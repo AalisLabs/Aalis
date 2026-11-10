@@ -70,9 +70,11 @@ async function probeBackend(
 }
 
 class OsCodeSandboxService implements CodeSandboxService {
+  /** activation 是本插件这次激活的中止信号：调用方没中止、本插件停用或重启时，沙箱里的命令同样停下 */
   constructor(
     private readonly proc: ProcessService,
     private readonly _backend: SandboxBackend,
+    private readonly activation: AbortSignal,
   ) {}
 
   get available(): boolean {
@@ -90,7 +92,8 @@ class OsCodeSandboxService implements CodeSandboxService {
     const wrapped = wrapForSandbox(this._backend, req.policy, req.cmd, req.args, req.cwd, req.env ?? {});
     // 经 process 服务 spawn 包好的启动器命令；env 已由 wrapper 的 --clearenv / env -i 注入白名单，
     // 故此处不再传 env（外层启动器进程继承宿主 env 无妨，wrapper 已为内层不可信子进程清空）。
-    return this.proc.execFile(wrapped.cmd, wrapped.args, { cwd: req.cwd, timeout: req.timeout, signal: req.signal });
+    const signal = req.signal ? AbortSignal.any([req.signal, this.activation]) : this.activation;
+    return this.proc.execFile(wrapped.cmd, wrapped.args, { cwd: req.cwd, timeout: req.timeout, signal });
   }
 }
 
@@ -106,7 +109,7 @@ export default definePlugin({
     const proc = caps.processService.use;
     const { backend, problem } = await probeBackend(proc, caps.lifecycle.use.signal);
     if (problem) log.warn(`${toSource(NONE)}：${toSource(problem)}`);
-    caps.provide.use(codeSandbox, new OsCodeSandboxService(proc, backend));
+    caps.provide.use(codeSandbox, new OsCodeSandboxService(proc, backend, caps.lifecycle.use.signal));
     // 这台机器上没有沙箱时整个插件用不了：在诊断里给出修法，没装 WebUI 的用户靠 /doctor 看到
     caps.doctor.use.registerCheck({
       id: 'code-sandbox.backend',
