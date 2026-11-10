@@ -166,7 +166,7 @@ lifecycle.use.onDispose(() => {
 
 ### 不要放入
 
-通过 `events.use.on` / `hooks.use.middleware` / `provide.use` / 业务层的 `register` 登记的东西都会随激活撤回。手动再退订可能 double-free。
+通过 `events.use.on` / `hooks.use.middleware` / `provide.use` / 业务层的 `register` 登记的东西都会随激活撤回，不必再在清理里手动退订（退订是幂等的，多调一次无害，只是多余）。
 
 ### 事件处理器里的异步工作
 

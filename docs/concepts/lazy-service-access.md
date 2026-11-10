@@ -136,7 +136,7 @@ export default definePlugin({
 
 ## 关停顺序
 
-关停以激活为单位，分收尾（drain，`lifecycle.use.onDrain`）与关闭（close，含 `onDispose`）两阶段。依赖交接放 `onDrain`（声明的依赖仍可用）；`onDispose` 阶段依赖可能已不可用，只释放自己的资源。
+关停以激活为单位，分收尾（drain，`lifecycle.use.onDrain`）与关闭（close，含 `onDispose`）两阶段。依赖交接放 `onDrain`（声明的依赖仍可用）；`onDispose` 主要释放自己的资源。声明的依赖在 `onDispose` 时一般还在（下面第一条：提供者等消费者 close 完才 drain），但依赖成环时不保证这个次序，optional 依赖也可能早已下线，用之前看 `present`。
 
 编排按依赖形状分三种，不是一条无条件规则：
 

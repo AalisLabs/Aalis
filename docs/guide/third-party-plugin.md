@@ -193,7 +193,7 @@ apply({ lifecycle }) {
 }
 ```
 
-需要在对外登记仍在、声明的依赖仍可调用时交接数据，用 `lifecycle.use.onDrain`；`onDispose` 只释放自己的资源，那时依赖可能已不可用。插件用别的插件的服务时消费者 close 完提供者才 drain（边对声明服务的全部提供者建）；根激活用插件的服务时根 drain 先于插件 close。`App.stop()` 先冻结并进入停机态，再发 `app:stopping`（知会，不是清理通道），然后执行停机计划。单独 unload / disable / bounce 提供者时，正在用它的 required 消费者先收尾再关，收尾时提供者仍在。
+需要在对外登记仍在、声明的依赖仍可调用时交接数据，用 `lifecycle.use.onDrain`；`onDispose` 主要释放自己的资源。插件用别的插件的服务时消费者 close 完提供者才 drain（边对声明服务的全部提供者建），所以 `onDispose` 时声明的依赖一般还在，但依赖成环时不保证这个次序，optional 依赖也可能早已下线；根激活用插件的服务时根 drain 先于插件 close。`App.stop()` 先冻结并进入停机态，再发 `app:stopping`（知会，不是清理通道），然后执行停机计划。单独 unload / disable / bounce 提供者时，正在用它的 required 消费者先收尾再关，收尾时提供者仍在。
 
 ## 5. 工具 / 命令 / WebUI 扩展点
 

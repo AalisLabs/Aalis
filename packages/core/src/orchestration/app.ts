@@ -281,7 +281,7 @@ export class App {
   /**
    * 停止应用。单飞：重入返回同一 Promise。
    *
-   * 先 `beginShutdown()` 置 `#shuttingDown`（新 bounce/register 被拒），再 `idle()` 排干在飞者，
+   * 先让插件管理进入停机终态（之后管理动作一律拒绝），再 `idle()` 排干在飞者，
    * 然后发 `app:stopping`，最后 stopAll。已静置时 `idle()` 仍让出一轮微任务——必须先冻闸，
    * 否则同轮排队的 bounce 会在置位前过闸、停机后留下 pending 幽灵。
    *

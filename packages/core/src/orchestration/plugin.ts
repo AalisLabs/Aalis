@@ -29,9 +29,9 @@ export interface PluginRegistration {
  *
  * 负责:
  * - 注册/加载/卸载插件
- * - 依赖追踪 (required + optional，判据=服务是否在容器中)
- * - 当所需服务就绪时自动激活插件
- * - 当所需服务移除时自动停用插件
+ * - 依赖追踪（只看 required：判据是为它选得到一家提供者、且那一家没在关闭；optional 的上下线不改变目标态）
+ * - required 服务就绪时自动激活插件
+ * - required 服务没了时转回 pending，服务回来再激活
  * - 插件启用/禁用控制
  */
 export class PluginManager implements PluginManagerService {
@@ -64,10 +64,8 @@ export class PluginManager implements PluginManagerService {
    */
   #queued = false;
   /**
-   * 全局关机标志。app.stop() 在 dispose 前置位，服务变更触发的
-   * 反应式重算都会因此跳过——避免「正在关机还去 bounce
-   * 一个永远不会被重新激活的插件」这种无意义噪声，也避免下游插件 dispose 中
-   * 试图 register 命令 / 监听服务等动作触发误重入。
+   * 停机终态（beginShutdown 置位，之后不再复位）：六个管理动作一律拒绝；重算不再启动新实例、不发 plugins:changed。
+   * 停机计划拆卸各插件引起的服务变更因此不会把谁重新激活
    */
   #shuttingDown = false;
   /** 停机计划的完成信号：beginShutdown 冻计划时填，stopAll 执行该计划 */

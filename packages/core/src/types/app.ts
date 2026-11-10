@@ -21,7 +21,7 @@ export interface AppService {
   restart(opts?: { rollback?: unknown }): void;
 }
 
-/** PluginManager 暴露给插件消费的接口 */
+/** 插件管理面 getStatus 返回的一条：一个插件实例此刻的状态 */
 export interface PluginStatusEntry {
   name: string;
   instanceId: string;

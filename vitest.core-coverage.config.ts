@@ -4,7 +4,8 @@ import { defineConfig } from 'vitest/config';
 // core 覆盖率门禁（preflight 跑）：只跑 test/core，只统计 packages/core/src。
 //
 // core 的每条行为都应由 core 自己的测试守住，不靠插件测试顺带覆盖，所以分母与测试集都限定在 core。
-// 四项阈值都是 100：覆盖不到的分支只有两条出路，补测试，或证明走不到后删掉。core 源码禁用
+// 四项阈值都是 100：覆盖不到的分支只有两条出路，补测试，或证明走不到后删掉。盲区：行内的匿名回调不单独计为函数，
+// 所在那行的调用表达式执行过就算覆盖，回调体有没有跑过要靠用例自己断言（如 restart 失败的 catch）。core 源码禁用
 // v8 / c8 / istanbul 的 ignore 注释（test/core/architecture.test.ts 守），门槛不能靠跳过统计达成。
 // 与 vitest.config.ts 同一源码映射（@aalis/* 指向 src），不合并那份配置：合并会把两边的 include 拼在一起。
 // ════════════════════════════════════════════════════════════
