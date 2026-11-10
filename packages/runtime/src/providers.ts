@@ -7,7 +7,7 @@ import type { RestartStrategy } from '@aalis/core';
 import { DefaultLogger } from '@aalis/core';
 import { CORE_CONFIG_SCHEMA, defaultsFrom } from '@aalis/schema-config';
 import { stringify as stringifyYaml } from 'yaml';
-import type { ConfigProvider, SecretProvider } from './config-store.js';
+import { CORE_TOP_LEVEL_KEYS, type ConfigProvider, type SecretProvider } from './config-store.js';
 import { assertAbsolute } from './data-dir.js';
 import {
   HOST_CORE_DIR,
@@ -23,15 +23,6 @@ import { openYamlFile } from './yaml-file.js';
 // ============================================================
 // FsYamlConfigProvider —— 从 YAML 文件加载+持久化配置
 // ============================================================
-
-const CORE_TOP_LEVEL_KEYS = new Set<string>([
-  'name',
-  'logLevel',
-  'plugins',
-  'disabledPlugins',
-  'servicePreferences',
-  'pluginServicePreferences',
-]);
 
 /**
  * 把 AalisConfig 序列化为 YAML 文本，按固定顺序输出 core 字段，

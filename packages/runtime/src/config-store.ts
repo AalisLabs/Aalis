@@ -688,6 +688,19 @@ function copyOwnSafeStringDict(input: unknown): Record<string, string> {
   return out;
 }
 
+/**
+ * 文档里由宿主专门处理的顶层键：读入时逐个规范化，保存时按固定顺序写在最前；其余顶层键（含 slowThresholdMs 这类核心配置）
+ * 原样透传
+ */
+export const CORE_TOP_LEVEL_KEYS: ReadonlySet<string> = new Set([
+  'name',
+  'logLevel',
+  'plugins',
+  'disabledPlugins',
+  'servicePreferences',
+  'pluginServicePreferences',
+]);
+
 function normalize(input: Partial<AalisConfig>): AalisConfig {
   // 核心字段的缺省值取自 CORE_CONFIG_SCHEMA，与 WebUI 设置页显示、比较用的默认值同一来源
   const coreDefaults = defaultsFrom(CORE_CONFIG_SCHEMA);
@@ -699,17 +712,9 @@ function normalize(input: Partial<AalisConfig>): AalisConfig {
     disabledPlugins: disabledIds(input.disabledPlugins),
   };
   for (const [key, value] of Object.entries(input)) {
-    if (key === 'name' || key === 'logLevel' || key === 'plugins' || key === 'disabledPlugins') continue;
-    if (isUnsafeConfigKey(key)) continue;
-    if (key === 'servicePreferences') {
-      merged.servicePreferences = copyOwnSafeStringDict(value);
-      continue;
-    }
-    if (key === 'pluginServicePreferences') {
-      merged.pluginServicePreferences = copyPluginPreferences(value);
-      continue;
-    }
-    merged[key] = value;
+    if (key === 'servicePreferences') merged.servicePreferences = copyOwnSafeStringDict(value);
+    else if (key === 'pluginServicePreferences') merged.pluginServicePreferences = copyPluginPreferences(value);
+    else if (!CORE_TOP_LEVEL_KEYS.has(key) && !isUnsafeConfigKey(key)) merged[key] = value;
   }
   return merged;
 }

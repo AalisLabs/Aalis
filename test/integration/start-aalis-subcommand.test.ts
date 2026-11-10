@@ -167,18 +167,36 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     expect(blank.stderr).not.toContain('配置项 slowThresholdMs');
     expect(blank.stderr).not.toContain('转入后台继续');
 
-    // 告警照原样显示收到的值：.inf 显示为 Infinity，不因 JSON.stringify 显示成 null
-    for (const [invalid, shown] of [
-      ['"abc"', '"abc"'],
-      ['-1', '-1'],
-      ['.inf', 'Infinity'],
+    // 按核心配置表单判定，告警照原样显示收到的值：.inf 显示为 Infinity，不因 JSON.stringify 显示成 null
+    for (const [invalid, said] of [
+      ['"abc"', '的值 "abc" 不可用：期望有限数值，得到 string'],
+      ['-1', '的值 -1 不可用：小于下限 0'],
+      ['.inf', '的值 Infinity 不可用：期望有限数值，得到 Infinity'],
     ]) {
       const r = await runWith(invalid);
       expect(r.code).toBe(0);
-      expect(r.stderr).toContain(`配置项 slowThresholdMs 应为不小于 0 的有限数字（毫秒），收到 ${shown}，按默认值处理`);
+      expect(r.stderr).toContain(`配置项 slowThresholdMs ${said}，按默认值处理`);
       expect(r.stderr).not.toContain('转入后台继续');
     }
   }, 45_000);
+
+  it('配置文件顶层的 logLevel 写成不可选的值：告警并按默认级别输出，不按 debug 全量输出', async () => {
+    const dir = project();
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: warning\nplugins: {}\n');
+    const r = await run(dir, [], { AALIS_E2E_MODE: 'daemon' });
+    expect(r.code).toBe(0);
+    const warning =
+      '配置项 logLevel 的值 "warning" 不可用：不是可选值（"debug"、"info"、"warn"、"error"）之一，按默认值处理';
+    expect(r.stderr).toContain(warning);
+    const entries = readLog(dir)
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line.slice(line.indexOf(' ') + 1)) as { level: string; message: string });
+    expect(entries).toContainEqual(expect.objectContaining({ level: 'warn', message: warning }));
+    // 默认级别是 info：启动日志照常写，core 与配置同步的 debug 一条都不写
+    expect(entries.map(e => e.level)).toContain('info');
+    expect(entries.map(e => e.level)).not.toContain('debug');
+  });
 
   it('未命中：报错 exit 2，不进守护进程，不碰 logs/latest.log', async () => {
     const dir = project();

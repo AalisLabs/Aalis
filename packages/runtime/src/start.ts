@@ -5,7 +5,8 @@ import { describeUnmet, unmetDependencies } from '@aalis/api-doctor';
 import { hostLogs } from '@aalis/api-host-logs';
 import { hostPaths } from '@aalis/api-host-paths';
 import { pluginSource } from '@aalis/api-plugin-source';
-import { App, events, LogHub, type LogLevel, provide, services } from '@aalis/core';
+import { App, DefaultLogger, events, LogHub, type LogLevel, provide, services } from '@aalis/core';
+import { CORE_CONFIG_SCHEMA, CORE_RESTART_KEYS, readFieldValue, type SchemaField } from '@aalis/schema-config';
 import { isTextError, resolveText } from '@aalis/schema-i18n';
 import { installBootstrapBuffer } from './bootstrap-buffer.js';
 import { createConfigStore, installHostConfig } from './config-store.js';
@@ -271,17 +272,26 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   const { config, provider } = loadOrExit(() => createFsYamlConfigProvider(paths.config));
   const secrets = loadOrExit(() => createFsSecretsProvider(paths.secrets));
   const store = loadOrExit(() => createConfigStore(config, provider, secrets));
-  // core 的慢操作阈值：缺省（含 YAML 空键解出的 null）交给 core 默认；不是非负有限数的写法告警后同样交给默认。
-  // 它与 logLevel 只在这里读一次，改了要重启：哪些核心键只在启动时读以 schema-config 的 CORE_RESTART_KEYS 为准，
+  // 只在启动时读、改了要重启的核心键（schema-config 的 CORE_RESTART_KEYS）在这里读一次交给 core，逐个按 CORE_CONFIG_SCHEMA
+  // 判定，与 WebUI 设置页同一套规则：缺省（含 YAML 空键解出的 null）交给 core 默认，不合法的告警后同样交给默认。
   // 改成热生效或新加启动时才读的键，同步改那一份
-  const slowThresholdMs = store.get('slowThresholdMs') ?? undefined;
-  const slowThresholdValid =
-    slowThresholdMs === undefined ||
-    (typeof slowThresholdMs === 'number' && Number.isFinite(slowThresholdMs) && slowThresholdMs >= 0);
+  const startup: Record<string, unknown> = {};
+  for (const key of CORE_RESTART_KEYS) {
+    const value = store.get(key);
+    const read = readFieldValue(CORE_CONFIG_SCHEMA[key] as SchemaField, value);
+    if ('value' in read) startup[key] = read.value;
+    else {
+      // 数字照原样显示：JSON.stringify 会把 Infinity / NaN 显示成 null
+      const received = typeof value === 'number' ? String(value) : JSON.stringify(value);
+      new DefaultLogger('aalis:config').warn(
+        `配置项 ${key} 的值 ${received} 不可用：${read.invalid.source}，按默认值处理`,
+      );
+    }
+  }
   const app = new App({
     name: store.get('name'),
-    logLevel: store.get('logLevel') as LogLevel,
-    slowThresholdMs: slowThresholdValid ? (slowThresholdMs as number | undefined) : undefined,
+    logLevel: startup.logLevel as LogLevel | undefined,
+    slowThresholdMs: startup.slowThresholdMs as number | undefined,
     // 子命令进程没有重启能力，不注入策略：`app.restart()` 按 core 语义抛「不可用」，指令层折成失败文案。
     // 注入的话，`restart` 子命令在 app.stop 超过策略 500ms 等待时会 spawn 一个 argv 仍带 restart 的
     // detached 子进程，新进程再命中 restart……无限连环（实测 5 代，Ctrl+C 打不到）。
@@ -299,12 +309,6 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
     // 宿主读取 @aalis/core 的实际版本注入启动 banner——core 环境无关、不自读 package.json。
     version: readCoreVersion(),
   });
-
-  if (!slowThresholdValid) {
-    // 数字照原样显示：JSON.stringify 会把 Infinity / NaN 显示成 null
-    const received = typeof slowThresholdMs === 'number' ? String(slowThresholdMs) : JSON.stringify(slowThresholdMs);
-    app.logger.warn(`配置项 slowThresholdMs 应为不小于 0 的有限数字（毫秒），收到 ${received}，按默认值处理`);
-  }
 
   // 宿主的根绑定：事件订阅、服务查询与宿主服务登记都经它，随 App 停止撤回
   const host = app.bind({ events, provide, services });

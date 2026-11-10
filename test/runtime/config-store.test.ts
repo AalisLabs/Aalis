@@ -64,12 +64,14 @@ function watched(initial: AalisConfig) {
 }
 
 describe('配置文档（内存态）', () => {
-  it('未传入字段时使用默认值', () => {
-    const store = createConfigStore({});
-    expect(store.get('name')).toBe('Aalis');
-    expect(store.get('logLevel')).toBe('info');
-    expect(store.get('plugins')).toEqual({});
-    expect(store.get('disabledPlugins')).toEqual([]);
+  it('未传入或留空（YAML 解析成 null）的字段使用默认值', () => {
+    for (const input of [{}, { name: null, logLevel: null, plugins: null, disabledPlugins: null }]) {
+      const store = createConfigStore(input as never);
+      expect(store.get('name')).toBe('Aalis');
+      expect(store.get('logLevel')).toBe('info');
+      expect(store.get('plugins')).toEqual({});
+      expect(store.get('disabledPlugins')).toEqual([]);
+    }
   });
 
   it('setPluginConfig / removePluginConfig', () => {
@@ -291,6 +293,16 @@ describe('字典读写不落原型链', () => {
     store.setServicePreference('llm', 'plugin-llm');
     expect(Object.hasOwn(store.getServicePreferences(), 'constructor')).toBe(false);
     expect(store.getServicePreferences().llm).toBe('plugin-llm');
+  });
+
+  it('pluginServicePreferences 读入时危险键、不是字符串的偏好与空段都不收', () => {
+    const poisoned = JSON.parse(
+      '{"name":"T","logLevel":"error","plugins":{},"pluginServicePreferences":{"__proto__":{"llm":"x"},' +
+        '"a":{"llm":"b","constructor":"x","n":1},"empty":{}}}',
+    );
+    const byPlugin = createConfigStore(poisoned).getAll().pluginServicePreferences ?? {};
+    expect(byPlugin).toEqual({ a: { llm: 'b' } });
+    expect(Object.getPrototypeOf(byPlugin)).toBe(Object.prototype);
   });
 });
 
