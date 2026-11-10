@@ -116,7 +116,12 @@ function makePm(projectRoot: string, restarts: unknown[] = [], proc: PackageMana
     rescanPlugins: async () => [],
     loaded: () => false,
     isPluginRegistered: () => false,
+    pluginStatus: () => [],
+    availableServices: () => [],
+    idle: async () => {},
     unloadPlugin: async () => {},
+    recoveryChannelProviders: () => [],
+    cleanupConfig: async () => {},
     restartApp: r => {
       restarts.push(r);
     },

@@ -4,7 +4,6 @@ import en from './locales/en.js';
 
 const SOURCE = {
   displayName: '包管理器',
-  noApp: 'app 服务不可用，无法执行包管理操作',
   emptyName: '包名必须是非空字符串',
   badName: '非法包名：{name}',
   badVersion: '非法版本号：{name}@{version}',
@@ -43,7 +42,6 @@ const SOURCE = {
   installedNonPlugin: '已安装 {target}（非插件包，不进入插件列表）',
   workspaceInstall: '根依赖含 workspace: 协议，拒绝在此运行 npm install（会写出 package-lock.json 并搅坏 pnpm 工作区）',
   workspaceUpdate: '根依赖含 workspace: 协议，拒绝在此运行 npm install',
-  noRestart: '当前宿主未提供重启能力，无法完成更新',
   noRootPackage: '读不到根 package.json: {path}',
   notUpdatable:
     '以下包不在根依赖中（由其它插件带入）或不是 registry 来源，单独更新只会装出第二份副本；请改为更新带入它们的插件：{names, list}',

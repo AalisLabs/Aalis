@@ -106,7 +106,12 @@ describe('包管理自己的失败原因按全局层的语言', () => {
       rescanPlugins: async () => [],
       loaded: () => false,
       isPluginRegistered: () => false,
+      pluginStatus: () => [],
+      availableServices: () => [],
+      idle: async () => {},
       unloadPlugin: async () => {},
+      recoveryChannelProviders: () => [],
+      cleanupConfig: async () => {},
       restartApp: () => {},
       ...deps,
     });

@@ -48,15 +48,15 @@
   "aalis": {
     "service": {
       "required": [
+        "app",
         "host-paths",
         "logger",
+        "plugins",
         "process",
         "provide",
         "services"
       ],
       "optional": [
-        "app",
-        "plugins",
         "host-config",
         "plugin-source"
       ],

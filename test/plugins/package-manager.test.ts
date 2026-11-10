@@ -147,7 +147,11 @@ function makeHarness(
     // 默认认为目标已就位（多数用例走成功路径）；需要测失败态的用例显式传 registered: []
     isPluginRegistered: name => (opts.registered ?? ['@scope/foo', 'foo', '@scope/ui']).includes(name),
     loaded: name => (opts.registered ?? ['@scope/foo', 'foo', '@scope/ui']).includes(name),
+    pluginStatus: () => [],
+    availableServices: () => [],
+    idle: async () => {},
     unloadPlugin: vi.fn(async () => {}),
+    recoveryChannelProviders: () => [],
     cleanupConfig: vi.fn(async () => {}),
     restartApp: vi.fn(r => {
       opts.restarts?.push(r);
@@ -912,15 +916,6 @@ describe('update — 流程', () => {
     expect(toSource(r.message)).toContain('workspace:');
     expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false);
   });
-
-  it('宿主未提供重启能力 → 提前拒绝，不跑任何 npm', async () => {
-    const h = okHarness();
-    h.deps.restartApp = undefined;
-    const r = await createPackageManager(h.deps).update([{ name: 'foo', version: '1.0.0' }]);
-    expect(r.ok).toBe(false);
-    expect(toSource(r.message)).toContain('重启');
-    expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false);
-  });
 });
 
 // ════════════════════════════════════════════════════════════
@@ -1075,8 +1070,11 @@ describe('uninstall', () => {
 
   it('卸载按定义 name 枚举全部 instanceId（主 + name:suffix），逐个 unload，配置一次整理全部实例', async () => {
     const h = harness(['aalis', 'aalis-plugin']);
-    h.deps.listPluginInstanceIds = name =>
-      name === '@scope/foo' ? ['@scope/foo', '@scope/foo:one', '@scope/foo:two'] : [];
+    h.deps.pluginStatus = () =>
+      ['@scope/foo', '@scope/foo:one', '@scope/foo:two'].map(instanceId => ({
+        ...snap('@scope/foo', 'active'),
+        instanceId,
+      }));
     const r = await createPackageManager(h.deps).uninstall('@scope/foo');
     expect(r.ok, toSource(r.message)).toBe(true);
     expect(h.deps.unloadPlugin).toHaveBeenCalledTimes(3);
@@ -1091,7 +1089,6 @@ describe('uninstall', () => {
     const h = harness(['aalis', 'aalis-plugin']);
     h.deps.isPluginRegistered = name => name === '@scope/foo';
     h.deps.loaded = () => false;
-    h.deps.listPluginInstanceIds = name => (name === '@scope/foo' ? ['@scope/foo', '@scope/foo:one'] : []);
     // 宿主登记的那个插件是 svc 唯一的提供者，有插件 required 它
     h.deps.pluginStatus = () => [
       snap('@scope/foo', 'active', { provides: ['svc'] }),

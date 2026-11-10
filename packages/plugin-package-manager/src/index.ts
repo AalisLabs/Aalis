@@ -12,7 +12,6 @@ import {
 import { pluginSource } from '@aalis/api-plugin-source';
 import { type ExecResult, type ProcessService, processService } from '@aalis/api-process';
 import {
-  type AppService,
   appService,
   type BoundOf,
   definePlugin,
@@ -211,8 +210,8 @@ const uses = {
   logger,
   provide,
   services,
-  app: optional(appService),
-  plugins: optional(pluginsService),
+  app: appService,
+  plugins: pluginsService,
   hostConfig: optional(hostConfig),
   source: optional(pluginSource),
 };
@@ -221,11 +220,6 @@ type Caps = BoundOf<typeof uses>;
 function createService(caps: Caps): PackageManagerService {
   const log = caps.logger.use;
   const proc = caps.proc.use;
-
-  function getApp(): AppService {
-    if (!caps.app.present) throw new TextError(t('noApp'));
-    return caps.app.use;
-  }
 
   return createPackageManager({
     proc,
@@ -246,25 +240,19 @@ function createService(caps: Caps): PackageManagerService {
     rescanPlugins: async () => (await (caps.source.present ? caps.source.use.rescan() : undefined)) ?? [],
     // 宿主不提供插件来源时没有经它登记的插件：已登记的同名插件一律不是这次装的包
     loaded: name => caps.source.present && caps.source.use.loaded(name),
-    // 与发现驱动跳过声明了已登记插件名的包同一判据：看主实例。plugins 服务缺席时视同没有登记
-    isPluginRegistered: name => (caps.plugins.present ? caps.plugins.use.getPlugin(name) !== undefined : false),
-    pluginStatus: () => (caps.plugins.present ? caps.plugins.use.getStatus() : []),
+    // 与发现驱动跳过声明了已登记插件名的包同一判据：看主实例
+    isPluginRegistered: name => caps.plugins.use.getPlugin(name) !== undefined,
+    pluginStatus: () => caps.plugins.use.getStatus(),
     availableServices: () => caps.services.use.names(),
-    idle: async () => {
-      if (caps.plugins.present) await caps.plugins.use.idle();
-    },
-    listPluginInstanceIds: definitionName =>
-      (caps.plugins.present ? caps.plugins.use.getStatus() : [])
-        .filter(p => p.name === definitionName)
-        .map(p => p.instanceId),
+    idle: () => caps.plugins.use.idle(),
     // 重启并交付回滚凭据。core 只透传 rollback（不解释形状），由 runtime 的重启策略
     // 在「新实例 ready 前夭折」时消费——触发者与执行者同为父进程，全程内存不落盘。
     //
     // `restart(opts)` 收参数是 core **0.10.0** 才有的；0.9.x 的 `restart()` 不收参数，
     // 多传的对象被静默丢弃 —— 不报错、不告警，只是更新失败后重启起来的是坏版本，
     // 回滚安全网整个不存在。故 peerDependencies 下界必须是 `>=0.10.0`，不能沿用 0.2.0。
-    restartApp: rollback => getApp().restart({ rollback }),
-    // 彻底卸载：dispose 上下文并从注册表移除（plugins 服务缺席则 no-op）。
+    restartApp: rollback => caps.app.use.restart({ rollback }),
+    // 彻底卸载：dispose 上下文并从注册表移除。
     // 区别于 disable（仅置禁用态，仍滞留在插件列表里）。
     // 撤销通道 = 市场页能用所依赖的三样：页面本身 / 托管它的服务端 / 装卸能力本身。
     // 取每个服务当前生效的 provider（`services.all` 的首个即是），contextId 就是包名
@@ -285,7 +273,7 @@ function createService(caps: Caps): PackageManagerService {
     ],
 
     unloadPlugin: async name => {
-      if (caps.plugins.present) await caps.plugins.use.unload(name);
+      await caps.plugins.use.unload(name);
     },
     // 文档没有改动时不保存：没东西要写，也就不该因配置文件的状况报失败
     cleanupConfig: async (instanceIds, removeConfig) => {
@@ -329,37 +317,32 @@ export interface PackageManagerDeps {
   loaded(name: string): boolean;
   /** 以这个插件名登记的主实例此刻是否在注册表里：不是从目标包加载的，就是插件名被占着、目标包被跳过 */
   isPluginRegistered(name: string): boolean;
-  /**
-   * 运行时插件状态，供服务依赖者判定（{@link findServiceDependents}）与装后回执（按主实例状态说明）。
-   * 缺省视为没有活跃插件。
-   */
-  pluginStatus?(): ReadonlyArray<ServiceStatus>;
-  /** 当前有提供者的服务名（`services.names()`，含宿主在根上提供的），服务依赖者判定用。缺省视为没有 */
-  availableServices?(): Iterable<string>;
+  /** 运行时插件状态，供服务依赖者判定（{@link findServiceDependents}）、装后回执（按主实例状态说明）与卸载时按定义 name 找全部实例。 */
+  pluginStatus(): ReadonlyArray<ServiceStatus>;
+  /** 当前有提供者的服务名（`services.names()`，含宿主在根上提供的），服务依赖者判定用 */
+  availableServices(): Iterable<string>;
   /**
    * 等插件状态机静置（plugins 服务的 `idle()`），装后回执读状态之前调用：rescan 登记新插件时若已有重算在飞，
-   * 登记只排队、立即返回，主实例还是 pending。不等转入后台的慢激活。缺省不等。
+   * 登记只排队、立即返回，主实例还是 pending。不等转入后台的慢激活。
    */
-  idle?(): Promise<void>;
-  /** 彻底卸载插件（dispose + 从注册表移除）。plugins 服务缺席则 no-op。 */
+  idle(): Promise<void>;
+  /** 彻底卸载插件（dispose + 从注册表移除）。 */
   unloadPlugin(name: string): Promise<void>;
   /**
    * 当前**承载撤销通道**的服务提供者包名列表（去重）。卸掉其中任何一个，用户就只能开
    * shell 恢复——与内核/宿主同一条判据。见 uninstallOne 的闸一之二。
    */
-  recoveryChannelProviders?(): string[];
+  recoveryChannelProviders(): string[];
   /**
    * 卸载后整理配置文档并落盘：清掉这些实例的停用标记（否则重装时带着上次的停用态登记）；removeConfig 时再删它们的配置段，
-   * 落盘后只有这些段引用的密钥由宿主一并删掉。落盘失败以拒绝传出。缺省则不整理
+   * 落盘后只有这些段引用的密钥由宿主一并删掉。落盘失败以拒绝传出。宿主不提供配置文档时什么都不做
    */
-  cleanupConfig?(instanceIds: string[], removeConfig: boolean): Promise<void>;
+  cleanupConfig(instanceIds: string[], removeConfig: boolean): Promise<void>;
   /**
-   * 按定义 name 列出注册表里全部 instanceId（主实例 + `name:suffix`）。
-   * 缺省则只对传入的定义 name 做一次 unload / cleanup。
+   * 重启进程并交付回滚凭据（新实例启动失败时由重启策略消费）。宿主没有重启策略或应用已开始停机时同步抛错
+   * （core 的 `app.restart()`）。
    */
-  listPluginInstanceIds?(definitionName: string): string[];
-  /** 重启进程并交付回滚凭据（新实例起不来时由重启策略消费）。缺省则 update 不可用。 */
-  restartApp?(rollback: {
+  restartApp(rollback: {
     reason: string;
     /** `deleteIfEmpty` 表示该文件更新前并不存在，回滚时应删除而非写空（见 runtime 的 RestartRollback）。 */
     restore: Array<{ path: string; content: string; deleteIfEmpty?: boolean }>;
@@ -710,13 +693,15 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
    */
   function dependentsOf(name: string): string[] {
     if (heldByHost(name)) return [];
-    return findServiceDependents(name, deps.pluginStatus?.() ?? [], deps.availableServices?.() ?? []);
+    return findServiceDependents(name, deps.pluginStatus(), deps.availableServices());
   }
 
-  /** 注册表里该定义的全部 instanceId；没有枚举函数时只卸定义 name 本身。 */
+  /** 注册表里该定义的全部 instanceId；一个都没登记（包没加载上）时只整理定义 name 本身。 */
   function instanceIdsFor(defName: string): string[] {
-    const listed = deps.listPluginInstanceIds?.(defName) ?? [];
-    const ids = [...new Set(listed.filter(id => id.length > 0))];
+    const ids = deps
+      .pluginStatus()
+      .filter(p => p.name === defName)
+      .map(p => p.instanceId);
     return ids.length > 0 ? ids : [defName];
   }
 
@@ -747,8 +732,8 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // rescan 只当副作用用（让加载器发现新包），**不看返回值**——判据是目标自身是否就位。
     await deps.rescanPlugins();
     if (deps.loaded(target)) {
-      await deps.idle?.();
-      const main = deps.pluginStatus?.().find(p => p.instanceId === target);
+      await deps.idle();
+      const main = deps.pluginStatus().find(p => p.instanceId === target);
       const settled = (message: TextRef): InstallResult => ({ ok: true, message, plugin: target });
       switch (main?.state) {
         case 'error':
@@ -866,7 +851,6 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     const built = buildUpdateSpecs(targets);
     if (built.error) return { ok: false, message: built.error };
     const { specs } = built;
-    if (!deps.restartApp) return { ok: false, message: t('noRestart') };
 
     const root = deps.projectRoot();
     // 没有「项目形态」这一层判断了：能不能更新是**每个包自己的来源**说了算（下面的
@@ -1080,7 +1064,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     //
     // 只拦「当前生效的那个」：想换实现的正常路径是「装新的 → 切过去 → 再卸旧的」，
     // 那时它已不是提供者，本闸自然放行。
-    const lifeline = deps.recoveryChannelProviders?.() ?? [];
+    const lifeline = deps.recoveryChannelProviders();
     if (lifeline.includes(pluginName)) {
       return { ok: false, message: t('lifeline', { name: pluginName }) };
     }
@@ -1125,7 +1109,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     if (held) return { ok: true, message: t('uninstalledNameTakenByHost', { name: pluginName }) };
     // 包已经卸掉了，配置文件没写成不改变这一点：回执照样 ok，写明原因与残留
     try {
-      await deps.cleanupConfig?.(instanceIds, removeConfig);
+      await deps.cleanupConfig(instanceIds, removeConfig);
     } catch (err) {
       return {
         ok: true,

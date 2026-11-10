@@ -3,7 +3,6 @@ import type { Source } from '../texts.js';
 
 export default defineLocale<Source>()({
   displayName: 'Package manager',
-  noApp: 'The app service is unavailable, so package operations cannot run',
   emptyName: 'The package name must be a non-empty string',
   badName: 'Invalid package name: {name}',
   badVersion: 'Invalid version: {name}@{version}',
@@ -49,7 +48,6 @@ export default defineLocale<Source>()({
   workspaceInstall:
     'The root dependencies use the workspace: protocol, so npm install is refused here (it would write package-lock.json and break the pnpm workspace)',
   workspaceUpdate: 'The root dependencies use the workspace: protocol, so npm install is refused here',
-  noRestart: 'The current host cannot restart, so the update cannot be completed',
   noRootPackage: 'Cannot read the root package.json: {path}',
   notUpdatable:
     'These packages are not root dependencies (another plugin brought them in) or are not from the registry, so updating them alone would install a second copy; update the plugins that bring them in instead: {names, list}',
