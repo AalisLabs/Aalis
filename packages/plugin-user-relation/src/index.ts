@@ -413,6 +413,8 @@ function start(caps: Caps): void {
   const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
   const store = new RelationStore(caps.memory.use);
   const service = new RelationService(store, caps.logger.use, caps.embedding, caps.lifecycle.use.signal);
+  // 收尾：等在途的整理与事件查重落定再撤回（/relation 指令、工具与抽取器调进来的都在内）
+  caps.lifecycle.use.onDrain(() => service.settled(), '等在途的关系图整理');
 
   caps.provide.use(userRelation, service);
 
@@ -492,6 +494,8 @@ function start(caps: Caps): void {
       },
     );
     extractor.start();
+    // 收尾：等在途的提取落定再撤回（信号已断，它们停在当前这一步，已经开始的写入写完）
+    caps.lifecycle.use.onDrain(() => extractor.settled(), '等在途的关系图提取');
   }
 
   // ─── 注入、工具与 /relation 指令 ─── 各受 agentInjection、toolsEnabled、commandsEnabled 控制；三者都关着时不登记关系图范围

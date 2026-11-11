@@ -310,6 +310,8 @@ export class RelationExtractor {
   private readonly backoff = new Map<string, { penalty: number; skip: number }>();
   /** 归档事件监听的退订；stop() 之后不再计数 */
   private off?: () => void;
+  /** 在途的提取（连同其后的淘汰前整理与老化）：本插件收尾时等它们落定 */
+  private readonly running = new Set<Promise<void>>();
 
   constructor(
     private readonly caps: ExtractorCaps,
@@ -331,7 +333,7 @@ export class RelationExtractor {
         backoff.skip -= 1;
         return;
       }
-      void this.extractSession(sessionId).catch(err => {
+      const work = this.extractSession(sessionId).catch(err => {
         // 停用、停机时中止不是提取失败：不退避、不告警
         if (this.caps.lifecycle.use.signal.aborted) return;
         const penalty = Math.min((this.backoff.get(sessionId)?.penalty ?? 1) * 2, MAX_BACKOFF_PENALTY);
@@ -341,7 +343,14 @@ export class RelationExtractor {
           `[user-relation] 提取失败 session=${sessionId}，退避约 ${penalty * this.cfg.triggerEveryNMessages} 条消息后重试: ${stringifyErr(err)}`,
         );
       });
+      this.running.add(work);
+      void work.then(() => this.running.delete(work));
     });
+  }
+
+  /** 等在途的提取都落定（等待期间开始的也等）：本插件收尾时调 */
+  async settled(): Promise<void> {
+    while (this.running.size > 0) await Promise.all(this.running);
   }
 
   stop(): void {
@@ -1143,6 +1152,8 @@ export class RelationExtractor {
             );
           }
         } catch (err) {
+          // 停用、停机时没发起的淘汰不是老化失败：不告警，交给提取入口按中止收尾
+          if (this.caps.lifecycle.use.signal.aborted) throw err;
           this.caps.logger.use.warn(`[user-relation] 自动老化失败: ${(err as Error).message}`);
         }
       }

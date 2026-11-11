@@ -98,6 +98,11 @@ import {
 export class RelationService {
   /** 最近一次 consolidate()；本次运行以来没跑过为 undefined */
   private _lastConsolidate?: LastConsolidate;
+  /**
+   * 在途的长操作（整理、事件查重：网络调用之后写图；淘汰与孤儿清理：/relation maintain 接在整理之后；改名同步：先读再写人物
+   * 节点）：本插件收尾时等它们落定
+   */
+  private readonly running = new Set<Promise<unknown>>();
 
   constructor(
     private readonly store: RelationStore,
@@ -107,7 +112,8 @@ export class RelationService {
     private readonly embedding?: ServiceSelection<EmbeddingService>,
     /**
      * 本插件这次激活的中止信号：整理（consolidate 与事件查重）里的模型调用与向量化接它，停用、停机时停在当前这一步、抛中止
-     * 原因，之前做完的写入留着。写图都在这一步的网络调用之后，中间没有别的中止点，每一步的写入要么做完要么没做
+     * 原因，之前做完的写入留着。写图都在这一步的网络调用之后，中间没有别的中止点，每一步的写入要么做完要么没做。它断开之后
+     * 不再发起新的长操作（见 track）
      */
     private readonly signal?: AbortSignal,
   ) {}
@@ -153,6 +159,26 @@ export class RelationService {
     return true;
   }
 
+  /**
+   * 发起一次长操作并记下，落定时移出。本插件这次激活已中止（收尾已开始）时不再发起、抛中止原因：收尾只等此前发起的，几步连着做的
+   * （/relation maintain 的整理接淘汰、提取接老化）停在已发起的那一步
+   */
+  private track<T>(start: () => Promise<T>): Promise<T> {
+    if (this.signal?.aborted) return Promise.reject(this.signal.reason);
+    const work = start();
+    const done: Promise<unknown> = work.then(
+      () => this.running.delete(done),
+      () => this.running.delete(done),
+    );
+    this.running.add(done);
+    return work;
+  }
+
+  /** 等在途的长操作都落定（等待期间开始的也等）：本插件收尾时调 */
+  async settled(): Promise<void> {
+    while (this.running.size > 0) await Promise.all(this.running);
+  }
+
   /** 最近一次 consolidation 的运行时间、触发源与各项计数；本次运行以来没跑过为 undefined */
   getLastConsolidateInfo(): LastConsolidate | undefined {
     return this._lastConsolidate;
@@ -194,9 +220,13 @@ export class RelationService {
    * 不创建新节点（避免水群幽灵）；不动 mentionCount / firstSeenAt / lastMentionedAt（与
    * 「显式提及」语义区分）；仅刷新 lastSeenAt。返回是否真的发生了改名。
    *
-   * 调用方：rename-watcher（订阅 inbound:message:archived，从 metadata.nickname 同步）。
+   * 调用方：rename-watcher（订阅 inbound:message:archived，从 metadata.nickname 同步）。在途时记着，本插件收尾时等它落定
    */
-  async syncDisplayName(platform: string, userId: string, displayName: string): Promise<boolean> {
+  syncDisplayName(platform: string, userId: string, displayName: string): Promise<boolean> {
+    return this.track(() => this.runSyncDisplayName(platform, userId, displayName));
+  }
+
+  private async runSyncDisplayName(platform: string, userId: string, displayName: string): Promise<boolean> {
     const existing = await this.store.getPerson(platform, userId);
     if (!existing) return false;
     if (existing.displayName === displayName) return false;
@@ -1097,9 +1127,13 @@ export class RelationService {
    *   孤儿的语义就是"没人指向"，无条件清。
    * - **零参数**：刻意不暴露任何 opts，避免重新引入误用。
    *
-   * 判定口径见 `findOrphans`（与 `/relation orphans` 共用）；先删悬空边再删孤儿节点。
+   * 判定口径见 `findOrphans`（与 `/relation orphans` 共用）；先删悬空边再删孤儿节点。在途时记着，本插件收尾时等它落定
    */
-  async pruneOrphans(): Promise<{
+  pruneOrphans(): ReturnType<RelationService['runPruneOrphans']> {
+    return this.track(() => this.runPruneOrphans());
+  }
+
+  private async runPruneOrphans(): Promise<{
     deletedPersons: number;
     deletedEvents: number;
     deletedEntities: number;
@@ -1221,9 +1255,15 @@ export class RelationService {
    * 另外 utils.computePageRank 在 person→event / person→entity 单向边上加了半权反向虚拟边（系数 0.5），
    * 让"参与重要事件 / 关注热门实体"的人 PR 能拉开差距，避免无 person-person 边的人退化到 seed 常数。
    *
-   * 返回各类删除计数，便于日志/测试断言。
+   * 返回各类删除计数，便于日志/测试断言。在途时记着，本插件收尾时等它落定
    */
-  async evictByQuota(quota: {
+  evictByQuota(
+    quota: Parameters<RelationService['runEvictByQuota']>[0],
+  ): ReturnType<RelationService['runEvictByQuota']> {
+    return this.track(() => this.runEvictByQuota(quota));
+  }
+
+  private async runEvictByQuota(quota: {
     /** 人物节点总数上限。0 = 不限（允许人物无限增长）。 */
     maxPersons?: number;
     maxEvents: number;
@@ -1293,7 +1333,7 @@ export class RelationService {
     await this.rewriteWeights(decayCfg);
 
     // 1) 先做孤儿清理（与配额无关，遗留噪声总是清；person / event / entity 一视同仁）
-    const orphanResult = await this.pruneOrphans();
+    const orphanResult = await this.runPruneOrphans();
     deletedPersons += orphanResult.deletedPersons;
     deletedEvents += orphanResult.deletedEvents;
     deletedEntities += orphanResult.deletedEntities;
@@ -1447,7 +1487,7 @@ export class RelationService {
     //      直接 deleteEdge（edge 配额）更是只删边不删端点。
     //      因此步骤 2-3 结束后必然残留新孤儿，在 PageRank 写回前清理，
     //      使写回阶段的 loadAll() 快照干净，避免对孤儿节点做无用写回。
-    await this.pruneOrphans();
+    await this.runPruneOrphans();
 
     // 4) 把 PageRank 写回三类节点，供 WebUI 展示"图重要性"；
     //    顺手跑社群发现（Louvain / Leiden / SLPA 可切换），把 communityId + communityMemberships 一并写回（同一批 snapshot 保证可比）。
@@ -2245,7 +2285,14 @@ export class RelationService {
   //   形成同一 (event,entity) 对同时存在两种边类型的脏数据。
   //   part-of 边应由 extractor LLM 在提取阶段负责建立。
   // ────────────────────────────────────────────────────────────────
-  async consolidate(
+  /** 整理，做法见 runConsolidate；在途时记着，本插件收尾时等它落定 */
+  consolidate(
+    opts: Parameters<RelationService['runConsolidate']>[0] = {},
+  ): ReturnType<RelationService['runConsolidate']> {
+    return this.track(() => this.runConsolidate(opts));
+  }
+
+  private async runConsolidate(
     opts: {
       autoLink?: boolean;
       /** 可选：传入后 consolidate 末尾会调用 LLM 做别名核验与摘要重写 */
@@ -3725,7 +3772,14 @@ export class RelationService {
    * 与 consolidate 行为口径完全一致：sessionScope 同池 + 加权融合阈值 + mergeReject 缓存复用 + LLM 终判。
    * 但不写图，仅返回候选 + LLM 判定。
    */
-  async findEventDuplicates(
+  /** 查事件重复，做法见 runFindEventDuplicates；在途时记着，本插件收尾时等它落定 */
+  findEventDuplicates(
+    opts: Parameters<RelationService['runFindEventDuplicates']>[0] = {},
+  ): ReturnType<RelationService['runFindEventDuplicates']> {
+    return this.track(() => this.runFindEventDuplicates(opts));
+  }
+
+  private async runFindEventDuplicates(
     opts: { llm?: { models: ServiceSelection<LLMModel>; modelRef: ModelRef; disableThinking?: boolean } } = {},
   ): Promise<{
     candidates: Array<{
