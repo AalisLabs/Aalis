@@ -52,6 +52,18 @@ function describeFetchError(err: unknown): string {
   return typeof code === 'string' ? `${err.message}: ${code}` : err.message;
 }
 
+/**
+ * 下单、撤单、改单的回执在 data 里逐项带结果（sCode 为 0 即这一项成功，否则 sMsg 是原因）：报错时把各项写成
+ * 「（[sCode] sMsg；…）」，没有逐项结果时为空串
+ */
+function itemResults(data: unknown): string {
+  if (!Array.isArray(data)) return '';
+  const items = data.flatMap((item: { sCode?: unknown; sMsg?: unknown } | null) =>
+    typeof item?.sCode === 'string' ? [`[${item.sCode}] ${item.sMsg}`] : [],
+  );
+  return items.length > 0 ? `（${items.join('；')}）` : '';
+}
+
 /** 响应体是 OKX 的回执（带字符串业务码）时交回它，否则（含不是 JSON）为 undefined */
 function okxReply<T>(text: string): OkxApiResponse<T> | undefined {
   try {
@@ -155,7 +167,9 @@ export class OkxClient {
       throw new Error(`OKX HTTP ${response.status}: ${text}`);
     }
     if (reply.code !== '0') {
-      throw new Error(`OKX API 错误 [${reply.code}]: ${reply.msg}`);
+      // 批量操作部分成功：逐项的结果照常交回，报成失败的话模型会整批重下，已经下成的那几单又下一遍
+      if (reply.code === '2') return reply;
+      throw new Error(`OKX API 错误 [${reply.code}]: ${reply.msg}${itemResults(reply.data)}`);
     }
     return reply;
   }
