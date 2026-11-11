@@ -12,7 +12,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 // 它们是真会落盘的破坏性操作，此前 sensitive(等级 1)无确认偏松。
 // 关键陷阱：capabilityMinLevel 里 risk 遮蔽 visibility——restricted 工具若同时
 // 带 risk，门槛从 2 反降到 1，因此删除类必须**不带** risk（有锚）。
-// 其余读/写类维持原档，不被本批顺手改动。
+// 其余读/写类维持原档，不被本批一并改动。
 // ════════════════════════════════════════════════════════════
 
 interface Captured {
@@ -42,7 +42,7 @@ async function collectTools(): Promise<Captured[]> {
   } as never);
   await app.plugins.register(skillsPlugin, {});
   await app.plugins.idle();
-  // 没激活时什么都登记不了，下面「不被顺手改动」这类断言会空转变绿
+  // 没激活时什么都登记不了，下面「不被一并改动」这类断言会空转变绿
   if (app.plugins.getPlugin(skillsPlugin.name)?.state !== 'active') throw new Error('skills 未激活');
   await app.stop();
   return captured;
@@ -67,7 +67,7 @@ describe('skills 工具权限档', () => {
     }
   });
 
-  it('非删除类不被顺手改动（仍无 restricted+confirm 组合变化）', () => {
+  it('非删除类不被一并改动（仍无 restricted+confirm 组合变化）', () => {
     for (const t of registered) {
       if (t.name === 'skill_delete' || t.name === 'skill_remove_file') continue;
       expect(t.confirm, `${t.name} 不应在本批被加 confirm`).toBeUndefined();

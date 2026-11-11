@@ -4,7 +4,7 @@ import type { App, Logger } from '../../packages/core/src/index.js';
 import { ownerTurn, type ReachDirs, reachDirs, removeDirs, sessionTmpIn, startReach } from '../fixtures/reach-host.js';
 
 // ════════════════════════════════════════════════════════════
-// 触及插件删本会话临时区在后台跑：启动时的清扫不拖住激活，删会话不等删临时区；出错记 warn，收尾时等它们落定。
+// 触及插件删本会话临时区在后台跑：启动时的清扫不阻塞激活，删会话不等删临时区；出错记 warn，收尾时等它们落定。
 // 删除经 node:fs/promises 的 rm，用例按路径把它挡住，看挡住期间别的照常往前走。
 // ════════════════════════════════════════════════════════════
 
@@ -68,7 +68,7 @@ async function start() {
 }
 
 describe('本会话临时区的删除在后台跑', () => {
-  it('启动时的清扫不拖住激活：清扫删到一半时插件已经可用，收尾时等它删完', async () => {
+  it('启动时的清扫不阻塞激活：清扫删到一半时插件已经可用，收尾时等它删完', async () => {
     const old = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
     const stale = sessionTmpIn(dirs.data, 'session-gone');
     mkdirSync(stale, { recursive: true });

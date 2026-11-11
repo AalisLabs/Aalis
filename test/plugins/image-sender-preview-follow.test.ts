@@ -7,7 +7,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // preview_image 随 media 在场注册：识别全靠 media，media 缺席时这个工具只会返回
-// 「未启用 media 服务」，挂着只是让 agent 白试一次。media 上线才挂、离场即撤。
+// 「未启用 media 服务」，挂着只是让 agent 做一次无效尝试。media 上线才挂、离场即撤。
 // ════════════════════════════════════════════════════════════
 
 const tick = () => new Promise(r => setTimeout(r, 0));

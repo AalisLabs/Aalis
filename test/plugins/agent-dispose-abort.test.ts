@@ -27,7 +27,7 @@ const AGENT_CONFIG = {
 };
 
 describe('plugin-agent 拆卸时中止在飞回合', () => {
-  it('拆卸后在飞回合以 aborted 收尾，而不是在已拆卸的激活上跑完投递', async () => {
+  it('拆卸后在飞回合以 aborted 收尾，而不是在已拆卸的激活上执行完投递', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     await registerHubs(app);
     // 每个 chunk 前等 300ms：给拆卸留出「回合在飞」的窗口
@@ -60,7 +60,7 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
     const unloading = app.plugins.unload(agentPlugin.name); // 只卸 agent 这一个插件
 
     await turn;
-    expect(seen, '拆卸不中止在飞回合，它就会在已拆卸的激活上跑完并把回复投出去').toEqual(['stream:done']);
+    expect(seen, '拆卸不中止在飞回合，它就会在已拆卸的激活上执行完毕并把回复投出去').toEqual(['stream:done']);
     await unloading;
 
     await app.stop();

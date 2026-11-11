@@ -12,7 +12,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 // /clear 在跑 memory:clear 中间件链之前预检记忆后端（清不了消息历史就整条不执行），链上的中间件
 // 可能要等一阵（在途落库、向量清空）。消息历史曾用预检时取到的实例清理：这期间 memory 胜者换了，
 // 旧实例还活着时清的是旧库、回执照样报成功，新胜者里的消息还在；旧实例已关时报失败。
-// 现在预检只决定执行与否，消息历史按链跑完时的胜者清理；那时记忆服务已下线，或全局清理时换上的
+// 现在预检只决定执行与否，消息历史按链执行完毕时的胜者清理；那时记忆服务已下线，或全局清理时换上的
 // 后端不支持 clearAll，就报消息历史清空失败。
 // ════════════════════════════════════════════════════════════
 
@@ -39,7 +39,7 @@ function memoryProvider(name: string, backend: ReturnType<typeof makeBackend>, p
   });
 }
 
-/** 装 plugin-commands、一个记忆后端 mem-a，以及一个把 memory:clear 链挂住、直到放行的中间件 */
+/** 装 plugin-commands、一个记忆后端 mem-a，以及一个让 memory:clear 链阻塞、直到放行的中间件 */
 async function world(memA: ReturnType<typeof makeBackend>) {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
@@ -72,7 +72,7 @@ async function world(memA: ReturnType<typeof makeBackend>) {
   await app.plugin(commandsPlugin, {});
   await app.plugins.idle();
 
-  /** 执行 /clear 或 /clear all；链挂住期间调 during 换记忆后端，再放行 */
+  /** 执行 /clear 或 /clear all；链阻塞期间调 during 换记忆后端，再放行 */
   async function runSwitching(name: 'clear' | 'clear.all', during: () => Promise<unknown>): Promise<string> {
     const cmd = host.commands.use.getAll().find(c => c.name === name);
     if (!cmd?.handler) throw new Error(`/${name} 未注册`);

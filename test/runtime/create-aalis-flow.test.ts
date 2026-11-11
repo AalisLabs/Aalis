@@ -30,7 +30,7 @@ import { resolveText, type TextRef } from '../../packages/schema-i18n/src/index.
 // --advanced 另问记忆后端、embedding 与向量库。默认答案看本机有没有 Ollama。
 
 const run = promisify(execFile);
-/** 起真 CLI 时系统语言固定为中文：LANG 定，清掉会盖过它的 LC_ALL 与 LC_MESSAGES */
+/** 启动真 CLI 时系统语言固定为中文：LANG 定，清掉会盖过它的 LC_ALL 与 LC_MESSAGES */
 const ZH_ENV = { ...process.env, LANG: 'zh_CN.UTF-8', LC_ALL: undefined, LC_MESSAGES: undefined };
 const cli = fileURLToPath(new URL('../../packages/create-aalis/src/cli.ts', import.meta.url));
 const tsx = createRequire(import.meta.url).resolve('tsx');
@@ -426,7 +426,7 @@ describe('create-aalis --yes', () => {
     expect(config.plugins[OLLAMA]).toEqual({ baseUrl: `http://127.0.0.1:${port}` });
     expect(config.plugins[OLLAMA_EMBEDDING]).toEqual({ baseUrl: `http://127.0.0.1:${port}` });
   });
-  it('探到的 Ollama 里只有嵌入模型：写明先拉一个对话模型，「下一步」里有 ollama pull', async () => {
+  it('探到的 Ollama 里只有嵌入模型：写明先下载一个对话模型，「下一步」里有 ollama pull', async () => {
     const port = await serve((request, response) => {
       response.setHeader('content-type', 'application/json');
       response.end(

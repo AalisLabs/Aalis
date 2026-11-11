@@ -14,7 +14,7 @@ import { deferred } from '../helpers/deferred.js';
 // 一轮重判。删除只在定时器里做，延时截到 24 小时、到点重判；
 // 插件重载之后按会话记录上的 lastTurn.endedAt 补删或重排。销毁之前把回报（名字、状态、原因、结果、任务）写进父会话记录，
 // check_subtask、wait_subtasks 读到即删，父会话提醒列出它的那一轮回复或静默收尾后删（出错、被停止的一轮留着，下一轮照常
-// 列出）；父会话清空时一并清掉。已删的子会话收到还没开跑的
+// 列出）；父会话清空时一并清掉。已删的子会话收到还没开始执行的
 // 派发与追问不跑。时钟用假时钟。
 // ════════════════════════════════════════════════════════════
 
@@ -219,7 +219,7 @@ describe('到期销毁', () => {
   it('时长很大时不立即销毁：定时器到 24 小时重判、再排', async () => {
     const { hub, child } = await setup(100_000);
     await hub.turn(child.id, 'replied');
-    // 先让会话管理落盘之类的短定时器跑完，下一个定时器就是到期判定
+    // 先让会话管理落盘之类的短定时器执行完毕，下一个定时器就是到期判定
     await advance(1000);
     for (const wait of [24 * HOUR - 1000, 24 * HOUR]) {
       const before = Date.now();
@@ -253,7 +253,7 @@ describe('到期销毁', () => {
     expect(exists(hub, child.id)).toBe(false);
   });
 
-  it('已删的子会话收到还没开跑的派发或追问不跑；不是子任务派来的照常跑', async () => {
+  it('已删的子会话收到还没开始执行的派发或追问不运行；不是子任务派来的照常运行', async () => {
     const { hub, child } = await setup(24);
     await hub.sm.deleteSession(child.id);
     expect(await hub.turn(child.id, 'replied', { source: 'subtask' })).toBe(false);
@@ -283,7 +283,7 @@ describe('追问经网关送达', () => {
     expect(waited?.subtasks[0]).toMatchObject({ status: 'completed', result: '<结果>' });
   });
 
-  it('追问那一轮里起的异步工作之后开的一轮不算追问开的：那时还有没落定的追问，它的回复不交回、不完成', async () => {
+  it('追问那一轮里发起的异步工作之后开的一轮不算追问开的：那时还有没落定的追问，它的回复不交回、不完成', async () => {
     const { hub, child, call } = await setup(24);
     await hub.turn(child.id, 'replied');
     await call('send_to_subtask', { subtask_id: child.id, message: '<追问一>' });

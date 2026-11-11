@@ -127,7 +127,7 @@ describe('回落到 source', () => {
     );
   });
 
-  it('一次渲染里参数中的文字对象至多渲染 1024 个、嵌套 32 层，超出的用那一个的 source：伪造的重复参数不放大、环不挂死', () => {
+  it('一次渲染里参数中的文字对象至多渲染 1024 个、嵌套 32 层，超出的用那一个的 source：伪造的重复参数不放大、环不会无限递归', () => {
     // 每层把下一层用两次：不设总量时要渲染 2^30 个
     let forged: TextRef = { i18n: NS, key: 'twice', params: { name: 'x' }, source: 'S' };
     for (let i = 0; i < 30; i++) forged = { i18n: NS, key: 'twice', params: { name: forged }, source: 'S' };

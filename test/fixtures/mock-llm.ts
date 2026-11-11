@@ -61,7 +61,7 @@ export class MockLLMService implements LLMModel {
 
   readonly id = 'mock-model';
   readonly providerId = '@aalis/test-fixture-mock-llm';
-  /** 上下文长度。**agent 的 tokenBudget 直接吃它**，缺了会让预算变 NaN。 */
+  /** 上下文长度。**agent 的 tokenBudget 直接依赖它**，缺了会让预算变 NaN。 */
   readonly contextLength: number;
   /** provider 建议的最大输出 token */
   readonly maxOutputTokens = 1024;

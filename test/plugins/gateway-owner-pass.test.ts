@@ -206,7 +206,7 @@ async function setup(opts: SetupOptions) {
     received,
     sm: () => host.sessionManager.use,
     flow: () => host.flowControl.use,
-    /** 真人入站经网关：等整条相位链跑完 */
+    /** 真人入站经网关：等整条相位链执行完毕 */
     send: (msg: IncomingMessage) => host.gateway.use.ingressMessage(msg),
     /** 平台适配器的投递：发入站事件，会话管理在同一个事件上收录房间 */
     emit: async (msg: IncomingMessage) => {

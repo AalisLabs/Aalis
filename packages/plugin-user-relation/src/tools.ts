@@ -148,7 +148,7 @@ export function registerRelationTools(
       function: {
         name: 'user_relation_resolve_node',
         description:
-          '把"赵敏 / 三角洲 / 那次吵架"这种自然语言关键词解析成节点 ID。返回多个候选，按相关度+权重排序。后续可把 id 喂给 expand_node / find_path / timeline。',
+          '把"赵敏 / 三角洲 / 那次吵架"这种自然语言关键词解析成节点 ID。返回多个候选，按相关度+权重排序。后续可把 id 交给 expand_node / find_path / timeline。',
         parameters: {
           type: 'object',
           properties: {

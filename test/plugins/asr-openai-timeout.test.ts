@@ -5,11 +5,11 @@ import asrOpenai from '../../packages/plugin-asr-openai/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // transcribe 的 fetch 此前不带 signal。调用方（plugin-media）与工具执行面都没有外层超时：
-// 对端不应答即整轮语音回合永久挂住——与已修的 embedding-openai / whisper-cpp 同形状。
-// 两条用例：卡死的对端在 timeoutMs 内被掐断；正常对端照常返回（防「把挂死换成功能坏」）。
+// 对端不应答即整轮语音回合一直阻塞——与已修的 embedding-openai / whisper-cpp 同形状。
+// 两条用例：卡死的对端在 timeoutMs 内被掐断；正常对端照常返回（防「把一直阻塞换成功能坏」）。
 // ════════════════════════════════════════════════════════════
 
-/** 只有收到 abort 才拒绝；没有 signal 就永远挂着——正是要抓的形状 */
+/** 只有收到 abort 才拒绝；没有 signal 就永远不落定——正是要抓的形状 */
 function hangingFetch(): typeof fetch {
   return ((_url: unknown, init?: RequestInit) =>
     new Promise<Response>((_resolve, reject) => {
@@ -42,7 +42,7 @@ describe('plugin-asr-openai: 请求必须带超时', () => {
     return app;
   }
 
-  it('对端不应答时在 timeoutMs 内被掐断，而不是永久挂住', async () => {
+  it('对端不应答时在 timeoutMs 内被掐断，而不是一直阻塞', async () => {
     vi.stubGlobal('fetch', hangingFetch());
     // 实现有 1000ms 地板（与 embedding-openai 同），故取 1000
     const app = await bootOpenai({ apiKey: 'k', timeoutMs: 1000 });
@@ -56,7 +56,7 @@ describe('plugin-asr-openai: 请求必须带超时', () => {
       ),
       new Promise<string>(r => setTimeout(() => r('still-hanging'), 2500)),
     ]);
-    expect(outcome, '没有 signal 就会一直挂着；有则在超时时以 TimeoutError 拒绝').toBe('rejected:TimeoutError');
+    expect(outcome, '没有 signal 就会一直未返回；有则在超时时以 TimeoutError 拒绝').toBe('rejected:TimeoutError');
   });
 
   it('正常对端照常返回', async () => {

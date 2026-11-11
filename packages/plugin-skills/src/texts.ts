@@ -11,7 +11,7 @@ const SOURCE = {
   maxSkillsDescription: '扫描时最多加载的 skill 数量。',
   discoveryEnabledLabel: '启用 Discovery 注入',
   discoveryEnabledDescription:
-    '往 system prompt 注入一行技能库路标，提示 agent 用 list_skills 检索、load_skill 加载技能；关闭时激活正文注入也一并停用。',
+    '在系统提示里加一行技能库指引，提示模型检索与加载技能；关闭时已激活技能的正文也不再注入。',
   triggersEnabledLabel: '启用 triggers 自动激活',
   triggersEnabledDescription: '匹配 SKILL.md frontmatter 中的 triggers regex 时自动加载该 skill。',
   skills: '技能',

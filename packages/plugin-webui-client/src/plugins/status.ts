@@ -149,7 +149,7 @@ export function rootAction(root: UnmetRoot, find: FindPlugin): Link | undefined 
     : { to: paths.plugin(root.instance), label: tr('goResolveNamed', { name }) };
 }
 
-/** 插件没起来去哪处理：缺服务的去第一条链的根插件；没有根插件可去时，待配置的去它的配置区，其余去它的详情 */
+/** 插件未启动时去哪处理：缺服务的去第一条链的根插件；没有根插件可去时，待配置的去它的配置区，其余去它的详情 */
 export function fixLink(
   instance: string,
   { lacking, unconfigured }: Pick<PluginRow, 'lacking' | 'unconfigured'>,

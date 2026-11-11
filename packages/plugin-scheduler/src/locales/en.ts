@@ -22,26 +22,26 @@ export default defineLocale<Source>()({
     'Platform identifier of task messages (such as internal, webui, onebot). Only used for message routing.',
   actorPlatformLabel: 'Run-as identity: platform',
   actorPlatformDescription:
-    'platform of the acting identity (separate from the target platform). authority decides capabilities by (actorPlatform, actorUserId) together. Fill it in together with Run-as identity: user ID; with neither, the task runs as the owner; filling in only one is a configuration error and the task is not loaded.',
+    'Whose identity the task runs as: the platform of that identity. Fill it in together with “Run-as identity: user ID”; with neither, the task runs as the owner; with only one, the task is not loaded.',
   actorUserIdLabel: 'Run-as identity: user ID',
   actorUserIdDescription:
-    'userId of the acting identity. Fill it in together with Run-as identity: platform; with neither, the task runs as the owner; filling in only one is a configuration error and the task is not loaded.',
+    'Whose identity the task runs as: the user ID of that identity. Fill it in together with “Run-as identity: platform”; with neither, the task runs as the owner; with only one, the task is not loaded.',
   contentLabel: 'Message content',
   contentDescription: 'The instruction or prompt sent to the agent.',
   enabledLabel: 'Enabled',
-  timeZoneLabel: 'Time zone (IANA)',
+  timeZoneLabel: 'Time zone',
   timeZoneDescription:
-    'Time zone for evaluating cron, such as Asia/Shanghai or Europe/London. Left empty = the local time zone of the process. Only applies to cron tasks.',
+    'Time zone that cron tasks are computed in, as an IANA time zone name such as Asia/Shanghai. Empty means the time zone of the process.',
   persistPathLabel: 'Dynamic task storage path',
   persistPathDescription:
     'Tasks created by the AI or in the WebUI, and the run records of one-off tasks in the config, are stored here (a storage URI) and loaded again after a restart.',
   badPersistPath:
     'persistPath="{value}" is not a storage URI: write it as <root>:/<path> (such as data:/scheduler-jobs.json), or delete the key to use the default',
   fieldCronDescription:
-    '5 fields or an alias: @hourly, @daily, @weekly, @every 30s; exactly one of this, fixed interval, one-time run at and run once after X seconds',
+    'A 5-field cron expression or an alias: @hourly, @daily, @weekly, @every 30s; fill in only one of the four ways of scheduling',
   fieldIntervalLabel: 'Fixed interval (seconds)',
   fieldIntervalDescription:
-    'At least 5 and at most {max, number} (about 24.8 days); exactly one of the four scheduling methods',
+    'At least 5 and at most {max, number} (about 24.8 days); fill in only one of the four ways of scheduling',
   fieldRunAtDescription: 'An ISO time, such as 2026-05-19T10:00:00; deleted automatically after running once',
   delaySecondsLabel: 'Run once after X seconds',
   delaySecondsDescription: 'Converted to a one-time run at = now + N seconds; deleted automatically after running once',

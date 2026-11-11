@@ -15,7 +15,7 @@ import { toSource } from '../../packages/schema-i18n/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 「服务注册成功 != 模型可用」：连通性检查失败只 warn、服务照常注册（刻意，Ollama 可能
-// 晚于 Aalis 起来）。代价是模型没 pull 时——/status 只数插件状态、插件状态是 active、
+// 晚于 Aalis 启动）。代价是模型没 pull 时——/status 只数插件状态、插件状态是 active、
 // 向量记忆每条消息静默失败——用户除了启动时一条 warn 之外拿不到任何信号。
 // 现在健康状况经 doctor registerCheck 上报，且错误里带上 Ollama 的响应体
 // （「模型没 pull」与「端点不存在」都是 404，只有响应体能区分）。
@@ -110,7 +110,7 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
         try {
           await a.stop();
         } catch {
-          /* 停不掉也要继续停下一个 */
+          /* 无法停止也要继续停下一个 */
         }
       }
     } finally {
@@ -176,7 +176,7 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
   });
 
   // 政策守卫，不是本批修复的回归钉子：连通性失败只 warn、服务照常注册是刻意设计
-  // （Ollama 可能晚于 Aalis 起来），这条用来防止有人把它改成 fail-closed。
+  // （Ollama 可能晚于 Aalis 启动），这条用来防止有人把它改成 fail-closed。
   it('政策守卫：连通性失败不阻塞服务注册', async () => {
     const fake = await startFake('modelMissing');
     servers.push(fake.server);
@@ -194,7 +194,7 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
       const svc = host.services.use.get(embedding);
 
       const t0 = Date.now();
-      await expect(svc!.embed('你好'), '体读取若落在超时窗口之外就会一直挂着').rejects.toThrow();
+      await expect(svc!.embed('你好'), '体读取若落在超时窗口之外就会一直未返回').rejects.toThrow();
       const elapsed = Date.now() - t0;
       expect(elapsed, `应在 timeoutMs(800ms) 附近失败，实际 ${elapsed}ms`).toBeLessThan(8_000);
     },
@@ -204,7 +204,7 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
   it(
     'Ollama 无响应时探测自带上限，不把 /doctor 拖到服务超时',
     async () => {
-      // 先以正常模式起实例：apply() 的启动连通性检查同样会等满 timeoutMs，
+      // 先以正常模式启动实例：apply() 的启动连通性检查同样会等满 timeoutMs，
       // 若一开始就挂起，用例超时先到，根本走不到 doctor 探测这一步。
       const fake = await startFake('ok');
       servers.push(fake.server);

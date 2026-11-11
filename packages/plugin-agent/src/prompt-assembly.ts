@@ -162,8 +162,8 @@ export async function assemblePromptContributions(
   inputs: PromptContributionView['inputs'],
   opts?: {
     /**
-     * 单个 build 的等待上限（毫秒；缺省/0 = 不设限）。挂死的 build（如网络
-     * embedding 卡住）会拖住每一次 LLM 调用——超时后该贡献本轮缺席、warn
+     * 单个 build 的等待上限（毫秒；缺省/0 = 不设限）。一直阻塞的 build（如网络
+     * embedding 卡住）会阻塞每一次 LLM 调用——超时后该贡献本轮缺席、warn
      * 点名、其余照常物化；键未物化，下一轮会重试。执行策略属收集方，故此
      * 护栏在组装器而非内核（与 DisposableChain.disposeAsync 的逐项超时同构）。
      */

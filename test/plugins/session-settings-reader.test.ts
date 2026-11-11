@@ -66,7 +66,7 @@ describe('全局层', () => {
     expect(A.reader().get().persona).toBe('default');
   });
 
-  it('非严格字段在插件配置里写坏了：行的 value 是原样值、effective 是作者默认、来源 default；读取器反复读只告警一次', async () => {
+  it('非严格字段在插件配置里填错了：行的 value 是原样值、effective 是作者默认、来源 default；读取器反复读只告警一次', async () => {
     const A = fieldsPlugin('zz-a', SCHEMA);
     const { admin, warns } = await setup({ doc: { plugins: { 'zz-a': { iterations: 0 } } }, fields: [A.definition] });
     const row = admin.rows({ layer: { scope: 'global' } }).find(r => r.plugin === 'zz-a' && r.key === 'iterations');

@@ -21,7 +21,7 @@ describe('process-local maxBuffer 输出上限', () => {
     const res = await handle.wait();
     expect(res.truncated).toBe(true);
     expect(Buffer.byteLength(res.stdout, 'utf-8')).toBeLessThanOrEqual(1000);
-    expect(res.code).toBe(7); // 进程正常跑完退出，未被 maxBuffer 杀掉
+    expect(res.code).toBe(7); // 进程正常执行完毕退出，未被 maxBuffer 杀掉
   });
 
   it('输出在上限内 → 完整返回、不标 truncated', async () => {

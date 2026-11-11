@@ -259,7 +259,7 @@ function registerCommands({
       return path.length > 0 ? registry.detail(path, argv.session) : registry.overview(argv.session);
     });
 
-  // 只给计数：逐项的检查（哪个插件为什么没起来、缺什么服务）交给 /doctor，末尾指过去
+  // 只给计数：逐项的检查（哪个插件为什么无法启动、缺什么服务）交给 /doctor，末尾指过去
   commands.use.command('status', t('statusDescription')).action(async () => {
     const status = plugins.present ? plugins.use.getStatus() : undefined;
     const count = (state: string) => status?.filter(p => p.state === state).length ?? 0;

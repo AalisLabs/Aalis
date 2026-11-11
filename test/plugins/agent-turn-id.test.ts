@@ -48,7 +48,7 @@ afterEach(async () => {
 });
 
 /**
- * 起一个带探针工具的 agent；handler 决定探针怎么跑，返回各面观察到的事件。
+ * 启动一个带探针工具的 agent；handler 决定探针怎么跑，返回各面观察到的事件。
  * `before` 在 agent 之前装别的插件（如存储与检查点）。
  */
 async function startAgent(
@@ -212,7 +212,7 @@ describe('落库的消息带回合 id', () => {
 });
 
 describe('abort 按回合 id 停止', () => {
-  /** 起一轮停在工具里的回合，返回它的 turnId 与放行口 */
+  /** 发起一轮停在工具里的回合，返回它的 turnId 与放行口 */
   async function turnInTool(sessionId: string) {
     const entered = deferred();
     const release = deferred();
@@ -245,7 +245,7 @@ describe('abort 按回合 id 停止', () => {
     expect(seen.turnEnds).toEqual([{ sessionId, turnId, outcome: 'aborted' }]);
   });
 
-  it('排队之后按 turnId 停：旧的 turnId 停不了排着开的下一轮', async () => {
+  it('排队之后按 turnId 停：旧的 turnId 无法停止排着开的下一轮', async () => {
     const sessionId = 'test:abort-queued';
     const entered = deferred();
     const release = deferred();
@@ -264,7 +264,7 @@ describe('abort 按回合 id 停止', () => {
     expect(agent.abort(sessionId, { turnId: userTurnId })).toBe(true);
     release.resolve();
     await userTurn;
-    expect(agent.abort(sessionId, { turnId: userTurnId }), '旧的 turnId 停不了排着开的下一轮').toBe(false);
+    expect(agent.abort(sessionId, { turnId: userTurnId }), '旧的 turnId 无法停止排着开的下一轮').toBe(false);
     await scheduledTurn;
     expect(seen.turnEnds).toEqual([
       { sessionId, turnId: userTurnId, outcome: 'aborted' },

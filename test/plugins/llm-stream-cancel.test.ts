@@ -7,7 +7,7 @@ import ollama from '../../packages/plugin-llm-ollama/src/index.js';
 // 流式请求被提前退出时必须 cancel 响应体，不能只 releaseLock。
 //
 // 事故背景：主模型切到本地后一轮生成 90+ 秒，忙群里 lane 中止高频发生。
-// releaseLock 只是放锁、底层流仍开着——被打断的生成让 undici 挂着半读的响应
+// releaseLock 只是放锁、底层流仍开着——被打断的生成让 undici 一直持有半读的响应
 // 与套接字，直到请求超时（300s）兜底才释放。cancel 自带放锁，且对已正常结束
 // 的流是 no-op，完整读完的路径不受影响。
 // ════════════════════════════════════════════════════════════
@@ -70,7 +70,7 @@ describe('chatStream 提前退出释放响应体', () => {
       if (got >= 3) break; // 模拟回合被停下、提前收工
     }
     expect(got).toBe(3);
-    expect(probe.cancelled(), 'break 后必须 cancel 响应体，否则半读的套接字挂到 300s 超时').toBe(true);
+    expect(probe.cancelled(), 'break 后必须 cancel 响应体，否则半读的套接字一直阻塞到 300s 超时').toBe(true);
   });
 
   it('正常读完（done:true）不受影响，cancel 是 no-op', async () => {

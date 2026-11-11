@@ -297,7 +297,7 @@ function runBrowserTools(caps: Caps): void {
   function ensureBrowser(): Promise<Browser> {
     // 只判句柄非空不够：Chromium 崩溃/被杀后句柄常驻，所有 browser_* 会永久失效到插件 bounce
     if (browser?.connected) return Promise.resolve(browser);
-    // 单飞：并发的调用共用同一次启动，不各起一个 Chromium（后赋值的会盖掉前一个，前一个就没人关了）
+    // 单飞：并发的调用共用同一次启动，不各启动一个 Chromium（后赋值的会盖掉前一个，前一个就没人关了）
     launching ??= launchBrowser().finally(() => {
       launching = null;
     });
@@ -305,15 +305,15 @@ function runBrowserTools(caps: Caps): void {
   }
 
   async function launchBrowser(): Promise<Browser> {
-    // 停用后才到的调用不再起闸与浏览器：onDispose 已经收过尾，这时起的东西没人关
+    // 停用后才到的调用不再启动闸与浏览器：onDispose 已经收过尾，这时启动的东西没人关
     if (lifecycle.use.signal.aborted) throw new Error('浏览器工具已停用');
     // 重新启动时页面表与各会话的上下文一起清，否则列出的是已经不存在的死页面，开页也会落到旧浏览器的上下文上
     browser = null;
     pages.clear();
     contexts.clear();
     browserPage.invalidate();
-    // 仅 blockPrivate 时起网络闸（关掉即零开销、本地全通，便于 owner 测本地）。
-    // 闸先于浏览器起好，起不来就不启动浏览器：浏览器不会在没有闸的情况下运行
+    // 仅 blockPrivate 时启动网络闸（关掉即零开销、本地全通，便于 owner 测本地）。
+    // 闸先于浏览器启动，闸启动失败就不启动浏览器：浏览器不会在没有闸的情况下运行
     const gateArgs: string[] = [];
     if (config.blockPrivate) {
       try {
@@ -343,7 +343,7 @@ function runBrowserTools(caps: Caps): void {
         viewport: { width: config.viewportWidth, height: config.viewportHeight },
         args: gateArgs,
         // 单条 CDP 命令的时限（puppeteer 默认 180 秒）。正常操作里最长的单条命令是等选择器与导航，都受 defaultTimeout 约束；
-        // 取它的两倍，让操作自己的超时先报，挂住的命令以此为上限。defaultTimeout 为 0（不设时限）时它也是 0，同样不设时限
+        // 取它的两倍，让操作自己的超时先报，一直阻塞的命令以此为上限。defaultTimeout 为 0（不设时限）时它也是 0，同样不设时限
         protocolTimeout: config.defaultTimeout * 2,
         sandbox: config.sandbox,
       });
@@ -364,7 +364,7 @@ function runBrowserTools(caps: Caps): void {
       );
     }
     // 启动期间插件被停用：onDispose 只关得到已交出的实例，这一代在这里关掉。
-    // 不等关闭落定：onDispose 要等这次启动落定才关闸，关闭挂住会把闸一起拖住
+    // 不等关闭落定：onDispose 要等这次启动落定才关闸，关闭阻塞时闸也跟着阻塞
     if (lifecycle.use.signal.aborted) {
       instance
         .close()
@@ -373,7 +373,7 @@ function runBrowserTools(caps: Caps): void {
     }
     browser = instance;
     instance.on('disconnected', () => {
-      // 只清自己那一代：迟到的旧实例事件不能把刚起来的新实例与它的页面一起清掉
+      // 只清自己那一代：迟到的旧实例事件不能把刚启动的新实例与它的页面一起清掉
       if (browser !== instance) return;
       browser = null;
       pages.clear();
@@ -386,7 +386,7 @@ function runBrowserTools(caps: Caps): void {
 
   /**
    * 关掉这一代浏览器，不等关闭落定（浏览器进程本身卡住时，puppeteer 在 protocolTimeout 后强杀进程），
-   * 页面表一起清，下次调用重新启动。挂着的 CDP 调用随连接断开失败，它们持有的锁随之释放
+   * 页面表一起清，下次调用重新启动。一直未返回的 CDP 调用随连接断开失败，它们持有的锁随之释放
    */
   function retireBrowser(instance: Browser, reason: string): void {
     // 已不是当前这一代（崩溃后已重启、已被关掉）：它的页面已不在表里，关闭也不归这里
@@ -403,7 +403,7 @@ function runBrowserTools(caps: Caps): void {
 
   /**
    * 截图（含切前台与找元素）的时限，取 defaultTimeout；为 0 时不设时限，与 puppeteer 对 0 的约定一致。
-   * 截图卡住（如渲染进程卡死）时底层调用一直挂着，并持有浏览器级的锁，同一浏览器里开新页、关页面与别的截图
+   * 截图卡住（如渲染进程卡死）时底层调用一直未返回，并持有浏览器级的锁，同一浏览器里开新页、关页面与别的截图
    * 都排在它后面，所以时限一到就关掉这一代浏览器，而不只是让这次调用先失败
    */
   async function withScreenshotTimeout<T>(slot: PageSlot, capture: Promise<T>): Promise<T> {
@@ -457,7 +457,7 @@ function runBrowserTools(caps: Caps): void {
       const b = await ensureBrowser();
       // 会话已删除就不再为它建上下文
       if (pending.deleted) throw new Error('调用所在的会话已删除');
-      // 每页独占一个窗口：同一窗口里的标签页会互相压到后台，而后台页上的点击等操作会一直挂住（见 browser_click）
+      // 每页独占一个窗口：同一窗口里的标签页会互相压到后台，而后台页上的点击等操作会一直阻塞（见 browser_click）
       const page = await (await contextOf(b, pending.owner)).newPage({ type: 'window' });
       // 开页途中会话被删：删除时已关掉它的上下文，这一页随之关闭，不登记
       if (pending.deleted) throw new Error('调用所在的会话已删除');
@@ -536,7 +536,7 @@ function runBrowserTools(caps: Caps): void {
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        // 起了网络闸时，闸的拒绝与目标连不上在浏览器侧是同一个错误码，补一句说明
+        // 启动了网络闸时，闸的拒绝与目标连不上在浏览器侧是同一个错误码，补一句说明
         return JSON.stringify({
           error:
             config.blockPrivate && msg.includes('net::ERR_SOCKS_CONNECTION_FAILED')
@@ -610,7 +610,7 @@ function runBrowserTools(caps: Caps): void {
       const slot = ownPage(args.pageId, callCtx.sessionId);
       if (!slot) return JSON.stringify({ error: '页面不存在' });
       try {
-        // 页面自己开出的窗口或标签页会把它压到后台，后台页不跑渲染，puppeteer 的点击等它进入视口会一直挂住
+        // 页面自己开出的窗口或标签页会把它压到后台，后台页不执行渲染，puppeteer 的点击等它进入视口会一直阻塞
         await slot.page.bringToFront();
         await slot.page.click(args.selector as string);
         await slot.page.waitForNetworkIdle({ timeout: 5000 }).catch(() => {});
@@ -822,7 +822,7 @@ function runBrowserTools(caps: Caps): void {
       ),
   });
 
-  // 会话删除时摘掉它的页面与上下文，在后台关掉上下文（页面随之关闭），不等关闭落定：浏览器卡住时关闭会一直排着，不能拖住删除。
+  // 会话删除时摘掉它的页面与上下文，在后台关掉上下文（页面随之关闭），不等关闭落定：浏览器卡住时关闭会一直排着，不能阻塞删除。
   // 页面与上下文记在根会话名下，删子会话不动它们
   caps.events.use.on('session:deleted', sessionId => {
     for (const pending of opening) if (pending.owner === sessionId) pending.deleted = true;
@@ -906,7 +906,7 @@ const SOCKS_FAILURE = Buffer.from([5, 1, 0, 1, 0, 0, 0, 0, 0, 0]);
 const HANDSHAKE_TIMEOUT_MS = 10_000;
 
 /**
- * 在 127.0.0.1 的随机端口起浏览器网络闸：浏览器经 `--proxy-server` 把全部 TCP 连接交给它，页面、弹出窗口、
+ * 在 127.0.0.1 的随机端口启动浏览器网络闸：浏览器经 `--proxy-server` 把全部 TCP 连接交给它，页面、弹出窗口、
  * 各类 worker 的 http(s) 请求、重定向的每一跳与 WebSocket 都在内。只实现浏览器用到的那部分 SOCKS5：无认证 + CONNECT，
  * 目标只收域名形式（ATYP=3）——Chrome 一律以这种形式交出目标，IP 字面量也是（IPv6 不带方括号）。
  *

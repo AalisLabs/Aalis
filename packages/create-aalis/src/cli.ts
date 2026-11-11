@@ -267,7 +267,7 @@ export async function askPicks(
   return { picks, keys };
 }
 
-/** @lancedb/lancedb 带预编译件的平台（它 optionalDependencies 里的平台包）：别的平台装上也起不来 */
+/** @lancedb/lancedb 带预编译件的平台（它 optionalDependencies 里的平台包）：别的平台装上也无法启动 */
 const LANCEDB_PLATFORMS = new Set(['darwin-arm64', 'linux-x64', 'linux-arm64', 'win32-x64', 'win32-arm64']);
 
 export function lancedbSupported(os: string, cpu: string): boolean {
@@ -443,8 +443,8 @@ interface Found {
  * 故此处不按包名剔除 `*-api` 与 `webui-client*`：关键词收敛（包按类型打词）之后那就是死代码，
  * 且按名判定会被改名打穿：`plugin-*-api` → `api-*` 之后 `/-api$/` 全部失配。
  *
- * 剩下的 `code-sandbox` 是**真功能插件**（带 aalis-plugin），排除理由与类型无关：它是被
- * code_runner 按需拉起的沙箱基建，不是用户「选功能」时该看到的条目。
+ * 剩下的 `code-sandbox` 是**真功能插件**（带 aalis-plugin），排除理由与类型无关：它是
+ * 选了 code_runner 时由脚手架自动带上的沙箱基建，不是用户「选功能」时该看到的条目。
  * 纯函数，便于单测。
  */
 export function toPluginCatalog(data: { objects?: Array<{ package: { name: string } }> }): CatalogEntry[] {
@@ -755,7 +755,7 @@ npm start
 \`\`\`
 
 - 第一次运行要做什么：${FIRST_RUN_URL}
-- 装不上或起不来：${TROUBLESHOOTING_URL}
+- 安装或启动失败：${TROUBLESHOOTING_URL}
 
 ## 配置
 

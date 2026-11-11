@@ -6,7 +6,7 @@ import { readBodyCapped } from '../../packages/plugin-llm-ollama/src/index.js';
 // 远程图片/音频下载体积上限——流式限额读取。
 //
 // 背景：附件缓存失败回退原 URL 时，provider 侧此前用
-// res.arrayBuffer() 全量缓冲、无任何体积上限——超大/恶意资源可撑爆内存。
+// res.arrayBuffer() 全量缓冲、无任何体积上限——超大/恶意资源可耗尽内存。
 // 契约：Content-Length 超限即拒（零读取）；无头时流式累计超限即断；正常资源原样返回。
 // ════════════════════════════════════════════════════════════
 

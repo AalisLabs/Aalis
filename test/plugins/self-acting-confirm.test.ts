@@ -181,7 +181,7 @@ async function boot(allow: string[], opts: { approvals?: ApprovalRequest[] } = {
     });
     return (content.startsWith('{') ? JSON.parse(content) : { text: content }) as Record<string, unknown>;
   };
-  /** 某人在 PARENT 里起一个后台任务，回任务 id */
+  /** 某人在 PARENT 里发起一个后台任务，回任务 id */
   const startTask = async (who: UserIdentity) => {
     const { taskId } = await call('zz_slow', { runInBackground: true }, who);
     expect(taskId).toEqual(expect.any(String));
@@ -198,7 +198,7 @@ async function boot(allow: string[], opts: { approvals?: ApprovalRequest[] } = {
 type Booted = Awaited<ReturnType<typeof boot>>;
 
 /**
- * who 单独调一次 name，被拒、原因含 reason，什么都没做：之前已有的编排 WF（没有节点）与 owner 起的后台任务原样不动，替身没被
+ * who 单独调一次 name，被拒、原因含 reason，什么都没做：之前已有的编排 WF（没有节点）与 owner 发起的后台任务原样不动，替身没被
  * 调用，没有定时任务与运行
  */
 async function expectRefused(
@@ -280,7 +280,7 @@ describe('别人单独发起的', () => {
     await expectRefused(s, name, args, MEMBER, NEEDS_APPROVAL);
   });
 
-  it('自己起的后台任务也停不了：停后台任务不另判起者，与别的 2 级加确认的工具同一规则', async () => {
+  it('自己发起的后台任务也无法停止：停后台任务不另判发起者，与别的 2 级加确认的工具同一规则', async () => {
     const s = await boot([]);
     s.setLevel(MEMBER, 2);
     const taskId = await s.startTask(MEMBER);

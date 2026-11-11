@@ -31,7 +31,7 @@ import { nodeProcessProbe } from '../../packages/runtime/src/instance-lock.js';
 //
 // 三条被守的不变量（对应曾实测出的故障）：
 // 1. 子命令进程不碰 logs/latest.log，也不轮转——否则守护进程正在写的日志被改名移走；
-// 2. 未命中的子命令报错退出（exit 2），绝不进守护进程——否则打错字就起第二个实例；
+// 2. 未命中的子命令报错退出（exit 2），绝不进守护进程——否则打错字就启动第二个实例；
 // 3. 子命令进程无重启策略——否则 `restart` 在 app.stop ≥ 500ms 时 spawn 出 argv 仍带 restart 的
 //    detached 子进程，无限连环（实测 5 代）。
 //
@@ -53,7 +53,7 @@ interface RunResult {
 
 function run(cwd: string, argv: string[], env: Record<string, string> = {}, timeoutMs = 12_000): Promise<RunResult> {
   return new Promise((resolveRun, reject) => {
-    // detached：让 tsx 包装脚本自成进程组。`.bin/tsx` 会再起一个真正跑夹具的 node 子进程，超时时
+    // detached：让 tsx 包装脚本自成进程组。`.bin/tsx` 会再启动一个真正跑夹具的 node 子进程，超时时
     // 只杀包装层会留下孤儿守护进程（变异验证时实测），必须按进程组整体 SIGKILL。
     // 与进程内测试同一源码映射，避免 runtime 源码搭配陈旧的 core dist。
     // 数据目录取这个临时目录，用户主目录也指到这里：解析一旦回退到 ~/.aalis，也落在临时目录里，不碰开发者自己的实例。
@@ -75,7 +75,7 @@ function run(cwd: string, argv: string[], env: Record<string, string> = {}, time
     child.stderr.on('data', d => {
       stderr += String(d);
     });
-    // 回归成「进守护进程」时子进程不会自己退出；超时杀掉整个进程组，让用例以退出码/信号不符而红，而不是挂死。
+    // 回归成「进守护进程」时子进程不会自己退出；超时杀掉整个进程组，让用例以退出码/信号不符而红，而不是一直阻塞。
     const timer = setTimeout(() => {
       try {
         if (child.pid) process.kill(-child.pid, 'SIGKILL');
@@ -337,7 +337,7 @@ describe('startAalis 数据目录（真实子进程）', () => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  it('数据目录没初始化：一行说明怎样初始化后 exit 1，不起空的家、不写任何文件', async () => {
+  it('数据目录没初始化：一行说明怎样初始化后 exit 1，不创建空的家、不写任何文件', async () => {
     const dir = tempDir();
     const r = await run(dir, ['probe']);
     expect(r.code).toBe(1);
@@ -427,7 +427,7 @@ describe('startAalis 数据目录（真实子进程）', () => {
     expect(existsSync(join(dir, 'first-config.json'))).toBe(false);
   });
 
-  it('默认加载器的安装集里没有 package.json：说明 appDir 要指向哪里后 exit 1，不带着零个插件起来', async () => {
+  it('默认加载器的安装集里没有 package.json：说明 appDir 要指向哪里后 exit 1，不带着零个插件启动', async () => {
     const dir = tempDir();
     writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
     const app = join(dir, 'install');
@@ -479,7 +479,7 @@ describe('startAalis 数据目录（真实子进程）', () => {
     expect(readdirSync(join(dir, 'run'))).toEqual(['instance.4.lock']);
   });
 
-  it('以 --service 启动而锁被占：写一行说明后 exit 0，服务管理器不会反复拉起', async () => {
+  it('以 --service 启动而锁被占：写一行说明后 exit 0，服务管理器不会反复重新启动进程', async () => {
     const dir = tempDir();
     writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
     liveLock(dir);
@@ -523,7 +523,7 @@ describe('startAalis 数据目录（真实子进程）', () => {
   it('/restart 经重启策略交接实例锁：第二代接手、令牌不留在环境里，第一代退出后只剩第二代持锁', async () => {
     const dir = tempDir();
     writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
-    // 第一代经 app.restart() 拉起第二代（继承本测试给的管道，run 会等到两代都退出）
+    // 第一代经 app.restart() 启动第二代进程（继承本测试给的管道，run 会等到两代都退出）
     const r = await run(dir, [], { AALIS_E2E_MODE: 'restart' }, 30_000);
     expect(r.code).toBe(0);
     expect(readFileSync(join(dir, 'gen.txt'), 'utf-8').trim()).toBe('2');
@@ -535,7 +535,7 @@ describe('startAalis 数据目录（真实子进程）', () => {
     expect(readdirSync(join(dir, 'run')).filter(n => n.endsWith('.lock'))).toEqual([]);
   }, 45_000);
 
-  it('以 --service 运行时 /restart 交给服务管理器：停掉后以 75 退出、放掉锁，不自己拉起新进程', async () => {
+  it('以 --service 运行时 /restart 交给服务管理器：停掉后以 75 退出、放掉锁，不自行启动新进程', async () => {
     const dir = tempDir();
     writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
     const r = await run(dir, ['--service'], { AALIS_E2E_MODE: 'restart' });

@@ -132,7 +132,7 @@ describe('follow 异步 cleanup', () => {
       return cleanup;
     });
     host.provide.use(svc, {});
-    await sleep(0); // notify 的对齐在微任务里，attach 必须先跑起来
+    await sleep(0); // notify 的对齐在微任务里，attach 必须先运行
     expect(state.finished).toBe(false);
     await app.plugins.unload('watcher');
     expect(state.finished, '关闭等到了它').toBe(true);

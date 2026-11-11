@@ -42,7 +42,7 @@ import { storedRoom } from '../fixtures/rooms.js';
 //
 // file 附件经 upload_group_file / upload_private_file 发出，内容只收 base64://：超过内联上限的存储文件
 // attachmentToOneBotFile 会退回 file://<宿主路径>，容器里的 NapCat 读不到，一律拒发。超过内联上限的网址附件（不论类型）
-// 一律拒发，原网址不交给实现端去拉。
+// 一律拒发，原网址不交给实现端去下载。
 // image、audio、video 按文件头分流：NapCat 能内联的格式走消息段；send_attachment 白名单里其余的媒体
 // （BMP、AVIF、HEIC 图片，MKV、AVI 视频）改经文件上传，不静默丢弃；不是媒体的（如配置文本）拒发，
 // 免得任意可读文件冒充媒体发出。没发出去的附件，agent 发出的消息在会话记忆里留投递失败记录。
@@ -52,8 +52,8 @@ import { storedRoom } from '../fixtures/rooms.js';
 // 一律不放行）。一条回复里的媒体（网址的标记与转成的附件合计）最多发 10 个，附件同时最多读 4 个。入站的引用与撤回按存档反查原文时，按归档时记下的标签去掉发送者前缀。
 // 发送不重试：没等到回执（超时、回执前断线）的记结果未知；逐条发出时一条没发成就停，投递结果与回报写明前几条已发出。实现端回
 // 失败时报错带返回码，「不支持该动作」另标出来；合并转发只按 id 拉，缓存命中时带截断标志与收到它的会话，没展开过的交回收到它的
-// 会话与现拉的办法、不先拉。
-// 本地起一个假的 OneBot 实现端（WebSocket 服务）记录适配器发出的 action。
+// 会话与当场获取的办法、不先获取。
+// 本地启动一个假的 OneBot 实现端（WebSocket 服务）记录适配器发出的 action。
 // ════════════════════════════════════════════════════════════
 
 type WsServer = {
@@ -956,7 +956,7 @@ describe('onebot 动作：失败带返回码，合并转发只按 id 拉', () =>
     expect(String((refused as Error).message)).toContain('<占位原话>');
   });
 
-  it('收到时没拉到的转发：get_forward_msg 交回收到它的会话与现拉的办法、不先拉；现拉只按 id 拉，拉不到抛出实现端原话；从没收到过的会话为空', async () => {
+  it('收到时没获取到的转发：get_forward_msg 交回收到它的会话与当场获取的办法、不先获取；当场获取只按 id 获取，获取失败时抛出实现端原话；从没收到过的会话为空', async () => {
     const t = await boot({ failActions: { get_forward_msg: { retcode: 100, message: '<占位原话>' } } });
     t.post({
       post_type: 'message',
@@ -1606,7 +1606,7 @@ describe('onebot 出站：安全', () => {
     expect(t.sent().some(a => a.action.startsWith('upload_'))).toBe(false);
   });
 
-  it('超过内联上限的网址图片附件：不发，原网址不交给实现端去拉，投递报超过内联上限', async () => {
+  it('超过内联上限的网址图片附件：不发，原网址不交给实现端去下载，投递报超过内联上限', async () => {
     const t = await boot();
     const message: OutgoingMessage = {
       sessionId: GROUP,

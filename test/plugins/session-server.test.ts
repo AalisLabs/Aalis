@@ -153,7 +153,7 @@ async function setup({
     sessionId,
     platform: sessionId.startsWith('onebot:') ? 'onebot' : 'webui',
   });
-  /** 按 agent 的顺序跑一轮：agent:turn:before 的默认动作里跑完回合，最后发 agent:turn:after */
+  /** 按 agent 的顺序跑一轮：agent:turn:before 的默认动作里执行完回合，最后发 agent:turn:after */
   const turn = async (sessionId: string, outcome: Outcome = 'replied', during?: () => Promise<void>) => {
     const message = messageOf(sessionId);
     const turnId = `t${++turns}`;

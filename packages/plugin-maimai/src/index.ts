@@ -189,7 +189,7 @@ class MaimaiClient {
     let resp: Response;
     let text: string;
     try {
-      // 工具执行面与调用方都没有外层超时：对端不应答即那轮对话永久挂住（与已修的 embedding-openai 同形）。
+      // 工具执行面与调用方都没有外层超时：对端不应答即那轮对话一直阻塞（与已修的 embedding-openai 同形）。
       // 时限连读响应体一起算：响应头到了、响应体卡住时同样超时
       const timeout = AbortSignal.timeout(Math.max(1000, this.cfg.timeoutMs));
       resp = await fetch(url.toString(), {

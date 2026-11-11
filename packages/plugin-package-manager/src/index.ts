@@ -133,7 +133,7 @@ type ServiceStatus = Pick<PluginStatusEntry, 'name' | 'instanceId' | 'state' | '
 /**
  * 找出「卸载 target 会断其服务依赖」的插件：target 的某个实例正在提供或马上就提供的某服务 S 没有别的插件正在提供，且有别的
  * 插件 required 依赖 S（uses 里未包 optional）→ 这些插件会被打断。卸载连同 target 的全部实例一起卸下，所以按同名的每个实例判：算在提供的是
- * active、activating，以及 pending 而只是在等的（按 api-doctor 的共享判据不缺什么，它要的在启动，起来就提供）；disabled、
+ * active、activating，以及 pending 而只是在等的（按 api-doctor 的共享判据不缺什么，它要的在启动，启动后就提供）；disabled、
  * error 与 pending 而缺服务的不在提供。别的提供者只算 active 与 activating（替代得是确定的）。已禁用（disabled / disposed）
  * 的依赖者不算。available 是当前有提供者的服务名（services.names()）。纯函数，便于单测。
  */
@@ -311,7 +311,7 @@ export interface PackageManagerDeps {
    * 这是判定「本次安装是否就位」的**唯一正确判据**：此刻注册表里的这个插件是从目标包加载的。不能用 `rescanPlugins()` 的返回值：
    * 它是全局副作用的产物——宿主的 rescan 对已注册插件直接跳过，返回的是「本次扫描新
    * 加载的**全部**插件」，与本次目标无对应关系。用它会在两个场景下给出错误结论：
-   * 重装已注册插件时恒返回空（误报失败）；两个安装并发时先跑完的那个会把对方的战果
+   * 重装已注册插件时恒返回空（误报失败）；两个安装并发时先执行完毕的那个会把对方的结果
    * 一并算作自己的（谎报），后跑的则拿到空数组（误报失败）。也不能只看插件名已登记：名字被宿主直接登记的插件占着时，
    * 发现驱动跳过目标包，注册表里那个插件不是它。
    *
@@ -898,7 +898,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
    * 1. `--dry-run` **有副作用**——它不碰 `package.json` 与 `package-lock.json`，却会把
    *    `node_modules/.package-lock.json`（npm 的隐藏 lockfile）重写成「目标版本已装」。
    *    紧接着的真装读到它就判定树已就绪，直接 `up to date` 什么都不做：于是声明成了新版、
-   *    node_modules 里仍是旧代码，而旧代码起得来 → 重启成功 → 回滚永不触发 → 整次更新
+   *    node_modules 里仍是旧代码，而旧代码能启动 → 重启成功 → 回滚永不触发 → 整次更新
    *    空转却报成功。副本里跑则 live tree 分毫未动，无需事后补救。
    * 2. 用户 `.npmrc` 里的 `legacy-peer-deps=true`（React 生态常见 workaround）会让 npm
    *    **完全不报** peer 告警，唯一的护栏静默失效。副本在项目树之外，天然不继承项目级
@@ -1048,11 +1048,11 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
 
     // ── 重启接管 ──
     // 回滚凭据交给重启策略：只有它能观察到「新实例 ready 前夭折」。插件级失败不在此列
-    // ——插件起不来会停在 error 态且 WebUI 可见，自动回滚反而会掩盖问题。
+    // ——插件启动失败会停在 error 态且 WebUI 可见，自动回滚反而会掩盖问题。
     // postRestore 钉**精确旧版**，不用裸 `npm install`。
     // 裸 install 只能按还原后的 package.json 重解析，而声明通常是 caret 范围（`^1.0.0`），
     // 刚崩掉的新版（1.1.0）本身就满足它——于是 npm 又把它装回来，node_modules 分毫未变，
-    // 而重启策略照样报告已回滚并拉起旧版本。实测：有锁时正常，无锁时静默失效。
+    // 而重启策略照样报告已回滚，并重新启动进程运行旧版本。实测：有锁时正常，无锁时静默失效。
     // `--no-save` 保证 package.json 维持 restore 写回的原样，不被 npm 改写成 `^旧版`。
     // 降级守卫已保证每个 target 都有已装版本（读不到的在那里就被拒了），此处的 undefined
     // 过滤只是让类型收窄，不承担逻辑。
@@ -1136,8 +1136,8 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // ── 闸一：类型 ──
     // 市场管的是**插件**。core / runtime / api / schema / util 不是插件，不在本工具职权内。
     // 这不是「权限不够」——owner 权限很高，走 `npm uninstall` 随时能删。这道闸拦的是
-    // 「**这个操作会把你用来撤销它的那条通道一起销毁**」：卸掉插件，实例照常跑、市场里点
-    // 一下就能装回来（带内可恢复）；卸掉内核或宿主，实例起不来、市场随之消失，只能开
+    // 「**这个操作会把你用来撤销它的那条通道一起销毁**」：卸掉插件，实例照常运行、市场里点
+    // 一下就能装回来（带内可恢复）；卸掉内核或宿主，实例无法启动、市场随之消失，只能开
     // shell 修（带外）。更新不在此列——它保留实例且失败会自动回滚。
     // 判据与安装同一份（nonMarketKind）。
     const kind = nonMarketKind(meta.keywords);

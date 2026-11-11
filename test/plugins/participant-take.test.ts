@@ -89,7 +89,7 @@ describe('别的会话的：逐个参与者过会话管理的规则', () => {
     const card = await cardOf(inRoom);
     expect(card.tool).toBe('send_attachment');
     expect(ownerChat.requested).toEqual([]);
-    expect(s.webuiCards(), 'owner 过不了「自己的私聊」，推给她只会让审批白等').toEqual([]);
+    expect(s.webuiCards(), 'owner 过不了「自己的私聊」，推给她只会让审批空等').toEqual([]);
     expect(await s.conn?.fail('approval/respond', answerOf(card, 'approve'))).toMatchObject({
       data: { code: 'forbidden' },
     });

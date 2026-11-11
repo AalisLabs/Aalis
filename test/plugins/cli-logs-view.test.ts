@@ -9,8 +9,8 @@ import { provideHostLogs } from '../fixtures/host-logs.js';
 import { fakeTty } from '../helpers/tty.js';
 
 // ════════════════════════════════════════════════════════════
-// CLI 的日志页经 host-logs 订阅：激活时补发文件日志里的历史（启动期的也在其中），界面起来以后实时的接着显示。
-// 起真 TUI（mock isTTY + 收集 stdout 帧）看日志页
+// CLI 的日志页经 host-logs 订阅：激活时补发文件日志里的历史（启动期的也在其中），界面启动以后实时的接着显示。
+// 启动真 TUI（mock isTTY + 收集 stdout 帧）看日志页
 // ════════════════════════════════════════════════════════════
 
 const FRAME_SPLIT = '\x1b[?25l\x1b[H';

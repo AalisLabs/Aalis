@@ -18,7 +18,7 @@ const CONTENDERS = 4;
 
 const children: ChildProcess[] = [];
 
-/** 起 CONTENDERS 个参赛者，等都报 READY 后发令；都报了结果再收场。返回排序后的结果 */
+/** 启动 CONTENDERS 个参赛者，等都报 READY 后发令；都报了结果再收场。返回排序后的结果 */
 async function race(runDir: string, dir: string): Promise<string[]> {
   const goFile = join(dir, 'go');
   const doneFile = join(dir, 'done');
@@ -37,7 +37,7 @@ async function race(runDir: string, dir: string): Promise<string[]> {
       err += String(d);
     });
     const exited = new Promise<void>(r => child.on('close', () => r()));
-    // 起不来或中途退出的参赛者不让测试干等：READY 前退出即失败，带上它的 stderr
+    // 启动失败或中途退出的参赛者不让测试空等：READY 前退出即失败，带上它的 stderr
     ready.push(
       new Promise((res, rej) => {
         child.stdout?.on('data', d => {
@@ -68,7 +68,7 @@ async function race(runDir: string, dir: string): Promise<string[]> {
 describe.skipIf(process.platform === 'win32')('实例锁：多个进程同时取锁', () => {
   const dirs: string[] = [];
   afterEach(() => {
-    // 失败时也不留孤儿：按进程组杀掉（tsx 包装层另起了真正跑脚本的 node 子进程）
+    // 失败时也不留孤儿：按进程组杀掉（tsx 包装层另行启动了真正跑脚本的 node 子进程）
     for (const child of children.splice(0)) {
       try {
         if (child.pid && child.exitCode === null) process.kill(-child.pid, 'SIGKILL');

@@ -60,7 +60,7 @@ afterEach(async () => {
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
 
-/** 数据目录 home、全局语言 language：起 plugin-i18n、before 起的插件、usage-stats 与 webui-server；回 app 与取 REST 的 request */
+/** 数据目录 home、全局语言 language：启动 plugin-i18n、before 启动的插件、usage-stats 与 webui-server；回 app 与取 REST 的 request */
 async function serve(home: string, language: string, before: (app: App) => Promise<unknown> = async () => {}) {
   const port = await freePort();
   const { app } = hostedApp(i18nSection([language]), { logger: silent });

@@ -16,7 +16,7 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 // ════════════════════════════════════════════════════════════
 // 子会话没有窗口：它的 id 由会话管理给，不是哪个平台的窗口 id，平台适配器不认领它，出站不交给平台。父会话靠子任务的
 // 结果与提醒拿到结果，WebUI 经会话服务的时间线看子会话。此前子会话的 id 是「父会话 id::随机串」：群里建的子任务，
-// 她的回复由 onebot 按 id 里的账号认领，目标拆成「群号::随机串」发出。本地起一个假的 OneBot 实现端。
+// 她的回复由 onebot 按 id 里的账号认领，目标拆成「群号::随机串」发出。本地启动一个假的 OneBot 实现端。
 // ════════════════════════════════════════════════════════════
 
 type WsSocket = { on(event: 'message', cb: (raw: Buffer) => void): void; send(data: string): void; terminate(): void };

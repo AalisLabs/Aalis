@@ -3,7 +3,7 @@ import type { Source } from '../texts.js';
 
 export default defineLocale<Source>()({
   displayName: 'Code sandbox (OS)',
-  none: 'No OS sandbox is available; code_runner in auto mode will refuse to run code',
+  none: 'No OS sandbox is available; “Code runner” refuses to run code when “Isolation mode” is “Automatic”',
   noPlatform:
     'This platform ({platform}) has no OS sandbox backend: to use the sandbox, run Aalis on macOS, Linux or WSL',
   fixSeatbelt: 'sandbox-exec ships with macOS; make sure /usr/bin/sandbox-exec can run, then reload this plugin',

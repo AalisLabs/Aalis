@@ -2,7 +2,7 @@
 // @aalis/plugin-cron-engine — 共享 cron 调度引擎
 //
 // 提供 'cron-engine' 服务：
-//   - 多订阅者共享同一个整分钟 tick（避免每个插件各起 setInterval）
+//   - 多订阅者共享同一个整分钟 tick（避免每个插件各设一个 setInterval）
 //   - 统一处理 cron / 别名 / @every interval 三种表达式
 //   - 失败的 handler 仅记录日志、不影响其他订阅者
 //

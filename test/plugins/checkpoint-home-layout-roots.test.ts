@@ -12,12 +12,12 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
-// checkpoint × 按数据目录布局派生的内置根：缓存区（cache）与 self 根（kind self）都不记录：任何会话都能经工具写技能与人设，
+// checkpoint × 按数据目录布局派生的内部根：缓存区（cache）与 self 根（kind self）都不记录：任何会话都能经工具写技能与人设，
 // 写入没有会话归属，记进正在进行的回合会被那一轮的回滚误撤。
 // 工作根（workspace）照常记录。
 // ════════════════════════════════════════════════════════════
 
-describe('checkpoint × 数据目录布局的内置根', () => {
+describe('checkpoint × 数据目录布局的内部根', () => {
   let base: string;
   let app: App;
   let storage: StorageService;

@@ -7,10 +7,10 @@ export default defineLocale<Source>()({
     'MongoDB connection string (may contain a user name and password; stored in secrets.yaml and not shown back in the WebUI)',
   databaseLabel: 'Database name',
   databaseDescription:
-    'The database that stores message history and metadata (in the collection named metadata). When empty it is derived from the data directory and the instance: the main data directory uses aalis, a profile data directory (data-<profile> under the deployment directory) uses aalis_<profile>, and instances with a suffix add it (such as aalis-b and aalis_<profile>_b for the `:b` instance). Two instances on the same connection string cannot use the same database; the one activated later reports a config error. The database records which data directory it belongs to, and other data directories connecting to it get an error too',
+    'The database that stores message history. When empty, it is named from the data directory and the instance (such as aalis or aalis_<profile>); two instances on the same connection cannot share a database.',
   claimFromLabel: 'Claim database ownership',
   claimFromDescription:
-    "Normally left empty. When the database already belongs to another data directory (for example after the data directory moved), first stop that data directory's instance, then fill in its path; when the database has data but no ownership record yet, fill in unowned. One startup moves the ownership to this data directory; remove this item after claiming: a leftover unowned makes every database it points to later skip the “has data” check",
+    'Normally left empty. When the database already belongs to another data directory, stop the instance there first, then fill in its path; when the database has data but no ownership record, fill in unowned. One startup completes the claim; remove this item afterwards.',
   collectionLabel: 'Collection name',
   collectionDescription: 'Name of the message collection',
   connectTimeoutMsLabel: 'Connect timeout (ms)',

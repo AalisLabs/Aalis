@@ -9,23 +9,23 @@ export default defineLocale<Source>()({
   hostDescription: 'IP address to bind; 0.0.0.0 makes it reachable from other machines',
   allowedHostsLabel: 'Host allowlist',
   allowedHostsDescription:
-    'Host names in the browser address bar when the WebUI is reached through a reverse proxy or a domain name, without scheme or port. IP addresses, localhost and the listen address are always accepted; requests for any other host name get 421, which keeps out DNS rebinding pages',
+    'Host names in the browser address bar when the WebUI is reached through a reverse proxy or a domain name, without scheme or port. IP addresses, localhost and the listen address need not be added',
   badAllowedHost: '{entry} is not a host name: write only the host name, without a scheme, user name or path',
   autoOpenLabel: 'Open the browser on startup',
   autoOpenDescription:
-    'Opens the default browser the first time the app starts listening; reloading the plugin with the same token does not open it again, while a newly generated token opens it again so you can sign in. Turn this off over SSH or in headless environments',
+    'Opens the default browser, signed in, each time the app starts. Turn this off over SSH or where there is no graphical desktop',
   tokenModeLabel: 'Token policy',
   tokenEphemeral: 'Generate a random token at each start (rotates on restart)',
   tokenPersist: 'Persist after the first generation (stays signed in across restarts)',
   tokenFixed: 'Use the fixed token below',
   tokenModeDescription:
-    'ephemeral = random at each start; persist = token written to data:/webui/token and reused; fixed = use the fixedToken field. Every mode writes the convenience file data:/webui/access.txt with the access URL.',
-  fixedTokenLabel: 'Fixed token (only with tokenMode=fixed)',
+    'How the access token is generated. Every mode writes the access URL and the token to state/webui/access.txt under the data directory',
+  fixedTokenLabel: 'Fixed token',
   fixedTokenDescription:
-    'A random string of at least {min} characters (after trimming whitespace); a shorter one keeps the plugin from starting; empty means persist. Stored in secrets.yaml and never shown in the WebUI.',
+    'Takes effect when “Token policy” is “Use the fixed token below”. A random string of at least {min} characters; a shorter one keeps the plugin from starting. If empty, it behaves as “Persist after the first generation”.',
   registryLabel: 'Plugin market npm registry',
   registryDescription:
-    'Base URL of the npm registry the plugin market searches. Not every mirror supports the npm search API (Taobao and other mainland mirrors do not), so the official registry is the default; in mainland China use a mirror or proxy that supports search. Installation goes through package-manager (following the local npm config), and the latest versions and updates on the cards are checked against the registry used for installing.',
+    'Base URL of the npm registry the plugin market searches. Not every mirror supports npm search; in mainland China use a mirror or proxy that does.',
   registryInvalid: 'marketplaceRegistry is not a valid URL',
   tokenTooShort: 'fixedToken needs at least {min} characters (currently {length})',
   accessTitle: '# Aalis WebUI access credentials (generated)',
@@ -36,7 +36,7 @@ export default defineLocale<Source>()({
   pageLanguage: 'en',
   loginTitle: 'Aalis WebUI sign-in',
   loginHint:
-    'The access token is in state/webui/access.txt under the data directory; the startup log line “Access credentials written” gives its full path. With tokenMode set to fixed it is the config item fixedToken, whose value is stored in secrets.yaml under the data directory after startup (the config file holds a reference).',
+    'The access token is in state/webui/access.txt under the data directory; the startup log line “Access credentials written” gives its full path. A fixed token is stored in secrets.yaml under the data directory.',
   tokenPlaceholder: 'Access token',
   loginButton: 'Sign in',
   tokenWrong: 'Incorrect token',

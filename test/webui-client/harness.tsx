@@ -311,7 +311,7 @@ export async function renderApp(
       <Where />
     </MemoryRouter>,
   );
-  // 等界面画出来、各处的副作用跑完再接上会话连接，用例都从「界面先于握手画好」写起
+  // 等界面画出来、各处的副作用执行完毕再接上会话连接，用例都从「界面先于握手画好」写起
   await vi.waitFor(() => expect(screen.getByTestId('app').childElementCount).toBeGreaterThan(0));
   await act(async () => {});
   const server = await connect();

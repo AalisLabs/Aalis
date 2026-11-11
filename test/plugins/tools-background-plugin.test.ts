@@ -142,7 +142,7 @@ describe('plugin-tools 的转后台接线', () => {
     expect(w.tasks().list()).toEqual([]);
   });
 
-  it('正常结束通知起它的会话；收到 app:stopping 之后结束的不通知', async () => {
+  it('正常结束通知发起它的会话；收到 app:stopping 之后结束的不通知', async () => {
     const w = await start();
     await w.run({ runInBackground: true });
     await w.run({ runInBackground: true });

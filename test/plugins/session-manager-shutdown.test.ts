@@ -30,7 +30,7 @@ describe('关停：active 会话自行收口落盘', () => {
 
     // 断言走落盘后的 metadata，不看停机后仍驻留的内存对象——漏 persist 必须红。
     expect(store.meta.get('in-flight')?.status, '在飞会话应收口，不得冻在 active').toBe('completed');
-    expect(store.meta.get('idle-waiting')?.status, '未开始的 waiting 会话不该被顺手收口').toBe('waiting');
+    expect(store.meta.get('idle-waiting')?.status, '未开始的 waiting 会话不该被一并收口').toBe('waiting');
     expect(store.meta.get('already-done')?.status).toBe('completed');
   });
 });

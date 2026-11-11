@@ -14,7 +14,7 @@ import { inputFromLastUser } from '../fixtures/turn-input.js';
 // ════════════════════════════════════════════════════════════
 // 跨会话检索模式（crossSessionMode，可按会话设）：生效值是召回上限，被动召回与 memory_recall 都不超过它。
 // 试点群设成不互通后，同平台别的会话（包括 owner 私聊）的向量命中不进被动召回，memory_recall 传更宽的 scope 也放不宽；
-// 哪一层写坏了按不互通。会话设置不在时只按插件配置。
+// 哪一层填错时按不互通。会话设置不在时只按插件配置。
 // ════════════════════════════════════════════════════════════
 
 const BASE_TS = Date.UTC(2026, 0, 1, 12, 0, 0);
@@ -146,7 +146,7 @@ describe('plugin-memory-vector：跨会话检索模式是召回上限', () => {
     expect(out.texts).not.toContain('外平台记忆');
   });
 
-  it('写坏了按不互通：会话层或插件配置里的坏值都只召回本会话', async () => {
+  it('填错时按不互通：会话层或插件配置里的坏值都只召回本会话', async () => {
     const atSession = await setup('all', { [CUR]: { crossSessionMode: 'everything' } });
     expect(await passive(atSession.assembly)).not.toContain('私聊记忆');
     expect((await recall(atSession.recall, 'all')).scope).toBe('session');

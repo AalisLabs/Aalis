@@ -28,7 +28,7 @@ import { fakeTty } from '../helpers/tty.js';
 // ════════════════════════════════════════════════════════════
 // 终端的审批面：plugin-cli 登记 cli 审批面，终端界面以本地终端身份接入。有按键才上报在场；审批推来时
 // 输入框换成模态的审批卡，卡上的事实经清洗，用方向键加回车或专用快捷键应答，打字与回车不算应答。
-// 起真的会话服务（审批服务）与真 TUI（假 TTY，收集 stdout 帧），审批直接经 approvals 发起。
+// 启动真的会话服务（审批服务）与真 TUI（假 TTY，收集 stdout 帧），审批直接经 approvals 发起。
 // ════════════════════════════════════════════════════════════
 
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
@@ -41,7 +41,7 @@ const stripAnsi = (s: string) => s.replace(ANSI_RE, '');
 /** 等两拍：渲染排在 setImmediate 上 */
 const settle = () => new Promise<void>(r => setImmediate(() => setImmediate(r)));
 
-/** 另一个审批面（WebUI），用来让审批在终端不在场时也挂着 */
+/** 另一个审批面（WebUI），用来让审批在终端不在场时也保持未决 */
 const webuiPlugin = (out: { surface?: ApprovalSurface }) =>
   definePlugin({
     name: '@test/webui-surface',
@@ -240,7 +240,7 @@ describe('在场：终端最近有输入才算在场', () => {
     expect(r.outcome).toBeUndefined();
   });
 
-  it('不在终端前（stdin/stdout 不是 TTY，不起界面）：没有在场的客户端，审批立即按没人在场拒绝', async () => {
+  it('不在终端前（stdin/stdout 不是 TTY，不启动界面）：没有在场的客户端，审批立即按没人在场拒绝', async () => {
     const s = await setup({ tty: false });
     expect(await s.request().promise).toMatchObject({ approved: false, source: 'absent' });
   });

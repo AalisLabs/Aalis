@@ -55,7 +55,7 @@ export default defineLocale<Source>()({
   typeContext: 'Message history and session context (including summaries and to-dos)',
   unknownClearType: 'Unknown clear type: {type}. Available types: {types}. See {prefix}help clear',
   noMemoryBackend:
-    'No memory backend is running, so nothing was cleared: enable one in the WebUI plugin area (such as SQLite memory), or remove it from disabledPlugins in the config file; if it still does not start, use /doctor to see why.',
+    'No memory backend is running, so nothing was cleared: enable one in the WebUI plugin area (such as SQLite memory), or remove it from disabledPlugins in the config file; if it still fails to start, use /doctor to see why.',
   noGlobalClear:
     'The memory backend cannot clear the message history of all sessions, so nothing was cleared. Use -t to clear types other than context on their own.',
   unhandledType: '{type}: no enabled plugin handles this type, so it was not cleared',

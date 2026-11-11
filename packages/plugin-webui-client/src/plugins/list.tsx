@@ -21,7 +21,7 @@ const STATES: ReadonlySet<string> = new Set<PluginState>([
   'error',
 ]);
 
-/** GET /api/plugins 的一项（一个插件实例）；没起来的原因（缺、在等、待配置）照契约 */
+/** GET /api/plugins 的一项（一个插件实例）；未启动的原因（缺、在等、待配置）照契约 */
 export interface PluginRow extends Localized<PluginBlockers> {
   /** 插件包名：同一插件的几个实例按它合在一起 */
   name: string;
@@ -34,7 +34,7 @@ export interface PluginRow extends Localized<PluginBlockers> {
   error?: string;
   /** 提供这个界面：不能从界面停用或卸载 */
   self?: boolean;
-  /** 旧实例超过宽限仍未停下：停下之前不起新实例 */
+  /** 旧实例超过宽限仍未停下：停下之前不启动新实例 */
   lingering?: boolean;
   reusable: boolean;
   provides: string[];

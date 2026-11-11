@@ -1,4 +1,4 @@
-// 重测试：起真浏览器、起构建、中止真实子进程断言时限，或起真实子进程与联网的集成测试。推送前的快测试（AALIS_TEST_SCOPE=quick）不跑它们，
+// 重测试：启动真浏览器、执行构建、中止真实子进程断言时限，或启动真实子进程与联网的集成测试。推送前的快测试（AALIS_TEST_SCOPE=quick）不跑它们，
 // 合进 dev 与发布之前手动跑全量时才跑，见 CONTRIBUTING.md 第 2 节。新加这类测试要登记在这里，
 // test/architecture/heavy-tests.test.ts 守着直接导入 puppeteer 或用 e2e 夹具的文件都在名单里。
 
@@ -27,5 +27,5 @@ const PROCESS_TIMING_TESTS = [
   '**/test/plugins/code-sandbox-os-probe-abort.test.ts',
 ];
 
-/** 推送前不跑的全部重测试：浏览器测试、中止真实子进程的测试，加上起真实子进程与联网的集成测试 */
+/** 推送前不跑的全部重测试：浏览器测试、中止真实子进程的测试，加上启动真实子进程与联网的集成测试 */
 export const HEAVY_TESTS = [...BROWSER_TESTS, ...PROCESS_TIMING_TESTS, '**/test/integration/**'];

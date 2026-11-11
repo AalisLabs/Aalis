@@ -119,7 +119,7 @@ describe('plugin-memory-summary: 手动压缩', () => {
     expect((await active(memory, 's')).map(shape)).toEqual([MARKER]);
   });
 
-  it('同一会话正在压缩时再压：拒绝并说明，不另起一次', async () => {
+  it('同一会话正在压缩时再压：拒绝并说明，不另行发起一次', async () => {
     const llm = gatedLLM();
     const { memory, compression } = await setup({}, llm.model);
     await seed(memory, 's', 4);

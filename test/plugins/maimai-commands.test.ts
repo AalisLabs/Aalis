@@ -154,7 +154,7 @@ describe('/maimai 的失败回复', () => {
     const run = await setup();
     const fix =
       '没有在运行的记忆后端（绑定记在它里面）：在 WebUI 插件区启用一个（如 SQLite 记忆），' +
-      '或把它从配置文件的 disabledPlugins 里删掉；启用了还起不来就用 /doctor 看原因';
+      '或把它从配置文件的 disabledPlugins 里删掉；启用后仍无法启动就用 /doctor 看原因';
     expect(await run('/maimai bind 123456')).toBe(`绑定失败：${fix}`);
     expect(await run('/maimai unbind')).toBe(`解绑失败：${fix}`);
   });

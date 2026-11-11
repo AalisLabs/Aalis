@@ -9,8 +9,7 @@ export default defineLocale<Source>()({
   modelLabel: 'Embedding model',
   modelDescription: 'The model used to turn text into vectors',
   timeoutMsLabel: 'Request timeout (ms)',
-  timeoutMsDescription:
-    'Timeout of a single embedding request. Without a limit, the startup probe can hold up the whole plugin activation chain.',
+  timeoutMsDescription: 'Timeout of a single embedding request.',
   baseUrlInvalid: 'baseUrl must be a full URL without a user name or password',
   baseUrlQuery:
     'baseUrl cannot contain a query string or fragment (anything after ? or #): the plugin appends paths to it',

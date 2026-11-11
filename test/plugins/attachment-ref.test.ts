@@ -108,7 +108,7 @@ describe('attachment-ref helpers', () => {
       expect(refs[0].desc).toContain('列A');
     });
 
-    it('净化后 matcher 命中且只吃掉整条占位（update_image_description 能改写）', () => {
+    it('净化后 matcher 命中且只匹配整条占位（update_image_description 能改写）', () => {
       const line = formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: dirty, ref: 'data/t.png' });
       const re = buildAttachmentRefMatcher(AttachmentRefKind.Image, 'data/t.png');
       expect(line.replace(re, '<改写>')).toBe('<改写>');

@@ -11,7 +11,7 @@
 //   3. 封禁（等级小于 0）            → 拒（负数的门槛与权限组都不放行）
 //   4. 等级 level >= 操作 minLevel   → 放行
 //   5. 所属组里有条目覆盖这个操作    → 放行；否则拒
-// 确认轴（confirm/HITL）正交，不在此函数（owner 也吃，防注入借权）。
+// 确认轴（confirm/HITL）正交，不在此函数（owner 也受它约束，防注入借权）。
 // 内含 glob 工具 matchAnyCap（硬禁、白名单与组条目的匹配）、组名与条目的写法，以及工具调用发起回合的类别 originKind
 // 与这一轮的主体 principalKind。
 // ════════════════════════════════════════════════════════════
@@ -114,10 +114,10 @@ export function resolveAccess(input: AccessInput): boolean {
   return grantsCover(input.granted, input.capability, input.toolGroups); // 5. 所属组覆盖
 }
 
-/** 判类别与主体要的那几项：起它的那一轮还原成的一轮没有会话 */
+/** 判类别与主体要的那几项：发起它的那一轮还原成的一轮没有会话 */
 type Turn = Pick<OriginTurn, 'platform' | 'userId' | 'participants' | 'inbound'>;
 
-/** 起它的那一轮还原成一轮 */
+/** 发起它的那一轮还原成一轮 */
 function turnOf({ platform, userId, participants, source, fromTurn }: NonNullable<InboundTurn['fromTurn']>): Turn {
   return { platform, userId, participants, inbound: { source, fromTurn } };
 }
@@ -126,8 +126,8 @@ function turnOf({ platform, userId, participants, source, fromTurn }: NonNullabl
  * 工具调用发起回合的类别（契约见 api-approval 的 OriginKind）：只看消息事实，不看会话类型与受众，不判是不是 owner，
  * 不读会话记录。按这一轮从哪里来判，不按授权身份判：owner 建的定时任务会把创建者回填成 actor，按 actor 判它就成了 owner 亲手。
  * - 不在由入站消息驱动的回合里（编排的节点、mcp-server 等）：没有人在这一轮亲手发起它，是 autonomous；
- * - 带起它的那一轮的续做与入站回合里派出的子任务，与起它的那一轮同一类别，不按通知或任务消息上的身份推；
- * - 其余带来源的注入（定时任务、编排、空闲与主动发言、不延续调用的宿主通知、平台请求事件，以及没带起它的那一轮的子任务）是
+ * - 带发起它的那一轮的续做与入站回合里派出的子任务，与发起它的那一轮同一类别，不按通知或任务消息上的身份推；
+ * - 其余带来源的注入（定时任务、编排、空闲与主动发言、不延续调用的宿主通知、平台请求事件，以及没带发起它的那一轮的子任务）是
  *   autonomous；
  * - 人亲手发来的消息（不带来源，含群里没点名、被频率触发挑中的插话）的一轮是 hand，几条一起进来的也是；参与者都没有账号的
  *   （没有人的消息）是她自己开口，失败关闭为 autonomous。
@@ -141,9 +141,9 @@ export function originKind(turn: Turn): OriginKind {
 }
 
 /**
- * 这一轮的主体（契约见 api-authority 的 principalOf），是不是 owner 只在这里与审批服务按身份判：类别为 hand（含随起它的那一轮的
+ * 这一轮的主体（契约见 api-authority 的 principalOf），是不是 owner 只在这里与审批服务按身份判：类别为 hand（含随发起它的那一轮的
  * 续做与子任务）且参与者都是 owner 为 owner，其余为 other（owner 与别人同在的一轮也是）。参与者是这一轮交来的：续做与子任务的
- * 取起它的那一轮的，批过的调用是批的人
+ * 取发起它的那一轮的，批过的调用是批的人
  */
 export function principalKind(turn: Turn, isOwner: (platform: string, userId?: string) => boolean): 'owner' | 'other' {
   const { participants } = turn;

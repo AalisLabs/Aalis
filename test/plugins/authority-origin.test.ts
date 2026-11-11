@@ -10,8 +10,8 @@ import { mkConfig, noFileStorage, silentLogger } from '../fixtures/authority.js'
 // ════════════════════════════════════════════════════════════
 // 发起回合的类别：按这一轮从哪里来判，不看会话类型与受众，也不判是不是 owner。
 // - 人亲手发来的消息（不带来源，含群里没点名、被频率触发挑中的插话）为 hand，不论在哪个会话、是谁；
-// - 子任务与续做一样随起它的那一轮（fromTurn）：与它同一类别；几个人的一轮同样按这几条判；
-// - 其余注入（含没带起它的那一轮的子任务）与不在入站回合里的调用为 autonomous：按授权身份判会把 owner 建的定时任务当成
+// - 子任务与续做一样随发起它的那一轮（fromTurn）：与它同一类别；几个人的一轮同样按这几条判；
+// - 其余注入（含没带发起它的那一轮的子任务）与不在入站回合里的调用为 autonomous：按授权身份判会把 owner 建的定时任务当成
 //   owner 亲手。
 // 是不是 owner 由用到类别的地方（审批服务等）按身份判，所以类别对 owner 与群成员一样。
 // ════════════════════════════════════════════════════════════
@@ -24,14 +24,14 @@ const WEBUI = 'session-a1b2c3d4';
 const GROUP = 'onebot:10000:group:20001';
 const OWNER_DM = `onebot:10000:private:${OWNER_QQ}`;
 
-/** 起它的那一轮：人亲手发来的 */
+/** 发起它的那一轮：人亲手发来的 */
 const handTurn = (who: { platform: string; userId: string }): FromTurn => ({
   platform: who.platform,
   userId: who.userId,
   participants: [who],
 });
 
-/** 续做那一轮：工具眼里是起它的人在调，授权身份取起它的那一轮的参与者 */
+/** 续做那一轮：工具眼里是发起它的人在调，授权身份取发起它的那一轮的参与者 */
 const resumed = (sessionId: string, from: FromTurn): OriginTurn => ({
   sessionId,
   platform: from.platform,
@@ -85,9 +85,9 @@ const rows: Array<[string, OriginTurn, OriginKind]> = [
     { sessionId: 'workflow::daily', platform: 'workflow', participants: [OWNER] },
     'autonomous',
   ],
-  ['续做：owner 在群里亲手那一轮起的', resumed(GROUP, handTurn(OWNER_ON_QQ)), 'hand'],
+  ['续做：owner 在群里亲手那一轮发起的', resumed(GROUP, handTurn(OWNER_ON_QQ)), 'hand'],
   [
-    '续做：平台请求事件那一轮起的（申请人是 owner，不按身份推成她亲手）',
+    '续做：平台请求事件那一轮发起的（申请人是 owner，不按身份推成她亲手）',
     resumed(OWNER_DM, {
       platform: 'onebot',
       userId: OWNER_QQ,
@@ -100,7 +100,7 @@ const rows: Array<[string, OriginTurn, OriginKind]> = [
   ['子任务：派自群成员那一轮', subtaskOf(GROUP, handTurn(MEMBER)), 'hand'],
   ['子任务：派自定时任务那一轮（授权身份是 owner）', subtaskOf(WEBUI, SCHEDULED), 'autonomous'],
   [
-    '没带起它的那一轮的子任务（编排的工具节点、mcp-server 派的）',
+    '没带发起它的那一轮的子任务（编排的工具节点、mcp-server 派的）',
     {
       sessionId: CHILD,
       platform: 'webui',
@@ -137,13 +137,13 @@ describe('权限服务的 originOf', () => {
     expect(originKind(turn, () => true)).toBe('hand');
   });
 
-  it('类别只有 hand 与 autonomous 两值：子任务与续做一样随起它的那一轮，不单设一类（类型层断言，带测试的类型检查守着）', () => {
+  it('类别只有 hand 与 autonomous 两值：子任务与续做一样随发起它的那一轮，不单设一类（类型层断言，带测试的类型检查守着）', () => {
     expectTypeOf<OriginKind>().toEqualTypeOf<'hand' | 'autonomous'>();
   });
 });
 
 // ════════════════════════════════════════════════════════════
-// 这一轮的主体：类别为 hand（含随起它的那一轮的续做与子任务）且参与者都是 owner 即 owner，参与者是这次调用的（子任务那一轮
+// 这一轮的主体：类别为 hand（含随发起它的那一轮的续做与子任务）且参与者都是 owner 即 owner，参与者是这次调用的（子任务那一轮
 // 取派它的那一轮的，批过的是批的人）；其余（自主回合、没带 fromTurn 的子任务）为 other。
 // ════════════════════════════════════════════════════════════
 
@@ -173,7 +173,7 @@ const principals: Array<[string, OriginTurn, 'owner' | 'other']> = [
   ],
   ['子任务里转后台的调用的续做：派子任务的是定时任务那一轮', resumed(CHILD, subtaskFacts(WEBUI, SCHEDULED)), 'other'],
   [
-    '没带起它的那一轮的子任务（授权身份是 owner）',
+    '没带发起它的那一轮的子任务（授权身份是 owner）',
     {
       sessionId: CHILD,
       platform: 'webui',
@@ -221,7 +221,7 @@ describe('权限服务的 principalOf', () => {
 
 // ════════════════════════════════════════════════════════════
 // 一轮的参与者：已经送进模型的每条输入的授权身份（actor ?? 发言者，没有发言者的是无主体），按身份去重、按进入先后排；
-// owner 的各个身份算一个参与者（取最先进来的那一个，判 owner 用调用方给的 isOwner，不给时按字面身份）；带起它的那一轮的
+// owner 的各个身份算一个参与者（取最先进来的那一个，判 owner 用调用方给的 isOwner，不给时按字面身份）；带发起它的那一轮的
 // 取它的参与者。点名只决定她回不回，插话照样按说话的人算，不看 triggerType。
 // ════════════════════════════════════════════════════════════
 
@@ -277,7 +277,7 @@ describe('originTurnOf 交出的参与者', () => {
     expect(originTurnOf(inputs).participants).toEqual([OWNER, OWNER_ON_QQ]);
   });
 
-  it('带起它的那一轮的注入取它的参与者；没有发言者的是无主体', () => {
+  it('带发起它的那一轮的注入取它的参与者；没有发言者的是无主体', () => {
     const from: FromTurn = { platform: 'onebot', participants: [OWNER_ON_QQ, MEMBER] };
     expect(
       originTurnOf([{ content: '<通知>', sessionId: GROUP, platform: 'onebot', source: 'bg:bg_x_1', fromTurn: from }])

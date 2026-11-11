@@ -499,7 +499,7 @@ const itemBase = {
  * 一次成形的条目不经 started 直接 completed，同一条目可以再次 completed（如送达结果晚到），按 itemId 覆盖：
  * - user-message：说话人自己写的话与附件（给模型看的发送者前缀、引用与附件描述不在文字里；存档没记发言人写的话的旧提问，文字是
  *   存档正文原样）；随这条提问转发来的聊天记录在 forwards，每项带给界面的事实（条数、参与者、转发的文字，界面画成单独的块；
- *   拉不到、展开出错或适配器关掉了展开的没有事实），文字里没有它们的占位；进了一轮的带 turnId、entry 与 addressed（见
+ *   获取失败、展开出错或适配器关掉了展开的没有事实），文字里没有它们的占位；进了一轮的带 turnId、entry 与 addressed（见
  *   inputBase），与通知一样；
  * - agent-message：她的文字与附件（可以只有附件）、模型与这一轮的 token；房间里没发出去的（工具调用之前说的、重试丢掉的、没回复就收尾的一轮里说的、
  *   平台没收下的）带 undelivered。没回复就收尾的一轮说的话不落库，只在实时推送里，历史里没有这几条；其余几种历史里同样标出；
@@ -775,7 +775,7 @@ export const BackgroundTaskSchema = z.object({
   kind: z.enum(['tool-call']),
   /** 显示名：工具调用是工具名 */
   label: z.string(),
-  /** tool-call 才有：起它的那次工具调用的工具名、所在回合与调用的 id（即工具卡的 itemId） */
+  /** tool-call 才有：发起它的那次工具调用的工具名、所在回合与调用的 id（即工具卡的 itemId） */
   call: z.object({ tool: z.string(), turnId: z.string(), callId: z.string() }).optional(),
   /** 在跑、完成、失败（结果带 error 或退出码不为 0）、被停止、被中断（工具撤回、停用、重启） */
   status: z.enum(['running', 'completed', 'failed', 'stopped', 'aborted']),

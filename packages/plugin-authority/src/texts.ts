@@ -92,16 +92,16 @@ const SOURCE = {
   nobodyCan: '这一轮的参与者里没有人能做这件事',
   approvalsAbsent: '操作已取消：{capability} 需要批准，但审批服务不在（由 @aalis/plugin-session-server 提供）',
   operationsDescription:
-    '每个指令、工具与设置项有一个最低等级：指令与工具默认按风险派生（安全 0、敏感 1、危险 2），设置项默认按声明；多数不用动。写在哪一层另有固定的门槛，不在这里调。',
+    '每个指令、工具与设置项能用的最低等级。默认按风险定（安全 0、敏感 1、危险 2），设置项按声明，一般不用改；设置写到哪一层另有固定门槛，不在这里调。',
   operationsEmpty: '没有登记的指令、工具或设置项',
   settingKind: '设置项',
   ownerOnlyLevel: '只有 owner',
   confirmSession: '每次（白名单可免）',
   confirmAlways: '每次（只有确认覆盖设为 off 能免）',
   rulesDescription:
-    '禁用压过一切，连 owner 也拒。免确认只对以 owner 身份做的事生效：owner 本人、owner 派的子任务、owner 建的定时任务、定义者与调用者都是 owner 的编排；别人发起的、有别人的话一起进来的照旧要 owner 批准，不能产生审批的直接拒绝；不放宽等级。都可以写通配，如 tool:*。',
+    '禁用压过一切，连 owner 也拒。免确认只对以 owner 身份做的事生效，不放宽等级；别人发起或参与的照旧要 owner 批准，无法发起审批的直接拒绝。可写通配，如 tool:*。',
   waivePattern:
-    '能力键或通配，如 tool:shell_exec、command:level、tool:*。只免以 owner 身份做的事的确认，别人发起的、有别人的话一起进来的照旧要 owner 批准',
+    '能力键或通配，如 tool:shell_exec、command:level、tool:*。只免以 owner 身份做的事的确认，别人发起或参与的照旧要 owner 批准',
   ownerOnly: '只有 owner 可管理权限',
   targetFormat: '目标格式：<platform:userId>',
   badGroupName: '组名只收字母、数字、连字符、下划线与中文，不以连字符开头：{name}',
@@ -118,7 +118,7 @@ const SOURCE = {
   groupsCleared: '已清空 {target} 的权限组',
   groupsTab: '权限组',
   groupsTable:
-    '组只加放行：成员等级不够的操作，组里有一条覆盖它即可用，组之间合起来算；硬禁与封禁照旧先拒。组不开工具分组闸，会话没开的分组照旧看不到；需要确认的工具对不是 owner 的成员照旧用不了。和给他相应等级一样，成员在开了 system、code-runner、skills 等分组的会话里能用不需确认的本机读与执行（如 file_read、run_python）。通配与 tool-group: 会纳入以后新登记的工具。',
+    '组只加放行：等级不够的操作，所属组有条目覆盖即可用，硬禁与封禁照旧先拒。组不开工具分组闸；需要确认的工具，不是 owner 的成员照旧用不了。成员能用已开分组里不需确认的本机读与执行（如 file_read、run_python）。通配与 tool-group: 也覆盖以后新登记的工具。',
   groupsEmpty: '还没有权限组',
   groupName: '组名',
   groupGrants: '放行条目',

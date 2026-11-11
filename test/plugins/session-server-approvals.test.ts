@@ -168,7 +168,7 @@ async function setup() {
     });
     return Object.assign(box, { promise });
   };
-  /** 让排着的微任务跑完（不推进时钟） */
+  /** 让排着的微任务执行完毕（不推进时钟） */
   const flush = () => vi.advanceTimersByTimeAsync(0);
   const auditFile = join(state, 'audit', 'approvals.jsonl');
   /** 换回真时钟，等审计写到 n 条为止，回全部记录 */
@@ -183,7 +183,7 @@ async function setup() {
     return read();
   };
   let turnSeq = 0;
-  /** 开一轮挂着，end 收尾；tool 发这一轮的工具调用事件 */
+  /** 开一轮一直不结束，end 收尾；tool 发这一轮的工具调用事件 */
   const openTurn = (sessionId: string) => {
     const turnId = `turn-${++turnSeq}`;
     const message = { content: '<提问>', sessionId, ...OWNER };
@@ -443,7 +443,7 @@ describe('重连宽限：在场的面全部消失之后再等 30 秒', () => {
     const other = await connect();
     other.conn.close();
     await vi.advanceTimersByTimeAsync(GRACE_MS);
-    expect(r.outcome, '还有在场的连接时断开一条不起宽限').toBeUndefined();
+    expect(r.outcome, '还有在场的连接时断开一条不开始宽限').toBeUndefined();
     await approve(back, pushed(back)[0]);
     await flush();
     expect(r.outcome).toMatchObject({ approved: true });
@@ -890,7 +890,7 @@ describe('结算', () => {
   it('已中止的回合发起：不排队、不推卡，直接 cancelled', async () => {
     const { mine, connect, request, flush } = await setup();
     const c = await connect();
-    // 同一会话已有一张卡在等：中止了的请求也不排在它后面干等
+    // 同一会话已有一张卡在等：中止了的请求也不排在它后面空等
     request(mine);
     const abort = new AbortController();
     abort.abort();

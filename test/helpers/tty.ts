@@ -1,4 +1,4 @@
-/** 伪造 TTY：stdout/stdin 的 isTTY、终端行列与 setRawMode，供起真 TUI 的测试用；restore 还原 */
+/** 伪造 TTY：stdout/stdin 的 isTTY、终端行列与 setRawMode，供启动真 TUI 的测试用；restore 还原 */
 export function fakeTty(rows: number, columns: number): { restore(): void } {
   const prev = {
     out: process.stdout.isTTY,

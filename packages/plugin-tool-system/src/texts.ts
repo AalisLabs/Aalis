@@ -7,7 +7,7 @@ const SOURCE = {
   groupSummary: 'Shell 命令执行、文件操作、系统信息查询、HTTP 请求等系统级工具',
   workingDirectoryLabel: '初始工作目录',
   workingDirectoryDescription:
-    '进程启动时的初始 cwd（unix 心智模型）。agent 可用 cd 工具在会话内切换，不会写回本配置。shell 以本项初始值为基准、不受 cd 影响；code-runner 使用它自己的 workingDirectory 配置。',
+    '每个会话的初始工作目录。模型可用 cd 在会话内切换，不写回配置；shell 默认在这里执行，不受 cd 影响。',
   shellLabel: 'Shell 工具',
   shellEnabledLabel: '启用 Shell 工具',
   maxOutputSizeLabel: '最大输出字节',
@@ -18,7 +18,7 @@ const SOURCE = {
   maxWriteSizeLabel: '最大写入字节',
   allowedRootsLabel: '允许访问的存储根',
   allowedRootsDescription:
-    '默认仅 agent 工作区（workspace/tmp），不含 data 等系统根（防裸读 data:/users.json 等）。设为 * 放开全部 readable 根；也可显式列出根名。写入/删除仍受各根自身权限限制。',
+    '文件工具能访问的存储根，默认只有 workspace 与 tmp，可增选别的根或选「全部可读根」；写入与删除仍受各根自身的权限限制。',
   rootAllReadable: '全部可读根',
   rootTmp: '临时目录',
   rootPluginData: '插件数据',

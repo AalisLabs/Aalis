@@ -9,7 +9,7 @@ import { freePort, upgrade, waitListening } from '../helpers/net.js';
 // ════════════════════════════════════════════════════════════
 // WebSocket 连接建立时认不出身份就关掉连接、记 warn，不补成 webui:console（owner）。握手的认证与这里的身份同步相继判同一个
 // token cookie，今天走不到这一支，所以把认证模块的 identify 换成认不出，其余照原实现。关掉的连接同样挂着 'error' 监听：
-// 关掉之前对端发来不合规的帧时，没人接的 'error' 会抛成 uncaughtException 打死整个进程。
+// 关掉之前对端发来不合规的帧时，没人接的 'error' 会抛成 uncaughtException 终止整个进程。
 // ════════════════════════════════════════════════════════════
 
 vi.mock('../../packages/plugin-webui-server/src/auth.js', async importOriginal => {
@@ -37,7 +37,7 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
 });
 
-/** 起 webui-server，会话服务是记下对端的替身；warns 是记下的 warn */
+/** 启动 webui-server，会话服务是记下对端的替身；warns 是记下的 warn */
 async function start() {
   const warns: string[] = [];
   const logger: Logger = {
@@ -86,7 +86,7 @@ describe('WebSocket 连接认不出身份', () => {
     expect(warns.some(message => message.includes('认不出身份'))).toBe(true);
   });
 
-  it('关掉之前对端发来不合规的帧（不带掩码）：这条连接照常断开，进程不被没人接的 error 打死', async () => {
+  it('关掉之前对端发来不合规的帧（不带掩码）：这条连接照常断开，进程不被没人接的 error 终止', async () => {
     const { port } = await start();
     const { status, socket } = await upgrade(port, '/session', { cookie: COOKIE }, sockets);
     expect(status).toBe(101);

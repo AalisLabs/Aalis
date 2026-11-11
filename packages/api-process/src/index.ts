@@ -35,7 +35,7 @@ export interface SpawnOptions {
   /**
    * wait() 累计缓冲（stdout+stderr 合计）字节上限；超出即停止累积（丢弃后续输出并标 `truncated`），
    * **不杀子进程**——终止交给 timeout / 调用方，后台长跑进程（dev server / `--watch`）不应被误杀。
-   * 防失控/恶意输出无上限累积撑爆宿主内存。缺省由实现给安全默认（如 10MB）。
+   * 防失控/恶意输出无上限累积耗尽宿主内存。缺省由实现给安全默认（如 10MB）。
    */
   maxBuffer?: number;
   /**

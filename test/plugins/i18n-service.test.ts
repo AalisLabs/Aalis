@@ -75,7 +75,7 @@ async function boot(
 }
 
 describe('chainOf：两种读者的语言链', () => {
-  it('全局层的语言规范化去重；写坏了（不是数组、有非字符串的项、有不合法的标签）按作者默认 en，空列表同样按 en', async () => {
+  it('全局层的语言规范化去重；填错时（不是数组、有非字符串的项、有不合法的标签）按作者默认 en，空列表同样按 en', async () => {
     const long = 'en-US-u-ca-gregory-co-phonebk-hc-h23-nu-latn';
     const chain = async (language: unknown) => (await boot({ language })).svc.chainOf(host);
     expect(await chain(['zh_CN.UTF-8', 'en-us', long, 'zh-CN', 'ja'])).toEqual(['zh-CN', 'en-US', long, 'ja']);

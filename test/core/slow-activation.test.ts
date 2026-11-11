@@ -23,7 +23,7 @@ import { activationHost, createInspectableApp } from '../helpers/inspectable-app
 //   后台期间它登记的服务不对外，依赖方保持 pending；落定后成功转 active 并上线服务、失败进 error，并补一次重算。
 // - lifecycle.signal：在飞初始化在关闭计划冻完后立即 abort，其余在各自收尾段入口 abort；
 //   停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件，abort 后至多再等 disposeTimeoutMs，到期不再等，
-//   旧实例停下之前同一 id 不起新实例（lingering）。
+//   旧实例停下之前同一 id 不启动新实例（lingering）。
 // 计时用真实定时器、毫秒级阈值；等待一律按条件轮询，不赌固定延时。
 // ════════════════════════════════════════════════════════════
 
@@ -123,7 +123,7 @@ describe('慢激活转入后台', () => {
     await within(w.app.start(), 2000, 'start');
   });
 
-  it('转入后台只告警一次、不留定时器：没调 stop 的宿主不会被它拖住退出', async () => {
+  it('转入后台只告警一次、不留定时器：没调 stop 的宿主不会被它阻塞退出', async () => {
     vi.useFakeTimers();
     try {
       const w = world({ slowThresholdMs: 20 });
@@ -131,7 +131,7 @@ describe('慢激活转入后台', () => {
       releases.push(gate.resolve);
       const registering = w.app.plugin(definePlugin({ name: 'stuck', apply: () => gate.promise }));
       await vi.advanceTimersByTimeAsync(10);
-      expect(vi.getTimerCount(), '阈值前挂着阈值定时器').toBe(1);
+      expect(vi.getTimerCount(), '阈值前有待触发的阈值定时器').toBe(1);
       await vi.advanceTimersByTimeAsync(10);
       await registering;
       expect(w.status('stuck')).toMatchObject({ state: 'activating', slow: true });
@@ -446,7 +446,7 @@ describe('lifecycle.signal 的时机', () => {
         name: 'inflight',
         uses: { lifecycle },
         async apply({ lifecycle }) {
-          if (life) return; // bounce 起的第二轮直接完成
+          if (life) return; // bounce 发起的第二轮直接完成
           life = lifecycle.use;
           entered.resolve();
           await untilAborted(lifecycle.use);
@@ -504,7 +504,7 @@ describe('lifecycle.signal 的时机', () => {
   });
 });
 
-describe('旧实例停下之前不起新实例', () => {
+describe('旧实例停下之前不启动新实例', () => {
   it('清理超过宽限：bounce 与卸载后同 id 重新登记都等旧实例停下，期间状态带 lingering', async () => {
     const w = world({ disposeTimeoutMs: 30 });
     const slowStop = deferred();
@@ -542,7 +542,7 @@ describe('旧实例停下之前不起新实例', () => {
   it.each([
     'bounce',
     'unload',
-  ] as const)('别的计划正关着它，总时长超过宽限：%s 等那边关完，旧实例关完之前不起同 id 新实例', async action => {
+  ] as const)('别的计划正关着它，总时长超过宽限：%s 等那边关完，旧实例关完之前不启动同 id 新实例', async action => {
     const w = world({ slowThresholdMs: 10, disposeTimeoutMs: 30 });
     const draining = deferred();
     let applies = 0;
@@ -574,7 +574,7 @@ describe('旧实例停下之前不起新实例', () => {
     if (action === 'unload') expect(await w.app.plugin(def)).toBe(true);
     await until(() => w.status('slowfail')?.state === 'active', '旧实例关完后重新激活');
     expect(applies).toBe(2);
-    expect(overlapped, '新实例起来时旧实例的清理还没跑完').toBe(false);
+    expect(overlapped, '新实例启动时旧实例的清理还没执行完毕').toBe(false);
   });
 });
 
@@ -605,7 +605,7 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
     }
   });
 
-  it('后台激活不响应 signal：bounce 在宽限后返回，条目照写目标态并带 lingering，apply 落定前不起新实例', async () => {
+  it('后台激活不响应 signal：bounce 在宽限后返回，条目照写目标态并带 lingering，apply 落定前不启动新实例', async () => {
     const w = world({ disposeTimeoutMs: 40 });
     const zombie = deferred();
     releases.push(zombie.resolve);
@@ -891,7 +891,7 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
     off = w.host.provide.use(svc, { v: 2 });
     await sleep(20);
     await w.app.plugins.idle();
-    expect(applies, '旧 apply 仍在跑，依赖恢复也不起新实例').toBe(1);
+    expect(applies, '旧 apply 仍在跑，依赖恢复也不启动新实例').toBe(1);
     zombie.resolve();
     await until(() => w.status('deaf')?.state === 'active', '旧 apply 落定后重新激活');
     expect(applies).toBe(2);

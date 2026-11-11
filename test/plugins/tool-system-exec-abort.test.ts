@@ -13,11 +13,11 @@ import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // exec 声明可转后台，只认执行器给这次调用的中止信号（前台时随回合中止，转后台之后随停止、撤回与停用中止），不另设超时。
-//   - exec 把 callCtx.signal 交给 process 服务（按进程组停干净，见 process-local-abort.test.ts），起进程不带超时；
+//   - exec 把 callCtx.signal 交给 process 服务（按进程组停干净，见 process-local-abort.test.ts），启动进程不带超时；
 //   - 被信号结束的才报「命令已中止」；中止前已正常退出的按实际退出回报、注明调用已中止，
 //     免得下一轮把已经生效的命令再跑一遍；
 //   - shell 工具只有 exec：后台进程表与它的几个工具由执行器的转后台与后台任务工具取代。
-// 起真实进程的用例只在 POSIX 跑。
+// 启动真实进程的用例只在 POSIX 跑。
 // ════════════════════════════════════════════════════════════
 
 const posix = process.platform !== 'win32';
@@ -34,7 +34,7 @@ const probe = (target: number): string | undefined => {
   }
 };
 
-/** ms 内落定则返回结果，否则抛错：变异下 handler 要等命令跑完，不让用例拖到 sleep 结束 */
+/** ms 内落定则返回结果，否则抛错：变异下 handler 要等命令执行完毕，不让用例拖到 sleep 结束 */
 async function within<T>(p: Promise<T>, ms: number): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
@@ -54,7 +54,7 @@ type Handler = RegisteredTool['handler'];
 const SESSION = 'zz-slice1-session';
 
 let dir: string;
-/** 经包装的 ProcessService 起过的进程 pid（= 进程组号），afterEach 收掉变异验证时停不掉的组 */
+/** 经包装的 ProcessService 启动过的进程 pid（= 进程组号），afterEach 收掉变异验证时无法停止的组 */
 let pids: number[];
 
 beforeEach(() => {
@@ -92,7 +92,7 @@ function register(proc: ProcessService): Record<string, Handler> {
   return handlers;
 }
 
-/** 真实 LocalProcessService 外包一层，记下起过的 pid */
+/** 真实 LocalProcessService 外包一层，记下启动过的 pid */
 function recordingProcess(): ProcessService {
   const inner = new LocalProcessService({} as unknown as StorageService);
   return {
@@ -135,7 +135,7 @@ describe('exec 接住中止（POSIX，真实进程）', () => {
     expect(res).toEqual({ exitCode: 0, stdout: 'zz-slice1-placeholder\n', stderr: '' });
   });
 
-  it.skipIf(!posix)('调用前已中止：返回 aborted，没有起进程', async () => {
+  it.skipIf(!posix)('调用前已中止：返回 aborted，没有启动进程', async () => {
     const { exec } = register(recordingProcess());
     const marker = join(dir, 'zz-slice1-marker');
     const ac = new AbortController();
@@ -182,7 +182,7 @@ describe('exec 接住中止（替身进程）', () => {
 });
 
 describe('exec 的声明', () => {
-  it('shell 工具只有 exec：声明可转后台（让出时限用执行器的默认），参数没有 timeout；起进程不带超时，中止信号就是这次调用的', async () => {
+  it('shell 工具只有 exec：声明可转后台（让出时限用执行器的默认），参数没有 timeout；启动进程不带超时，中止信号就是这次调用的', async () => {
     const registered: Array<Omit<RegisteredTool, 'pluginName'>> = [];
     const spawned: Array<SpawnOptions | undefined> = [];
     const fake = {

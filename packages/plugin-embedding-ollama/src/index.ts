@@ -142,7 +142,7 @@ class OllamaEmbeddingService implements EmbeddingService {
     signal.throwIfAborted();
     // 如果还没检测过，先尝试新版 API。
     // 只有明确的 404/405（端点不存在）才值得试旧端点：网络不通/超时/5xx 是瞬态故障
-    // （典型场景是 Ollama 晚于 Aalis 起来，启动探测正好撞上），原样抛出并保持 null，
+    // （典型场景是 Ollama 晚于 Aalis 启动，启动探测正好撞上），原样抛出并保持 null，
     // 下次调用重探——否则一次瞬态失败会把整个生命周期钉在已弃用端点上。
     // 新端点 404 本身也不足以判定是旧版：模型没 pull 时新旧两个端点都答 404。
     // 所以结论只在旧端点真答上来之后才钉成「旧版」，否则连同错误一起抛出、保持 null。
@@ -252,23 +252,23 @@ async function startOllamaEmbedding({
   }
 
   provide.use(embedding, service, { label: `Ollama / ${model}` });
-  // 「Embedding 模型」下拉只列这个插件连着的 Ollama 的模型（按服务名合起各提供者会混进别家的）；来源名按插件定，开了几个实例时
+  // 「Embedding 模型」下拉只列这个插件连着的 Ollama 的模型（按服务名合并各提供者会混进别家的）；来源名按插件定，开了几个实例时
   // WebUI 取最前那家
   contributions.use.contribute('webui:options', {
     id: 'embedding-ollama',
     list: async () => (await service.listModels()).map(name => ({ value: name, label: name })),
   });
 
-  // 连通性失败只 warn、服务照常注册，是刻意的（Ollama 可能晚于 Aalis 起来）。
+  // 连通性失败只 warn、服务照常注册，是刻意的（Ollama 可能晚于 Aalis 启动）。
   // 代价是「服务在、但每次调用都失败」这一态对用户完全不可见：/status 只数插件状态，
   // 插件状态是 active，向量记忆则每条消息静默失败。把真实健康状况交给 doctor 上报。
   // doctor 的 runChecks 顺序 await 且不设超时（plugin-doctor/src/index.ts:runChecks），
   // 而 embed 最长要等 (retries + 1) × timeoutMs（默认 60s）。/doctor 正是出问题时才跑的
-  // 命令，不能被一条网络探测拖住：探测自带上限，取 5s 与配置超时中的小者。
+  // 命令，不能被一条网络探测阻塞：探测自带上限，取 5s 与配置超时中的小者。
   // 与服务构造函数的 clamp 对齐（this.timeoutMs = Math.max(1000, timeoutMs)）：
   // 直接取原始配置值的话，timeoutMs 填 0 会让探测立刻 reject，/doctor 恒报假阳性。
   const probeTimeoutMs = Math.min(5_000, Math.max(1_000, timeoutMs));
-  // 本插件 reusable=true，可按 `name:suffix` 起多实例；doctor 以 spec.id 为键，
+  // 本插件 reusable=true，可按 `name:suffix` 启动多个实例；doctor 以 spec.id 为键，
   // 同 id 重复注册后者覆盖前者——两个实例共用一个 id 就只有一个的健康度可见，
   // 恰是这条检查要堵的洞。默认实例保持 `embedding.ollama`，多实例带上后缀。
   const checkId = lifecycle.use.id.startsWith(`${name}:`)

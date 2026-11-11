@@ -325,7 +325,7 @@ export function createPageRegistry(deps: PageRegistryDeps) {
     }
   }
 
-  /** 跑一次调用：闸门拒的回它的状态码；插件抛的回 500 与原因，挂着文字对象且 status 在 400–599 的（TextError）用它的 status */
+  /** 执行一次调用：闸门拒的回它的状态码；插件抛的回 500 与原因，挂着文字对象且 status 在 400–599 的（TextError）用它的 status */
   async function guarded<T>(run: () => Promise<Reply<T>>): Promise<Reply<T>> {
     try {
       return await run();

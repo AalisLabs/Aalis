@@ -24,7 +24,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 //   - 被信号结束的才报 aborted；中止前已正常退出的按实际退出回报、注明调用已中止（与 exec 同一口径）。
 //   - 没被中止、脚本以非零退出的结果带 error（「退出码 N」），按 api-tools 的 toolFailed 判为失败；中止的两支不带。
 // 真实进程的断言看心跳文件而不是 pid：Linux bwrap 下记下的 pid 是外层启动器，解释器不在我们的进程组里，
-// 只查 pid 已不存在测不出沙箱内的进程是否真的停了。起真实进程的用例只在 POSIX 跑。
+// 只查 pid 已不存在测不出沙箱内的进程是否真的停了。启动真实进程的用例只在 POSIX 跑。
 // ════════════════════════════════════════════════════════════
 
 const posix = process.platform !== 'win32';
@@ -63,7 +63,7 @@ const waitFor = async (cond: () => boolean, ms: number): Promise<boolean> => {
   return cond();
 };
 
-/** ms 内落定则返回结果，否则抛错：变异下 handler 要等脚本跑到超时，不让用例拖到那时 */
+/** ms 内落定则返回结果，否则抛错：变异下 handler 要一直等到脚本超时，不让用例拖到那时 */
 async function within<T>(p: Promise<T>, ms: number): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
@@ -84,7 +84,7 @@ const SESSION = 'zz-slice1-session';
 
 let root: string;
 let workspace: string;
-/** 经包装的 ProcessService 起过的进程 pid（= 进程组号），afterEach 收掉变异验证时停不掉的组 */
+/** 经包装的 ProcessService 启动过的进程 pid（= 进程组号），afterEach 收掉变异验证时无法停止的组 */
 let pids: number[];
 
 beforeEach(() => {
@@ -141,7 +141,7 @@ function localStorage(): StorageService {
   } as unknown as StorageService;
 }
 
-/** 真实 LocalProcessService，记下起过的 pid；execFile 经 this.spawn，同样被记下 */
+/** 真实 LocalProcessService，记下启动过的 pid；execFile 经 this.spawn，同样被记下 */
 class RecordingProcess extends LocalProcessService {
   override spawn(cmd: string, args: readonly string[], opts?: SpawnOptions): SpawnHandle {
     const handle = super.spawn(cmd, args, opts);
@@ -220,7 +220,7 @@ async function call(handler: Handler, args: Record<string, unknown>, signal?: Ab
 async function expectStopsOnAbort(handler: Handler, code: string, onlyAborted = true): Promise<void> {
   const ac = new AbortController();
   const pending = call(handler, { code }, ac.signal);
-  // 防空跑：脚本确实跑起来了、心跳在增长
+  // 防空跑：脚本确实在运行、心跳在增长
   expect(await waitFor(() => heartbeats() >= 2, 10_000)).toBe(true);
   ac.abort();
   const res = await within(pending, 3000);

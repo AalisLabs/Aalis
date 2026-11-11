@@ -46,7 +46,7 @@ const t = defineTexts({
 const CHAT = 'zz-chat';
 const OWNER = 'zz-owner';
 /**
- * 预置在会话表里的房间：owner 经几个机器人账号的私聊，没取名。经网关的原生入站会跑完整条相位链（兜底回复也是出站），
+ * 预置在会话表里的房间：owner 经几个机器人账号的私聊，没取名。经网关的原生入站会执行整条相位链（兜底回复也是出站），
  * 不经它收录
  */
 const ROOMS = [1, 2, 3].map(n => `${CHAT}:bot${n}:private:${OWNER}`);
@@ -188,11 +188,11 @@ describe('agent 发到会话里的「[系统]」「[错误]」按会话的语言
   it('解析不出模型：en 会话里整句是英文；zh-CN 是原文', async () => {
     const s = await setup();
     expect(await s.ask((await s.session(['en'])).id, '在吗')).toEqual([
-      '[System] No LLM with the chat capability was found — make sure at least one LLM provider plugin ' +
+      '[System] No model with the chat capability was found — make sure at least one model provider plugin ' +
         '(such as @aalis/plugin-llm-deepseek) is installed and enabled.',
     ]);
     expect(await s.ask((await s.session(['zh-CN'])).id, '在吗')).toEqual([
-      '[系统] 未找到任何具备 chat 能力的 LLM —— 请确认已安装并启用至少一个 LLM 提供者插件（如 @aalis/plugin-llm-deepseek）。',
+      '[系统] 未找到任何具备 chat 能力的模型 —— 请确认已安装并启用至少一个模型提供者插件（如 @aalis/plugin-llm-deepseek）。',
     ]);
   });
 

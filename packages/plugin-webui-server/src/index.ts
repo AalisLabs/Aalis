@@ -332,7 +332,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
   // persist 的读回跟随 storage：storage 是 optional、不参与激活拓扑，可能晚于本插件上线
   // （加载顺序、启动时配置出错后修好、运行时才启用）。只在 apply 里读一次会读空：内存里是新随机
-  // token，持久化的那份不生效，已登录的浏览器全部被登出；没有 token 文件时也永远建不起来。
+  // token，持久化的那份不生效，已登录的浏览器全部被登出；没有 token 文件时也永远无法建立。
   // follow 对已在线的 storage 同步首挂，晚上线时补读。持久化的那份优先（浏览器里 30 天的 cookie
   // 就是它）；只认第一次成功，之后 storage 换人不再换 token。
   let tokenSettled = uiConfig.tokenMode === 'ephemeral' || fixedToken !== '';
@@ -881,7 +881,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       return;
     }
 
-    // 合起各提供者的取值（人设卡等服务走 listModels()）
+    // 合并各提供者的取值（人设卡等服务走 listModels()）
     const allProviders = services.use.all(serviceName) as Array<ServiceView<{ listModels?(): Promise<unknown[]> }>>;
     const models: string[] = [];
     for (const provider of allProviders) {
@@ -1130,8 +1130,8 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
     // 监听失败（典型 EADDRINUSE：3000 被别的 dev server 占了）是 bind 之后**异步 emit** 的，
     // 不在任何调用栈内，外层 try/catch 接不住 —— 无人处理即 uncaughtException →
-    // runtime 的 process.exit(1)，把聊天适配器、定时任务连同整个 bot 一起打死。
-    // 契约本该是「WebUI 起不来、其余照跑」（plugin-activation 的插件失败隔离）。
+    // runtime 的 process.exit(1)，把聊天适配器、定时任务连同整个 bot 一起终止。
+    // 契约本该是「WebUI 无法启动、其余照常运行」（plugin-activation 的插件失败隔离）。
     //
     // **必须挂在 wss 上，挂 server 上是死代码。** `new WebSocketServer({ server })` 构造时
     // 已给 http server 挂了一条 'error' 监听（内容是 `this.emit.bind(this, 'error')`，转发给

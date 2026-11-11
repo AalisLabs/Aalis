@@ -36,7 +36,7 @@ const WHITELIST = new Map<string, string>([
     'spawn create-aalis/cli.ts',
     '脚手架在终端前台跑 npm install：输出直通终端，用户看着进度、按 Ctrl+C 中止，耗时随网络与包量变，没有合理上限',
   ],
-  ['spawn plugin-webui-server/auth.ts', 'detached 拉起浏览器，fire-and-forget 不等其结束'],
+  ['spawn plugin-webui-server/auth.ts', '以 detached 方式启动浏览器，fire-and-forget 不等其结束'],
   [
     'spawn plugin-trigger-laya/sidecar.ts',
     '常驻侧车：寿命由托管方管（启动超时后 SIGKILL，停止时先 SIGTERM、超时再 SIGKILL），不设整体超时',
@@ -77,7 +77,7 @@ const RULES: Rule[] = [
     release: /\.close\(\)|\bunwatchFile\b|\bonDispose\b/,
   },
   {
-    // 调用方与工具执行面都没有外层超时：一个不带 signal 的 fetch 就能把整轮对话永久挂住。
+    // 调用方与工具执行面都没有外层超时：一个不带 signal 的 fetch 就能把整轮对话一直阻塞。
     id: 'fetch',
     name: 'fetch 需配对 AbortSignal/AbortController/signal:',
     acquire: /\bfetch\s*\(/,

@@ -18,8 +18,8 @@ import { type RequestDraft, toolContext } from './tool-call.js';
 // 声明），按名字调处理器；zz-agent 是 agent 的替身，与 agent 一样同一个实例声明 SCHEMA 那几项（模型一项的全局层是本插件偏好）
 // 并提供 agent 服务：assignModel 经自己的读取器写本会话层，可让它抛错；clearing 直接跑清理（会话管理删子会话时经它清数据），
 // 没有回合要停。记下派发与追问的入站消息，派发那一刻读一次子会话
-// 的设置。回合按 agent 的顺序在 agent:turn:before 的 next 里跑完、发 agent:turn:after。网关的替身收下追问，等用例让它落定：
-// 跑完追问开的那一轮（在送达它的那次调用的异步上下文里跑，与 agent 一样），或不开轮就落定（在网关相位被挡下、被放掉）。
+// 的设置。回合按 agent 的顺序在 agent:turn:before 的 next 里执行完毕、发 agent:turn:after。网关的替身收下追问，等用例让它落定：
+// 执行完追问开的那一轮（在送达它的那次调用的异步上下文里跑，与 agent 一样），或不开轮就落定（在网关相位被挡下、被放掉）。
 // ════════════════════════════════════════════════════════════
 
 type Handler = RegisteredTool['handler'];
@@ -174,7 +174,7 @@ export async function startSubtaskHub(opts: SubtaskHubOptions = {}) {
     await vi.waitFor(() => expect(ingressed.length).toBeGreaterThan(0));
     return ingressed.shift() as (typeof ingressed)[number];
   };
-  /** 最早那条追问开一轮（在送达它的那次调用里跑完），跑完它才落定；返回这一轮的默认动作有没有执行 */
+  /** 最早那条追问开一轮（在送达它的那次调用里执行完毕），执行完毕它才落定；返回这一轮的默认动作有没有执行 */
   const followUp = async (
     outcome: Outcome = 'replied',
     options: { error?: string; during?: () => Promise<unknown> } = {},

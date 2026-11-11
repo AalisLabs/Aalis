@@ -22,7 +22,7 @@ interface TokenUsage extends TokenUsageEvent {
   observedAt: number;
 }
 
-/** tools 声明为可选：没有工具服务时本插件照常激活，缓存先攒着，工具服务上线即补登记 */
+/** tools 声明为可选：没有工具服务时本插件照常激活，缓存先暂存，工具服务上线即补登记 */
 const uses = { tools: optional(tools), events, lifecycle, logger };
 type Caps = BoundOf<typeof uses>;
 

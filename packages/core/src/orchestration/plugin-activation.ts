@@ -42,7 +42,7 @@ export interface ActivationDeps {
   disposeTimeoutMs?: number;
   /** 初始化期 required 缺失时记一次重试，返回这次拆卸的目标态（见 PluginManager 的 #spendRetry） */
   spendRetry: (entry: PluginRecord, missing: string, cause?: unknown) => 'pending' | 'error';
-  /** 关完的激活仍有工作没落定（rest 落定时兑现）：记在实例 id 名下，落定之前同一 id 不起新实例 */
+  /** 关完的激活仍有工作没落定（rest 落定时兑现）：记在实例 id 名下，落定之前同一 id 不启动新实例 */
   linger: (instanceId: string, rest: Promise<unknown>) => void;
 }
 
@@ -58,9 +58,9 @@ export interface ActivationDeps {
  * - 判据用 entry.activation 而非 state：'activating' 的在飞或后台激活同样要拆。冻结计划后它的
  *   signal 立即 abort，收尾段至多再等 disposeTimeoutMs 让 apply 落定（Resources.drain）。
  * - 关完仍有工作没落定的（被拆的初始化或清理超过宽限，Resources.lingering）交给 deps.linger 记在 id 名下：终态照写，
- *   同一 id 等它落定才起新实例（含卸载后同 id 重新登记）。
+ *   同一 id 等它落定才启动新实例（含卸载后同 id 重新登记）。
  * - 拆激活统一 try/catch：拆卸抛出不得让 entry.activation 悬置（否则
- *   重激活闸永挂、插件静默不可激活）。
+ *   重激活闸一直阻塞、插件静默不可激活）。
  * - 清引用带恒等卫：并发路径若已 join 同一次拆卸并清过引用，不重复置空。
  *
  * 「拆激活」对整批统一编排：消费者先于它依赖的提供者关闭，归属与服务依赖一起决定顺序

@@ -64,7 +64,7 @@ export class UserStore {
   }
   delete(key: string): boolean {
     const ok = this.users.delete(key);
-    // 扑空也记脏键，作为删除墓碑：首次读取完成前（storage 未上线、读取尚未开始）内存表不含文件里的记录，
+    // 找不到也记脏键，作为删除墓碑：首次读取完成前（storage 未上线、读取尚未开始）内存表不含文件里的记录，
     // 不记的话读取按文件重建时被删的记录（如封禁）又回来
     this.touch(key);
     return ok;
@@ -137,8 +137,8 @@ export class UserStore {
   }
 
   /**
-   * 等在飞的 load 落定（期间又起了新的 load 就接着等）；load 成败都算落定，本身不抛。
-   * load 无论成败都先清掉 loading 再落定，这里的递归只会接着等新起的 load。
+   * 等在飞的 load 落定（期间又发起了新的 load 就接着等）；load 成败都算落定，本身不抛。
+   * load 无论成败都先清掉 loading 再落定，这里的递归只会接着等新发起的 load。
    */
   whenLoaded(): Promise<void> {
     if (!this.loading) return Promise.resolve();

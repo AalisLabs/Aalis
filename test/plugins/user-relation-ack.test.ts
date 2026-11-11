@@ -193,8 +193,8 @@ describe('/relation 整理与体检：立即反馈与结果按会话的语言', 
   it('en', async () => {
     expect(await consolidateAndMaintain('en')).toEqual({
       acks: [
-        'Consolidating the relation graph (autoLink=off, LLM=on), please wait…',
-        'Running a checkup on the relation graph: consolidating, then compressing (autoLink=off, LLM=on), please wait…',
+        'Consolidating the relation graph (autoLink=off, model=on), please wait…',
+        'Running a checkup on the relation graph: consolidating, then compressing (autoLink=off, model=on), please wait…',
       ],
       replies: [
         [
@@ -203,14 +203,14 @@ describe('/relation 整理与体检：立即反馈与结果按会话的语言', 
           '- EventEntityEdge deduplication, groups rewritten: 3',
           '- Entity hierarchy candidate pairs: 4, new entity-entity[part-of] edges: 5',
           '- Lateral parent candidate clusters: 6, new parent entities: 7, new lateral part-of edges: 8',
-          '- LLM verification: 9 passed, 10 rejected; summaries rewritten: 11',
+          '- Model verification: 9 passed, 10 rejected; summaries rewritten: 11',
           '',
           'Alias candidates (first 10):',
           '  · [entity] zz-a  ↔  [entity] zz-b  —  <占位理由>',
         ].join('\n'),
         [
           'Relation graph checkup done:',
-          '[1/2] Consolidate: people 40→30, events 41→31, entities 42→32, edges 43→33; aliases 1 candidate/2 edges, event edges rewritten 3, hierarchy 4 candidates/5 edges, lateral parents 6 clusters/7 created/8 edges, LLM passed 9, rejected 10, summaries rewritten 11',
+          '[1/2] Consolidate: people 40→30, events 41→31, entities 42→32, edges 43→33; aliases 1 candidate/2 edges, event edges rewritten 3, hierarchy 4 candidates/5 edges, lateral parents 6 clusters/7 created/8 edges, model passed 9, rejected 10, summaries rewritten 11',
           '[2/2] Compress: people 30→20, events 31→21, entities 32→22, edges 33→23',
         ].join('\n'),
       ],
@@ -220,8 +220,8 @@ describe('/relation 整理与体检：立即反馈与结果按会话的语言', 
   it('zh-CN：原文', async () => {
     expect(await consolidateAndMaintain('zh-CN')).toEqual({
       acks: [
-        '正在整理关系图（autoLink=off，LLM=on），请稍候…',
-        '正在体检关系图：先整理再压缩（autoLink=off，LLM=on），请稍候…',
+        '正在整理关系图（autoLink=off，模型=on），请稍候…',
+        '正在体检关系图：先整理再压缩（autoLink=off，模型=on），请稍候…',
       ],
       replies: [
         [
@@ -230,14 +230,14 @@ describe('/relation 整理与体检：立即反馈与结果按会话的语言', 
           '- EventEntityEdge 去重：3 组重整',
           '- 实体层级候选：4 对，新增 5 条 entity-entity[part-of] 边',
           '- 侧向父候选：6 簇，新建父实体 7 个，新增 8 条侧向 part-of 边',
-          '- LLM 核验：通过 9，否决 10；摘要重写 11 条',
+          '- 模型核验：通过 9，否决 10；摘要重写 11 条',
           '',
           '别名候选（前 10 条）：',
           '  · [entity] zz-a  ↔  [entity] zz-b  —  <占位理由>',
         ].join('\n'),
         [
           '关系图体检完成：',
-          '[1/2] 整理：人物 40→30，事件 41→31，实体 42→32，边 43→33；别名 1 候选/2 边，事件边重整 3，层级 4 候选/5 边，侧向父 6 簇/新建 7/边 8，LLM 通过 9 否决 10 摘要重写 11',
+          '[1/2] 整理：人物 40→30，事件 41→31，实体 42→32，边 43→33；别名 1 候选/2 边，事件边重整 3，层级 4 候选/5 边，侧向父 6 簇/新建 7/边 8，模型通过 9 否决 10 摘要重写 11',
           '[2/2] 压缩：人物 30→20，事件 31→21，实体 32→22，边 33→23',
         ].join('\n'),
       ],
@@ -247,7 +247,7 @@ describe('/relation 整理与体检：立即反馈与结果按会话的语言', 
   it.each([
     [
       'en',
-      'Running a checkup on the relation graph: consolidating, then compressing (autoLink=off, LLM=off), please wait…',
+      'Running a checkup on the relation graph: consolidating, then compressing (autoLink=off, model=off), please wait…',
       [
         'Relation graph checkup done:',
         '[1/2] Consolidate: people 40→30, events 41→31, entities 42→32, edges 43→33; aliases 1 candidate/2 edges, event edges rewritten 3, hierarchy 4 candidates/5 edges, lateral parents 6 clusters/7 created/8 edges',
@@ -256,7 +256,7 @@ describe('/relation 整理与体检：立即反馈与结果按会话的语言', 
     ],
     [
       'zh-CN',
-      '正在体检关系图：先整理再压缩（autoLink=off，LLM=off），请稍候…',
+      '正在体检关系图：先整理再压缩（autoLink=off，模型=off），请稍候…',
       [
         '关系图体检完成：',
         '[1/2] 整理：人物 40→30，事件 41→31，实体 42→32，边 43→33；别名 1 候选/2 边，事件边重整 3，层级 4 候选/5 边，侧向父 6 簇/新建 7/边 8',
@@ -312,18 +312,18 @@ describe('/relation consolidation-status 按会话的语言', () => {
     const at = `${new Intl.DateTimeFormat('en', { dateStyle: 'short' }).format(AT)} ${new Intl.DateTimeFormat('en', { timeStyle: 'medium' }).format(AT)}`;
     expect(await statuses('en')).toEqual([
       'Note: consolidation has not run since startup.\nTriggers: /relation consolidate (manual), /relation maintain (consolidate, then compress), or automatically before capacity eviction.',
-      `Last consolidation: ${at} (trigger: manual)\n${COUNTED_EN}, duplicate event candidates 12 (merged 13), LLM passed 9, rejected 10 (cache hits 14), summaries rewritten 11`,
+      `Last consolidation: ${at} (trigger: manual)\n${COUNTED_EN}, duplicate event candidates 12 (merged 13), model passed 9, rejected 10 (cache hits 14), summaries rewritten 11`,
       `Last consolidation: ${at} (trigger: automatic, before eviction)\n${COUNTED_EN}`,
-      `Last consolidation: ${at} (trigger: API call)\n${COUNTED_EN}, LLM passed 9, rejected 10, summaries rewritten 11`,
+      `Last consolidation: ${at} (trigger: API call)\n${COUNTED_EN}, model passed 9, rejected 10, summaries rewritten 11`,
     ]);
   });
 
   it('zh-CN：原文', async () => {
     expect(await statuses('zh-CN')).toEqual([
       '注意：本次运行以来尚未执行过整理。\n触发方式：/relation consolidate（手动）、/relation maintain（先整理后压缩），或容量淘汰前自动触发。',
-      `最近一次整理：2026/10/29 06:05:03（触发方式：手动）\n${COUNTED}，重复事件候选 12（合并 13），LLM 通过 9 否决 10（缓存命中 14） 摘要重写 11`,
+      `最近一次整理：2026/10/29 06:05:03（触发方式：手动）\n${COUNTED}，重复事件候选 12（合并 13），模型通过 9 否决 10（缓存命中 14） 摘要重写 11`,
       `最近一次整理：2026/10/29 06:05:03（触发方式：淘汰前自动）\n${COUNTED}`,
-      `最近一次整理：2026/10/29 06:05:03（触发方式：API 调用）\n${COUNTED}，LLM 通过 9 否决 10 摘要重写 11`,
+      `最近一次整理：2026/10/29 06:05:03（触发方式：API 调用）\n${COUNTED}，模型通过 9 否决 10 摘要重写 11`,
     ]);
   });
 });

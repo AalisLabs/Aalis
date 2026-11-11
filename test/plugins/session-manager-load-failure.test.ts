@@ -141,7 +141,7 @@ describe('session-manager 会话表加载失败', () => {
     expect(store.meta.get('old-1')).toEqual(original);
   });
 
-  it('读表进行中停机、随后这次读表失败：不再进入重试等待，停机不被拖住', async () => {
+  it('读表进行中停机、随后这次读表失败：不再进入重试等待，停机不被阻塞', async () => {
     const store = fakeMemory({ 'old-1': original });
     let calls = 0;
     let fail!: (err: Error) => void;

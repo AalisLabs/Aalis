@@ -20,7 +20,7 @@ import { deferred } from '../helpers/deferred.js';
 // ════════════════════════════════════════════════════════════
 // 删除会话时停掉这个会话在跑的回合：会话管理把整个删除（删子会话、发 session:deleted、清数据）交给 agent 的 clearing，它先停下
 // 这个会话在跑的一轮、放掉排着的，等它收尾，并从这时起按住这个会话到清完，所以清数据一定在回合停下之后。被停的一轮不落库、
-// 不外发；别的会话的回合照常跑完。新旧两代按会话管理给的代号分：开始删除的同一步换代号，网关在收录之后记下、交给 agent 之前比，
+// 不外发；别的会话的回合照常执行完毕。新旧两代按会话管理给的代号分：开始删除的同一步换代号，网关在收录之后记下、交给 agent 之前比，
 // agent 在 handleMessage 入口记下、交给通道之前（按住期间等着的放开之后）比，只比这两处。删除开始之前已过会话管理收录、删除
 // 开始之后才到这两处的是旧的一代，放掉、不归档，房间按下一条重新建档后也不在新的历史里；在触发判定或流控相位里挂过删完时刻、
 // 随后被吞掉的不经这两处，照旧影子归档，进了重新建档的房间的历史。删除期间（带子会话的从删子会话起）经网关到的同一会话的消息
@@ -138,7 +138,7 @@ async function bootGateway({ after }: { after?: After } = {}) {
       groupId: '20001',
     });
   /**
-   * 在入站相位（缺省指令相位）挂住正文为 content 的那一条：它已过会话管理收录、还没交给 agent。entered 在挂住时落定，release
+   * 在入站相位（缺省指令相位）阻塞正文为 content 的那一条：它已过会话管理收录、还没交给 agent。entered 在阻塞时落定，release
    * 之后放行
    */
   const holdInPhase = (content: string, phase: 'inbound:command' | 'inbound:dispatch' = 'inbound:command') => {
@@ -157,11 +157,11 @@ async function bootGateway({ after }: { after?: After } = {}) {
   return { model, host, sm: host.sessionManager.use, outcomes, ingress, holdInPhase, historyOf };
 }
 
-/** 让排着的微任务与 I/O 回调跑完 */
+/** 让排着的微任务与 I/O 回调执行完毕 */
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
 describe('删除会话时停掉它在跑的回合', () => {
-  it('删除等这个会话的回合停下再清数据；被停的一轮不落库、不外发，别的会话的回合照常跑完', async () => {
+  it('删除等这个会话的回合停下再清数据；被停的一轮不落库、不外发，别的会话的回合照常执行完毕', async () => {
     let inflight = 0;
     let wake!: () => void;
     const bothStarted = new Promise<void>(resolve => {
@@ -217,7 +217,7 @@ describe('删除会话时停掉它在跑的回合', () => {
     ['清数据', 'memory:clear'],
   ] as const)('删除期间（%s时）经网关到的同一房间的消息是新的一代：等删除做完再处理，房间按它重新建档，照常回复，存档不被这次删除清掉', async (_label, on) => {
     const { model, host, sm, outcomes, ingress, historyOf } = await bootGateway();
-    // 删除的这一段里挂住，新的一条在这时到达：停下旧的一轮之后、它落定之前，或清数据时。在收录里等着的它要到删除做完才放行，
+    // 删除的这一段里阻塞，新的一条在这时到达：停下旧的一轮之后、它落定之前，或清数据时。在收录里等着的它要到删除做完才放行，
     // 收录之后才记下代号
     const entered = deferred();
     const gate = deferred();

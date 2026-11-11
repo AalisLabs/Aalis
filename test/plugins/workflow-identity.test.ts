@@ -27,8 +27,8 @@ import { type PageHost, pageHost } from '../fixtures/page-host.js';
 // 权限服务不在时判不出 owner，调用者与定义者不是同一身份的按匿名。
 // 真 storage-local、真工具注册表与权限插件：zz_whoami 记下每次执行时的授权身份；zz_confirm 声明需要确认，确认覆盖设为
 // off（只对 owner 免），没有审批服务，不免的一律拒。workflow_define、workflow_run、workflow_remove 2 级加确认（与别的要确认的
-// 操作同一规则），确认覆盖设为 off：owner 一个人定义、调起与删除不问；别人要做都得 owner 批，经工具调起的调用者因此总是 owner，
-// 调用者不是 owner 的只有经编排服务 runWorkflow 调起的。要审批的用例另装审批替身：记下请求，一律由 OWNER 批准。
+// 操作同一规则），确认覆盖设为 off：owner 一个人定义、调用与删除不问；别人要做都得 owner 批，经工具调用时调用者因此总是 owner，
+// 调用者不是 owner 的只有经编排服务 runWorkflow 调用的。要审批的用例另装审批替身：记下请求，一律由 OWNER 批准。
 // ════════════════════════════════════════════════════════════
 
 const OWNER = { platform: 'onebot', userId: '99999' };
@@ -60,7 +60,7 @@ let actors: Array<UserIdentity | undefined>;
 let confirmed: number;
 
 const defFile = () => join(base, 'workspace', 'workflows', `${ID}.yaml`);
-// data:/ 是内置根，按数据目录布局在 state/ 下
+// data:/ 是内部根，按数据目录布局在 state/ 下
 const runsFile = () => join(base, 'state', 'workflow-runs.json');
 
 /** 审批替身：把每个审批请求记进 requests，一律由 OWNER 批准 */
@@ -194,11 +194,11 @@ afterEach(async () => {
 });
 
 describe('编排的运行身份：定义者与调用者里不是 owner 的一方', () => {
-  it('定义者后来不是 owner 了：owner 经 workflow_run 调起按他执行，确认覆盖的 off 不免', async () => {
+  it('定义者后来不是 owner 了：owner 经 workflow_run 调用按他执行，确认覆盖的 off 不免', async () => {
     const first = await boot({ owners: [OWNER, MEMBER] });
     expect((await first.tool('workflow_define', { yaml: MANUAL }, OWNER)).ok).toBe(true);
     await first.tool('workflow_run', { id: ID }, OWNER);
-    expect(actors, '对照：owner 定义、owner 调起按 owner 执行').toEqual([OWNER]);
+    expect(actors, '对照：owner 定义、owner 调用按 owner 执行').toEqual([OWNER]);
     expect(confirmed).toBe(1);
     expect((await first.tool('workflow_define', { yaml: MANUAL }, MEMBER)).ok).toBe(true);
     await first.app.stop();
@@ -209,7 +209,7 @@ describe('编排的运行身份：定义者与调用者里不是 owner 的一方
     expect(confirmed, '他的回合不免确认').toBe(1);
   });
 
-  it('经编排服务调起 owner 定义的编排：调用者是成员的按成员执行，不传调用者的按匿名，借不到定义者的身份', async () => {
+  it('经编排服务调用 owner 定义的编排：调用者是成员的按成员执行，不传调用者的按匿名，借不到定义者的身份', async () => {
     const s = await boot();
     await s.tool('workflow_define', { yaml: MANUAL }, OWNER);
     await s.svc.runWorkflow(ID, {}, 'manual', MEMBER);
@@ -218,7 +218,7 @@ describe('编排的运行身份：定义者与调用者里不是 owner 的一方
     expect(confirmed).toBe(0);
   });
 
-  it('几个人的一轮调起：要 owner 批，批过的按 owner 调起、按定义者执行', async () => {
+  it('几个人的一轮调用：要 owner 批，批过的按 owner 调用、按定义者执行', async () => {
     const requests: ApprovalRequest[] = [];
     const s = await boot({ approvals: requests });
     await s.tool('workflow_define', { yaml: MANUAL }, OWNER);
@@ -284,7 +284,7 @@ describe('编排的运行身份：定义者与调用者里不是 owner 的一方
     expect(actors).toEqual([undefined]);
   });
 
-  it('权限服务不在时，同一身份定义又调起的编排按这个身份执行', async () => {
+  it('权限服务不在时，同一身份定义又调用的编排按这个身份执行', async () => {
     const s = await boot({ owners: [OWNER, MEMBER] });
     await s.tool('workflow_define', { yaml: MANUAL }, MEMBER);
     expect(await s.app.plugins.disable(authorityPlugin.name)).toBe(true);
@@ -309,7 +309,7 @@ describe('定义者记录', () => {
   it.each([
     ['定义文件在磁盘上被改过', () => writeFileSync(defFile(), `${readFileSync(defFile(), 'utf8')}# 改过\n`)],
     ['运行历史文件读不出', () => writeFileSync(runsFile(), '{')],
-  ])('%s：重启后按匿名，owner 调起也一样', async (_label, tamper) => {
+  ])('%s：重启后按匿名，owner 调用也一样', async (_label, tamper) => {
     const first = await boot();
     await first.tool('workflow_define', { yaml: MANUAL }, OWNER);
     await first.app.stop();

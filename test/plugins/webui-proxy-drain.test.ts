@@ -22,7 +22,7 @@ afterEach(async () => {
   });
 });
 
-/** 起一个 HTTP 服务，返回「拿到服务端 res」的 promise + 端口。 */
+/** 启动一个 HTTP 服务，返回「拿到服务端 res」的 promise + 端口。 */
 async function serveOnce(): Promise<{ res: Promise<http.ServerResponse>; port: number }> {
   let handoff: (res: http.ServerResponse) => void = () => {};
   const res = new Promise<http.ServerResponse>(resolve => {

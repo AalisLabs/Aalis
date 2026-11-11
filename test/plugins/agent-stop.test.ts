@@ -31,10 +31,10 @@ import { callTool, StepModel, stepModelPlugin } from '../fixtures/step-llm.js';
 
 // ════════════════════════════════════════════════════════════
 // /stop（plugin-agent 登记）：停下本会话在跑的一轮，做法同停止键，排着的照常开下一轮。这一轮的参与者（进了这一轮的各条输入
-// 按 originTurnOf 算：真人的话是发言者，续做是起它的那一轮的参与者，定时任务是建它的人）与 owner 能停，不看等级；排队中、
+// 按 originTurnOf 算：真人的话是发言者，续做是发起它的那一轮的参与者，定时任务是建它的人）与 owner 能停，不看等级；排队中、
 // 待插入的不算，没有账号的不算任何人。同一份实现，终端、QQ 私聊与群里一样。@ 她或引用她的消息发的 /stop（QQ 客户端在开头插一个
 // 对她的 @，正文经 OneBot 适配器的解析函数造出）照样是指令，开头 @ 的是别人时不是。
-// 经真实的网关、指令与权限插件（owner 是配置里的 QQ 号与本机的 console），模型是能挂住某一次调用的替身。
+// 经真实的网关、指令与权限插件（owner 是配置里的 QQ 号与本机的 console），模型是能阻塞某一次调用的替身。
 // ════════════════════════════════════════════════════════════
 
 const STOPPED = '已停下这一轮';
@@ -152,7 +152,7 @@ describe.each([
 });
 
 /**
- * A 的插话开一轮，第一次调用模型时 B 的话到了、还在待插入；这次调用回探针，B 的话插进第二次调用。两次调用都挂住，返回时停在
+ * A 的插话开一轮，第一次调用模型时 B 的话到了、还在待插入；这次调用回探针，B 的话插进第二次调用。两次调用都阻塞，返回时停在
  * 第一次（waiting）或第二次（joined）上
  */
 async function groupTurn(phase: 'waiting' | 'joined', options?: Parameters<typeof boot>[1]) {
@@ -178,7 +178,7 @@ async function groupTurn(phase: 'waiting' | 'joined', options?: Parameters<typeo
 }
 
 describe('/stop 的判据：群里', () => {
-  it('不在这一轮里的群友被拒，话还在待插入、没进这一轮的同样被拒；这一轮照常跑完', async () => {
+  it('不在这一轮里的群友被拒，话还在待插入、没进这一轮的同样被拒；这一轮照常执行完毕', async () => {
     const { s, done } = await groupTurn('waiting');
     await s.say({ ...GROUP, ...C }, '/stop');
     await s.say({ ...GROUP, ...B }, '/stop');
@@ -204,7 +204,7 @@ describe('/stop 的判据：群里', () => {
 describe('/stop 的判据：注入开的一轮', () => {
   it.each([
     [
-      '他起的后台任务的结束通知开的一轮（续做）',
+      '他发起的后台任务的结束通知开的一轮（续做）',
       {
         source: 'bg:bg_x_1',
         hostNotice: { kind: 'background', id: 'bg_x_1' },
@@ -226,7 +226,7 @@ describe('/stop 的判据：注入开的一轮', () => {
   it.each([
     ['不带 actor', {}],
     ['带无主体的 actor', { actor: selfInitiatedActor('webui') }],
-  ])('没有账号的注入发的 /stop 停不了没有主体的一轮（%s）：这一轮照常回完', async (_kind, actor) => {
+  ])('没有账号的注入发的 /stop 无法停止没有主体的一轮（%s）：这一轮照常回完', async (_kind, actor) => {
     const s = await boot();
     const where = { sessionId: 'zz-stop-internal', platform: 'webui' };
     const injected = { source: 'scheduler', ownerApproved: true, ...actor };

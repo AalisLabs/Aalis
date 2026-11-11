@@ -22,7 +22,7 @@ const pexec = promisify(execFile);
 //
 // 联网不可用时整组跳过，不让 CI 因网络红。
 //
-// 不依赖调用方的 npm 配置：本文件起的 npm 用空的 userconfig 与 globalconfig、源用 npmmirror、不走代理。调用方的
+// 不依赖调用方的 npm 配置：本文件启动的 npm 用空的 userconfig 与 globalconfig、源用 npmmirror、不走代理。调用方的
 // userconfig 可能带发布令牌，代理可能按流量计费，都不该被测试用上。
 // ════════════════════════════════════════════════════════════
 
@@ -36,7 +36,7 @@ const emptyGlobalconfig = join(npmDir, 'global-npmrc');
 for (const file of [emptyUserconfig, emptyGlobalconfig]) writeFileSync(file, '');
 
 /**
- * 就地把 env 改成给 npm 的环境：删掉调用方的 npm 配置（经 npm 起的进程里，调用方配置里的项会以 npm_config_*
+ * 就地把 env 改成给 npm 的环境：删掉调用方的 npm 配置（经 npm 启动的进程里，调用方配置里的项会以 npm_config_*
  * 出现在环境里）与所有以 proxy 结尾的变量（NO_PROXY 一并删掉无害），userconfig 与 globalconfig 都指向空文件，
  * 源用 npmmirror。
  */
@@ -49,7 +49,7 @@ function isolateNpm(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   env.NPM_CONFIG_REGISTRY = 'https://registry.npmmirror.com';
   return env;
 }
-// 本文件起的 npm 都继承 process.env，插件给 npm 的 env 也是叠在 process.env 上的整份环境，所以改它本身
+// 本文件启动的 npm 都继承 process.env，插件给 npm 的 env 也是叠在 process.env 上的整份环境，所以改它本身
 isolateNpm(process.env);
 
 interface ExecOpts {
@@ -153,8 +153,8 @@ afterAll(() => {
 });
 
 describe('安装链（真实 npm）', () => {
-  it('调用方的 userconfig、npm 配置与代理传不进本文件起的 npm（不联网）', async () => {
-    // 本文件起的 npm 不另传 env，继承的就是 process.env：它得已经隔离过
+  it('调用方的 userconfig、npm 配置与代理传不进本文件启动的 npm（不联网）', async () => {
+    // 本文件启动的 npm 不另传 env，继承的就是 process.env：它得已经隔离过
     const inherited = await pexec('npm', ['config', 'get', 'userconfig', 'registry', 'proxy', 'https-proxy'], {
       cwd: npmDir,
     });
@@ -335,7 +335,7 @@ describe('安装链（真实 npm）', () => {
       // 这条只有真跑 npm 才能证伪。实测（npm 10.9.2）：`--dry-run` 不碰 package.json 与
       // package-lock.json，却会把 node_modules/.package-lock.json 写成「目标版本已装」；
       // 紧接着的真装读到它就 `up to date` 什么都不做。症状是 package.json 与 lockfile
-      // 都成了新版、node_modules 里仍是旧代码，而旧代码起得来 → 重启成功 → 回滚永不触发
+      // 都成了新版、node_modules 里仍是旧代码，而旧代码能启动 → 重启成功 → 回滚永不触发
       // → 更新全程空转却报成功，且 lockfile 从此在撒谎（日后 npm ci 会无看守地跳版）。
       const p = mkdtempSync(join(tmpdir(), 'aalis-dryrun-'));
       try {

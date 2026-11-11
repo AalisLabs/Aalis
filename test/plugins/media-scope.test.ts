@@ -36,7 +36,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 // 本身由会话管理的参数化表钉住（session-take-rule），这里的 take 与 local 是替身，只看分流。本机文件判法（localFileInScope）
 // 直接测，主体用权限插件的 principalKind。会话表、owner 判定与历史都是内存替身；真实写入方一节跑 onebot 附件缓存、绘图
 // （离线渲染是替身）与媒体识别的落盘，断言它们按 api-media 的目录约定落进各自的子目录、判据接受它们产出的地址，是会话
-// 目录名的唯一守卫。浏览器截图的那条在 tool-browser-screenshot 里（要起真浏览器）。
+// 目录名的唯一守卫。浏览器截图的那条在 tool-browser-screenshot 里（要启动真浏览器）。
 // ════════════════════════════════════════════════════════════
 
 const OWNER_QQ = '90001';

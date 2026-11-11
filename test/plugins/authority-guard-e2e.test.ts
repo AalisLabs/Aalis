@@ -113,7 +113,7 @@ describe('authority 执行守卫真的挂在 commands 上', () => {
 describe('权限插件注入网络出口策略', () => {
   afterEach(() => setNetworkPolicy({}));
 
-  /** 宿主文档的 network 为 network 时起权限插件；changeNetwork 照热重载的路径先换文档、再发 host-config:changed */
+  /** 宿主文档的 network 为 network 时启动权限插件；changeNetwork 照热重载的路径先换文档、再发 host-config:changed */
   async function startAuthority(network: unknown) {
     const warns: string[] = [];
     const logger: Logger = {

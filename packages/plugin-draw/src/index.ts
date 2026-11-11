@@ -251,7 +251,7 @@ function registerDraw(caps: Caps): void {
           '**选型**：图形/图标/梗图/示意图 → 写完整 SVG 文档（**必须带 viewBox**，建议同时带 width/height）；' +
           '图文卡片/表格/排版类 → 写 HTML 片段+内联 CSS（可内嵌 SVG 图形；不要写 <html>/<body> 外壳）。\n' +
           '**硬约束**：渲染页禁用脚本且拦截全部网络请求——<script> 不会执行，外链图片/字体/CSS 一律加载失败，' +
-          '资源只能内联（data: URI）；中文与 emoji 直接可用（系统字体栈兜底）。' +
+          '资源只能内联（data: URI）；中文与 emoji 直接可用（回落到系统字体栈）。' +
           '画布定界：SVG 按 viewBox/width 精确定界；HTML 按 width 参数定宽、内容自动量高。',
         parameters: {
           type: 'object',

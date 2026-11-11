@@ -28,7 +28,7 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据', () => {
+describe('UserStore：加载失败后拒写，不让全量快照覆盖原数据', () => {
   it('坏 JSON（解析失败）：load 后改等级并 save，原文件一字不动', async () => {
     const file = join(dir, 'users.json');
     const broken = '{"version":5,"users":{"onebot:banned":{"level":-5}';

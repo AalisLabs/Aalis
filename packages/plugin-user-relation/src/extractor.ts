@@ -8,7 +8,7 @@
  * - 提取时读取最近 `readWindowSize`（默认 30）条 → 窗口与触发步长有意 overlap，
  *   让上一轮窗口尾部 ~10 条与本轮重合，形成"层叠上下文"，缓解 LLM
  *   对话题/关系单次识别不稳定的问题
- * - per-sessionId 在飞中标记：同一 session 同时只跑一次提取，避免风暴
+ * - per-sessionId 在飞中标记：同一 session 同时只执行一次提取，避免风暴
  *
  * "all-new" 模式：把读窗口放大到 `allNewMaxMessages`，一次性消化所有累积；
  * 默认不启用（容易超 context window）。
@@ -78,7 +78,7 @@ export interface ExtractorConfig {
   senderNeighborhoodEdgeLimit: number;
   /** LLM model 引用；为空走默认 'llm' service */
   extractionModel?: ModelRef;
-  /** 是否禁用思考模式（思考型模型上）。提取是结构化输出任务，默认禁用以避免 budget 被 reasoning 吃掉 */
+  /** 是否禁用思考模式（思考型模型上）。提取是结构化输出任务，默认禁用以避免 budget 被 reasoning 占满 */
   disableThinking: boolean;
   /** 严格自证：仅 person-person 边要求 evidence 中至少一条由 from 方本人发出（evidence.messageId.sender == fromPersonId） */
   strictSelfAssertion: boolean;
@@ -111,7 +111,7 @@ export interface ExtractorConfig {
   /** Weight 衰减下限因子，effW 不会低于 raw × floor。保留"老朋友"底色。默认 0.3 */
   weightDecayFloor: number;
   /**
-   * evictByQuota 之后顺手跑的社群发现算法。默认 'louvain'。
+   * evictByQuota 之后运行的社群发现算法。默认 'louvain'。
    * - 'louvain' / 'leiden'：硬划分，每个节点恰好属于一个社群（leiden 额外保证社群内部连通）
    * - 'slpa'：Speaker-Listener Label Propagation，原生重叠社区；跨群人物能获得多个社群隶属度
    */
@@ -1057,8 +1057,8 @@ export class RelationExtractor {
       this.caps.logger.use.debug(`[user-relation] ${ctxInfo.sessionId} 提取完成，本批次无变动`);
     }
 
-    // 写后顺手老化（模仿 profile 风格，不开独立调度器）。
-    // 孤儿清理与配额无关——总是顺手扫一遍。注意：evictByQuota 内部已自带孤儿清理，
+    // 写后随即老化（模仿 profile 风格，不开独立调度器）。
+    // 孤儿清理与配额无关——总是同时扫一遍。注意：evictByQuota 内部已自带孤儿清理，
     // 配了配额时不要重复调用 pruneOrphans。
     const hasQuota =
       this.cfg.evictionEnabled &&
@@ -1333,7 +1333,7 @@ function buildExtractionPrompt(
       '  · 正向身份：「B 是我朋友 / 兄弟 / CP / 老婆 / 男友 / 师傅 / 同事 / 同学 / 队友」→ A→B directed=true，relationType 取对应词。',
       '  · 负向 / 紧张：「B 跟我闹翻 / B 拉黑我 / 我讨厌 B / B 是我前任」→ A→B directed=true，relationType=hostile / antagonist / rival / ex 等。',
       '  · 仰慕 / 单向情感：「我在追 B / B 是我偶像 / B 让我崇拜」→ A→B directed=true relationType=admirer 等。',
-      '  · 层级（顺手填 hierarchy）：「B 是我老板 / 老师 / 师傅 / 前辈」→ hierarchy=superior；「B 是我徒弟 / 学生 / 下属」→ subordinate。',
+      '  · 层级（同时填 hierarchy）：「B 是我老板 / 老师 / 师傅 / 前辈」→ hierarchy=superior；「B 是我徒弟 / 学生 / 下属」→ subordinate。',
       '  · **关键**：A 提及第三方关系（如 "我听说 B 和 C 在一起了" / "B 跟 C 同班"）——这是 A 的转述，不要直接输出 B→C 边（会因严格自证丢弃）；可输出 A→B 一条 friend/colleague 表达 A 与 B 的认识关系（如果 A 与 B 本身确有关系陈述），否则跳过该信号。',
       '  · 一句话规则：**只要发话人自己说"我和 X 是某关系"就建边，单向、不需双方确认**。',
       '  · **依然要避免的幻觉**：',
@@ -1387,7 +1387,7 @@ function buildExtractionPrompt(
       '  · `conflict` —— 争吵 / 对立 / 拉黑 / 退群 / 翻脸 / 公开撕逼 / 互相 diss。',
       '  · `incident` —— 突发负面事件：bug / 事故 / 翻车 / 服务器崩 / 设备坏 / 被骗。',
       '  · `milestone` —— 标志性进展：发布、上线、签约、获奖、毕业、退役、达成成就、生日纪念日。',
-      '  · `discussion` —— **兜底类别**：单纯围绕某话题"聊一聊、讨论、安利、吐槽、复盘"，没有协作行为/冲突/事故/里程碑。**能选上面四个就不要用 discussion**。把所有事件都标 discussion 会让类别失去区分度。',
+      '  · `discussion` —— **后备类别**：单纯围绕某话题"聊一聊、讨论、安利、吐槽、复盘"，没有协作行为/冲突/事故/里程碑。**能选上面四个就不要用 discussion**。把所有事件都标 discussion 会让类别失去区分度。',
       '  · `other` —— 极少用，仅在以上五类都套不上时（如纯仪式性问候活动）才考虑。',
       '- **事件 scope 字段（决策极简版）**：',
       '  · **同时满足两条**才能填 `"global"`：(a) 当前是【跨会话模式】窗口（消息行首带 `[sid:xxx]` 前缀），**且** (b) 该事件 evidence 引用了**至少 2 个不同 sid** 的消息。',

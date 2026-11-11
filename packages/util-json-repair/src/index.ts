@@ -47,7 +47,7 @@ function isLikelyClosingQuote(s: string, quoteIndex: number): boolean {
 
 /**
  * 移除对象/数组尾部多余逗号（`,]` / `,}`），只在字符串外生效。
- * 无状态的全局 replace 会把字符串**内容**里的 `,]` / `,}` 一并吃掉，
+ * 无状态的全局 replace 会把字符串**内容**里的 `,]` / `,}` 一并删除，
  * 静默改写模型写的正文（落库后无人复核），故与其它两步同款走 inString 状态机。
  */
 function stripTrailingCommasOutsideStrings(s: string): string {

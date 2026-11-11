@@ -63,7 +63,7 @@ const HISTORY = [
 ];
 
 /**
- * 起 webui-server：host-logs 的历史读临时数据目录的 logs/latest.log，实时接进程级的默认中枢；装着 zz-log-a、它的实例 2 与
+ * 启动 webui-server：host-logs 的历史读临时数据目录的 logs/latest.log，实时接进程级的默认中枢；装着 zz-log-a、它的实例 2 与
  * zz-log-b。应用自己的日志进 hub（只收告警及以上），不进推给页面的默认中枢
  */
 async function start(hub = new LogHub()) {

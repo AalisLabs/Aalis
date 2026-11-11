@@ -18,11 +18,12 @@ export default defineLocale<Source>()({
   sessionHistoryLabel: 'Session history',
   sessionHistoryEnabledLabel: 'Enable the OneBot history tools',
   sessionHistoryEnabledDescription:
-    'Registers onebot_resolve_session_id / onebot_get_session_history (read recent history by group number or QQ number). Which sessions can be read follows the cross-session rules of session management.',
-  maxLimitLabel: 'Maximum messages per read',
-  maxLimitDescription: 'The limit parameter passed by the agent is capped at this value.',
-  defaultLimitLabel: 'Default messages per read (when the agent passes no limit)',
-  defaultLimitDescription: 'Cannot exceed maxLimit.',
+    'Registers tools that read recent chat history by group number or QQ number. Which sessions can be read follows the cross-session rules of session management.',
+  maxLimitLabel: 'Max messages per read',
+  maxLimitDescription:
+    'Most messages a single chat history read returns; larger requests from the model are capped to it.',
+  defaultLimitLabel: 'Default messages per read',
+  defaultLimitDescription: 'Used when the model gives no limit; cannot exceed “Max messages per read”.',
   dailyGroup: 'OneBot read-only and everyday',
   dailyGroupSummary:
     'Read-only queries (group info, members, friend list, history, login info) plus low-risk everyday interactions (poke, friend likes)',

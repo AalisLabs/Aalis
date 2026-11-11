@@ -8,15 +8,14 @@ export default defineLocale<Source>()({
   developerTokenDescription: 'The developer token applied for at https://maimai.lxns.net',
   baseUrlDescription: 'Domain of the score service; usually no need to change it',
   enableToolsLabel: 'Register agent tools',
-  enableToolsDescription: 'Register structured tools for the LLM agent (keeping it on is recommended)',
+  enableToolsDescription: 'Register structured tools for the model (keeping it on is recommended)',
   enableCommandsLabel: 'Register slash commands',
   enableCommandsDescription: 'Register slash commands such as /maimai for users',
   defaultBindOnPrivateChatLabel: 'Default binding in private chats',
   defaultBindOnPrivateChatDescription:
     'In OneBot private chats, if the caller has not bound a friend code but their QQ number is registered with the score service, query by their QQ number automatically',
   timeoutMsLabel: 'Request timeout (ms)',
-  timeoutMsDescription:
-    'Limit for a single score service API request. Tool execution has no outer timeout, so an unresponsive service would hang the whole turn',
+  timeoutMsDescription: 'Timeout of a single score service API request',
   baseUrlNotPlain: 'baseUrl must be a complete URL without a user name or password',
   baseUrlHasQuery:
     'baseUrl must not contain a query string or fragment (anything after ? or #): the plugin appends paths to it',
@@ -42,7 +41,7 @@ export default defineLocale<Source>()({
   unknownSender:
     'Cannot tell who sent the message (no platform user ID); binding only works on platforms that can identify the sender, such as QQ',
   noMemory:
-    'No memory backend is running (bindings are stored in it): enable one in the WebUI plugin area (such as SQLite memory), or remove it from disabledPlugins in the configuration file; if it still fails to start, use /doctor to see why',
+    'No memory backend is running (bindings are stored in it): enable one in the WebUI plugin area (such as SQLite memory), or remove it from disabledPlugins in the config file; if it still fails to start, use /doctor to see why',
   byQq: 'Querying the score service with your QQ number (if this fails, run /maimai bind <friend code> first)',
   noTargetHint:
     'No query target found. Provide the friend_code/qq parameter, or bind yourself first with /maimai bind <friend code>.',

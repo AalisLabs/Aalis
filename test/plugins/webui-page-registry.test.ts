@@ -19,7 +19,7 @@ import { fixedRef } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 页面登记表本身：invalidate 的合并、提示的替换与撤回、按条目身份撤回、会话面板 applies 的超时。
-// 只测登记表，不起端口；经真实 HTTP 的闸门见 webui-pages.test.ts。
+// 只测登记表，不监听端口；经真实 HTTP 的闸门见 webui-pages.test.ts。
 // ════════════════════════════════════════════════════════════
 
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };

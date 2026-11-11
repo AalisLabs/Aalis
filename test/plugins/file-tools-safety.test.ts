@@ -336,7 +336,7 @@ describe('file_search 目录模式：截断后按 nextStartFile + nextStartLine 
 
     const one = await call('file_search', { path: 'workspace:/dir', pattern: 'hit', maxResults: 2 });
     expect(one.truncated).toBe(true);
-    // 第一段只吃到 sub/d.txt 的两条命中，断点落在同文件的下一行（3 + 1）
+    // 第一段只取到 sub/d.txt 的两条命中，断点落在同文件的下一行（3 + 1）
     expect(one.nextStartFile).toBe('sub/d.txt');
     expect(one.nextStartLine).toBe(4);
 

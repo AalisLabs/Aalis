@@ -7,9 +7,9 @@ import embeddingOllama from '../../packages/plugin-embedding-ollama/src/index.js
 
 // ════════════════════════════════════════════════════════════
 // 新旧 API 探测（真 HTTP 服务）：
-//   apply 启动时会主动 embed('ping')。若此刻 Ollama 还没起来（网络错误/5xx），
+//   apply 启动时会主动 embed('ping')。若此刻 Ollama 还未启动（网络错误/5xx），
 //   旧逻辑 catch 不看错误类型就把结论钉成「旧版 /api/embeddings」且终身不复位
-//   ——「Ollama 晚于 Aalis 起来」正好把它钉死在已弃用端点上。
+//   ——「Ollama 晚于 Aalis 启动」正好把它钉死在已弃用端点上。
 //   现在只有明确的 404/405 才试旧端点，且要等旧端点真答上来才钉结论：模型没 pull
 //   时新旧两个端点都答 404，否则同样会把实例终身钉在已弃用端点上。
 // ════════════════════════════════════════════════════════════
@@ -67,14 +67,14 @@ describe('plugin-embedding-ollama: 新旧 API 探测', () => {
     return svc;
   }
 
-  it('启动探测撞上 5xx（Ollama 还没起来）：不钉死旧端点，恢复后仍走新版 /api/embed', async () => {
+  it('启动探测撞上 5xx（Ollama 还未启动）：不钉死旧端点，恢复后仍走新版 /api/embed', async () => {
     const fake = await startFake('boom5xx');
     servers.push(fake.server);
     const svc = await load(fake.baseUrl); // apply 的 ping 会失败（只是 warn）
 
     expect(fake.paths, '瞬态失败不该回落到已弃用端点').not.toContain('/api/embeddings');
 
-    fake.mode = 'ok'; // Ollama 起来了
+    fake.mode = 'ok'; // Ollama 已启动
     const vec = await svc.embed('你好');
     expect(vec).toEqual([0.1, 0.2]);
     expect(fake.paths.filter(p => p === '/api/embed').length, '应重探新版端点').toBeGreaterThanOrEqual(2);

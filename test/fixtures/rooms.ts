@@ -39,7 +39,7 @@ export async function recordRoom(events: Pick<Events, 'emit'>, sessionId: string
 
 /**
  * 会话表里一条已收录的房间记录，来源字段与 OneBot 的声明相同（private 为一对一，其余类型为多方），供预置会话表：
- * 入站要经网关的用例发原生入站会跑完整条相位链，改用预置
+ * 入站要经网关的用例发原生入站会执行整条相位链，改用预置
  */
 export function storedRoom(sessionId: string, name?: string): Record<string, unknown> {
   const { platform, selfId, sessionType, targetId } = parse(sessionId);
@@ -82,7 +82,7 @@ export function sessionInfoOf(id: string, parentId?: string): SessionInfo {
 
 /**
  * 把已收录的房间（会话 id → 名字）预置进记忆后端：会话表里的房间记录，与它们所在窗口的场所记录（同一窗口一条，显示名取
- * 先列的那个房间的名字，与房间建档时建的一样）。要在会话管理读表之前调用：起了整条入站链的用例发原生入站会跑一轮回合，
+ * 先列的那个房间的名字，与房间建档时建的一样）。要在会话管理读表之前调用：启动了整条入站链的用例发原生入站会跑一轮回合，
  * 改用预置
  */
 export async function seedRooms(memory: Pick<MemoryService, 'commitMetadata'>, rooms: Record<string, string>) {

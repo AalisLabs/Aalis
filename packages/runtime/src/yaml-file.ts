@@ -36,7 +36,7 @@ interface YamlFileOptions<T> {
    */
   mode?: number;
   /**
-   * 运行中改成空文件（或只剩注释）时按 {@link missing} 的值投递。缺省拒收：主配置变空多是写坏了，
+   * 运行中改成空文件（或只剩注释）时按 {@link missing} 的值投递。缺省拒收：主配置变空多是写入出错，
    * 放行会让全部插件按默认值重载；密钥文件清空是合法状态
    */
   emptyAsMissing?: boolean;
@@ -130,7 +130,7 @@ export function openYamlFile<T extends object>(absPath: string, opts: YamlFileOp
 
     save(value) {
       // 写前比对磁盘实况：盘上内容必须仍是本进程最后读入或写出的那份。不是，就有尚未生效的外部修改
-      // （去抖窗口内、监听未武装、解析失败被搁置、另一个进程写过），整份覆写会把它静默吃掉，所以拒写。
+      // （去抖窗口内、监听未武装、解析失败被搁置、另一个进程写过），整份覆写会把它静默丢弃，所以拒写。
       // 文件不存在时没有可保护的内容，照写。
       let onDisk: string | null = null;
       try {

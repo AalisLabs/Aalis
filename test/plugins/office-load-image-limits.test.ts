@@ -13,7 +13,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // doc_add_image / ppt_add_image 的图片：
-//   - 远程下载与 plugin-media、ASR 同口径：带 15 秒超时信号、20 MiB 流式限额（慢速对端不挂住整轮工具调用，超大响应
+//   - 远程下载与 plugin-media、ASR 同口径：带 15 秒超时信号、20 MiB 流式限额（慢速对端不让整轮工具调用一直阻塞，超大响应
 //     不整块读进内存）；另接这次工具调用的中止信号，回合中止时下载随之断开
 //   - 格式按文件头认，不看扩展名与 Content-Type；不是图片的拒绝，Word 与 PPT 嵌不进的格式明确报错，不产出打不开的文档
 //   - 来源按文件工具的同一判定求值：存储地址原样，相对路径落在输出目录下，宿主机绝对路径（含 C:/）拒绝
@@ -88,7 +88,7 @@ const noStorage = {} as never;
 
 describe('office loadImage：远程图片下载', () => {
   it('超过 20 MiB 的响应在读完之前被拒（无 Content-Length 按流式累计，有则按声明值）', async () => {
-    // 只取错误文案断言：若误放行，把 21 MiB 的 Buffer 交给断言库会在格式化失败信息时撑爆内存
+    // 只取错误文案断言：若误放行，把 21 MiB 的 Buffer 交给断言库会在格式化失败信息时耗尽内存
     const failure = (path: string) =>
       loadImage(noStorage, `${base}${path}`, 'data:/docs').then(
         () => '未拒绝',
@@ -112,7 +112,7 @@ describe('office loadImage：远程图片下载', () => {
     const r = await loadImage(noStorage, `${base}/ok.png`, 'data:/docs');
     expect(r.buffer.equals(PNG)).toBe(true);
     expect(r.format.format).toBe('PNG');
-    expect(signal, '下载未带 AbortSignal，慢速对端会挂住整轮工具调用').toBeInstanceOf(AbortSignal);
+    expect(signal, '下载未带 AbortSignal，慢速对端会让整轮工具调用一直阻塞').toBeInstanceOf(AbortSignal);
     const i = timeoutSpy.mock.results.findIndex(res => res.value === signal);
     expect(i, '下载信号不是 AbortSignal.timeout 造的').toBeGreaterThanOrEqual(0);
     expect(timeoutSpy.mock.calls[i]).toEqual([15_000]);
@@ -126,7 +126,7 @@ describe('office loadImage：远程图片下载', () => {
   it('非 2xx 响应先取消响应体再报错，不占着连接', async () => {
     let cancelled = false;
     const body = new ReadableStream<Uint8Array>({
-      pull() {}, // 对端不再发数据：不取消的话流一直挂着
+      pull() {}, // 对端不再发数据：不取消的话流一直不结束
       cancel() {
         cancelled = true;
       },

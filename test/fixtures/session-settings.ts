@@ -115,7 +115,7 @@ export const SCHEMA = defineConfig({
     default: '',
     session: { appliesTo: ['room'], prominence: 'advanced', narrowest: 'place' },
   },
-  /** 严格字段：写坏了原样交出 */
+  /** 严格字段：填错时原样交出 */
   scope: {
     type: 'select',
     label: '范围',
@@ -264,7 +264,7 @@ export function recordingLogger(warns: string[], scope = ''): Logger {
 }
 
 /**
- * 起一个装好会话管理与会话设置的宿主，插件一律按文档登记（配置与禁用标记取自文档）：doc 是宿主配置文档；adapters 各由一个
+ * 启动一个装好会话管理与会话设置的宿主，插件一律按文档登记（配置与禁用标记取自文档）：doc 是宿主配置文档；adapters 各由一个
  * 插件提供，插件名为 zz-adapter-<平台>-<序号>；stored 与 places 预置会话表与场所记录；owners 给出时由一个替身 authority
  * 认定这些身份是 owner；models 是 llm 服务的模型（[provider, model]）；save 接宿主配置的落盘；settings 为 false 时不装会话设置；
  * first 在会话管理之前登记，plugins 在会话设置之后、fields 之前登记。warns 收集告警。调用方负责停掉返回的 app
@@ -319,7 +319,7 @@ export async function startSettings({
   ];
   for (const definition of definitions) await registerFromDoc(app, store, definition);
   await app.plugins.idle();
-  // required 依赖缺席时插件停在 pending 且不报错——核激活状态，别让「压根没跑起来」冒充绿
+  // required 依赖缺席时插件停在 pending 且不报错——核激活状态，别让「根本没有运行」冒充绿
   for (const { name } of definitions) {
     const state = app.plugins.getPlugin(name)?.state;
     if (state !== 'active' && !store.isPluginDisabled(name)) {

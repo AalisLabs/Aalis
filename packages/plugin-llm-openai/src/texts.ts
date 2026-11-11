@@ -25,22 +25,21 @@ const SOURCE = {
   apiKeyDescription: 'OpenAI API 密钥（本地服务可留空）',
   baseUrlLabel: 'API 地址',
   baseUrlDescription:
-    'API 端点完整前缀（含版本段，如 https://api.openai.com/v1）；插件只在其后拼 /chat/completions 与 /models。可替换为任何兼容服务（如 Gemini 的 https://generativelanguage.googleapis.com/v1beta/openai）。',
+    '写到版本段为止，如 https://api.openai.com/v1；插件在后面拼 /chat/completions 与 /models。也可填其他兼容服务的地址。',
   customModelsLabel: '自定义模型',
   customModelsDescription:
     '手动添加的模型名称（每行一个或逗号分隔）。用于补充自动发现列表中未出现的模型。与自动发现重复时会提示去重。',
   discoverModelsLabel: '自动发现模型',
   discoverModelsDescription:
-    '启动时请求 /models 发现可用模型，WebUI 可刷新模型列表。网关不提供 /models 时关闭：不发发现请求，只注册 customModels（此时必填），也不支持刷新。',
+    '启动时向服务查询可用模型，之后可在 WebUI 刷新。服务不提供模型列表时关闭，这时只用自定义模型（必填），也不能刷新。',
   modelCapabilitiesLabel: '单模型能力覆盖',
   modelCapabilitiesDescription:
-    '按行指定某个模型的能力集。有该模型的表项时**覆盖**插件启发式推断，与 adapter 默认能力仍取并集。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：gpt-4o: chat,tool_calling,vision,streaming\n可用能力：chat / tool_calling / vision / streaming / thinking 等。',
-  providerCapabilitiesLabel: '适配器默认能力（逗号分隔）',
-  providerCapabilitiesDescription:
-    '为本适配器下所有模型额外补充的能力。最终某模型的能力 = 此处能力 ∪ 模型级别能力。例：chat,tool_calling,streaming',
+    '逐个模型指定能力。写了的模型不再按名字推断，能力为这里写的加上适配器默认能力。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：gpt-4o: chat,tool_calling,vision,streaming\n可用能力：chat / tool_calling / vision / streaming / thinking 等。',
+  providerCapabilitiesLabel: '适配器默认能力',
+  providerCapabilitiesDescription: '给所有模型额外加上的能力，逗号分隔。例：chat,tool_calling,streaming',
   timeoutLabel: '停顿超时（秒）',
   timeoutDescription:
-    '多久收不到新的生成内容算超时（秒）。一直在输出不算超时；不流式的请求要在这段时间内收到整份回复。模型思考时不发出思考内容（如 OpenAI 官方的推理模型）或输入很长时，建议适当调大。0 = 不限制。',
+    '多久收不到新的生成内容算超时，持续输出不算；不流式的请求要在这段时间内收到完整回复。模型不输出思考内容或输入很长时宜调大。0 为不限。',
   temperatureLabel: '温度',
   temperatureDescription: '0-2，越高越随机',
   maxTokensLabel: '最大 Token',
@@ -51,7 +50,7 @@ const SOURCE = {
   thinkingParamEffort: 'reasoning_effort：档位按模型族（OpenAI 官方与多数兼容端点）',
   thinkingParamThinking: 'thinking.type：关、开（DeepSeek 风格的端点或中转）',
   thinkingParamDescription:
-    '能思考的模型（内置表里的 o 系列与 gpt-5 系列，gpt-5-chat 除外，或单模型能力覆盖里写了 thinking 的）按这种写法提供深度思考的档位。请求指定了档位才发对应字段，没指定时不发、按端点自己的默认。端点不认所选字段时会拒收指定了档位的请求，这时换一种写法，或在单模型能力覆盖里去掉这个模型的 thinking。',
+    '能思考的模型按这种写法发送思考档位，请求没指定档位时不发。端点不认这个字段而拒收请求时，换一种写法，或在单模型能力覆盖里去掉这个模型的 thinking。',
   requestTimeout: 'LLM 请求超时：{seconds} 秒内没有收到新的生成内容，可在配置里调大 timeout',
   pluginClosed: 'LLM 插件已停用或重载，这次请求没有发出',
   pluginStopped: 'LLM 插件已停用或重载，这次请求中途停下',

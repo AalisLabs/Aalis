@@ -5,17 +5,17 @@ import en from './locales/en.js';
 const SOURCE = {
   displayName: '回滚检查点',
   rootDirLabel: '存储目录',
-  rootDirDescription: '存储 URI（默认 data:/checkpoints）。所有 checkpoint blob 和 manifest 写入此位置。',
+  rootDirDescription: '检查点的存放位置，填存储地址（storage URI），默认 data:/checkpoints。',
   maxFileSizeLabel: '单文件大小上限（字节）',
-  maxFileSizeDescription: '超过此大小的文件不做内容快照，只在 manifest 里记录为 skipped。',
+  maxFileSizeDescription: '超过此大小的文件不做内容快照，只记为跳过。',
   keepSessionsLabel: '保留的会话数',
-  keepSessionsDescription: 'GC 阈值。每次提交回合后，若 session 目录数超过此值，删除最早的几个。设为 0 关闭 GC。',
+  keepSessionsDescription: '最多保留多少个会话的检查点，每次提交回合后超出的删去最早的。设为 0 不限。',
   keepTurnsLabel: '每个会话保留的回合数',
   keepTurnsDescription:
-    '每次提交回合后，这个会话的回合数超过此值就删除最早的几轮（连同备份），只能回滚最近这么多轮；没改文件、只有对话的回合也算一轮。设为 0 不限。',
+    '每个会话最多保留这么多轮的检查点，超出时删去最早的几轮（连同备份），只能回滚最近这么多轮；只有对话的回合也算一轮。设为 0 不限。',
   coverageLabel: '记检查点的会话',
   coverageDescription:
-    '哪些会话的回合建检查点（回滚靠它）。「按受众」只在受众只有你的会话里记：WebUI、终端与你自己的 IM 私聊；群与别人的私聊不记，你从 WebUI 发进群的那一轮也不记。',
+    '哪些会话的回合建检查点，回滚靠它。「按受众」只在受众只有你的会话里记（WebUI、终端与你自己的私聊），群与别人的私聊不记。',
   coverageOff: '不记',
   coverageOwnerOnly: '按受众（只有你时记）',
   coverageAll: '记',

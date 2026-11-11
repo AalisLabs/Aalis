@@ -56,7 +56,7 @@ async function readTail(path: string, limit: number, accept: (entry: LogEntry) =
 
 /**
  * host-logs 服务的实现：历史读文件日志（先等它把已记下的写完），实时接中枢。`file` 不给时没有历史。
- * 订阅带历史时先攒着实时的，历史送完再接着送比它新的，之后直通；补发途中 listener 抛错只丢掉那一条，与中枢同一规则
+ * 订阅带历史时先暂存实时的，历史送完再接着送比它新的，之后直通；补发途中 listener 抛错只丢掉那一条，与中枢同一规则
  */
 export function createHostLogs(
   hub: LogHub,

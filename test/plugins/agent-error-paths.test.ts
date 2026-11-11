@@ -274,7 +274,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
     ]);
   });
 
-  it('有调用没报过生成进度：报过的用那时的 callId，没报过的另起，不按位置串到别的调用上', async () => {
+  it('有调用没报过生成进度：报过的用那时的 callId，没报过的另行生成，不按位置串到别的调用上', async () => {
     const app = new App({ name: 'E2E', logLevel: 'error' });
     const calls: ChatResponse = {
       content: null,

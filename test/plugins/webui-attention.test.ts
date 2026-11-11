@@ -25,7 +25,7 @@ import { freePort, waitListening } from '../helpers/net.js';
 // ════════════════════════════════════════════════════════════
 // 「需要处理」：webui-server 把推出未结的审批、插件故障与插件的提示汇总成一个列表，经 GET /api/attention 给出，
 // 变化时经 /admin 推 attention.changed。插件故障是失败与缺服务：缺的服务沿依赖链追到根（api-doctor 的共享判据），
-// 只在等别的插件启动的不算；失败的另列必填却没填的配置项。起真的 webui-server，审批服务与会话管理用契约层面的替身：
+// 只在等别的插件启动的不算；失败的另列必填却没填的配置项。启动真的 webui-server，审批服务与会话管理用契约层面的替身：
 // 审批推出与结算由用例发 approval:created、approval:settled，列表照 list() 给出
 // ════════════════════════════════════════════════════════════
 
@@ -86,7 +86,7 @@ const sessionsDouble = definePlugin({
   },
 });
 
-/** 配置里 ok 不为 true 就起不来 */
+/** 配置里 ok 不为 true 就无法启动 */
 const failing = definePlugin({
   name: 'zz-attention-failing',
   uses: { config },
@@ -121,7 +121,7 @@ const middle = definePlugin({
 });
 const top = definePlugin({ name: 'zz-attention-top', uses: { middle: middleService }, apply() {} });
 
-/** 必填的 apiKey 没填就起不来：待配置 */
+/** 必填的 apiKey 没填就无法启动：待配置 */
 const unconfigured = definePlugin({
   name: 'zz-attention-unconfigured',
   configSchema: { apiKey: { type: 'string', label: 'API Key', required: true } },
@@ -286,7 +286,7 @@ describe('「需要处理」的读口与 attention.changed', () => {
     ]);
   });
 
-  it('链：缺的服务沿依赖链追到根，链上每个没起来的插件各计 1；插件列表给同一份原因', async () => {
+  it('链：缺的服务沿依赖链追到根，链上每个无法启动的插件各计 1；插件列表给同一份原因', async () => {
     const { attention, row } = await start([failingRoot, middle, top]);
     const root = { kind: 'error', instance: failingRoot.name, error: '打不开数据库' };
     const items = await attention();

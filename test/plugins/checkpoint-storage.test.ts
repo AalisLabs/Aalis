@@ -46,7 +46,7 @@ describe('checkpoint × storage (真 fs)', () => {
     await app.plugins.register(storageLocalPlugin, {
       roots: [
         { name: 'ws', path: ws, kind: 'workspace', browsable: true, readable: true, writable: true, deletable: true },
-        // data:/ 与 tmp:/ 是内置根（数据目录的 state/ 与 tmp/），不在用户 roots 里声明
+        // data:/ 与 tmp:/ 是内部根（数据目录的 state/ 与 tmp/），不在用户 roots 里声明
       ],
     });
     await app.plugins.register(checkpointPlugin, {
@@ -235,7 +235,7 @@ describe('checkpoint × storage (真 fs)', () => {
     });
 
     // 故障 storage：move 抛错（强制走「写回源端 + 删目标」回落），删目标抛 EACCES——非 ENOENT，不该被豁免。
-    // 另起一个读同一 checkpoint 目录的服务实例，经构造参数注入它
+    // 另行创建一个读同一 checkpoint 目录的服务实例，经构造参数注入它
     // 业务句柄是转发句柄，展开得不到成员：在它之上覆盖两个方法，其余沿原型链转发
     const faulty: StorageService = Object.assign(Object.create(storage) as StorageService, {
       move: async () => {

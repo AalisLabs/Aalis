@@ -10,33 +10,32 @@ export default defineLocale<Source>()({
   timeWeightDescription: '0 = purely semantic, 1 = purely by recency',
   userPriorityBoostLabel: 'Same-user boost',
   userPriorityBoostDescription:
-    'In user mode, the hit score of messages from the same user is multiplied by this factor (>1 means they come first)',
+    'When “Cross-session search mode” is “Same-user boost”, the hit score of messages from the same user is multiplied by this factor (>1 means they come first)',
   perItemMaxCharsLabel: 'Per-message truncation length',
   perItemMaxCharsDescription:
-    'Character limit for each message shown to the LLM; 0 = no truncation (recommended). Anything beyond is marked with “…[已截断，还剩 N 个字符未展示]”.',
+    'Character limit for each message shown to the model; 0 = no truncation (recommended). Anything beyond is marked with “…[已截断，还剩 N 个字符未展示]”.',
   minScoreLabel: 'Minimum similarity',
   minScoreDescription:
     '0~1; hits whose score (the semantic score before time weighting) is below this are dropped. 0 means no filtering',
   contextExpandLabel: 'Context expansion',
   contextExpandDescription:
-    'After a hit, automatically fetch the N neighboring messages before and after it in its original session (including user/assistant/notice/tool) to restore the context. 0 = off.',
-  windowLabel: 'Expansion window (N messages each side)',
-  windowDescription: '0 = the hit only. 2~5 recommended',
+    'After a hit, fetch the neighboring messages before and after it in its original session to restore the context.',
+  windowLabel: 'Expansion window',
+  windowDescription: 'N messages are fetched on each side of a hit. 0 = the hit only; 2~5 recommended',
   crossSessionLabel: 'Expand across sessions too',
-  crossSessionDescription:
-    'When a hit comes from another session (possible in user/all mode), whether to fetch context from that session as well',
+  crossSessionDescription: 'When a hit comes from another session, whether to fetch context from that session as well',
   indexingLabel: 'Indexing settings',
   indexingDescription:
     'Controls peak shaving and concurrency of background vector indexing. The search path is not affected by this queue.',
   concurrencyLabel: 'Max concurrent indexing tasks',
   concurrencyDescription:
-    'Number of background embedding + vector write tasks running at once. 0 or negative means no limit; 2~10 recommended, as too many may overwhelm a local embedding service.',
+    'Number of background embedding and write tasks running at once. 0 or negative means no limit; 2~10 recommended, as too many may overwhelm a local embedding service.',
   maxQueueSizeLabel: 'Max indexing queue length',
   maxQueueSizeDescription:
     'Limit of the queue of messages waiting to be indexed. 0 or negative means no limit; beyond it the oldest waiting messages are dropped so memory does not grow without bound.',
   recallRolesLabel: 'Recall roles',
   recallRolesDescription:
-    "Whether the AI's own past replies (role=assistant) take part in recall as semantic hits. The others-only option filters the **hits** (the candidate pool is doubled to compensate); neighbors pulled in by context expansion are not filtered and may still appear labeled “Assistant·你自己” (keeping the context intact). Whatever the option, assistant entries are always rendered with the role label (a guard against self-reinforcement that the switch does not turn off). Old vectors stored without a role are treated as user (the other party)",
+    "Whether the AI's own past replies take part in recall as hits. “Recall only the other party” lets only the other party's messages be hits, while messages expanded around a hit are not filtered; whatever the option, recalled AI replies are marked as the AI's own.",
   recallRolesAll: 'Recall both the other party and the AI itself',
   recallRolesOthers: "Recall only the other party (filter out the AI's own replies)",
   crossSessionModeLabel: 'Cross-session search mode',

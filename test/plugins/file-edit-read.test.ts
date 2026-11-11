@@ -94,7 +94,7 @@ describe('file_edit：行尾与行号', () => {
     expect(files['workspace:/crlf.txt']).toBe('a\r\nNEW\r\nc\r\nd\r\n');
   });
 
-  it('LF 文件不会被塞进 CR', async () => {
+  it('LF 文件不会被插入 CR', async () => {
     const files = { 'workspace:/lf.txt': 'a\nOLD\nc\n' };
     const { call } = setup(files);
     await call('file_edit', { path: 'workspace:/lf.txt', oldText: 'OLD', newText: 'NEW' });

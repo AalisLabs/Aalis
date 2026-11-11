@@ -35,10 +35,10 @@ import { waitListening } from '../helpers/net.js';
 // ════════════════════════════════════════════════════════════
 // standard 档的端到端：照脚手架 standard 档的默认集组装——它算出的插件集（选了语义记忆，没有 Ollama 时 embedding 用
 // OpenAI）与它写的配置文档（不写平台档，工具分组没设时按会话从哪里建的给）。外部服务换成替身：对话模型是假模型，记忆后端用内存实现（不依赖
-// 原生模块），OpenAI Embedding 不填 apiKey（照常起不来，向量记忆因此缺服务，两个都进「需要处理」），MCP 不配服务器。
+// 原生模块），OpenAI Embedding 不填 apiKey（照常启动失败，向量记忆因此缺服务，两个都进「需要处理」），MCP 不配服务器。
 // 桌面与手机两种宽度走主流程：发消息与流式回复，模型经工具搜索找到工具再调用（工具卡与审批），回滚撤回写的文件，计划，
 // 压缩线，转后台的命令在「后台」里停掉，会话设置与会话默认，插件区与详情，运行状况与「需要处理」，各页面打开不空；
-// 页面里没有没处理的报错，服务端除了 OpenAI Embedding 起不来的那一行没有告警与错误
+// 页面里没有没处理的报错，服务端除了 OpenAI Embedding 启动失败的那一行没有告警与错误
 // ════════════════════════════════════════════════════════════
 
 const EMBEDDING = '@aalis/plugin-embedding-openai';
@@ -79,8 +79,8 @@ const e2e = useWebuiE2E();
 const { cleanups } = e2e;
 
 /**
- * 起运行时：脚手架 standard 档的插件集与配置文档；对话模型、记忆后端与前端包由共用组合换成替身（假模型的上下文与对话模型
- * 相当，回 GREETING 的那次流出第一块后停住，等 resume 放行），两个起不来的插件在 start 之前另登记。logged 是从登记起
+ * 启动运行时：脚手架 standard 档的插件集与配置文档；对话模型、记忆后端与前端包由共用组合换成替身（假模型的上下文与对话模型
+ * 相当，回 GREETING 的那次流出第一块后停住，等 resume 放行），两个无法启动的插件在 start 之前另登记。logged 是从登记起
  * 服务端记下的告警与错误
  */
 async function start() {
@@ -125,7 +125,7 @@ async function start() {
   return { app, origin: `http://127.0.0.1:${port}`, logged, resume: greeting.resolve };
 }
 
-/** 服务端只记了 OpenAI Embedding 缺 apiKey 起不来的那一行 */
+/** 服务端只记了 OpenAI Embedding 缺 apiKey 启动失败的那一行 */
 const ONLY_UNCONFIGURED = [expect.stringContaining(`"${EMBEDDING}" 激活失败`)];
 
 /** 页面停 ms 毫秒期间发出的 HTTP 请求与 WebSocket 帧：推送替代轮询，空闲时应为空 */

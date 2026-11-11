@@ -74,7 +74,7 @@ type Streamed = Item<'agent-message'> | Item<'reasoning'>;
 /**
  * 历史与还没收尾的回合的条目按时间并成一段，两边各自的先后不变，同一时刻历史在前：这一轮的输入由在途条目给出，这一轮进行期间
  * 别人说的话在历史里，并起来与实时看到的同序。收尾之后的历史按落库的时刻排，与这里不全同序：她某一步的输出（思考、正文、
- * 工具卡，最后的回复也算）出现之后、这一步落库之前别人说的话，这里排在这一步之后，收尾之后排在它之前（工具调用组等工具跑完、
+ * 工具卡，最后的回复也算）出现之后、这一步落库之前别人说的话，这里排在这一步之后，收尾之后排在它之前（工具调用组等工具执行完毕、
  * 回复等写完才落库）
  */
 function byTime(history: readonly SessionItem[], ongoing: readonly SessionItem[]): SessionItem[] {
@@ -244,7 +244,7 @@ export function createTimeline(deps: TimelineDeps) {
     });
   }
 
-  /** 她这一轮的回复：最后一版流式正文就是它（没有流式输出时新起一条），之前的几版在房间里是重试丢掉的 */
+  /** 她这一轮的回复：最后一版流式正文就是它（没有流式输出时新增一条），之前的几版在房间里是重试丢掉的 */
   function reply(turn: Turn, out: OutgoingMessage): void {
     const open = turn.streaming;
     turn.streaming = undefined;
@@ -498,7 +498,7 @@ export function createTimeline(deps: TimelineDeps) {
    * agent:tool:after：这次工具结果落库时要带的元数据，历史据此还原工具卡：审批的结算（approval），房间里经它发出、
    * 平台已收下的消息（sentToRoom），回合停止时这次调用还没结束（aborted，stopped 为工具返回时回合的中止信号已触发，
    * 工具卡同时落成 aborted），命令的退出码（exitCode，工具卡的展示同时带上），这次调用转到了后台时的任务 id
-   * （backgroundTask，工具卡同时带上 taskId）。退出码在这里取：agent 跑完这个钩子才把过长的结果截断，截断后的结果
+   * （backgroundTask，工具卡同时带上 taskId）。退出码在这里取：agent 等这个钩子执行完毕才把过长的结果截断，截断后的结果
    * 不再是 JSON。送达结果只取已经到了的：发消息的工具都等过确认，没等到的不再等
    */
   async function toolMetadata(

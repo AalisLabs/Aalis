@@ -14,8 +14,7 @@ const SOURCE = {
   defaultNumResultsLabel: '默认结果数',
   defaultNumResultsDescription: '每次搜索返回的结果条数',
   enableCompressionLabel: '启用搜索结果压缩',
-  enableCompressionDescription:
-    '启用后，搜索结果将先经过 LLM 压缩整合后再返回给 Agent，减少 Token 消耗并提升信息质量。',
+  enableCompressionDescription: '启用后，搜索结果将先经过模型压缩整合后再返回给 Agent，减少 Token 消耗并提升信息质量。',
   compressionPromptLabel: '压缩提示词',
   compressionPromptDescription:
     "自定义压缩搜索结果的提示词。留空使用默认提示。提示词中用 '{query}' 代表搜索关键词、'{results}' 代表搜索结果（不写 '{results}' 模型就收不到结果）。",

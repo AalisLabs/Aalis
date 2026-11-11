@@ -181,7 +181,7 @@ function backgroundDouble() {
 const e2e = useWebuiE2E();
 const { cleanups } = e2e;
 
-/** 起运行时：共用的 minimal 档组合加三个测试插件，后台任务登记偏好替身那一份 */
+/** 启动运行时：共用的 minimal 档组合加三个测试插件，后台任务登记偏好替身那一份 */
 async function startDoubles() {
   const contract = doubles();
   const background = backgroundDouble();

@@ -159,7 +159,7 @@ async function setup({ withoutApprovals = false, appConfig = {}, confirm = 'sess
 
 type Ctx = Omit<ToolCallRequest, 'turnId' | 'callId'>;
 
-/** 起它的那一轮：人亲手发来的 */
+/** 发起它的那一轮：人亲手发来的 */
 const handTurn = (who: { platform: string; userId: string }): FromTurn => ({
   platform: who.platform,
   userId: who.userId,
@@ -178,7 +178,7 @@ const subtask = (sessionId: string, parent: string, from: FromTurn): Ctx => ({
 /** 定时任务那一轮：授权身份是创建者 owner */
 const SCHEDULED: FromTurn = { platform: 'webui', participants: [OWNER], source: 'scheduler' };
 
-/** 续做那一轮：按 agent 的填法，工具眼里是起它的人在调，授权身份取起它的那一轮的参与者 */
+/** 续做那一轮：按 agent 的填法，工具眼里是发起它的人在调，授权身份取发起它的那一轮的参与者 */
 const resumed = (sessionId: string, from: FromTurn): Ctx => ({
   sessionId,
   platform: from.platform,
@@ -280,7 +280,7 @@ describe('不能产生审批的回合：不推给任何面，模型收到对应�
     ['群成员那一轮派的子任务', subtask(`${ROOM}::abcd1234`, ROOM, handTurn(MEMBER_QQ)), INELIGIBLE],
     ['owner 建的定时任务那一轮派的子任务', subtask(`${MINE}::abcd1234`, MINE, SCHEDULED), INELIGIBLE],
     [
-      '没带起它的那一轮的子任务（编排的工具节点、mcp-server 派的）',
+      '没带发起它的那一轮的子任务（编排的工具节点、mcp-server 派的）',
       {
         sessionId: `${MINE}::abcd1234`,
         platform: 'webui',

@@ -67,7 +67,7 @@ export interface PersonNode {
   lastPageRankAt?: number;
   /**
    * 最近一次社群发现得到的**主社群**标签（字符串 id，跨重算不稳定，只在同一批节点间可比）。
-   * 由 `evictByQuota` 跑完 PageRank 后顺手计算并写入；等同于 `communityMemberships[0].id`。
+   * 由 `evictByQuota` 运行完 PageRank 后随即计算并写入；等同于 `communityMemberships[0].id`。
    * 保留此字段是为了向下兼容旧消费方；新代码请优先读 `communityMemberships`。
    * 未跑过的实例为 undefined。
    */
@@ -154,7 +154,7 @@ export interface EventNode {
  * - EntityNode 表示"持续存在的对象"，多个人可以分别与同一个 entity 建立关系（如"喜欢/玩/拥有/创作/讨厌"）。
  *
  * 经典场景：群里有两人都喜欢游戏《三角洲》 → 应建模为一个 EntityNode (entityKind='work', name='三角洲')
- * 两人通过 person-entity 边（role='enthusiast'）共同指向它；而不是塞进一个事件标题。
+ * 两人通过 person-entity 边（role='enthusiast'）共同指向它；而不是放入一个事件标题。
  */
 export type EntityKind =
   | 'topic' // 话题 / 兴趣 / 概念
@@ -289,7 +289,7 @@ export type RecommendedPersonRelationType = (typeof RecommendedPersonRelationTyp
  * 人际层级维度 —— 与 `directed` 正交。
  *
  * `directed` 描述"A 声明与 B 的关系"（reporter 语义）；`hierarchy` 单独描述
- * 角色高低，避免把"上下/平级"塞进 relationType 文本里污染语义。
+ * 角色高低，避免把"上下/平级"放入 relationType 文本里污染语义。
  *
  * - `superior`：from 视角下 from > to（如 from 是老板、师父、长辈）
  * - `subordinate`：from < to

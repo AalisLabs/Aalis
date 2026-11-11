@@ -44,7 +44,7 @@ const OWNER_CALL = toolContext({ sessionId: OWNER_SESSION, platform: 'webui', us
 const ROOM_CALL = toolContext({ sessionId: ROOM, platform: 'onebot', userId: '90002' });
 
 /**
- * 起一个 App：宿主侧 tools 替身收集 handler，memory 替身按会话交出给定历史，会话表里有 OWNER_SESSION 与 ROOM，
+ * 启动一个 App：宿主侧 tools 替身收集 handler，memory 替身按会话交出给定历史，会话表里有 OWNER_SESSION 与 ROOM，
  * owner 是 webui:console
  */
 function startApp(histories: Record<string, Message[]>) {
@@ -95,7 +95,7 @@ describe('send_attachment 发送存储库内的文件前核对文件头', () => 
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-imgsend-sig-'));
-    // data 是 storage-local 的内置根，映射到数据目录的 state/
+    // data 是 storage-local 的内部根，映射到数据目录的 state/
     const dataDir = join(base, 'state');
     mkdirSync(join(dataDir, 'images', 's'), { recursive: true });
     mkdirSync(join(dataDir, 'secret'), { recursive: true });

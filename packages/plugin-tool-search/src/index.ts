@@ -212,7 +212,7 @@ function capabilityCatalog(
  * 根修:发现证据原本只从消息历史反推,而上下文裁剪会把旧 assistant+tool 组
  * 压成纯文本(toolCalls/toolCallId 结构消失)——长任务中途,已激活的工具会从
  * 可见列表悄然蒸发,模型突然调不了刚用过的工具。注册表把每轮提取结果做并集
- * 持久(进程内存级),对消息考古的完整性不再敏感;memory:clear 时同步重置。
+ * 持久(进程内存级),对查阅久远消息的完整性不再敏感;memory:clear 时同步重置。
  */
 export class DiscoveredToolsRegistry {
   private sessions = new Map<string, Map<string, true>>();
@@ -376,7 +376,7 @@ function registerToolSearch({ tools, hooks, logger, config }: Caps): void {
           : defaultLimit;
       const effectiveLimit = Math.min(defaultLimit, requestedLimit);
 
-      // handler 由 tools 提供者自己调起，正常情况下它必然在场；缺席只可能是拆卸竞态
+      // handler 由 tools 提供者自己调用，正常情况下它必然在场；缺席只可能是拆卸竞态
       if (!tools.present) return JSON.stringify({ error: '工具服务当前不可用，请稍后重试' });
       const service = tools.use;
 

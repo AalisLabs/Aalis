@@ -791,7 +791,7 @@ class SessionManager implements SessionManagerService {
     // 整个删除交给 agent 的 clearing：它先按住这个会话、停下在跑的一轮并等它收尾，按住到清完，删子会话期间这个会话也不开轮。先删
     // 各级子会话（含活跃子会话），再发事件、清数据：监听方在事件里停掉这个会话在跑的东西，清数据时就不会有中途写回来的。子会话的
     // 抛错收进 failures，不拦住余下的子会话与这个会话自己的发事件、清数据、给上一级发 session:updated：这个会话已摘掉，停在半路
-    // 的话它的数据不清，余下子会话的 parentId 悬空，也没法再删一次
+    // 的话它的数据不清，余下子会话的 parentId 悬空，也无法再删一次
     let removed = 1;
     const finish = async () => {
       for (const childId of [...session.children]) removed += await this.remove(childId, failures);
@@ -1068,7 +1068,7 @@ class SessionManager implements SessionManagerService {
     // 兜底：LLM 失败或返回空时，用用户消息首段作为临时标题，避免会话永远没有标题
     if (!title && userMessage?.trim()) {
       title = truncateChars(userMessage.trim().replace(/\s+/g, ' '), 20);
-      this.caps.logger.use.info(`使用用户消息兜底生成标题: ${sessionId} -> ${title}`);
+      this.caps.logger.use.info(`改用用户消息生成标题: ${sessionId} -> ${title}`);
     }
 
     if (title) {
@@ -1421,7 +1421,7 @@ async function run(caps: Caps): Promise<void> {
   // ===== 会话状态 =====
   // 回合真正开始时（agent:turn:before）才翻 active，归档的不翻：群里只有消息、她没开口的房间不显示「进行中」
   //（触发判定在入站相位，挡下的消息到不了这里）。同一个中间件在 finally 里记下这一轮并收口，根会话与子会话一样，这是
-  // 唯一的收口：next() 返回时整轮已跑完、agent:turn:after 也已执行（agent 只在这个钩子的默认动作里发它），结局已经记下；
+  // 唯一的收口：next() 返回时整轮已执行完毕、agent:turn:after 也已执行（agent 只在这个钩子的默认动作里发它），结局已经记下；
   // 后面的中间件不调 next() 或抛错时 agent 不发回合收尾，同样由这里兜住。按回合 id 登记在飞的回合，会话里没有别的在飞回合
   // 时才收口；回合中途的出站（send_attachment 在工具执行中直接发）不收口。
   hooks.use.middleware('agent:turn:before', async (data, next) => {

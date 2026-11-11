@@ -160,7 +160,7 @@ describe('结尾的「下一步」', () => {
     expect(next('standard')).not.toContain('其余要填');
   });
 
-  it('Ollama：没有对话模型时先 ollama pull 一个；语义记忆用它时先拉 embedding 模型（与插件的默认模型一致）', () => {
+  it('Ollama：没有对话模型时先 ollama pull 一个；语义记忆用它时先下载 embedding 模型（与插件的默认模型一致）', () => {
     const { model } = defaultsFrom(embeddingOllama.configSchema);
     const picks = defaultPicks('standard', true);
     expect(picks.chat).toBe(OLLAMA);
@@ -168,10 +168,10 @@ describe('结尾的「下一步」', () => {
     const empty = toSource(ollamaSteps(picks, { base: 'http://127.0.0.1:11434', models: [], chat: false }));
     expect(empty.join('\n')).toContain('ollama pull <对话模型名>');
     expect(empty.join('\n')).toContain(`ollama pull ${model}`);
-    // 只拉了 embedding 模型：语义记忆的有了，对话模型照样要拉
+    // 只下载了 embedding 模型：语义记忆的有了，对话模型照样要下载
     const chatOnly = ollamaSteps(picks, { base: 'http://127.0.0.1:11434', models: [`${model}:latest`], chat: false });
     expect([toSource(chatOnly), chatOnly.map(step => resolveText(step, ['en']))]).toEqual([
-      ['ollama pull <对话模型名>    # 先拉一个对话模型'],
+      ['ollama pull <对话模型名>    # 先下载一个对话模型'],
       ['ollama pull <chat model name>    # pull a chat model first'],
     ]);
     expect(

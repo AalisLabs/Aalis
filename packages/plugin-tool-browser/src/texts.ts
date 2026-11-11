@@ -14,19 +14,18 @@ const SOURCE = {
   maxPagesDescription: '同时打开的最大页面数量。超出后关闭最早打开的页面。',
   executablePathLabel: 'Chrome 路径',
   executablePathDescription:
-    '自定义 Chrome/Chromium 可执行文件的绝对路径。留空时用 puppeteer 配置里的可执行文件（PUPPETEER_EXECUTABLE_PATH、.puppeteerrc），没配时用 puppeteer 自带的 Chrome。',
+    'Chrome 的绝对路径。留空时用 puppeteer 配置里的可执行文件，没配置时用 puppeteer 自带的 Chrome。',
   sandboxLabel: 'Chromium 沙箱',
   sandboxDescription:
     '打开后 Chromium 带沙箱启动，网页即使攻破渲染进程也出不了沙箱。Linux 上以 root 运行或容器里没有可用的沙箱时，打开后浏览器无法启动。',
   maxContentLengthLabel: '最大内容长度',
   maxContentLengthDescription: '返回给 Agent 的页面文本最大字符数。',
   blockPrivateLabel: '封锁内网与本地',
-  blockPrivateDescription:
-    '拒绝 localhost / 127.x / ::1 / 10.x / 172.16-31.x / 192.168.x / 169.254.x / 0.0.0.0，防止 SSRF。',
+  blockPrivateDescription: '拒绝访问本机与内网地址（如 localhost、10.x、192.168.x），防止 SSRF。',
   allowedProtocolsLabel: '允许的协议',
   allowedProtocolsDescription: '浏览器只允许访问这些协议的 URL。',
   allowedHostsLabel: '主机白名单',
-  allowedHostsDescription: '允许访问的主机（含内网时需在此显式列出）。留空 = 仅按 blockPrivate 判定。',
+  allowedHostsDescription: '允许访问的主机（含内网时需在此显式列出）。留空 = 仅按「封锁内网与本地」判定。',
   browser: '浏览器',
   groupSummary: '使用 Puppeteer 无头浏览器进行网页导航、内容提取、截图等操作',
   close: '关闭',

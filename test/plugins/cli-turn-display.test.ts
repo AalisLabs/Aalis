@@ -29,7 +29,7 @@ import { fakeTty } from '../helpers/tty.js';
 // 收成一行，与 WebUI 同一句；有失败、等审批、还在跑的不收，还在跑的这一轮最后一段末尾那一组也不收；夹着的思考随这一组收起，
 // 思考不画。Ctrl+O 全部展开或收起（审批卡在时也能按），帮助页列出。本地行（输入回显等）按到达先后插在行与行之间，落在收起的一组
 // 内部时排到这一组之后。等你批准的写成黄色，失败的写成红色。
-// 起真的会话服务、会话管理、存档、网关、agent 与终端界面（假 TTY，收集 stdout 帧），模型是能挂住某一次调用的替身，在终端里打字发出
+// 启动真的会话服务、会话管理、存档、网关、agent 与终端界面（假 TTY，收集 stdout 帧），模型是能阻塞某一次调用的替身，在终端里打字发出
 // ════════════════════════════════════════════════════════════
 
 // 颜色由终端能力定、在载入时取定，测试进程不是终端：载入之前钉成基本 16 色，帧里留着颜色码（只影响这个文件的进程）
@@ -69,7 +69,7 @@ afterEach(async () => {
 
 /**
  * decide 按这是 agent 第几次调用模型作答（带工具表的请求；不带的是会话管理给新会话起标题，回一个标题）；探针带 fail 时结果
- * 带 error，带 wait 时挂到放行。fresh 为假时终端的会话事先建好、起好标题：终端起来时就订上它，模型只收到 agent 的调用，
+ * 带 error，带 wait 时阻塞到放行。fresh 为假时终端的会话事先建好、起好标题：终端启动时就订上它，模型只收到 agent 的调用，
  * hold(n) 的 n 就是 agent 的第几次调用；为真时第一条消息发出之前才建档，终端在发出之前订上。待办服务是替身：holdSnapshot
  * 之后会话服务取订阅快照时挂在取待办上，直到放行
  */
@@ -197,7 +197,7 @@ async function setup(decide: (n: number) => ChatResponse, { rows = 40, columns =
   /** 发一条不是她回复的出站（如宿主提示），写成一段本地行 */
   const notify = (content: string) =>
     host.events.use.emit('outbound:message', { sessionId: 'cli-default', platform: 'cli', content, source: 'system' });
-  /** 之后的订阅快照挂在取待办上：entered 在挂住时落定，release 之后才回 */
+  /** 之后的订阅快照阻塞在取待办上：entered 在阻塞时落定，release 之后才回 */
   const holdSnapshot = () => {
     const gate = { entered: deferred<void>(), release: deferred<void>() };
     snapshotGate = gate;

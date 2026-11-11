@@ -16,7 +16,7 @@ import { provideHostPaths } from './host-paths.js';
 import { registerHubs } from './hubs.js';
 import { fakeMemory } from './session-memory.js';
 
-// 触及插件的测试件：一个 zz-slice2- 前缀的临时目录里放实例数据目录、安装集与操作系统用户的主目录，起会话管理（内存替身的
+// 触及插件的测试件：一个 zz-slice2- 前缀的临时目录里放实例数据目录、安装集与操作系统用户的主目录，启动会话管理（内存替身的
 // 会话表）、本地存储、本地进程、权限与触及插件。owner 是本机控制台与 onebot 的 <owner>。
 
 export const OWNER_QQ = '99999';
@@ -64,7 +64,7 @@ export function removeDirs(dirs: ReachDirs): void {
 }
 
 /**
- * 起一个实例。`appPath` 是交给 host-paths 的安装集路径（缺省为 dirs.app）；`stored` 预置会话表；`logger` 接住各插件的日志。
+ * 启动一个实例。`appPath` 是交给 host-paths 的安装集路径（缺省为 dirs.app）；`stored` 预置会话表；`logger` 接住各插件的日志。
  * 操作系统用户的主目录取 HOME：调用方先把 HOME 指到 dirs.user。交回的 paths 是交给插件的数据目录布局
  */
 export async function startReach(

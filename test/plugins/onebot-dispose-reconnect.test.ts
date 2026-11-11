@@ -12,7 +12,7 @@ import contributionsPlugin from '../../packages/plugin-contributions/src/index.j
 // onebot 关闭一开始（lifecycle.signal 已断）就不再重连：scheduleReconnect 不排新定时器，已排的定时器
 // 到点时 doConnect 不再建连接。signal 在本激活收尾段入口断开；这里让宿主根绑定 platform（required），
 // 根的收尾因此排在 onebot 收尾之后、撤回之前——两者之间 onebot 已断、清理段还没跑，正是这两处检查守的窗口。
-// 连的是进程内起在 127.0.0.1 的 ws 服务端，不连任何外部服务。
+// 连的是进程内在 127.0.0.1 启动的 ws 服务端，不连任何外部服务。
 // ════════════════════════════════════════════════════════════
 
 /** 用到的 ws 服务端面（ws 是 onebot 包的依赖，test/ 解析不到它的类型） */

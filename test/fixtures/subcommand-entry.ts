@@ -144,8 +144,8 @@ const opts = {
 } as StartAalisOptions;
 const app = await startAalis(opts);
 if (mode === 'tty') writeFileSync(resolve(process.cwd(), 'ready'), String(process.pid));
-// 'restart' 模式的第一代：守护进程起来后调 app.restart()。前台由重启策略拉起第二代并交出实例锁，第二代就绪后
-// 第一代退出；以 --service 启动时第一代停掉后以服务重启的退出码结束，由服务管理器拉起（这里没有服务管理器）。
+// 'restart' 模式的第一代：守护进程启动后调 app.restart()。前台由重启策略启动第二代进程并交出实例锁，第二代就绪后
+// 第一代退出；以 --service 启动时第一代停掉后以服务重启的退出码结束，由服务管理器重新启动进程（这里没有服务管理器）。
 if (respawns && gen === 1) {
   writeFileSync(resolve(process.cwd(), 'gen1-pid.txt'), String(process.pid));
   (app.bind({ services }).services.use.get('app') as { restart(): void }).restart();

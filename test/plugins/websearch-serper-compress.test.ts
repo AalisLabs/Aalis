@@ -29,7 +29,7 @@ interface Setup {
   broken?: 'throws' | 'no-model';
 }
 
-/** 起搜索插件（开压缩），压缩模型按 finishReason 回给定的正文；返回调一次 web_search 的函数与模型收到的请求 */
+/** 启动搜索插件（开压缩），压缩模型按 finishReason 回给定的正文；返回调一次 web_search 的函数与模型收到的请求 */
 async function setup({
   content = '<压缩后的结果>',
   finishReason = 'stop',

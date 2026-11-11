@@ -7,7 +7,7 @@ import whisper from '../../packages/plugin-asr-whisper-cpp/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 两处 execFile 必须带 timeout：LocalProcessService.spawn 只在 opts.timeout>0 时才武装
-// killTree，否则子进程不退就永不 settle——一条构造的音频挂住整轮 agent（abort 也停不掉
+// killTree，否则子进程不退就永不 settle——一条构造的音频让整轮 agent 一直阻塞（abort 也无法停止
 // 子进程），whisper/ffmpeg 还会逐条堆积。
 // ════════════════════════════════════════════════════════════
 
@@ -48,7 +48,7 @@ describe('plugin-asr-whisper-cpp: 子进程必须带超时', () => {
       try {
         await a.stop();
       } catch {
-        /* 停不掉也继续 */
+        /* 无法停止也继续 */
       }
     }
   });

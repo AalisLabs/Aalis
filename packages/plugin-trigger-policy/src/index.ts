@@ -186,7 +186,7 @@ function run(caps: Caps): void {
       states.set(sessionId, s);
     }
 
-    // 禁言期：不累计计数，已攒的计数与评分清零（平台禁言只能在这里清：禁言期来消息时）；
+    // 禁言期：不累计计数，已累计的计数与评分清零（平台禁言只能在这里清：禁言期来消息时）；
     // 也不再识别禁言关键词，避免缩短平台禁言。仍记为真人活动，放行给 flow 相位吞掉并归档。
     if (flow?.isMuted(sessionId)) {
       resetCounters(s);

@@ -772,7 +772,7 @@ class DefaultAgent implements AgentService {
       /**
        * 一批工具调用的上下文，按这批开始那一刻已送进模型的输入构造：会话、发言者、参与者与入站回合由 originTurnOf 拼（字段语义
        * 见它与 ToolCallContext，owner 的各个身份按权限服务合成一个参与者）；入站回合只有这里填，工具据此正向区分真人消息与
-       * 内部注入。叠进来的人从下一批起算，已执行的不追溯。续做取起它的那一轮的发言者只用在这里，归档与提示词贡献仍按输入本身的
+       * 内部注入。叠进来的人从下一批起算，已执行的不追溯。续做取发起它的那一轮的发言者只用在这里，归档与提示词贡献仍按输入本身的
        * userId
        */
       const toolContext = (): ToolCallRequest => ({
@@ -1693,7 +1693,7 @@ class DefaultAgent implements AgentService {
           }
         } else if (rawSource) {
           // 其余注入者(memory-history/user-profile/user-relation/自定义插件等):
-          // 计入 systemOther 汇总之余按全局键点名,预算争抢时能看出是谁在吃;界面按键里的实例前缀合并到插件
+          // 计入 systemOther 汇总之余按全局键点名,预算争抢时能看出是谁在占用;界面按键里的实例前缀合并到插件
           systemOtherTokens += t;
           injectorTokens[rawSource] = (injectorTokens[rawSource] ?? 0) + t;
         }
@@ -2218,7 +2218,7 @@ function run(caps: Caps): void {
   // 超时沿用 core 对 onDrain 的 disposeTimeoutMs，不另加配置键。
   caps.lifecycle.use.onDrain(() => agentImpl.queues.shutdown(), '停下在跑的回合');
   // 清理段再停一次：drain 超时或未走到收尾时的兜底，不再等落定；已停下的是空操作。
-  caps.lifecycle.use.onDispose(() => void agentImpl.queues.shutdown(), '停下在跑的回合（兜底）');
+  caps.lifecycle.use.onDispose(() => void agentImpl.queues.shutdown(), '停下在跑的回合（清理段再停一次）');
   // 会话删除：停下这个会话（见 sessionDeleted）
   caps.events.use.on('session:deleted', sessionId => agentImpl.sessionDeleted(sessionId));
   const agent = agentImpl as unknown as InternalAgent;
@@ -2269,7 +2269,7 @@ function run(caps: Caps): void {
     });
 
   // /stop 同停止键：只停本会话在跑的一轮，排着的照常开下一轮。不看等级：发出者是这一轮的参与者（进了这一轮的各条输入按
-  // originTurnOf 算：真人的话是发言者，续做与子任务是起它的那一轮的参与者，定时任务与编排是它的授权身份），或是 owner；排队与
+  // originTurnOf 算：真人的话是发言者，续做与子任务是发起它的那一轮的参与者，定时任务与编排是它的授权身份），或是 owner；排队与
   // 待插入的不算，没有账号的不算任何人
   caps.commands.use.command('stop', t('stopDescription'), { risk: 'safe' }).action(({ session }) => {
     const { sessionId, platform, userId } = session;

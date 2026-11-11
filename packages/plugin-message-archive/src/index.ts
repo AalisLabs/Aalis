@@ -164,7 +164,7 @@ export default definePlugin({
     }, '等在途的出站记录与补描述');
     const archive = createArchiveService(caps, cfg.debugLogs, track);
     caps.provide.use(messageArchive, archive);
-    // 适配器送达之后发的快照记进会话历史；不等它写完，免得拖住同一事件的其它监听
+    // 适配器送达之后发的快照记进会话历史；不等它写完，免得阻塞同一事件的其它监听
     caps.events.use.on('outbound:delivered', msg => {
       track(
         archive

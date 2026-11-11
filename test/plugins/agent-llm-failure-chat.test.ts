@@ -9,7 +9,7 @@ import type { OutgoingMessage } from '../../packages/schema-message/src/index.js
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
-// 一个 LLM 都解析不到时，agent 把「以下 LLM 插件激活失败：…」发回会话（群聊也在内）。
+// 一个 LLM 都解析不到时，agent 把「以下模型插件激活失败：…」发回会话（群聊也在内）。
 // 这条只点名出错的实例、指向 /doctor，不带插件的 error 原文：模型发现失败的原因里有发现地址与
 // connect ECONNREFUSED <地址>:<端口> 这类网络层原因，发进会话就把内网部署细节交给了群里所有人。
 // ════════════════════════════════════════════════════════════
@@ -76,7 +76,7 @@ describe('LLM 全部激活失败：发回会话的提示只点名实例', () => 
     expect(text, '聊天提示带出了内网地址').not.toContain('192.0.2.10');
     expect(text, '聊天提示带出了网络层原因').not.toContain('ECONNREFUSED');
     expect(text, '出错的实例要全部点名').toContain(
-      '以下 LLM 插件激活失败：zz-broken-llm、zz-broken-llm:b、zz-broken-llm:c、zz-broken-llm:d。',
+      '以下模型插件激活失败：zz-broken-llm、zz-broken-llm:b、zz-broken-llm:c、zz-broken-llm:d。',
     );
     expect(text, '/doctor 是受限指令，提示要注明需要权限').toContain('可用 /doctor 查看原因（需要相应权限）');
   });

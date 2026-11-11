@@ -22,7 +22,7 @@ import { recordRoom } from '../fixtures/rooms.js';
 
 // ════════════════════════════════════════════════════════════
 // 触及服务：按一次工具调用签发凭据。主体取权限服务的 principalOf，场所与绑定取会话管理里的记录，档位固定为工作区档、
-// 越界要问，清单按真实路径生成；子任务的类别随起它的那一轮，主体按这次调用的参与者，批过的按批的人；本会话临时区按需建、
+// 越界要问，清单按真实路径生成；子任务的类别随发起它的那一轮，主体按这次调用的参与者，批过的按批的人；本会话临时区按需建、
 // 随会话删、定期清扫。
 // ════════════════════════════════════════════════════════════
 
@@ -120,7 +120,7 @@ describe('上限：主体是 owner 的一轮有本地效果，不论在哪个会
     expect((await svc.forCall(picked(MEMBER))).exec).toBe('none');
   });
 
-  it('续做随起它的那一轮：owner 那一轮的续做在群里也有，群成员那一轮的没有', async () => {
+  it('续做随发起它的那一轮：owner 那一轮的续做在群里也有，群成员那一轮的没有', async () => {
     const { host, svc } = await start();
     await recordRoom(host.events.use, GROUP);
     const resume = (userId: string) => {
@@ -365,7 +365,7 @@ describe('清单按真实路径', () => {
     mkdirSync(join(dirs.app, 'node_modules', '@zz'), { recursive: true });
     mkdirSync(join(dirs.app, 'packages', 'inside'), { recursive: true });
     symlinkSync(join(dirs.app, 'packages', 'inside'), join(dirs.app, 'node_modules', '@zz', 'inside'));
-    // 坏掉的作用域链接与同名的文件：跳过，不让插件起不来
+    // 坏掉的作用域链接与同名的文件：跳过，不让插件启动失败
     symlinkSync(join(dirs.base, 'gone'), join(dirs.app, 'node_modules', '@zz-broken'));
     writeFileSync(join(dirs.app, 'node_modules', '@zz-file'), '');
     // 源码形态下 packages/ 里链接到安装集以外的包：与安装集里的包一样，构建产物与依赖归宿主控制面
@@ -395,7 +395,7 @@ describe('清单按真实路径', () => {
     return started.svc.forCall(ownerTurn(started.webui));
   }
 
-  /** 起实例时守护进程的入口（插件激活时按 process.argv[1] 取） */
+  /** 启动实例时守护进程的入口（插件激活时按 process.argv[1] 取） */
   async function startWithEntry(entry: string, opts: Parameters<typeof startReach>[1] = {}) {
     const saved = process.argv[1];
     process.argv[1] = entry;
@@ -563,7 +563,7 @@ describe('本会话临时区', () => {
       utimesSync(join(dirs.data, 'tmp', 'sessions', name), old, old);
     }
 
-    // 清扫在后台跑，收尾时等它跑完
+    // 清扫在后台跑，收尾时等它执行完毕
     await (await start({ stored })).app.stop();
     expect(existsSync(tmpOf('session-gone')), '会话表里没有、7 天没改动').toBe(false);
     expect(existsSync(tmpOf('session-unknown-fresh')), '会话表里没有、最近改过').toBe(true);

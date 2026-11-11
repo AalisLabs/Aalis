@@ -64,7 +64,7 @@ export class RenderUnavailableError extends Error {
   override name = 'RenderUnavailableError';
 }
 
-/** 渲染步骤超时：底层 CDP 调用仍挂着，这一代浏览器随之关掉（见 withPage）。 */
+/** 渲染步骤超时：底层 CDP 调用仍未返回，这一代浏览器随之关掉（见 withPage）。 */
 export class StepTimeoutError extends Error {
   override name = 'StepTimeoutError';
 }
@@ -219,8 +219,8 @@ export class OfflineRenderer {
   }
 
   /**
-   * 给加载之后的步骤（等字体、量高、截图：不吃 puppeteer 的 timeout）套步骤时限，防极端 CSS 慢渲染吊死并发槽。
-   * 时限只让等待方先失败，底层 CDP 调用仍挂着；截图还持有浏览器级的锁，关上下文与别的渲染开新页都要等它。
+   * 给加载之后的步骤（等字体、量高、截图：不受 puppeteer 的 timeout 约束）套步骤时限，防极端 CSS 慢渲染一直占用并发槽。
+   * 时限只让等待方先失败，底层 CDP 调用仍未返回；截图还持有浏览器级的锁，关上下文与别的渲染开新页都要等它。
    * 所以超时抛 StepTimeoutError，由 withPage 关掉这一代浏览器。
    */
   private withTimeout<T>(p: Promise<T>, label: string): Promise<T> {
@@ -234,7 +234,7 @@ export class OfflineRenderer {
 
   /**
    * 关掉这一代浏览器，不等关闭落定（浏览器进程本身卡住时，puppeteer 在 protocolTimeout 后强杀进程）。
-   * 挂着的 CDP 调用随连接断开失败、锁随之释放，同一代里其它在飞的渲染一并失败；下次渲染懒启动新的一代。
+   * 未返回的 CDP 调用随连接断开失败、锁随之释放，同一代里其它在飞的渲染一并失败；下次渲染懒启动新的一代。
    */
   private retire(browser: Browser, reason: string): void {
     // 已不是当前这一代（别的超时已换代、空闲关停或停用）：关闭已由那一方发起
@@ -283,7 +283,7 @@ export class OfflineRenderer {
     await this.acquireSlot();
     let browser: Browser | null = null;
     let context: BrowserContext | null = null;
-    // 取消时关掉上下文，挂着的 CDP 调用随之失败
+    // 取消时关掉上下文，未返回的 CDP 调用随之失败
     const stop = () => {
       context?.close().catch(() => {});
     };
@@ -299,14 +299,14 @@ export class OfflineRenderer {
       page.on('request', request => route(request, req.resources));
       await page.setViewport({ ...req.viewport, deviceScaleFactor: req.viewport.deviceScaleFactor ?? 1 });
       await page.goto(req.entry, { waitUntil: 'load', timeout: this.stepTimeoutMs });
-      // 等字体就绪（外链字体被拦时很快落定并回退系统字体，不会挂死——实测行为）
+      // 等字体就绪（外链字体被拦时很快落定并回退系统字体，不会一直阻塞——实测行为）
       await this.withTimeout(page.evaluate('document.fonts ? document.fonts.ready.then(() => true) : true'), 'fonts');
       const box = await this.measure(page, req);
       return await fn(page, box);
     } catch (err) {
       if (err instanceof StepTimeoutError && browser) {
         this.retire(browser, err.message);
-        // 不等关上下文：它要等挂住的截图释放锁
+        // 不等关上下文：它要等一直未返回的截图释放锁
         context = null;
       }
       throw err;

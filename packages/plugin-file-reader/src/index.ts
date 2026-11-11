@@ -125,7 +125,7 @@ interface FileMeta {
   size: number;
   sessionId: string;
   uploadedAt: number;
-  /** 提取结果：不超过内联阈值的正文与读不出的结论顺手缓存，避免每次都重新解析 */
+  /** 提取结果：不超过内联阈值的正文与读不出的结论同时缓存，避免每次都重新解析 */
   extraction?: Extraction;
 }
 
@@ -428,7 +428,7 @@ async function run(caps: Caps): Promise<void> {
     return { format: UNKNOWN_FORMAT, extraction: { unreadable: '不是 UTF-8 文本，也不是 PDF 或 DOCX' } };
   }
 
-  /** 不超过内联阈值的正文与读不出的结论顺手缓存进元信息；读文件与解析失败（retry）可能是一时的，不缓存，下次重试 */
+  /** 不超过内联阈值的正文与读不出的结论同时缓存进元信息；读文件与解析失败（retry）可能是一时的，不缓存，下次重试 */
   const cacheable = (extraction: Extraction): boolean =>
     'text' in extraction ? extraction.text.length <= autoInlineLimit : !extraction.retry;
 
@@ -552,7 +552,7 @@ async function run(caps: Caps): Promise<void> {
 
   // ===== 存储 / 删除 =====
 
-  /** 存下上传的文件，交出它的条目与按这份字节判的格式；只看字节就有的提取结果顺手缓存进元信息 */
+  /** 存下上传的文件，交出它的条目与按这份字节判的格式；只看字节就有的提取结果同时缓存进元信息 */
   async function storeFile(
     name: string,
     data: Buffer,
@@ -661,7 +661,7 @@ async function run(caps: Caps): Promise<void> {
     }
   }
 
-  // ===== 初始化阶段：恢复索引 + 起一次清理 =====
+  // ===== 初始化阶段：恢复索引 + 发起一次清理 =====
 
   await restoreIndex();
   await runCleanup().catch((err: unknown) => logger.use.warn('初次清理失败:', err));
@@ -670,7 +670,7 @@ async function run(caps: Caps): Promise<void> {
     () => {
       runCleanup().catch((err: unknown) => logger.use.warn('定时清理失败:', err));
     },
-    60 * 60 * 1000, // 每小时跑一次
+    60 * 60 * 1000, // 每小时执行一次
   );
 
   lifecycle.use.onDispose(() => {
@@ -714,7 +714,7 @@ async function run(caps: Caps): Promise<void> {
             maxLength: {
               type: 'integer',
               minimum: 1,
-              description: `返回文本的最大字符数（正整数）。${toolDefaultMaxLength === 0 ? '不传时不截断。' : `不传时默认 ${toolDefaultMaxLength}，避免一次喂入超长内容爆 token。`}`,
+              description: `返回文本的最大字符数（正整数）。${toolDefaultMaxLength === 0 ? '不传时不截断。' : `不传时默认 ${toolDefaultMaxLength}，避免一次交出过长的内容、超出 token 上限。`}`,
             },
           },
           required: ['fileId'],
@@ -833,7 +833,7 @@ async function run(caps: Caps): Promise<void> {
     const known = (entry: FileEntry, content?: Content) =>
       inline ? extractionOf(entry, content, lifecycle.use.signal) : entry.extraction;
     // 本插件写的描述先按下标记下，结尾写进那一刻的 _attachmentDescriptions，只动自己负责的位：
-    // 媒体识别可能与本预处理器并发（触发判定启动的识别，放行时不等它跑完），开头取的快照里
+    // 媒体识别可能与本预处理器并发（触发判定启动的识别，放行时不等它执行完毕），开头取的快照里
     // 没有其间写好的图片描述，整表写回会把它冲掉
     const own = new Map<number, string>();
     for (let i = 0; i < msg.attachments.length; i++) {

@@ -62,7 +62,7 @@ function unmetRequirements(plugins: Iterable<string>): string[] {
   );
 }
 const cli = fileURLToPath(new URL('../../packages/create-aalis/src/cli.ts', import.meta.url));
-/** 起真 CLI 时系统语言固定为中文：LANG 定，清掉会盖过它的 LC_ALL 与 LC_MESSAGES；Ollama 探测指向没人监听的端口，不碰本机真的 Ollama */
+/** 启动真 CLI 时系统语言固定为中文：LANG 定，清掉会盖过它的 LC_ALL 与 LC_MESSAGES；Ollama 探测指向没人监听的端口，不碰本机真的 Ollama */
 const CLI_ENV = {
   ...process.env,
   LANG: 'zh_CN.UTF-8',

@@ -41,7 +41,7 @@ afterEach(async () => {
     try {
       await a.stop();
     } catch {
-      /* 停不掉也要继续停下一个 */
+      /* 无法停止也要继续停下一个 */
     }
   }
 });

@@ -29,7 +29,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 // 标记：不算点名、不算 @ 了谁、不算附件引用。消息段里能当来源读的只有网址与 base64 的 data URL：file 字段只当文件名，
 // 本机路径、file:// 与存储地址不读。合并转发的展开不写进正文，另放 forwards（给模型的信封加给界面的事实），正文在转发处留占位：
 // 归档文本拼回原位、与展开写在正文里逐字相同，点名、禁言关键词与 @ 只看正文。
-// 本地起一个假的 OneBot 实现端（WebSocket 服务），附件的地址是 data URI，落进内存 storage。
+// 本地启动一个假的 OneBot 实现端（WebSocket 服务），附件的地址是 data URI，落进内存 storage。
 // ════════════════════════════════════════════════════════════
 
 type WsServer = {
@@ -217,7 +217,7 @@ async function groupMessage(
 const text = (s: string) => ({ type: 'text', data: { text: s } });
 
 describe('onebot 入站：引用写在消息段的位置', () => {
-  it('正文里手打的「[图片]」不吃掉图片的引用，引用紧跟在图片段的位置', async () => {
+  it('正文里手打的「[图片]」不丢弃图片的引用，引用紧跟在图片段的位置', async () => {
     const t = await boot('v11');
     const msg = await groupMessage(t, [text('看这个[图片]'), { type: 'image', data: { file: 'a.png', url: PNG_URI } }]);
     expect(msg.content.startsWith('看这个[图片][图片 | ref:data:/images/')).toBe(true);

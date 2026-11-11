@@ -17,7 +17,7 @@ async function setup() {
   host.provide.use(memory, fakeMemory() as never);
   await app.plugin(sessionManagerPlugin);
   await app.plugins.idle();
-  // required 依赖缺席时插件停在 pending 且不报错——核激活状态，别让「压根没跑起来」冒充绿
+  // required 依赖缺席时插件停在 pending 且不报错——核激活状态，别让「根本没有运行」冒充绿
   const state = app.plugins.getPlugin(sessionManagerPlugin.name)?.state;
   if (state !== 'active') throw new Error(`session-manager 未激活（state=${state}）`);
   return { app, host, sm: host.sessionManager.use };

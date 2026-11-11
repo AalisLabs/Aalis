@@ -118,7 +118,7 @@ afterEach(async () => {
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
 
-/** 让经入站事件进来、不等待的相位链跑完（setImmediate 不在假时钟内） */
+/** 让经入站事件进来、不等待的相位链执行完毕（setImmediate 不在假时钟内） */
 async function settle(): Promise<void> {
   for (let i = 0; i < 20; i++) await new Promise<void>(resolve => setImmediate(resolve));
 }
@@ -387,7 +387,7 @@ async function setup({
 /**
  * 审批服务是只记接入的替身（会话服务的审批要用会话管理，用它聊天审批就排不到会话管理前面），会话管理最后启用：它的入站监听
  * 排在聊天审批之后。替身的在场只看最近一次在场上报是不是在 presenceMs 之内。emit 发一条入站（缺省是 owner 经账号甲在私聊里
- * 说的），等相位链跑完
+ * 说的），等相位链执行完毕
  */
 async function stubbed(presenceMs = 10 * MINUTE) {
   const { app } = hostedApp({ owners: [OWNER_QQ] });
@@ -932,7 +932,7 @@ describe('接入与在场', () => {
 });
 
 describe('没送达', () => {
-  it('审批消息没送达：owner 在这里看不到它，不白等，宽限之后按不在场结', async () => {
+  it('审批消息没送达：owner 在这里看不到它，不空等，宽限之后按不在场结', async () => {
     const s = await setup({ deliver: () => ({ ok: false, error: '发送失败' }) });
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     await s.say('帮我清一下');

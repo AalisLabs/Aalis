@@ -8,14 +8,14 @@ export default defineLocale<Source>()({
   sessionIdDescription: 'The session that CLI chat runs in.',
   lastViewLabel: 'Last view',
   lastViewDescription:
-    'Written back automatically at run time; with startupView=last, startup restores the view recorded here.',
+    'Written back automatically at run time; when “Startup view” is “Restore last”, startup restores the view recorded here.',
   promptLabel: 'Prompt',
   promptDescription: 'Prefix of the command-line input prompt',
   maxLogEntriesLabel: 'In-memory log buffer limit (entries)',
   maxLogEntriesDescription:
     'Maximum number of entries the log page keeps in memory; beyond it the oldest are dropped in chunks. The full log is always in logs/latest.log in the data directory',
   startupViewLabel: 'Startup view',
-  startupViewDescription: 'Default view after the CLI takes over the terminal. last restores the last view',
+  startupViewDescription: 'Default view after the CLI takes over the terminal',
   viewLast: 'Restore last',
   viewChat: 'Chat',
   viewLogs: 'Logs',

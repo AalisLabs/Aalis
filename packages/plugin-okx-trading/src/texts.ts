@@ -14,7 +14,7 @@ const SOURCE = {
   demoDescription: '启用后将使用模拟交易环境，强烈建议先在模拟盘测试',
   confirmRealMoneyLabel: '确认实盘风险',
   confirmRealMoneyDescription:
-    '仅当关闭模拟盘（demo:false）、用真实资金时，须显式设为 true 以确认风险；否则不暴露下单/撤单/策略/划转/提币等交易工具，仅保留查询。',
+    '关闭模拟盘、用真实资金交易时须打开以确认风险；不打开时只保留查询，不提供下单、策略与划转等交易工具。',
   timeoutMsLabel: '请求超时 (ms)',
   enableTradingLabel: '启用交易工具',
   enableTradingDescription: '关闭后仅保留查询类工具，不暴露下单/撤单操作',
@@ -23,10 +23,9 @@ const SOURCE = {
   enableTransferLabel: '启用资金划转',
   enableTransferDescription: '启用资金账户划转工具',
   defaultPageLimitLabel: '分页查询默认条数',
-  defaultPageLimitDescription: '查询订单/账单/成交明细等接口，LLM 未传 limit 时使用。',
+  defaultPageLimitDescription: '查询订单/账单/成交明细等接口，模型未传 limit 时使用。',
   maxPageLimitLabel: '分页查询最大条数',
-  maxPageLimitDescription:
-    'LLM 传入的 limit 会被 cap 到该值；查到的条目整份交给模型，调大会增加单次工具结果的体积。OKX API 本身单页一般最多 100（个别接口 300）。',
+  maxPageLimitDescription: '分页查询一次最多返回的条数，模型要的更多时按这个值算。调大会让单次工具结果变大。',
   baseUrlNotPlain: 'baseUrl 需为不带用户名或密码的完整 URL',
   baseUrlHasQuery: 'baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径',
   abortedAfterSent: '请求已发出后中止，OKX 是否已执行未知：先查询订单、持仓或资金状态，确认之后再决定是否重试',

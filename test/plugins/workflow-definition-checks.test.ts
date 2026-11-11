@@ -330,7 +330,7 @@ describe('写错的触发器当场拒收', () => {
     });
     expect(svc.listWorkflows().map(d => d.id)).toEqual(['zz-month']);
     await vi.advanceTimersByTimeAsync(50);
-    expect(started, '溢出的话 50 毫秒里会起 50 次运行').toEqual([]);
+    expect(started, '溢出的话 50 毫秒里会启动 50 次运行').toEqual([]);
   });
 });
 

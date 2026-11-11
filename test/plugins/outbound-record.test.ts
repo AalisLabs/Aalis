@@ -342,7 +342,7 @@ describe('IM 房间的出站在送达之后记进历史', () => {
     ]);
   });
 
-  it('记录写失败：记一条 warn，不拖住同一事件的其它监听', async () => {
+  it('记录写失败：记一条 warn，不阻塞同一事件的其它监听', async () => {
     const failing = {
       saveMessage: async () => {
         throw new Error('磁盘满了');

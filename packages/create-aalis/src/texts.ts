@@ -65,9 +65,9 @@ const SOURCE = {
   upgradeNode: '升级方法见 {url}',
   badOllamaHost:
     'OLLAMA_HOST 的值「{value}」不是有效的地址：写成 主机:端口（如 127.0.0.1:11434）或完整地址（如 http://主机:端口）',
-  pullChat: 'ollama pull <对话模型名>    # 先拉一个对话模型',
+  pullChat: 'ollama pull <对话模型名>    # 先下载一个对话模型',
   pullEmbedding: 'ollama pull {model}    # 语义记忆用的 embedding 模型',
-  nonTty: '检测到非交互式环境（stdin 不是 TTY），没法逐项提问。改用非交互的写法：',
+  nonTty: '检测到非交互式环境（stdin 不是 TTY），无法逐项提问。改用非交互的写法：',
   nonTtyYes:
     '  npm create aalis@latest <名> -- --yes             # 全取默认：探到本机 Ollama 时对话模型与语义记忆都用它，否则 DeepSeek、不装语义记忆；平台是 CLI 与 WebUI',
   nonTtyTier: '  npm create aalis@latest <名> -- --tier minimal    # 按某一档的默认装：bare、minimal、standard、full',
@@ -80,7 +80,7 @@ const SOURCE = {
   installing: '正在 npm install（可能需要几分钟）…',
   nextSteps: '下一步：',
   indented: '  {line}',
-  unfilledKeys: '还没填的密钥（填好之前对应的插件起不来）：',
+  unfilledKeys: '还没填的密钥（填好之前对应的插件无法启动）：',
   unfilledKey: '  {plugin} 的 {key}',
   keyWhereWebui: '  填法：启动后在 WebUI 插件区打开该插件填写，或填进 data/aalis.config.yaml 里 plugins 下该插件的段',
   keyWhere: '  填法：填进 data/aalis.config.yaml 里 plugins 下该插件的段',

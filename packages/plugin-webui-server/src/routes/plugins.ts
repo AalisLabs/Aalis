@@ -781,7 +781,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
       res.status(500).json({ error: t('unloadFailed', { instance: instanceId, error: textOf(err) }) });
       return;
     }
-    // 返回 false 而条目还在：停机中拒绝了卸载，配置段已删、实例仍在跑到停机为止。条目已不在的是别处先卸掉了，照常回已删除
+    // 返回 false 而条目还在：停机中拒绝了卸载，配置段已删、实例仍在运行直到停机为止。条目已不在的是别处先卸掉了，照常回已删除
     if (!unloaded && pm.getPlugin(instanceId)) {
       res.json({ ok: true, message: t('deletedShuttingDown', { instance: instanceId }) });
       return;

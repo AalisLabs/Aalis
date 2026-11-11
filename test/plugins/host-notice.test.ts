@@ -162,7 +162,7 @@ describe('message-archive：宿主通知归档', () => {
     expect(seen).toEqual([]);
   });
 
-  it('通知的 id 与带给界面的事实按登记的键记下；起它的那一轮与回复引用不记', async () => {
+  it('通知的 id 与带给界面的事实按登记的键记下；发起它的那一轮与回复引用不记', async () => {
     const app = newApp();
     await registerHubs(app);
     await app.plugin(memoryInMemory);

@@ -71,7 +71,7 @@ const doc = (language?: string[]) => ({
   plugins: { ...(language ? i18nSection(language).plugins : {}), [checkpointPlugin.name]: CHECKPOINT_CONFIG },
 });
 
-/** 起一轮：checkpoint 的 agent:turn:before 中间件把 inside 里的存储改动记进这一轮 */
+/** 发起一轮：checkpoint 的 agent:turn:before 中间件把 inside 里的存储改动记进这一轮 */
 async function turn(app: App, sessionId: string, turnId: string, inside: (store: StorageService) => Promise<void>) {
   const host = app.bind({ hooks, storage });
   const message = { content: '<改文件>', sessionId, platform: 'webui' };

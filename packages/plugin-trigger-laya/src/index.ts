@@ -7,7 +7,7 @@
 // @ 与叫名字不强制开口，开不开口由模型决定；点名只决定开口后的类别、授权主体与兜底。
 // 模型判定不了时兜底：只回点名，其余吞掉并归档，不回退到别的触发插件。判定不可用（侧车熔断、memory 缺席、
 // 托管的侧车退出、没有 process 服务）由正常转入时记 error、恢复时记 warn，状态也经 doctor 检查项报告。
-// 配置了 sidecarDir 时本插件自己托管侧车：生效时拉起、退出后退避重启，不再生效或停用时关掉（sidecar.ts）。
+// 配置了 sidecarDir 时本插件自己托管侧车：生效时启动侧车进程、退出后退避重启，不再生效或停用时关掉（sidecar.ts）。
 // 另监听入站归档事件做运行期自检（self-check.ts）。
 // ============================================================
 
@@ -120,7 +120,7 @@ const IMAGE_WINDOW = 20;
 const POINTER_ONLY_WARN = 10;
 
 /**
- * 判定时这条消息的图片是否都只有指针、没有内容描述。只有指针：描述位为空（识别跑完了但没有描述，如没有可用的
+ * 判定时这条消息的图片是否都只有指针、没有内容描述。只有指针：描述位为空（识别执行完毕但没有描述，如没有可用的
  * 识别模型），或只有不带描述的附件引用 `[图片 | ref:…]`（media 关了图片到达即识别时写的）。识别失败的占位不算
  * （media 每次失败另记 warn）。多张图时每张都只有指针才算。附件识别还没写回（超过 mediaWaitMs、识别抛错、media
  * 缺席）或没有图片附件时返回 undefined，不计入：前者由自检汇总的「缺附件描述」反映，media 缺席见依赖说明
@@ -175,7 +175,7 @@ const uses = {
   memory: optional(memory),
   // 缺席时不报诊断项
   doctor: optional(doctor),
-  // 托管侧车时用来拉起它；缺席时拉不起，判定按兜底只回点名
+  // 托管侧车时由它启动侧车进程；缺席时无法启动，判定按兜底只回点名
   process: optional(processService),
 };
 type Caps = BoundOf<typeof uses>;
@@ -208,7 +208,7 @@ function run(caps: Caps): void {
 
   let failures = 0;
   let openUntil = 0;
-  /** 判定不可用的原因（侧车熔断、memory 缺席、托管的侧车退出或没能拉起），诊断项写出它；undefined = 可用 */
+  /** 判定不可用的原因（侧车熔断、memory 缺席、托管的侧车退出或没能启动侧车进程），诊断项写出它；undefined = 可用 */
   let down: TextRef | undefined;
   let downSince = 0;
 
@@ -233,7 +233,7 @@ function run(caps: Caps): void {
     if (failures < CIRCUIT_FAILURES) return;
     openUntil = Date.now() + CIRCUIT_OPEN_MS;
     // 失败计数在侧车正常作答时清零（成功的判定与 422 / 413），恰好等于门限的那次是转入熔断。判定不可用期间
-    // 回过 422 / 413 又攒满门限的，仍是同一次故障：goDown 只在由可用转入时记 error
+    // 回过 422 / 413 又累计到门限的，仍是同一次故障：goDown 只在由可用转入时记 error
     if (failures === CIRCUIT_FAILURES) {
       goDown(t('circuitOpen', { count: failures, why, seconds: CIRCUIT_OPEN_MS / 1000 }));
     } else {
@@ -272,7 +272,7 @@ function run(caps: Caps): void {
     let appReady = false;
     let active = false;
     let chain = Promise.resolve();
-    /** 按应用是否就绪、本插件是否生效起停侧车；串行，旧的停完才拉起新的 */
+    /** 按应用是否就绪、本插件是否生效启停侧车；串行，旧的停完才启动新的侧车进程 */
     const reconcile = (): Promise<void> => {
       chain = chain
         .then(async () => {
@@ -300,7 +300,7 @@ function run(caps: Caps): void {
             });
           }
         })
-        .catch(err => logger.use.warn(`[laya] 起停侧车出错: ${err}`));
+        .catch(err => logger.use.warn(`[laya] 启停侧车出错: ${err}`));
       return chain;
     };
     caps.events.use.on('app:ready', () => {
@@ -351,7 +351,7 @@ function run(caps: Caps): void {
       if (!unsupported.has(kind)) {
         unsupported.add(kind);
         logger.use.warn(
-          `[laya] ${kind} 的消息不带机器人账号，所在会话也没有记下（适配器没有填 selfId），这类消息一律按兜底只回点名；` +
+          `[laya] ${kind} 的消息不带机器人账号，所在会话也没有记下（适配器没有填 selfId），这类消息一律按后备判定只回点名；` +
             '要让它们照常回复，把它们移出生效范围，或切到 trigger-policy',
         );
       }
@@ -407,7 +407,9 @@ function run(caps: Caps): void {
     // 窗口才恢复，期间这个会话每条都走兜底，记 info 让用户看得到
     const bytes = Buffer.byteLength(body);
     if (bytes > MAX_BODY_BYTES) {
-      logger.use.info(`[laya] 请求体 ${bytes} 字节超过侧车上限 ${MAX_BODY_BYTES}，本条按兜底只回点名 | session=${sid}`);
+      logger.use.info(
+        `[laya] 请求体 ${bytes} 字节超过侧车上限 ${MAX_BODY_BYTES}，本条按后备判定只回点名 | session=${sid}`,
+      );
       return fallback('请求体超限');
     }
     // 确实要发请求才记：在此之前兜底与超限的判定不参与自检
@@ -504,13 +506,13 @@ function run(caps: Caps): void {
       verdict = await judge(message, addressed, names, threshold);
     } catch (err) {
       // 取历史失败等意外：本条兜底，不计侧车失败
-      logger.use.warn(`[laya] 判定异常，本条按兜底只回点名: ${err}`);
+      logger.use.warn(`[laya] 判定异常，本条按后备判定只回点名: ${err}`);
       verdict = { speak: addressed, fallback: '判定异常' };
     }
     // 判定日志：不含正文与昵称，带到达序号
     const detail =
       'fallback' in verdict
-        ? `兜底=${verdict.fallback}`
+        ? `后备判定=${verdict.fallback}`
         : `logit=${verdict.logit.toFixed(3)} | 阈值=${verdict.threshold} | 版本=${verdict.version}`;
     logger.use.debug(
       `[laya] 判定${arrivalTag(message)} | session=${sid} | speak=${verdict.speak} | addressed=${addressed} | ${detail} | ` +
@@ -548,7 +550,7 @@ function run(caps: Caps): void {
     async run(): Promise<CheckResult> {
       const current = winner();
       const detail = `endpoint=${cfg.endpoint}${managed ? `; sidecarDir=${managed.dir}` : ''}`;
-      // 不生效时不判定、不拉起侧车，侧车在不在都不影响回复：不检查
+      // 不生效时不判定、不启动侧车进程，侧车在不在都不影响回复：不检查
       if (current?.id !== selfId) {
         return {
           id: 'trigger.laya',

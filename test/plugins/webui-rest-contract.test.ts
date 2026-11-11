@@ -44,7 +44,7 @@ import { runTscProbe } from '../helpers/tsc-probe.js';
 import { contractRoutes } from '../helpers/webui-contract.js';
 
 // ════════════════════════════════════════════════════════════
-// 管理面 REST 的回应与契约对得上：起真的 webui-server，契约路由表里的每条路由都走一遍成功的路径，记下实际回来的 JSON
+// 管理面 REST 的回应与契约对得上：启动真的 webui-server，契约路由表里的每条路由都走一遍成功的路径，记下实际回来的 JSON
 // （回文件的记下响应头），连同几种失败的回应（含请求体不是 JSON、路径参数解不开、处理函数抛错），一次交给 tsc 按
 // api-webui 的 rest.ts 检查线上的形状（Localized，文字已渲染成字符串）：多出的字段、缺的字段、类型不对都报。启动时在
 // express 上记下实际登记的路由，与契约的路由表逐条对上。各服务是契约层面的替身；市场的检索源与安装源、图片代理的上游在
@@ -196,7 +196,7 @@ const model = definePlugin({
   },
 });
 
-/** 起不来的插件：「需要处理」里有插件故障 */
+/** 启动失败的插件：「需要处理」里有插件故障 */
 const failing = definePlugin({
   name: 'zz-rest-failing',
   apply() {
@@ -593,7 +593,7 @@ describe('管理面 REST 的回应与契约', () => {
     expect([...registered].sort()).toEqual(expected.sort());
   });
 
-  it('/api/models 合起各提供者的 listModels()：胜出的提供者没有它时照样取排在后面的；取不到的跳过，记 warn 点名', () => {
+  it('/api/models 合并各提供者的 listModels()：胜出的提供者没有它时照样取排在后面的；取不到的跳过，记 warn 点名', () => {
     expect(mixedModels).toEqual({ models: ['zz-late'] });
     expect(warns.filter(w => w.startsWith('取 zz-mixed '))).toEqual([
       '取 zz-mixed 的可选值时 zz-mixed/broken 失败，它的取值不在下拉里: Error: 人设目录读不出',

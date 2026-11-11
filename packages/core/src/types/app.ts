@@ -43,7 +43,7 @@ export interface PluginStatusEntry {
   slow?: boolean;
   /**
    * 旧实例关完仍有工作没落定（清理或被拆的初始化超过 `AppOptions.disposeTimeoutMs`）时为 true，否则不给。state 照常是
-   * 目标态；它停下之前同一 id 不起新实例，停下后按目标态继续。与 `slow` 对称：一个是新实例没起完，一个是旧实例没停完
+   * 目标态；它停下之前同一 id 不启动新实例，停下后按目标态继续。与 `slow` 对称：一个是新实例没启动完，一个是旧实例没停完
    */
   lingering?: boolean;
   // 配置详情（config / configSchema）不属状态摘要——

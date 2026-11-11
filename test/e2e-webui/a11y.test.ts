@@ -49,7 +49,7 @@ function script(request: ChatModelRequest): ChatResponse {
   return { content: '你好。' };
 }
 
-/** 两个工具：部署要 owner 批准；任务一直跑到被中止 */
+/** 两个工具：部署要 owner 批准；任务一直运行到被中止 */
 const probeTools = definePlugin({
   name: 'zz-a11y-tools',
   uses: { tools },
@@ -97,7 +97,7 @@ function framesPlugin(): PluginDefinition {
   });
 }
 
-/** 起运行时：minimal 档加两个工具、用户档案与插件前端；一个房间、一份档案 */
+/** 启动运行时：minimal 档加两个工具、用户档案与插件前端；一个房间、一份档案 */
 async function start() {
   const { app, port } = await webuiStack({
     clientDir: e2e.clientDir,

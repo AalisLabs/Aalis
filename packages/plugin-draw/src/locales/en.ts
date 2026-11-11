@@ -8,18 +8,19 @@ export default defineLocale<Source>()({
   defaultWidthDescription: 'Canvas width used in HTML mode and for SVG without a declared width',
   maxWidthLabel: 'Max canvas width (px)',
   maxWidthDescription: 'Both the requested width and the width declared in the markup are capped to this value',
-  maxPixelsLabel: 'Max canvas CSS pixels',
+  maxPixelsLabel: 'Max canvas pixels',
   maxPixelsDescription:
-    'Upper limit of width×height (CSS pixels), 4MP by default. Note that the actual raster memory = this value × scale² (scale defaults to 2, i.e. 4 times); static images are screenshotted at scale, so the device pixel ceiling is scale² times this value. Work out the memory before raising it',
+    'Pixel limit (width × height) of the output image, per frame for animations, 4MP by default. Static images get a smaller canvas by the screenshot scale factor, so the scaled output stays within it.',
   maxSourceKBLabel: 'Max input markup (KB)',
   maxSourceKBDescription: 'Size limit of the source parameter',
   scaleLabel: 'Screenshot scale factor',
-  scaleDescription: 'deviceScaleFactor: 2 = Retina sharpness (twice the pixels, larger files)',
+  scaleDescription:
+    'Screenshot scale for static images; 2 gives sharp output (twice the width and height, larger files)',
   headlessLabel: 'Headless mode',
   headlessDescription: 'Can be turned off while debugging to watch the rendering page',
-  executablePathLabel: 'Chrome path (left empty, detected automatically)',
+  executablePathLabel: 'Chrome path',
   executablePathDescription:
-    'Left empty, the executable in the puppeteer configuration (PUPPETEER_EXECUTABLE_PATH, .puppeteerrc) is used, or, if none is configured, the Chrome bundled with puppeteer (the same binary as the browser tools, in a separate process)',
+    'Absolute path to Chrome. Left empty, the executable in the puppeteer configuration is used, or the Chrome bundled with puppeteer if none is configured.',
   sandboxLabel: 'Chromium sandbox',
   sandboxDescription:
     'When on, Chromium starts with its sandbox, so markup that takes over the renderer process still cannot leave it. As root on Linux, or in a container without a usable sandbox, Chromium then cannot start.',
@@ -27,8 +28,7 @@ export default defineLocale<Source>()({
   idleShutdownSecDescription:
     'Shut Chromium down to free memory after the renderer has been idle this long; 0 = always on',
   maxConcurrencyLabel: 'Max concurrent renders',
-  maxConcurrencyDescription:
-    'Maximum number of render jobs at once; when many people in a group draw at the same time, the rest queue, so unbounded pages and ffmpeg do not bring the machine down',
+  maxConcurrencyDescription: 'Maximum number of render jobs at once; the rest queue',
   animMaxDurationSecLabel: 'Max animation duration (seconds)',
   animMaxDurationSecDescription: 'Hard limit on the animation duration of draw_animation',
   animDefaultFpsLabel: 'Default animation frame rate',
@@ -37,8 +37,7 @@ export default defineLocale<Source>()({
   animMaxFramesDescription:
     'When duration × frame rate exceeds it, the effective duration is derived from the frame count',
   animMaxOutputMBLabel: 'Max GIF size (MB)',
-  animMaxOutputMBDescription:
-    'Exceeding it is an error (OneBot inline delivery is limited to 10MB; this leaves headroom)',
+  animMaxOutputMBDescription: 'A generated GIF larger than this is an error; at most 9',
   clearType: 'Image cache',
   cleared: 'Cleared drawings ({count, plural, one {# file} other {# files}})',
   clearFailed: 'Failed to clear drawings: {error}',

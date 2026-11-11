@@ -8,9 +8,9 @@ import { toolContext } from '../fixtures/tool-call.js';
 // ════════════════════════════════════════════════════════════
 // 页面卡住时的时限（真 Chromium + 本机 http 服务）：
 // - browser_screenshot 按 defaultTimeout 返回超时错误，关掉这一代浏览器（页面表一起清），下次调用重新启动。
-//   此前截图没有自己的时限，底层截图一直挂着、持有浏览器级的锁，要到 CDP 命令的时限（puppeteer 默认 180 秒）才返回，
+//   此前截图没有自己的时限，底层截图一直未返回、持有浏览器级的锁，要到 CDP 命令的时限（puppeteer 默认 180 秒）才返回，
 //   其间同一浏览器里开新页、关页面、别的截图都排在它后面。
-// - 其它操作挂住时，以两倍 defaultTimeout 为上限。
+// - 其它操作阻塞时，以两倍 defaultTimeout 为上限。
 // 卡死是真的：让页面渲染进程的主线程陷入死循环，截图等不到新帧（puppeteer 的 launch 与截图外包一层，插件代码不动）。
 // 不外发：测试启动的 Chrome 不走系统代理，除 127.0.0.1 外的主机一律映射到 127.0.0.1:1。
 // ════════════════════════════════════════════════════════════
@@ -76,7 +76,7 @@ let origin: string;
 let app: App;
 let call: Call;
 
-/** 起一份浏览器工具，返回按名调用工具、解析文本结果的函数（未接 storage：截图不落盘，随 images 交出） */
+/** 启动一份浏览器工具，返回按名调用工具、解析文本结果的函数（未接 storage：截图不落盘，随 images 交出） */
 async function startBrowserTools(defaultTimeout: number): Promise<{ app: App; call: Call }> {
   const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide });
@@ -88,7 +88,7 @@ async function startBrowserTools(defaultTimeout: number): Promise<{ app: App; ca
     },
     registerGroup: () => () => {},
   } as never);
-  // blockPrivate:false 才连得上本机测试服务（同时不起网络闸）
+  // blockPrivate:false 才连得上本机测试服务（同时不启动网络闸）
   await app.plugins.register(browserPlugin, { headless: true, blockPrivate: false, defaultTimeout });
   await app.plugins.idle();
   return {
@@ -143,7 +143,7 @@ describe('页面卡住时的时限', () => {
     expect(await call('browser_screenshot', { pageId: fresh })).toMatchObject({ ok: true });
   }, 60_000);
 
-  it('其它操作挂住时，以两倍 defaultTimeout 为上限', async () => {
+  it('其它操作阻塞时，以两倍 defaultTimeout 为上限', async () => {
     const pageId = await openPage();
     probe.pages
       .at(-1)

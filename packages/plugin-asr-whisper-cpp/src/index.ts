@@ -5,7 +5,7 @@
 //   - 安装 whisper.cpp（brew install whisper-cpp）
 //   - 下载模型文件（如 ggml-base.bin）
 //
-// 输入音频经 ffmpeg 转 16kHz 单声道 WAV 后喂给 whisper-cli。
+// 输入音频经 ffmpeg 转 16kHz 单声道 WAV 后交给 whisper-cli。
 // ============================================================
 
 import { Buffer } from 'node:buffer';

@@ -17,20 +17,20 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { absentDoctor, fixedRef, ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
-// code-sandbox-os 的启动探测接 lifecycle.signal：启动器挂住时，停用与停机随 abort 落定，不拖满停机宽限、
+// code-sandbox-os 的启动探测接 lifecycle.signal：启动器阻塞时，停用与停机随 abort 落定，不拖满停机宽限、
 // 旧实例也不会超过宽限仍没停下。被中止时一律抛出，不落成「没有沙箱后端」的 warn。
 //
 // process 服务用替身，只实现探测用到的 spawn；句柄的 wait 按用例给的行为落定。探测命令按平台分支，
-// 替身不起真实进程，停用与失败的用例在有探测分支的平台（macOS、Linux）上跑，后端选择的用例改写 process.platform 两个都测。
+// 替身不启动真实进程，停用与失败的用例在有探测分支的平台（macOS、Linux）上跑，后端选择的用例改写 process.platform 两个都测。
 // ════════════════════════════════════════════════════════════
 
-/** 本机平台有探测分支；其余平台直接按无后端，不起探测进程 */
+/** 本机平台有探测分支；其余平台直接按无后端，不启动探测进程 */
 const probes = process.platform === 'darwin' || process.platform === 'linux';
 
 const GRACE_MS = 200;
 
 /** 没有后端时的结论、各平台的修法与没有探测分支时的那一句 */
-const NONE = '没有可用的 OS 沙箱，code_runner 的 auto 模式会拒绝执行代码';
+const NONE = '没有可用的 OS 沙箱，「代码执行器」的「隔离模式」选「自动」时会拒绝执行代码';
 const FIX: Partial<Record<NodeJS.Platform, string>> = {
   darwin: 'sandbox-exec 是 macOS 自带的，确认 /usr/bin/sandbox-exec 能执行后重载本插件',
   linux:
@@ -68,7 +68,7 @@ function fakeProcess(behaviour: Behaviour) {
   return { service, calls };
 }
 
-/** wait 一直挂着，只在 opts.signal 中止时以 SIGTERM 落定（没传 signal 就永不落定） */
+/** wait 一直不落定，只在 opts.signal 中止时以 SIGTERM 落定（没传 signal 就永不落定） */
 const hangUntilAbort = (opts: SpawnOptions): Promise<ExecResult> =>
   new Promise(resolve => {
     opts.signal?.addEventListener('abort', () => resolve({ ...EXITED, code: null, signal: 'SIGTERM' }), {
@@ -144,7 +144,7 @@ afterEach(async () => {
 
 describe('code-sandbox-os 探测随 lifecycle.signal 中止', () => {
   it.skipIf(!probes)(
-    '安全：启动器挂住时停用，探测随 abort 落定：条目转 disabled，不留超过宽限仍没停下的旧实例，停用在 1 秒内返回',
+    '安全：启动器阻塞时停用，探测随 abort 落定：条目转 disabled，不留超过宽限仍没停下的旧实例，停用在 1 秒内返回',
     async () => {
       const { service, calls } = fakeProcess({ wait: hangUntilAbort });
       const { logger, lines } = recorder();
@@ -152,7 +152,7 @@ describe('code-sandbox-os 探测随 lifecycle.signal 中止', () => {
       apps.push(app);
       app.bind({ provide }).provide.use(processService, service);
       const registering = app.plugin(codeSandboxOs);
-      await until(() => calls.length === 1, '探测起进程');
+      await until(() => calls.length === 1, '探测启动进程');
 
       const started = Date.now();
       expect(await app.plugins.disable(codeSandboxOs.name)).toBe(true);
@@ -240,7 +240,7 @@ describe('code-sandbox-os 探测失败与后端选择', () => {
     },
   );
 
-  it('平台没有探测分支：不起进程，后端为 none，warn 写明换到哪些平台', async () => {
+  it('平台没有探测分支：不启动进程，后端为 none，warn 写明换到哪些平台', async () => {
     const { service, calls } = fakeProcess({ wait: async () => EXITED });
     const { lines, provided } = await onPlatform('win32', async () => {
       const run = applyWith(service, new AbortController().signal);
@@ -315,7 +315,7 @@ describe('doctor 的「代码沙箱」项', () => {
     });
     const english = (text: unknown) => resolveText(text as never, ['en']);
     expect(english(result?.message)).toBe(
-      'No OS sandbox is available; code_runner in auto mode will refuse to run code',
+      'No OS sandbox is available; “Code runner” refuses to run code when “Isolation mode” is “Automatic”',
     );
     expect(english(result?.detail)).toMatch(/ reload this plugin.*\. Probing \S+ failed: exit code 1$/i);
   });

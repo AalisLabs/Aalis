@@ -23,8 +23,8 @@ import { StepModel, stepModelPlugin } from '../fixtures/step-llm.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
-// 编排的 agent 节点经网关送达（真的网关、流控与 agent，模型是能挂住某一次调用的替身）：节点的指令在目标会话里排在在跑的一轮之后
-// 单独成一轮，节点按自己的异步上下文认出它开的那一轮，不认同一会话里别的回合；同一编排两次运行的同名节点各认各的。指向调起这次
+// 编排的 agent 节点经网关送达（真的网关、流控与 agent，模型是能阻塞某一次调用的替身）：节点的指令在目标会话里排在在跑的一轮之后
+// 单独成一轮，节点按自己的异步上下文认出它开的那一轮，不认同一会话里别的回合；同一编排两次运行的同名节点各认各的。指向调用这次
 // 运行的会话（那一轮在等这次运行）、指令在网关相位被吞或被放掉没开轮时立即失败，不等满节点超时。
 // ════════════════════════════════════════════════════════════
 
@@ -43,7 +43,7 @@ const nodeTo = (sessionId: string, timeoutSeconds = 60): WorkflowDef => ({
   nodes: [{ id: 'a', type: 'agent', instruction: '<指令>', sessionId, platform: 'webui', timeoutSeconds, out: 'r' }],
 });
 
-/** 让排着的微任务与 I/O 回调跑完 */
+/** 让排着的微任务与 I/O 回调执行完毕 */
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
 async function boot() {
@@ -106,15 +106,15 @@ describe('编排的 agent 节点经网关送达', () => {
     expect(results.map(r => r.outputs.r).sort()).toEqual(['回1', '回2']);
   });
 
-  it('指向调起这次运行的会话：立即失败，不送达', async () => {
+  it('指向发起这次运行的会话：立即失败，不送达', async () => {
     const s = await boot();
     const result = await s.run(nodeTo('zz-caller'), 'r1', 'zz-caller');
     expect(result.status).toBe('failed');
-    expect(toSource(result.error)).toContain('调起这次运行的会话');
+    expect(toSource(result.error)).toContain('发起这次运行的会话');
     expect(s.model.requests).toEqual([]);
   });
 
-  it('经 workflow_run 调起、agent 节点指向调用者所在的会话：立即失败，不送达', async () => {
+  it('经 workflow_run 调用、agent 节点指向调用者所在的会话：立即失败，不送达', async () => {
     const s = await boot();
     await s.app.plugin(cronEnginePlugin, {});
     await s.app.plugin(workflowPlugin, {});
@@ -126,7 +126,7 @@ describe('编排的 agent 节点经网关送达', () => {
     const ctx = toolRequest({ sessionId: 'zz-caller', platform: 'webui', userId: 'console' });
     const out = JSON.parse((await registry.use.execute('workflow_run', { id: WORKFLOW }, ctx)).content);
     expect(out.status).toBe('failed');
-    expect(out.nodes[0].error).toContain('调起这次运行的会话');
+    expect(out.nodes[0].error).toContain('发起这次运行的会话');
     expect(s.model.requests).toEqual([]);
   });
 

@@ -355,7 +355,7 @@ export class MediaServiceImpl implements MediaService {
    * - `http(s)://` URL → 直接返回原 URL（analyze_image 可直接处理）。
    * - 已是存储地址（如适配器已落盘）→ 原样返回。
    * - 其它无法处理的格式 → 返回 null（描述仍写入，不含 ref）。
-   * - 落盘失败（磁盘满、没有写权限）→ 抛出，消息以「图片落盘失败」开头：没法识别时调用方整条按失败写，
+   * - 落盘失败（磁盘满、没有写权限）→ 抛出，消息以「图片落盘失败」开头：无法识别时调用方整条按失败写，
    *   还能识别时照常识别、描述不带引用。
    */
   private async cacheImageRef(att: MessageAttachment, sessionId: string): Promise<string | null> {
@@ -551,7 +551,7 @@ export class MediaServiceImpl implements MediaService {
 
     // 写回 IncomingMessage：只补不换，都按写回这一刻的消息读。识别期间 file-reader 可能已把文件附件
     // 换成 aalis-file:// 引用、写好文件描述（预处理器的先后取决于登记次序；触发判定启动的识别，放行时
-    // 也不等它跑完），整表覆盖会把引用改回原始数据、把文件描述冲掉。attachments 逐项只补 mimeType 与
+    // 也不等它执行完毕），整表覆盖会把引用改回原始数据、把文件描述冲掉。attachments 逐项只补 mimeType 与
     // 落盘的地址（ref），描述只填本插件写了的位（文件、直通音频等保留已有值）
     msg.attachments = (msg.attachments ?? []).map((a, i) => ({
       ...a,

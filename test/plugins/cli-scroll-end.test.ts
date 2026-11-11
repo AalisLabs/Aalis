@@ -5,7 +5,7 @@ import { fakeTty } from '../helpers/tty.js';
 
 // Help 页自己宣传「Home/End 滚动 Logs / Status / Help」，但 handleScrollKey 只认
 // home（End 只在 logs 页的 handleLogsKey 里实现过）——按 End 无任何反应，是个假按键。
-// 这里起真 TUI（mock isTTY + 收集 stdout 帧），按 End 后看 footer 的 scroll 计数与底部内容。
+// 这里启动真 TUI（mock isTTY + 收集 stdout 帧），按 End 后看 footer 的 scroll 计数与底部内容。
 
 const FRAME_SPLIT = '\x1b[?25l\x1b[H';
 
@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 /**
- * 起 CLI（直接进 startupView，缺省 help 页），先按完 prelude 里的按键（其效果算进 before 帧），
+ * 启动 CLI（直接进 startupView，缺省 help 页），先按完 prelude 里的按键（其效果算进 before 帧），
  * 再按 keyName，返回按键前后的最后一帧。
  */
 async function framesAroundKey(
@@ -36,7 +36,7 @@ async function framesAroundKey(
     await app.plugin(cliPlugin, { startupView });
     await app.plugins.idle();
     // 激活闸会让缺依赖的插件停在 pending 而不报错：不核一下，下面的帧断言会在
-    // 「TUI 压根没起来」上变成对空帧的比对。
+    // 「TUI 根本没有启动」上变成对空帧的比对。
     const state = app.plugins.getPlugin(cliPlugin.name)?.state;
     if (state !== 'active') throw new Error(`plugin-cli 未激活（state=${state}）`);
     await app.start();

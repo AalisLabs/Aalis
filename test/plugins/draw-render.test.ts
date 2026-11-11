@@ -6,7 +6,7 @@ import { OfflineRenderer } from '../../packages/util-chromium/src/index.js';
 // 真 Chromium 集成锚：draw 的渲染计划经离线渲染库出图（本机已有 puppeteer 缓存的 Chrome）。
 // 要实证的事：
 //   1) 渲染出真 PNG 且尺寸 = 画布×scale（定界生效）；HTML 按内容量高、受像素上限限高、最低 16；
-//   2) 标记里的 <script> 不执行、外联被拦而渲染不挂死（走 draw 的完整请求，不只看库本身）。
+//   2) 标记里的 <script> 不执行、外联被拦而渲染不会一直阻塞（走 draw 的完整请求，不只看库本身）。
 // 库层的隔离（宿主文件、零网络、上下文、并发槽、步骤超时）见 test/utils/util-chromium-*.test.ts。
 // ════════════════════════════════════════════════════════════
 
@@ -67,7 +67,7 @@ describe('draw 渲染（真浏览器）', () => {
     }
   }, 30_000);
 
-  it('安全：<script> 不执行、外联被拦、渲染不挂死', async () => {
+  it('安全：<script> 不执行、外联被拦、渲染不会一直阻塞', async () => {
     const renderer = makeRenderer();
     try {
       // 脚本若执行，画布会被撑到 500 高

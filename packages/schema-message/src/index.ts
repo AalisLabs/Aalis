@@ -171,7 +171,7 @@ export interface FromTurn {
   participants: readonly { platform: string; userId: string }[];
   /** 那一轮的来源（同 {@link IncomingMessage.source}，人亲手发来的没有） */
   source?: string;
-  /** 那一轮自己的起它的那一轮 */
+  /** 那一轮自己的发起它的那一轮 */
   fromTurn?: FromTurn;
 }
 
@@ -303,7 +303,7 @@ export interface IncomingMessage {
     userId: string;
   };
   /**
-   * 起它的那一轮：续做（如后台任务的结束通知）与子任务（任务消息与追问）的消息带着起它的那次调用所在那一轮的事实，权限服务
+   * 发起它的那一轮：续做（如后台任务的结束通知）与子任务（任务消息与追问）的消息带着发起它的那次调用所在那一轮的事实，权限服务
    * 按那一轮判续做与子任务这一轮的类别与主体，这一轮的参与者取它的参与者（agent 经 api-authority 的 originTurnOf
    * 拼工具调用上下文）。只由登记的注入方填（`test/architecture/host-notice-identity.test.ts`），只在那次调用在入站回合里时填，
    * 不由模型给；不进归档与提示词钩子
@@ -336,7 +336,7 @@ export interface IncomingMessage {
      */
     reportOnly?: boolean;
     /**
-     * 回复这条通知时引用哪条消息：平台消息 id，取自起那次调用的入站消息（ToolCallContext.inbound.messageId）。
+     * 回复这条通知时引用哪条消息：平台消息 id，取自发起那次调用的入站消息（ToolCallContext.inbound.messageId）。
      * plugin-agent 回复时把它带进出站消息的 {@link OutgoingMessage.replyTo}；入站消息没有平台消息 id 的不设
      */
     replyTo?: string;
@@ -680,9 +680,9 @@ export interface ForwardFacts {
 export interface ForwardedChat {
   /** 平台给的转发 id：正文里它的占位（{@link forwardPlaceholder}）按它对位 */
   id: string;
-  /** 给模型看的展开，归档文本把它换进占位的位置（OneBot 的信封；拉不到时写原因；适配器关掉展开时就是占位本身） */
+  /** 给模型看的展开，归档文本把它换进占位的位置（OneBot 的信封；获取失败时写原因；适配器关掉展开时就是占位本身） */
   content: string;
-  /** 给界面的事实；拉不到内容、展开出错与关掉展开时没有 */
+  /** 给界面的事实；获取内容失败、展开出错与关掉展开时没有 */
   facts?: ForwardFacts;
 }
 

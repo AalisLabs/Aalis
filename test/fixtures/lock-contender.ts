@@ -1,5 +1,5 @@
-// 实例锁竞争测试的参赛进程（test/integration/instance-lock-race.test.ts 经 tsx 起多份）：
-// 起来后在 stdout 报 READY，等发令文件出现再一起取锁，报 OK 或 BUSY；取到的一直持锁，直到收场文件出现再放，
+// 实例锁竞争测试的参赛进程（test/integration/instance-lock-race.test.ts 经 tsx 启动多份）：
+// 启动后在 stdout 报 READY，等发令文件出现再一起取锁，报 OK 或 BUSY；取到的一直持锁，直到收场文件出现再放，
 // 保证慢一步的参赛者看到的是活着的持有者。两个文件都等不到时 30 秒后自己退出，不留孤儿进程。
 import { existsSync } from 'node:fs';
 import { acquireInstanceLock } from '../../packages/runtime/src/instance-lock.js';

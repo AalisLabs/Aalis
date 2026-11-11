@@ -8,7 +8,7 @@ import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 // cron-engine 主循环：整分钟边界重排 + 回补
 //
 // 旧实现是「对齐一次 setTimeout + setInterval(60_000)」：interval 的误差会累积，
-// 攒够一分钟就整分钟丢触发；tick 晚到（事件循环阻塞 / 机器休眠唤醒）时也只求值
+// 累计满一分钟就整分钟丢触发；tick 晚到（事件循环阻塞 / 机器休眠唤醒）时也只求值
 // 当前这一分钟，中间的分钟静默消失（"每天 02:00 备份"那一分钟就这么没了）。
 //
 // 现语义：每轮按下一个整分钟边界重排 setTimeout；tick 时把
@@ -147,7 +147,7 @@ describe('cron-engine 整分钟 tick', () => {
       h.engine.subscribe('* * * * *', () => {
         fired++;
       });
-      // 正常跑到 00:05（首轮只求值当前分钟，第二轮回补 00:02~00:05）
+      // 正常运行到 00:05（首轮只求值当前分钟，第二轮回补 00:02~00:05）
       h.fireTickAt(T0 + MIN + 10);
       h.fireTickAt(T0 + 5 * MIN + 10);
       expect(fired).toBe(5);
@@ -168,9 +168,9 @@ describe('cron-engine 整分钟 tick', () => {
   it('dispose 后 subscribe 不复活主循环：陈旧服务引用不会留下越过卸载的定时器', async () => {
     await withEngine(T0 + 1_000, async h => {
       await h.app.stop();
-      // 卸载后仍被握着的陈旧服务引用再 subscribe：不得把主循环起回来
+      // 卸载后仍被握着的陈旧服务引用再 subscribe：不得把主循环重新启动
       h.engine.subscribe('* * * * *', () => {});
-      expect(vi.getTimerCount(), 'dispose 后 subscribe 把 tick 循环起了回来，定时器越过卸载活着').toBe(0);
+      expect(vi.getTimerCount(), 'dispose 后 subscribe 把 tick 循环重新启动了，定时器越过卸载活着').toBe(0);
     });
   });
 
@@ -183,7 +183,7 @@ describe('cron-engine 整分钟 tick', () => {
       const host = app.bind({ cronEngine, lifecycle });
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
       host.cronEngine.use.subscribe('* * * * *', () => {});
-      expect(vi.getTimerCount(), '订阅起了主循环').toBe(1);
+      expect(vi.getTimerCount(), '订阅启动了主循环').toBe(1);
       let pending = -1;
       host.lifecycle.use.onDrain(() => {
         vi.runOnlyPendingTimers();
@@ -201,7 +201,7 @@ describe('cron-engine 整分钟 tick', () => {
     await withEngine(T0 + 1_000, async h => {
       await h.app.stop();
       // interval 通道不经 scheduleNextTick，闸只设在那里时这里照建 setInterval，
-      // 而 onDispose 早已跑完，intervalSubs 里这个新 timer 永远不会被 clearInterval
+      // 而 onDispose 早已执行完毕，intervalSubs 里这个新 timer 永远不会被 clearInterval
       const off = h.engine.subscribe('@every 1s', () => {});
       expect(vi.getTimerCount(), 'dispose 后 @every subscribe 建出了永不被清的 setInterval').toBe(0);
       expect(() => off(), '退订句柄应是可安全调用的空操作').not.toThrow();

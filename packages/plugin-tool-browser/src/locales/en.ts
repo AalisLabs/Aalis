@@ -13,7 +13,7 @@ export default defineLocale<Source>()({
   maxPagesDescription: 'Maximum number of pages open at once. Beyond it, the earliest opened page is closed.',
   executablePathLabel: 'Chrome path',
   executablePathDescription:
-    'Absolute path to a custom Chrome/Chromium executable. Left empty, the executable in the puppeteer configuration (PUPPETEER_EXECUTABLE_PATH, .puppeteerrc) is used, or, if none is configured, the Chrome bundled with puppeteer.',
+    'Absolute path to Chrome. Left empty, the executable in the puppeteer configuration is used, or the Chrome bundled with puppeteer if none is configured.',
   sandboxLabel: 'Chromium sandbox',
   sandboxDescription:
     'When on, Chromium starts with its sandbox, so a web page that takes over the renderer process still cannot leave it. As root on Linux, or in a container without a usable sandbox, the browser then cannot start.',
@@ -21,12 +21,12 @@ export default defineLocale<Source>()({
   maxContentLengthDescription: 'Maximum number of characters of page text returned to the agent.',
   blockPrivateLabel: 'Block private and local networks',
   blockPrivateDescription:
-    'Refuse localhost / 127.x / ::1 / 10.x / 172.16-31.x / 192.168.x / 169.254.x / 0.0.0.0 to prevent SSRF.',
+    'Refuse local and private-network addresses (such as localhost, 10.x, 192.168.x) to prevent SSRF.',
   allowedProtocolsLabel: 'Allowed protocols',
   allowedProtocolsDescription: 'The browser may only visit URLs with these protocols.',
   allowedHostsLabel: 'Host allowlist',
   allowedHostsDescription:
-    'Hosts that may be visited (private-network hosts must be listed here explicitly). Left empty, only blockPrivate decides.',
+    'Hosts that may be visited (private-network hosts must be listed here explicitly). Left empty, only “Block private and local networks” decides.',
   browser: 'Browser',
   groupSummary: 'Web navigation, content extraction, screenshots and more with the Puppeteer headless browser',
   close: 'Close',

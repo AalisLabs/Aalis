@@ -133,7 +133,7 @@ const uses = {
   persona: optional(persona),
   /** 登记 cli 审批面：终端界面在场时审批推到这里，应答记在这个登记身份名下 */
   approvals: optional(approvals),
-  /** 欢迎行下面的指路：有没有插件没起来，与 /doctor 在不在 */
+  /** 欢迎行下面的指路：有没有插件无法启动，与 /doctor 在不在 */
   plugins: optional(pluginsService),
   commands: optional(commands),
   /** 发出入站之前给配置的会话建档，创建来源写 cli 审批面的登记名 */
@@ -203,7 +203,7 @@ function startCli(caps: Caps): void {
   const adapter: PlatformAdapter = {
     adapterName: 'CLI',
     platform: 'cli',
-    // 终端界面在跑才有连接；后台运行（非 TTY）与界面起来之前没有连接，不是离线
+    // 终端界面在跑才有连接；后台运行（非 TTY）与界面启动之前没有连接，不是离线
     getConnections(): PlatformConnection[] {
       return tui?.isRunning() ? [{ id: sessionId, platform: 'cli', status: 'online' }] : [];
     },
@@ -280,7 +280,7 @@ function startCli(caps: Caps): void {
     );
   });
 
-  // 日志从激活起订阅：先补发最近 2000 条，之后实时接着送，seq 连续。界面起来之前攒着，起来之后交给它
+  // 日志从激活起订阅：先补发最近 2000 条，之后实时接着送，seq 连续。界面启动之前暂存，启动之后交给它
   const earlyLogs: LogEntry[] = [];
   let onLog: (entry: LogEntry) => void = entry => earlyLogs.push(entry);
   const stopLogs = caps.logs.use.subscribe(entry => onLog(entry), { history: 2000 });
@@ -347,7 +347,7 @@ class CliTui {
     initialEntries: LogEntry[] = [],
   ) {
     this.view = config.startupView === 'last' ? config.lastView : config.startupView;
-    // 日志由插件入口的订阅送来：界面起来之前的这一批，之后经 appendLog 一条条接着
+    // 日志由插件入口的订阅送来：界面启动之前的这一批，之后经 appendLog 一条条接着
     this.logLines = initialEntries.slice();
     // 以本地终端身份接入审批面（与输入消息的 userId 相同）。有按键才上报在场。卡上的文字按全局层的语言渲染，事实原样
     this.attendance = this.approvalSurface.attend(CONSOLE, {
@@ -408,7 +408,7 @@ class CliTui {
   }
 
   /**
-   * 插件状态静置之后，有插件没起来时在欢迎行下面指路：数目是失败与缺服务之和（缺服务按 api-doctor 的共享判据，只在等
+   * 插件状态静置之后，有插件无法启动时在欢迎行下面指路：数目是失败与缺服务之和（缺服务按 api-doctor 的共享判据，只在等
    * 别的插件启动的不算），与 /doctor 的「失败」「未就绪」两项一致；有 doctor 指令时指向它，没有时指向日志页
    */
   private async pointToUnready(): Promise<void> {

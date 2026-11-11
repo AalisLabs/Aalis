@@ -275,7 +275,7 @@ describe('初始化期间 required 依赖消失', () => {
         async apply({ dependency }) {
           attempts++;
           if (stable) return void dependency.use.value;
-          // 错误实现也只能跑到保险丝，不能让测试挂死或占满微任务队列。
+          // 错误实现也只能运行到保险丝为止，不能让测试一直阻塞或占满微任务队列。
           if (attempts === 31) throw new Error('测试保险丝：自动重试未被收敛预算拦住');
           if (mode === 'recompute') await (app.plugins as PluginManager).recompute();
           if (mode === 'register') {

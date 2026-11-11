@@ -7,7 +7,7 @@ import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
-// 清消息历史与删会话的测试件：装上 /clear、在 WebUI 会话里敲一条指令、在删除或清理的一段里挂住一家。
+// 清消息历史与删会话的测试件：装上 /clear、在 WebUI 会话里敲一条指令、在删除或清理的一段里阻塞一家。
 // ════════════════════════════════════════════════════════════
 
 /** 装上 plugin-commands（网关是替身），清消息历史由它的 /clear 发起 */
@@ -33,8 +33,8 @@ export async function command(app: App, sessionId: string, line: string): Promis
 }
 
 /**
- * 删除或清理的一段里挂住一家：只听 session:deleted 的一家（收到就挂住），或先清再调 next 的一家清理（如人设、检查点）。entered
- * 在它第一次挂住时落定，release 之后放行（之后的不再挂）
+ * 删除或清理的一段里阻塞一家：只听 session:deleted 的一家（收到就阻塞），或先清再调 next 的一家清理（如人设、检查点）。entered
+ * 在它第一次阻塞时落定，release 之后放行（之后的不再阻塞）
  */
 export function hanging(on: 'session:deleted' | 'memory:clear') {
   const entered = deferred();

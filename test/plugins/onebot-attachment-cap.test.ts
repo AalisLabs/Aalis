@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readBodyCapped } from '../../packages/plugin-adapter-onebot/src/attachment-cache.js';
 
 // ════════════════════════════════════════════════════════════
-// 入站附件下载流式限额：无 Content-Length 时也不会全量缓冲撑爆内存。
+// 入站附件下载流式限额：无 Content-Length 时也不会全量缓冲耗尽内存。
 // ════════════════════════════════════════════════════════════
 
 function fakeRes(chunks: Uint8Array[], contentLength?: number): Response {
@@ -123,7 +123,7 @@ describe('cacheOneAttachment 大小闸覆盖全部来源', () => {
       new AbortController().signal,
     );
     expect(out).toBeNull();
-    expect(readCalled, '超限文件被整份读进内存 = 白吃一次峰值，正是这条要挡的').toBe(false);
+    expect(readCalled, '超限文件被整份读进内存 = 无谓地占用一次峰值内存，正是这条要挡的').toBe(false);
   });
 
   it('storage 来源：未超限照常读取', async () => {

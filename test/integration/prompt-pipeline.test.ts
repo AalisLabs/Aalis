@@ -129,7 +129,7 @@ function createProbeContributionPlugin(views: PromptContributionView[], hookLayo
         },
       );
       // 中场贡献探针：工具执行后（工具循环的二次组装之前）注册新贡献。
-      // MIDTURN 块只能由二次 assemblePromptContributions 物化——该调用被删则测试必挂。
+      // MIDTURN 块只能由二次 assemblePromptContributions 物化——该调用被删则测试必然失败。
       hooks.use.middleware('agent:tool:after' as never, async (_data: unknown, next: () => Promise<void>) => {
         contributions.use.contribute(POINT, {
           id: 'midturn-probe',
@@ -301,7 +301,7 @@ describe('提示词管线端到端（真实 agent.handleMessage + 探针 LLM）'
     try {
       await stack.agent.handleMessage(incoming('你好'));
 
-      // 主管线确实跑完：LLM 被调一次，回复经 outbound 出站
+      // 主管线确实执行完毕：LLM 被调一次，回复经 outbound 出站
       expect(stack.recorder).toHaveLength(1);
       expect(stack.outbound.map(m => m.content)).toEqual(['REPLY-1']);
 
@@ -385,7 +385,7 @@ describe('提示词管线端到端（真实 agent.handleMessage + 探针 LLM）'
       const first = stack.recorder[0];
       const second = stack.recorder[1];
 
-      // 中场贡献（agent:tool:after 里注册）只该出现在第二次请求——二次组装被删则此处必挂
+      // 中场贡献（agent:tool:after 里注册）只该出现在第二次请求——二次组装被删则此处必然失败
       expect(injectedBy(first, 'midturn-probe')).toHaveLength(0);
       const midturn = injectedBy(second, 'midturn-probe');
       expect(midturn).toHaveLength(1);

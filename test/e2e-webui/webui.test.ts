@@ -40,14 +40,14 @@ import { deferred } from '../helpers/deferred.js';
 import { waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
-// WebUI 端到端：构建前端，起最少插件组合的运行时（create-aalis 的 minimal 档，加内存记忆、假模型与 webui-server，
+// WebUI 端到端：构建前端，启动最少插件组合的运行时（create-aalis 的 minimal 档，加内存记忆、假模型与 webui-server，
 // 不装计划、检查点、摘要），在真的 Chromium 里按桌面与手机两种宽度走主流程；按宽度变的排版（房间表、声明式页面与
 // 会话面板的容器查询）只有真的排版才验得了，也在这里核。声明式页面用一个探针插件登记，另装迁移过来的计划任务与工作流看
 // 真实插件的页面。插件前端用脚手架生成的插件，加一个在临时目录里搭的测试插件（会话面板，与隔离的各项核查）。
 // 浏览器经一个可以切断的中转连到 webui-server，断线重连靠它模拟。假模型按这一轮的
 // 最后一条消息回话，流式回复逐块慢慢出；需要批准的是一个声明了命令展示的探针工具，可转后台的是另一个测试插件登记的命令工具
 // （会写输出、响应中止），子会话由子任务插件派生，发图片的用例另装媒体识别（把上传的图片落盘）。页面里的请求只到这个中转与
-// 本机起的「外站」，外站一律不连。
+// 本机启动的「外站」，外站一律不连。
 // ════════════════════════════════════════════════════════════
 
 const CSP =
@@ -286,7 +286,7 @@ const probePages = definePlugin({
   },
 });
 
-/** 没配好起不来的插件：服务地址没填时激活失败，填了就好 */
+/** 没配好就无法启动的插件：服务地址没填时激活失败，填了就好 */
 const NEEDS_CONFIG = 'zz-e2e-needs-config';
 const needsConfig = definePlugin({
   name: NEEDS_CONFIG,
@@ -320,7 +320,7 @@ const noticeProbe = definePlugin({
   },
 });
 
-/** 可多开的插件：主实例之外另起实例 */
+/** 可多开的插件：主实例之外另行启动实例 */
 const MULTI = 'zz-e2e-multi';
 const multi = definePlugin({ name: MULTI, displayName: '多开的探针', reusable: true, apply() {} });
 
@@ -453,7 +453,7 @@ function framesPlugin(): PluginDefinition {
   });
 }
 
-/** 本机起的「外站」：按路径数收到的请求，一律回空的 200 */
+/** 本机启动的「外站」：按路径数收到的请求，一律回空的 200 */
 async function externalSite() {
   const hits = new Map<string, number>();
   const server = createHttpServer((req, res) => {
@@ -537,7 +537,7 @@ async function relay(target: number) {
 }
 
 /**
- * 起运行时（共用的 minimal 档组合，模型是按 script 回话的假模型），再加一个需要批准的探针工具；extra 是另加的插件，doc 是宿主
+ * 启动运行时（共用的 minimal 档组合，模型是按 script 回话的假模型），再加一个需要批准的探针工具；extra 是另加的插件，doc 是宿主
  * 配置文档，hold 是假模型每次流出第一段后的闸门。requests 是假模型收到的请求
  */
 async function startStack(
@@ -1258,7 +1258,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(problems).toEqual([]);
   }, 60_000);
 
-  it('缺必填配置起不来的插件：树上标着待配置，详情写没填的键；照样能改配置（改了以后行尾出现撤销，正在填的输入框不挪位置、不变窄），保存即重新激活，转为运行中', async () => {
+  it('缺必填配置无法启动的插件：树上标着待配置，详情写没填的键；照样能改配置（改了以后行尾出现撤销，正在填的输入框不挪位置、不变窄），保存即重新激活，转为运行中', async () => {
     const stack = await startStack();
     await stack.app.plugin(needsConfig, {});
     await stack.app.plugins.idle();
@@ -1996,7 +1996,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     await send(page, '后台跑 alpha');
     const sessionId = await sessionIdOf(page);
     await page.waitForSelector(text(MOVED));
-    // 立即转：起它的那一轮不等让出时限（1 秒）就收了尾
+    // 立即转：发起它的那一轮不等让出时限（1 秒）就收了尾
     const sessions = stack.app.bind({ sessionManager }).sessionManager.use;
     const tasks = stack.app.bind({ backgroundTasks }).backgroundTasks.use;
     await expect.poll(() => sessions.getSession(sessionId)?.lastTurn).toBeDefined();

@@ -60,7 +60,7 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
 });
 
-/** 起一个带配置文档（owners）的宿主，登记权限插件与会话表桩；不给会话管理时会话表桩不登记 */
+/** 启动一个带配置文档（owners）的宿主，登记权限插件与会话表桩；不给会话管理时会话表桩不登记 */
 async function host(opts: { sessions?: boolean } = {}) {
   const { app } = hostedApp({ owners: [OWNER] });
   apps.push(app);

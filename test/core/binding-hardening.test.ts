@@ -253,7 +253,7 @@ describe('optional：品牌标记，自有 optional 字段不能绕过激活闸'
     }
     await app.plugins.idle();
     expect(threw, `定义期不应抛：${threw}`).toBeUndefined();
-    expect(ran, '误把 required 描述符认成 optional 会让 apply 跑起来').toBe(false);
+    expect(ran, '误把 required 描述符认成 optional 会让 apply 运行').toBe(false);
     expect(app.plugins.getPlugin('c-true')?.state).toBe('pending');
   });
 
@@ -273,7 +273,7 @@ describe('optional：品牌标记，自有 optional 字段不能绕过激活闸'
       }),
     );
     await app.plugins.idle();
-    expect(ran, '误把 required 描述符认成 optional 会让 apply 跑起来').toBe(false);
+    expect(ran, '误把 required 描述符认成 optional 会让 apply 运行').toBe(false);
     expect(app.plugins.getPlugin('c')?.state).toBe('pending');
   });
 

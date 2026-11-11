@@ -9,7 +9,7 @@ const SOURCE = {
   modelLabel: 'Embedding 模型',
   modelDescription: '用于生成文本向量的模型',
   timeoutMsLabel: '请求超时 (ms)',
-  timeoutMsDescription: '单次 embedding 请求超时时间。不设上限时启动探测会把插件激活链整条钉住。',
+  timeoutMsDescription: '单次 embedding 请求的超时时间。',
   baseUrlInvalid: 'baseUrl 需为不带用户名或密码的完整 URL',
   baseUrlQuery: 'baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径',
 } as const;

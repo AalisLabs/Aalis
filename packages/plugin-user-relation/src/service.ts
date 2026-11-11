@@ -286,7 +286,7 @@ export class RelationService {
     const now = Date.now();
     // sessionScope 优先取显式传入；其次从 evidence[0].sessionId 推断；最终兜底 'global'。
     // 'global' 哨兵表示「显式跨会话事件」。
-    // 若调用方真的没法给出 scope（如批处理脚本），落 'global' 并 audit warn 以便排查。
+    // 若调用方真的无法给出 scope（如批处理脚本），落 'global' 并 audit warn 以便排查。
     let scope = input.sessionScope ?? input.evidence?.[0]?.sessionId;
     if (scope === undefined) {
       scope = 'global';
@@ -989,7 +989,7 @@ export class RelationService {
     // ── familiar 占位自动废除 ──
     // 'familiar' 是行为观察兜底标签（"两人常一起说话但不知道具体关系"）；
     // 一旦同一对人之间出现任何**身份性**关系（friend/cp/mentor/colleague/rival/...），
-    // familiar 就不再有信息量。在新建或加强非 familiar 关系时顺手删除同对的 familiar 边，
+    // familiar 就不再有信息量。在新建或加强非 familiar 关系时同时删除同对的 familiar 边，
     // 避免视觉冗余。不动 is-alias-of / alt-account-of（别名声明正交于亲密度）。
     if (normalizedType !== 'familiar' && normalizedType !== 'is-alias-of' && normalizedType !== 'alt-account-of') {
       for (const e of snapshot.edges) {
@@ -1093,7 +1093,7 @@ export class RelationService {
    * 廉价预判：图中任一类节点 / 边的当前数量是否已达到 `evictByQuota` 的滞回触发阈值
    * （`count >= ceil(cap · (1 + hysteresisPct))`），即下一次 `evictByQuota` **真的会删东西**。
    *
-   * 用于 extractor 的"写后顺手老化"路径节流：避免每次提取都跑 PageRank / consolidate。
+   * 用于 extractor 的"写后随即老化"路径节流：避免每次提取都跑 PageRank / consolidate。
    * 公式与 {@link evictByQuota} 内部判定一致；任一类超阈即返回 true（与 evict 的分类独立判定对齐）。
    *
    * `cap <= 0` 的类视为不限，跳过检查；`evictionEnabled` 由调用方负责。
@@ -1231,7 +1231,7 @@ export class RelationService {
   }
 
   /**
-   * 自动老化：按配额淘汰过多节点。模仿 profile 的"写后顺手扫"风格，不开独立调度器。
+   * 自动老化：按配额淘汰过多节点。模仿 profile 的"写后随即扫描"风格，不开独立调度器。
    *
    * 优先级（每次仅在超额时执行）：
    *   1. **孤儿节点**先删（无任何边引用的 person / event / entity；委托 `pruneOrphans()`）。
@@ -1490,7 +1490,7 @@ export class RelationService {
     await this.runPruneOrphans();
 
     // 4) 把 PageRank 写回三类节点，供 WebUI 展示"图重要性"；
-    //    顺手跑社群发现（Louvain / Leiden / SLPA 可切换），把 communityId + communityMemberships 一并写回（同一批 snapshot 保证可比）。
+    //    同时运行社群发现（Louvain / Leiden / SLPA 可切换），把 communityId + communityMemberships 一并写回（同一批 snapshot 保证可比）。
     //    存储 schema 统一：louvain/leiden 永远写单元素 memberships=[{id, weight:1}]，slpa 写全多元素；
     //    communityId 始终等于 memberships[0].id（主社群，向下兼容旧消费方）。
     {
@@ -1605,7 +1605,7 @@ export class RelationService {
      * 复用调用方已加载的全图，省掉一次 `loadAll()`。
      *
      * `loadAll()` 是 O(全图)（实测生产库 3090 条 / 41 MB / ≈540 ms），而一次 prompt 构建里
-     * 本就要读两次（本函数一次、全局热点一次）。由调用方加载一次喂给两边即可，**不需要在
+     * 本就要读两次（本函数一次、全局热点一次）。由调用方加载一次交给两边即可，**不需要在
      * store 里做缓存**——那会引入失效、TTL、冻结、并发覆盖一整串要维护的东西（实测过，四条
      * 缺陷）。同 `scoreBetween` 已有的 `_snapshot`。
      */
@@ -2753,7 +2753,7 @@ export class RelationService {
       }
 
       // 给候选里出现过的每个 entity 算一次 compositeScore（snapshot 已固定，避免重复扫边）
-      // F2：缓存完整 score 对象（含 compositeScore + 邻居剖面），用于喂给 verifyAliasPair 的上下文。
+      // F2：缓存完整 score 对象（含 compositeScore + 邻居剖面），用于交给 verifyAliasPair 的上下文。
       const scoreCache = new Map<string, { compositeScore: number; neighbor: PairNeighborProfile } | null>();
       const getScoreInfo = (id: string): { compositeScore: number; neighbor: PairNeighborProfile } | null => {
         if (scoreCache.has(id)) return scoreCache.get(id) ?? null;
@@ -2960,7 +2960,7 @@ export class RelationService {
     }
 
     // ─── 遗留数据整理共用快照刷新：(3)/(3b)/(3c) 一律基于**合并后的实况**重载 ───
-    // 旧形态吃 pass 开头快照，而 (1)/(1.5) 真合并已「保 id 改端点」重写/删除了边——
+    // 旧形态用的是 pass 开头的快照，而 (1)/(1.5) 真合并已「保 id 改端点」重写/删除了边——
     // 按旧端点重建 dedup key 会「删活边 + 把死端点写回」（端到端复现过：
     // 事件对已删实体 X 的 part-of/about 两条边被折叠成指向死 X 的悬空边，
     // 活的 事件→canonical 挂载净丢失，随后被 pruneOrphans 当幽灵边清掉）。
@@ -4253,7 +4253,7 @@ export class RelationService {
    *
    * 内部分两步：
    *  1) 复用 mergeAlias 把每个 alias 的边改写到 canonical（保留同名 alias 标记边以便回溯）；
-   *  2) 物理删除 alias 节点本身（cascade 顺手清理残留的 alias 标记边）。
+   *  2) 物理删除 alias 节点本身（cascade 同时清理残留的 alias 标记边）。
    */
   async mergeNodes(opts: {
     kind: 'event' | 'entity';
@@ -4303,7 +4303,7 @@ export class RelationService {
       // 物理删除 alias 节点 —— **仅在 mergeAlias 没删成时兜底**。
       // mergeAlias 的「真合并」步骤本身就会级联删掉 alias 节点（它整段包在 try/catch 里，
       // 成功与否由 aliasDeleted 如实回报）。无条件再删一次是常态下的纯浪费：每个 alias 多付
-      // 2 次全图读（实测单次 listMetadata 中位 177ms，合并 5 个 alias 白烧约 1.8s），
+      // 2 次全图读（实测单次 listMetadata 中位 177ms，合并 5 个 alias 白白消耗约 1.8s），
       // 而对一个已不存在的节点，cascade 是幂等空操作、连边都清不到。
       if (!r.aliasDeleted) {
         const { deletedEdges } =

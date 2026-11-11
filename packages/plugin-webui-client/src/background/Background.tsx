@@ -44,10 +44,10 @@ export const taskName = (task: BackgroundTask) =>
 /** 子会话在跑：它的回合，或它与各级子会话里有后台工作 */
 const active = (session: SessionSummary) => session.running || session.background > 0;
 
-/** 子会话结束了：不在跑，也跑完过一轮（刚建、还没开始的不算） */
+/** 子会话结束了：不在跑，也执行完过一轮（刚建、还没开始的不算） */
 const ended = (session: SessionSummary) => !active(session) && session.lastTurn !== undefined;
 
-/** 在跑的在前（后起的在上），结束的按结束时间、晚的在上 */
+/** 在跑的在前（后启动的在上），结束的按结束时间、晚的在上 */
 function splitTasks(tasks: readonly BackgroundTask[]): [BackgroundTask[], BackgroundTask[]] {
   const running = tasks.filter(task => task.status === 'running').sort((a, b) => b.startedAt - a.startedAt);
   const ended = tasks
@@ -258,7 +258,7 @@ function TaskRow({ task, onOutput }: { task: BackgroundTask; onOutput?(): void }
 }
 
 /**
- * 子会话的状态：等你批准（它或它下面的子会话有推出、还没结的审批）、在跑、出错（写原因）、被停止、完成；还没跑完一轮的
+ * 子会话的状态：等你批准（它或它下面的子会话有推出、还没结的审批）、在跑、出错（写原因）、被停止、完成；还没执行完一轮的
  * 没有
  */
 function childState(

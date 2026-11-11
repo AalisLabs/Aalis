@@ -80,7 +80,7 @@ async function setup(schedulerConfig: Record<string, unknown> = {}) {
   host.hooks.use.middleware('inbound:dispatch', async data => {
     passed.push(data.message);
   });
-  /** 入站相位链跑完 count 条（指令执行了或往下走了都算） */
+  /** 入站相位链执行完 count 条（指令执行了或往下走了都算） */
   const settled = (count = 1) =>
     new Promise<void>(resolve => {
       const off = host.events.use.on('gateway:phase:done', ({ phase, reachedEnd }) => {
@@ -137,7 +137,7 @@ describe('其余带 source 的注入：不过指令解析，当普通消息交�
     expect(s.passed.map(m => [m.sessionId, m.source, m.content])).toEqual([[CHILD, 'subtask', '/halt']]);
   });
 
-  it('编排的发消息节点与 agent 节点（owner 调起）', async () => {
+  it('编排的发消息节点与 agent 节点（owner 调用）', async () => {
     const s = await setup();
     const done = s.settled(2);
     await runDag({

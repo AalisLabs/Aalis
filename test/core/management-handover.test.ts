@@ -387,7 +387,7 @@ describe('提供者清理之前，跟随者交接落定', () => {
   });
 });
 
-describe('交接不经事件投递：慢跟随者不拖住别人，通知不等监听器', () => {
+describe('交接不经事件投递：慢跟随者不阻塞别人，通知不等监听器', () => {
   const S = defineService<{ name: string; alive: boolean }>('t:handover:shared');
   const never = () => new Promise<void>(() => {});
 
@@ -426,7 +426,7 @@ describe('交接不经事件投递：慢跟随者不拖住别人，通知不等�
   it.each([
     'unload',
     'disable',
-  ] as const)('%s 提供者：前一个跟随者的清理挂住，后一个仍在提供者 onDispose 之前清理，后登记的变更监听照常收到', async action => {
+  ] as const)('%s 提供者：前一个跟随者的清理一直阻塞，后一个仍在提供者 onDispose 之前清理，后登记的变更监听照常收到', async action => {
     const app = world(50);
     const log: string[] = [];
     await app.plugin(provider(log, 'p'));
@@ -452,7 +452,7 @@ describe('交接不经事件投递：慢跟随者不拖住别人，通知不等�
     expect(log).toContain('listener got changed');
   });
 
-  it('注册更高优先级的提供者：前一个跟随者的清理挂住，后一个仍换到新胜者', async () => {
+  it('注册更高优先级的提供者：前一个跟随者的清理一直阻塞，后一个仍换到新胜者', async () => {
     const app = world(50);
     const log: string[] = [];
     await app.plugin(provider(log, 'p1'));
@@ -507,7 +507,7 @@ describe('交接不经事件投递：慢跟随者不拖住别人，通知不等�
   });
 });
 
-describe('跟随者已放弃等待的撤回不再拖住提供者，包装型提供者不制造伪环', () => {
+describe('跟随者已放弃等待的撤回不再阻塞提供者，包装型提供者不制造伪环', () => {
   const S = defineService<{ name: string }>('t:handover:hung');
   const never = () => new Promise<void>(() => {});
   const provider = (name: string) =>
@@ -522,7 +522,7 @@ describe('跟随者已放弃等待的撤回不再拖住提供者，包装型提�
   const handoverTimeouts = (warnings: string[]) =>
     warnings.filter(w => w.includes('Resources "p"') && w.includes('下游交接'));
 
-  it('required 下游的跟随清理挂住：它自己关闭时已按超时放弃，提供者不再等第二轮', async () => {
+  it('required 下游的跟随清理一直阻塞：它自己关闭时已按超时放弃，提供者不再等第二轮', async () => {
     const { app, warnings } = capturing(30);
     await app.plugin(provider('p'));
     await app.plugin(
@@ -540,7 +540,7 @@ describe('跟随者已放弃等待的撤回不再拖住提供者，包装型提�
     expect(handoverTimeouts(warnings)).toEqual([]);
   });
 
-  it('跟随者 bounce 时清理挂住：遗留的边不拖累之后卸载提供者', async () => {
+  it('跟随者 bounce 时清理一直阻塞：遗留的边不拖累之后卸载提供者', async () => {
     const { app, warnings } = capturing(30);
     let hang = true;
     await app.plugin(provider('p'));

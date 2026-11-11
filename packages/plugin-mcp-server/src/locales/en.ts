@@ -10,9 +10,10 @@ export default defineLocale<Source>()({
   bindEmpty: 'bind must not be empty',
   tokenLabel: 'Access token',
   tokenDescription:
-    'External MCP clients connecting to /sse and /messages must send the header Authorization: Bearer <token>. At least 32 visible ASCII characters with no whitespace; can be generated with openssl rand -hex 32. Stored in the secret store, and the WebUI does not show it back',
+    'External MCP clients must send it in the header Authorization: Bearer <token>. At least 32 visible ASCII characters with no whitespace; can be generated with openssl rand -hex 32',
   tokenInvalid: 'must be at least 32 visible ASCII characters (no whitespace)',
-  toolGroupsLabel: 'Allowed tool groups (empty = all, subject to the restricted switch)',
-  toolGroupsDescription: "An empty list or ['*'] = expose tools of all groups (still subject to allowRestricted).",
+  toolGroupsLabel: 'Allowed tool groups',
+  toolGroupsDescription:
+    "An empty list or ['*'] = expose tools of all groups (still subject to “Allow exposing restricted tools”).",
   allowRestrictedLabel: 'Allow exposing restricted tools',
 });

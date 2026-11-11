@@ -96,16 +96,16 @@ export default defineLocale<Source>()({
   approvalsAbsent:
     'Operation cancelled: {capability} needs approval, but the approval service is absent (provided by @aalis/plugin-session-server)',
   operationsDescription:
-    'Each command, tool and setting has a minimum level: commands and tools default to one derived from their risk (safe 0, sensitive 1, dangerous 2), settings to the level they declare; most need no change. Which layer a setting is written to has its own fixed threshold, not adjusted here.',
+    'The minimum level for each command, tool and setting. Defaults follow the risk (safe 0, sensitive 1, dangerous 2), and settings follow their declaration; most need no change. Which layer a setting is written to has its own fixed threshold, not adjusted here.',
   operationsEmpty: 'No commands, tools or settings are registered',
   settingKind: 'Setting',
   ownerOnlyLevel: 'Owner only',
   confirmSession: 'Every time (the waiver list can waive it)',
   confirmAlways: 'Every time (only a confirmation override set to off waives it)',
   rulesDescription:
-    'Deny rules override everything, owners included. Waiving confirmation only applies to what is done as an owner: the owner in person, subtasks the owner dispatched, scheduled tasks the owner created, and workflows whose definer and caller are both owners; anything started by others, or joined by messages from others, still needs owner approval, and is refused where no approval can be raised. Neither lowers levels. Both accept wildcards, such as tool:*.',
+    'Deny rules override everything, owners included. Waiving confirmation only applies to what is done as an owner and does not lower levels; anything started or joined by others still needs owner approval, and is refused where no approval can be raised. Wildcards such as tool:* are accepted.',
   waivePattern:
-    'A capability key or wildcard, such as tool:shell_exec, command:level, tool:*. Only waives confirmation for what is done as an owner; anything started by others, or joined by messages from others, still needs owner approval',
+    'A capability key or wildcard, such as tool:shell_exec, command:level, tool:*. Only waives confirmation for what is done as an owner; anything started or joined by others still needs owner approval',
   ownerOnly: 'Only an owner can manage permissions',
   targetFormat: 'Target format: <platform:userId>',
   badGroupName:
@@ -124,7 +124,7 @@ export default defineLocale<Source>()({
   groupsCleared: 'Cleared the permission groups of {target}',
   groupsTab: 'Permission groups',
   groupsTable:
-    "Groups only grant: an operation above a member's level is allowed when an entry in one of their groups covers it, and groups add up; hard denials and bans still refuse first. Groups do not open tool group gates, so groups the session has not enabled stay hidden; tools that need confirmation stay unavailable to members who are not owners. Just like giving them the matching level, members can use local reads and execution that need no confirmation (such as file_read, run_python) in sessions with groups like system, code-runner and skills enabled. Wildcards and tool-group: also cover tools registered later.",
+    "Groups only grant: an operation above a member's level is allowed when an entry in one of their groups covers it; hard denials and bans still refuse first. Groups do not open tool group gates, and tools that need confirmation stay unavailable to members who are not owners. Members can use local reads and execution that need no confirmation (such as file_read and run_python) in tool groups the session has enabled. Wildcards and tool-group: also cover tools registered later.",
   groupsEmpty: 'No permission groups yet',
   groupName: 'Group name',
   groupGrants: 'Grant entries',

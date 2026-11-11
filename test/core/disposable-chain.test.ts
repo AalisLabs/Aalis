@@ -128,7 +128,7 @@ describe('DisposableChain.disposeAsync', () => {
     expect(order).toEqual([3, 1]);
   });
 
-  it('逐项超时：卡住的项被放弃，后续项照跑，且不悬挂进程', async () => {
+  it('逐项超时：卡住的项被放弃，后续项照常运行，且不悬挂进程', async () => {
     const order: string[] = [];
     const logger = new DefaultLogger('test');
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
@@ -158,7 +158,7 @@ describe('DisposableChain reporter 自身失败不中断清理', () => {
     },
   };
 
-  it('reporter 抛错：disposeAsync 下拒绝项之后的清理照跑，promise 正常 resolve', async () => {
+  it('reporter 抛错：disposeAsync 下拒绝项之后的清理照常运行，promise 正常 resolve', async () => {
     const chain = new DisposableChain(brokenSink, hold);
     const order: number[] = [];
     chain.push(() => {

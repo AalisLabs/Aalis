@@ -27,17 +27,15 @@ const SOURCE = {
   customModelsDescription:
     '手动添加的模型名称（每行一个或逗号分隔）。用于补充自动发现列表中未出现的模型。与自动发现重复时会提示去重。',
   discoverModelsLabel: '自动发现模型',
-  discoverModelsDescription:
-    '启动时请求 /models 发现可用模型。网关不提供 /models 时关闭：不发发现请求，只注册 customModels（此时必填）。',
+  discoverModelsDescription: '启动时向服务查询可用模型。服务不提供模型列表时关闭，这时只用自定义模型，且必须填写。',
   modelCapabilitiesLabel: '单模型能力覆盖',
   modelCapabilitiesDescription:
-    '按行指定某个模型的能力集。有该模型的表项时**覆盖**插件启发式推断，与 adapter 默认能力仍取并集。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：deepseek-flash: chat,tool_calling,streaming,thinking,vision\n可用能力：chat / tool_calling / vision / streaming / thinking 等。',
-  providerCapabilitiesLabel: '适配器默认能力（逗号分隔）',
-  providerCapabilitiesDescription:
-    '为本适配器下所有模型额外补充的能力。最终某模型的能力 = 此处能力 ∪ 模型级别能力。例：chat,tool_calling,streaming',
+    '逐个模型指定能力。写了的模型不再按名字推断，能力为这里写的加上适配器默认能力。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：deepseek-flash: chat,tool_calling,streaming,thinking,vision\n可用能力：chat / tool_calling / vision / streaming / thinking 等。',
+  providerCapabilitiesLabel: '适配器默认能力',
+  providerCapabilitiesDescription: '给所有模型额外加上的能力，逗号分隔。例：chat,tool_calling,streaming',
   timeoutLabel: '停顿超时（秒）',
   timeoutDescription:
-    '多久收不到新的生成内容算超时（秒）。一直在输出（含思考内容）不算超时；不流式的请求要在这段时间内收到整份回复。0 = 不限制。',
+    '多久收不到新的生成内容算超时，持续输出（含思考）不算；不流式的请求要在这段时间内收到完整回复。0 为不限。',
   temperatureLabel: '温度',
   temperatureDescription: '0-2，越高越随机',
   maxTokensLabel: '最大 Token',
@@ -45,14 +43,13 @@ const SOURCE = {
   contextLengthLabel: '上下文长度',
   contextLengthDescription: '模型上下文窗口大小',
   strictToolCallsLabel: 'Strict 工具调用',
-  strictToolCallsDescription:
-    '启用后所有工具调用将使用 strict 模式，模型输出严格遵循 JSON Schema（参考 api-docs.deepseek.com）',
+  strictToolCallsDescription: '开启后所有工具定义都用 strict 模式，模型给的参数严格符合 JSON Schema。',
   forceJsonOutputLabel: '强制 JSON 输出',
   forceJsonOutputDescription:
-    '启用后所有最终回复请求将携带 response_format: \'{type:"json_object"}\'，配合角色卡 outputFormat 使用可提升格式遵循率。工具调用阶段不受影响（工具响应走 tool_calls 字段）。需确保 system prompt 中含有 json 字样（启用 outputFormat 的角色卡会自动满足此条件）。',
+    '开启后不带工具的请求要求模型输出 JSON，配合角色卡的输出格式使用。系统提示里须含 json 字样。',
   thinkingLabel: '默认思考档位',
   thinkingDescription:
-    '能思考的模型（v4、reasoner 等，或单模型能力覆盖里写了 thinking 的）在请求没指定档位时用这一档，会话设置的「深度思考」压过它。自动：开启思考，强度由 DeepSeek 按场景在高与最高之间选。不能思考的模型一律按关发。',
+    '能思考的模型在请求没指定档位时用这一档，会话设置的「深度思考」优先。自动：开启思考，强度由 DeepSeek 在高与最高之间选。',
   requestTimeout: 'DeepSeek 请求超时：{seconds} 秒内没有收到新的生成内容，可在配置里调大 timeout',
   pluginClosed: 'DeepSeek 插件已停用或重载，这次请求没有发出',
   pluginStopped: 'DeepSeek 插件已停用或重载，这次请求中途停下',

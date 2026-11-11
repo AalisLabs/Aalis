@@ -13,7 +13,7 @@ import { fakeTty } from '../helpers/tty.js';
 // CLI 会话里的附件：终端显示不了图片本身，写一行说明（类型、名称、大小、本机路径；取不到路径时写存储地址），
 // 写出即算送达（填 delivery 并发 outbound:delivered，照常归档）。附件消息不往终端写空行。
 // 用非 TTY 模式：出站消息落成 `[cli] …` 日志，便于断言。订阅着终端的会话时她回复的正文由条目画、出站只写附件，这一支只在 TUI
-// 里走到，那两条用例起真 TUI、看最后一帧。
+// 里走到，那两条用例启动真 TUI、看最后一帧。
 
 const FRAME_SPLIT = '\x1b[?25l\x1b[H';
 const ANSI_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[A-Za-z]`, 'g');
@@ -32,7 +32,7 @@ interface Cli {
   delivered: OutgoingMessage[];
 }
 
-/** 非 TTY 模式起 CLI。before 在装 CLI 之前跑（在那里装的插件登记的出站监听排在 CLI 的前面），收尾还原 isTTY 并停掉 app */
+/** 非 TTY 模式启动 CLI。before 在装 CLI 之前跑（在那里装的插件登记的出站监听排在 CLI 的前面），收尾还原 isTTY 并停掉 app */
 async function headlessCli(run: (cli: Cli) => Promise<void>, before?: (app: App) => Promise<unknown>): Promise<void> {
   const tty = { out: process.stdout.isTTY, in: process.stdin.isTTY };
   Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
@@ -233,7 +233,7 @@ describe('plugin-cli 附件', () => {
     }));
 
   /**
-   * 起真 TUI 交出 message，回执照样认领为送达；交回最后一帧去掉 ANSI 控制码的画面。subscribed 时另接上会话服务、等终端订上它的
+   * 启动真 TUI 交出 message，回执照样认领为送达；交回最后一帧去掉 ANSI 控制码的画面。subscribed 时另接上会话服务、等终端订上它的
    * 会话：她回复的正文由会话服务推来的条目画
    */
   async function tuiFrame(message: OutgoingMessage, subscribed: boolean): Promise<string> {

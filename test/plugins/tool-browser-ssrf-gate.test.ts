@@ -9,7 +9,7 @@ import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js
 import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
-// 浏览器工具的 SSRF 闸（真 Chromium + 测试自己在本机起的 http / udp 服务）：
+// 浏览器工具的 SSRF 闸（真 Chromium + 测试自己在本机启动的 http / udp 服务）：
 // 浏览器的全部 TCP 连接经插件进程内的网络闸，页面、SharedWorker、Service Worker、页面自己 window.open 出的窗口、
 // 重定向的每一跳与 WebSocket 都经过它；WebRTC 不发 UDP。
 //
@@ -24,7 +24,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 
 type Handler = (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string | ToolExecutionResult>;
 
-// 测试里启动的 Chrome 追加参数：没起闸（没有 --proxy-server）时不走系统代理，起了闸时不加这一条，免得盖掉闸；
+// 测试里启动的 Chrome 追加参数：没启动闸（没有 --proxy-server）时不走系统代理，启动了闸时不加这一条，免得盖掉闸；
 // 除 127.0.0.1 与 localhost 外的主机一律映射到 127.0.0.1:1（只作用于浏览器自己解析的连接，经闸的连接由闸解析）；
 // WebRTC 不用 mDNS 主机名（否则会向局域网发组播）。
 // 不映射成「解析不到」：导航因解析失败出错时，Chrome 会拿公网域名做一次 DNS 探测
@@ -178,7 +178,7 @@ afterAll(async () => {
   await new Promise<void>(resolve => server.close(() => resolve()));
 });
 
-/** 起一个装好浏览器插件的 App，工具 handler 收进返回的表里 */
+/** 启动一个装好浏览器插件的 App，工具 handler 收进返回的表里 */
 async function startBrowserTools(
   config: Record<string, unknown>,
 ): Promise<{ app: App; handlers: Record<string, Handler> }> {
@@ -201,7 +201,7 @@ async function navigate(handlers: Record<string, Handler>, url: string): Promise
   return JSON.parse((await handlers.browser_navigate({ url }, toolContext({ sessionId: 's' }))) as string);
 }
 
-/** 等页面（或它开的窗口、它起的 worker）把探测结果回报到 /zz-done/<tag> */
+/** 等页面（或它开的窗口、它启动的 worker）把探测结果回报到 /zz-done/<tag> */
 async function waitForDone(tag: string, timeoutMs = 30_000): Promise<string> {
   const prefix = `/zz-done/${tag}?r=`;
   const deadline = Date.now() + timeoutMs;

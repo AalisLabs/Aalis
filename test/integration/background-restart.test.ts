@@ -23,7 +23,7 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 import { client } from '../fixtures/session-client.js';
 
 // ════════════════════════════════════════════════════════════
-// 重启之后的后台任务：真的 agent 在一轮里起两次可转后台的调用，都转到后台；一个在重启之前正常结束，一个还在跑。
+// 重启之后的后台任务：真的 agent 在一轮里发起两次可转后台的调用，都转到后台；一个在重启之前正常结束，一个还在跑。
 // 停机（app:stopping 之后停用工具注册表与会话服务）再以同一份插件数据与同一份存档重新激活它们：
 // 还在跑的落成 aborted（重启时还在跑），已结束的保持原来的结局；历史里两张工具卡的 taskId 都在 background/list 里，
 // 状态与登记表一致。

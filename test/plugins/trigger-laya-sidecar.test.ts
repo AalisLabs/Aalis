@@ -6,7 +6,7 @@ import { defineTexts, resolveText, TextError, type TextRef, toSource } from '../
 import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
-// plugin-trigger-laya 的托管侧车（sidecar.ts）：拉起参数、就绪行、退出后退避重启、首次拉起前地址已被占用、
+// plugin-trigger-laya 的托管侧车（sidecar.ts）：启动侧车进程的参数、就绪行、退出后退避重启、首次启动侧车进程前地址已被占用、
 // 没有 process 服务、启动超时、停止即中止 spawn 的 signal 并等它退出。process 服务是假的（不启动真进程），时钟用假时钟；
 // 接进插件后的行为见 trigger-laya.test.ts「托管侧车」。
 // ════════════════════════════════════════════════════════════
@@ -77,7 +77,7 @@ interface Harness {
   reasons: TextRef[];
   /** signal 是最近一次探测收到的中止信号 */
   probe: { taken: boolean; calls: number; signal?: AbortSignal };
-  /** 拉起时给出的 process 服务；置为 undefined 模拟缺席 */
+  /** 启动侧车进程时给出的 process 服务；置为 undefined 模拟缺席 */
   current: { process: ProcessService | undefined };
 }
 
@@ -134,7 +134,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('托管侧车：拉起与就绪', () => {
+describe('托管侧车：启动进程与就绪', () => {
   it('首次启动侧车进程前探地址的请求接停止：停掉侧车时交给探测的信号随之中止', async () => {
     const h = start();
     expect(h.probe.signal?.aborted).toBe(false);
@@ -142,9 +142,9 @@ describe('托管侧车：拉起与就绪', () => {
     expect(h.probe.signal?.aborted).toBe(true);
   });
 
-  it('按侧车目录的布局拉起：venv 的 python 以 -I 运行、模型取 models/current、端口与父进程 pid 作参数，工作目录是侧车目录', async () => {
+  it('按侧车目录的布局启动侧车进程：venv 的 python 以 -I 运行、模型取 models/current、端口与父进程 pid 作参数，工作目录是侧车目录', async () => {
     const h = start();
-    expect(h.children, '先探地址，探完才拉起').toHaveLength(0);
+    expect(h.children, '先探地址，探完才启动侧车进程').toHaveLength(0);
     await settle();
     expect(h.children).toHaveLength(1);
     const [c] = h.children;
@@ -163,7 +163,7 @@ describe('托管侧车：拉起与就绪', () => {
     expect(c.opts?.cwd).toBe(DIR);
     expect(c.opts?.maxBuffer, 'wait() 只用退出码，不替常驻进程暂存输出').toBe(1);
     expect(h.sc.state).toMatchObject({ kind: 'starting', restarts: 0 });
-    expect(infos(h)).toEqual([`[laya] 正在拉起侧车（${DIR}，端口 17878），就绪前判定按兜底只回点名`]);
+    expect(infos(h)).toEqual([`[laya] 正在启动侧车进程（${DIR}，端口 17878），就绪前按后备判定只回点名`]);
   });
 
   it('就绪行 → ready；就绪行之外的输出记 debug；就绪行跨块到达也认；多出的就绪行不重复记', async () => {
@@ -196,18 +196,18 @@ describe('托管侧车：拉起与就绪', () => {
     expect(line.length).toBe('[laya] 侧车: '.length + 64 * 1024);
   });
 
-  it('首次拉起前地址上已有侧车在答 /health：不拉起、不记「正在拉起」，记 warn，状态为 external', async () => {
+  it('首次启动侧车进程前地址上已有侧车在答 /health：不启动、不记「正在启动侧车进程」，记 warn，状态为 external', async () => {
     const h = start({ taken: true });
     await settle();
     expect(h.children).toHaveLength(0);
     expect(h.sc.state).toEqual({ kind: 'external' });
     expect(infos(h)).toEqual([]);
     expect(h.logs.filter(([l]) => l === 'warn').map(([, m]) => m)).toEqual([
-      '[laya] 侧车端口 17878 上已有侧车在运行（系统服务或手动启动的），本插件不拉起，直接使用它；要改由本插件托管，' +
-        '先停掉它（系统服务要卸载，直接结束进程会被系统拉回），再重启 Aalis 或把 trigger 偏好切走再切回',
+      '[laya] 侧车端口 17878 上已有侧车在运行（系统服务或手动启动的），本插件不启动侧车进程，直接使用它；要改由本插件托管，' +
+        '先停掉它（系统服务要卸载，直接结束进程会被系统重新启动），再重启 Aalis 或把 trigger 偏好切走再切回',
     ]);
     await h.sc.stop();
-    expect(infos(h), '没拉起过，停止时不记「已停掉」').toEqual([]);
+    expect(infos(h), '没启动过侧车进程，停止时不记「已停掉」').toEqual([]);
   });
 });
 
@@ -232,10 +232,10 @@ describe('托管侧车：退出与重启', () => {
     expect(h.children).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(h.children).toHaveLength(2);
-    expect(h.probe.calls, '只在首次拉起前探地址').toBe(1);
+    expect(h.probe.calls, '只在首次启动侧车进程前探地址').toBe(1);
     expect(h.sc.state).toMatchObject({ kind: 'starting', restarts: 1 });
 
-    // 一直起不来：间隔 2、4、8、16、32、60、60，都属同一轮故障
+    // 一直启动失败：间隔 2、4、8、16、32、60、60，都属同一轮故障
     const delays: number[] = [];
     for (let i = 0; i < 7; i++) {
       h.children.at(-1)?.exit(2);
@@ -277,7 +277,7 @@ describe('托管侧车：退出与重启', () => {
     expect(h.sc.state).toMatchObject({ kind: 'waiting', restarts: 1 });
   });
 
-  it('被信号终止、拉起失败（wait 拒绝、spawn 抛错）都按意外退出重启', async () => {
+  it('被信号终止、启动侧车进程失败（wait 拒绝、spawn 抛错）都按意外退出重启', async () => {
     const h = start();
     await settle();
     h.children[0].exit(null, 'SIGSEGV');
@@ -289,7 +289,7 @@ describe('托管侧车：退出与重启', () => {
     await vi.advanceTimersByTimeAsync(1_000);
     h.children[1].fail(new Error('spawn ENOENT'));
     await settle();
-    expect(h.exits.at(-1)?.[0]).toBe('拉起侧车失败（spawn ENOENT），2s 后重启');
+    expect(h.exits.at(-1)?.[0]).toBe('启动侧车进程失败（spawn ENOENT），2s 后重启');
 
     const throwing = start({
       process: {
@@ -300,11 +300,11 @@ describe('托管侧车：退出与重启', () => {
       },
     });
     await settle();
-    expect(throwing.exits).toEqual([['拉起侧车失败（bad cwd），1s 后重启', true]]);
+    expect(throwing.exits).toEqual([['启动侧车进程失败（bad cwd），1s 后重启', true]]);
     await throwing.sc.stop();
   });
 
-  it('拉起失败的错误带文字对象（TextError，spawn 抛出与 wait 拒绝）：诊断里按读者语言', async () => {
+  it('启动侧车进程失败的错误带文字对象（TextError，spawn 抛出与 wait 拒绝）：诊断里按读者语言', async () => {
     const denied = defineTexts({
       ns: '@zz/laya-spawn',
       language: 'zh-CN',
@@ -334,12 +334,12 @@ describe('托管侧车：退出与重启', () => {
     await h.sc.stop();
   });
 
-  it('拉起时没有 process 服务：按没能拉起处理、退避重试，服务回来后的下一次重试照常拉起', async () => {
+  it('启动侧车进程时没有 process 服务：按启动失败处理、退避重试，服务回来后的下一次重试照常启动侧车进程', async () => {
     const h = start({ process: null });
     await settle();
-    expect(h.exits).toEqual([['process 服务缺席，拉不起侧车，1s 后重启', true]]);
+    expect(h.exits).toEqual([['process 服务缺席，无法启动侧车进程，1s 后重启', true]]);
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(h.exits.at(-1)).toEqual(['process 服务缺席，拉不起侧车，2s 后重启', false]);
+    expect(h.exits.at(-1)).toEqual(['process 服务缺席，无法启动侧车进程，2s 后重启', false]);
     const later = fakeProcess();
     h.current.process = later.service;
     await vi.advanceTimersByTimeAsync(2_000);
@@ -400,7 +400,7 @@ describe('托管侧车：停止', () => {
     expect(infos(h).filter(m => m === '[laya] 已停掉侧车')).toHaveLength(1);
   });
 
-  it('等重启期间停止：取消重启；探地址期间停止：不拉起；两者都没有子进程，不记「已停掉」', async () => {
+  it('等重启期间停止：取消重启；探地址期间停止：不启动侧车进程；两者都没有子进程，不记「已停掉」', async () => {
     const waiting = start();
     await settle();
     waiting.children[0].exit(4);

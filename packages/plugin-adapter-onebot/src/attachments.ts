@@ -8,8 +8,8 @@
 //
 // 由于 NapCat / go-cqhttp 经常跑在 Docker / 远端机器，file:// 不一定可达。
 // 默认策略：把 storage URI / data:/http 都转成 base64:// 让数据走 WS 隧道，
-// 最稳。超过 MAX_INLINE_BYTES 的 storage 文件回退到 file:// + warn；超过的网址拒发，不交给 daemon 去拉
-// （它再拉一次不经 SSRF 判定）。
+// 最稳。超过 MAX_INLINE_BYTES 的 storage 文件回退到 file:// + warn；超过的网址拒发，不交给 daemon 去下载
+// （它再下载一次不经 SSRF 判定）。
 //
 // image、audio、video 按文件头分流（格式签名见 @aalis/util-file-signature）：NapCat 能内联的格式走消息段；
 // 认得出、但不能内联的媒体（如 BMP、HEIC 图片，MKV、AVI 视频）改经文件上传；不是媒体的拒发——发送工具在 owner
@@ -22,7 +22,7 @@
 // 给 daemon。生产侧 attachments 几乎都来自 plugin-media / plugin-image-sender
 // 产出的 storage URI / data URI，故此回归仅在裸 file:// 用例下生效。
 //
-// 她回复正文里的媒体标记只发网址的，同样经 safeFetch 下载后内联（inlineMarkupMedia），不交给 daemon 去拉；其余地址的去掉。
+// 她回复正文里的媒体标记只发网址的，同样经 safeFetch 下载后内联（inlineMarkupMedia），不交给 daemon 去下载；其余地址的去掉。
 // 一条回复里的媒体（正文的媒体段与 plugin-image-sender 把存储地址的标记转成的附件）合计有上限（capReplyMedia）。
 // 下载接调用方给的中止信号（本插件这次激活的）：停用、停机时随之停下，不等 30 秒的时限。
 // ============================================================
@@ -119,10 +119,10 @@ async function attachmentToOneBotFile(
   // http(s):// → 下载后 base64 内联
   if (isWebUrl(data)) {
     logger?.debug?.(`OneBot 下载远程附件: ${data.slice(0, 120)}`);
-    // 与入站缓存同一上限：慢源不能把发送这条消息的回合拖住几分钟。
+    // 与入站缓存同一上限：慢源不能把发送这条消息的回合阻塞几分钟。
     const res = await safeFetch(data, { signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]) });
     if (!res.ok) throw new Error(`download failed (${res.status}): ${data}`);
-    // 流式限额读取：不先全量 arrayBuffer 再判大小（避免无 Content-Length 时撑爆内存，与入站对称）。
+    // 流式限额读取：不先全量 arrayBuffer 再判大小（避免无 Content-Length 时耗尽内存，与入站对称）。
     const capped = await readBodyCapped(res, MAX_INLINE_BYTES);
     if (!capped) throw new TextError(t('tooLargeToInline'));
     return fromBytes(capped);
@@ -246,7 +246,7 @@ export function capReplyMedia(
 }
 
 /**
- * 她回复正文（OutgoingMessage.markup）里的媒体段只发网址的：实现端自己去拉不经 SSRF 判定，这里与附件同一条路，经 safeFetch
+ * 她回复正文（OutgoingMessage.markup）里的媒体段只发网址的：实现端自己去下载不经 SSRF 判定，这里与附件同一条路，经 safeFetch
  * 下载、按文件头核对后改成 base64:// 内联。条数的上限在这之前由 capReplyMedia 去掉；下载同时最多 MEDIA_FETCH_CONCURRENCY
  * 个，按段的先后排队。地址不是网址的（file://、本机路径、存储地址、data URI、正文里写的 base64:// 等）不交给实现端，与解析
  * 不了、下载不了、超过内联上限、不是能内联的媒体的段一样去掉，原因收进 errors（已记 warn）；存储里的媒体由 plugin-image-sender

@@ -1,4 +1,4 @@
-// 本包自己的原文字典：没起来的原因（缺、在等）与 core 自己的失败的说明
+// 本包自己的原文字典：未启动的原因（缺、在等）与 core 自己的失败的说明
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 

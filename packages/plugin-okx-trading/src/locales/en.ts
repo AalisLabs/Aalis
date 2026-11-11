@@ -16,7 +16,7 @@ export default defineLocale<Source>()({
     'When on, the simulated trading environment is used; testing in demo trading first is strongly recommended',
   confirmRealMoneyLabel: 'Confirm live trading risk',
   confirmRealMoneyDescription:
-    'Only when demo trading is off (demo:false) and real money is used, this must be set to true explicitly to confirm the risk; otherwise trading tools such as placing or cancelling orders, strategies, transfers and withdrawals are not exposed, and only queries remain.',
+    'Must be on to confirm the risk when demo trading is off and real money is used; otherwise only queries remain, without trading tools such as orders, strategies and transfers.',
   timeoutMsLabel: 'Request timeout (ms)',
   enableTradingLabel: 'Enable trading tools',
   enableTradingDescription: 'When off, only query tools remain and placing or cancelling orders is not exposed',
@@ -26,10 +26,10 @@ export default defineLocale<Source>()({
   enableTransferDescription: 'Enable the funding account transfer tool',
   defaultPageLimitLabel: 'Default page size',
   defaultPageLimitDescription:
-    'Used by endpoints that query orders, bills, fills and the like when the LLM passes no limit.',
+    'Used by endpoints that query orders, bills, fills and the like when the model passes no limit.',
   maxPageLimitLabel: 'Max page size',
   maxPageLimitDescription:
-    'A limit passed by the LLM is capped to this value; the entries found are handed to the model in full, so raising it makes each tool result larger. The OKX API itself usually returns at most 100 per page (300 for a few endpoints).',
+    'Most entries a paged query returns at once; larger requests from the model are capped to it. Raising it makes each tool result larger.',
   baseUrlNotPlain: 'baseUrl must be a complete URL without a user name or password',
   baseUrlHasQuery:
     'baseUrl must not contain a query string or fragment (anything after ? or #): the plugin appends paths to it',

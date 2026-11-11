@@ -9,25 +9,24 @@ const SOURCE = {
   systemPromptDescription: '定义 Agent 的行为准则。当人设插件存在时，身份描述由人设提供，此处仅作为行为指令追加。',
   memoryTokenBudgetLabel: '长期记忆预留 Token',
   memoryTokenBudgetDescription:
-    '注入的 system 消息（技能、摘要、记忆等）的 token 额度，只在硬裁剪丢完历史仍超预算时起作用：它们合计超过额度就按比例缩减，仍超时删除',
+    '注入的系统消息（技能、摘要、记忆等）合计的 token 额度。只在裁掉历史后仍超预算时起作用：超出时按比例缩减，仍超就删除',
   promptBuildTimeoutMsLabel: '提示词贡献构建超时 (ms)',
-  promptBuildTimeoutMsDescription:
-    '单个 agent:prompt 贡献 build 的等待上限。挂死的构建（如网络检索卡住）超时后本轮缺席、其余照常，避免拖住每次 LLM 调用。0 表示不设限。',
+  promptBuildTimeoutMsDescription: '组装提示词时等每一块内容的上限，超时的那块本轮不加入，其余照常。0 表示不设限。',
   toolResultMaxRatioLabel: '工具结果最大比例',
   toolResultMaxRatioDescription: '单条工具结果占上下文窗口的最大比例 (0~1)，超出则截断。例如 0.15 表示 15%',
   trimThresholdRatioLabel: '裁剪触发比例',
   trimThresholdRatioDescription:
-    '裁剪预算 = 上下文长度 × 该比例 − 最大输出 token − 512 安全余量（下限 1024）。硬裁剪按它裁要发出的消息列表（只裁内存里的，不影响 DB）：历史超过可用量（预算减去头部与四分之一预算）就成段丢，其余几步在估算超过预算时才做。默认 1.0 表示用满扣除输出预留后的可用窗口；调低可提前裁剪。压缩触发在会话设置里调：自动压缩线（摘要插件）与历史条数上限（本插件）。',
+    '裁剪预算占上下文窗口的比例，再扣去最大输出与安全余量。默认 1.0 用满窗口，调低可提前裁剪。压缩时机在会话设置的「自动压缩线」与「历史条数上限」里调。',
   systemNotice: '[系统] {why}',
   turnError: '[错误] {error}',
   llmNoneErrored:
-    '未找到任何具备 chat 能力的 LLM —— 以下 LLM 插件激活失败：{plugins, list}。可用 /doctor 查看原因（需要相应权限）。',
+    '未找到任何具备 chat 能力的模型 —— 以下模型插件激活失败：{plugins, list}。可用 /doctor 查看原因（需要相应权限）。',
   llmNone:
-    '未找到任何具备 chat 能力的 LLM —— 请确认已安装并启用至少一个 LLM 提供者插件（如 @aalis/plugin-llm-deepseek）。',
+    '未找到任何具备 chat 能力的模型 —— 请确认已安装并启用至少一个模型提供者插件（如 @aalis/plugin-llm-deepseek）。',
   llmNotFound: '配置指向的模型不存在：{wanted}。当前可用：{models, list}{more}。',
   llmMore: ' 等 {count, number} 个（用 /model 查看全部）',
   llmUnresolved:
-    'LLM 解析失败：能力过滤后有 {count, number} 个可用 entry，但解析时一个都没取到（服务可能正在装卸中，稍后重试）。',
+    '模型解析失败：能力过滤后有 {count, number} 个可用 entry，但解析时一个都没取到（服务可能正在装卸中，稍后重试）。',
   partHistory: '历史消息',
   partToolResults: '工具结果',
   partToolDefs: '工具定义',
@@ -40,7 +39,7 @@ const SOURCE = {
   partSystemOther: '其余系统提示',
   llmLabel: '模型',
   llmDescription:
-    '这个会话用的对话模型。没设时跟随服务偏好：给本插件设了 llm 的服务偏好时用它，否则用全局偏好，都没有时用第一个可用的对话模型',
+    '这个会话用的对话模型。没设时跟随服务偏好：先看给本插件设的偏好，再看全局偏好，都没有时用第一个可用的对话模型',
   llmUnset: '跟随服务偏好',
   thinkLabel: '深度思考',
   thinkDescription: '可选的档位随所用的模型；没设或当前模型没有这一档时按模型的默认档',
@@ -50,7 +49,7 @@ const SOURCE = {
   maxToolIterationsUnset: '不限',
   historyLimitLabel: '历史条数上限',
   historyLimitDescription:
-    '发给模型的会话历史不超过这么多条：超过时一次丢掉最早的一半，之后照常累积到这个条数再丢一段；丢掉的只是这一轮发给模型的，会话历史本身保留，压缩时照样进摘要。装了摘要插件时，会话的消息到这个条数就压缩。0 表示不按条数：发全部活跃历史，只按自动压缩线压缩',
+    '发给模型的会话历史最多这么多条，超过时丢掉最早的一半（会话历史本身保留）；装了摘要插件时，到这个条数就压缩。0 表示不按条数，只按自动压缩线压缩',
   stopDescription: '停下本会话在跑的一轮；排着的消息照常开下一轮。参与这一轮的人和 owner 能停',
   stopped: '已停下这一轮',
   stopIdle: '没有在跑的一轮',

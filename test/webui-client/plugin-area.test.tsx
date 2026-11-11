@@ -22,7 +22,7 @@ import { BOARD, NOTES, ROSTER, SETTINGS_PAGE } from './pages.js';
 // 插件区：左栏是实例树（按子系统分组到插件、再到实例，组名与顺序取子系统目录，顶上是市场与「只看有问题的」）；
 // 详情由宿主拼装：头部（包名、版本、状态与原因，启停、重载、卸载）、依赖与贡献（缺的服务写链与根：根停用可以一键启用，
 // 根失败去处理它，没有提供者写说明，在等写等待谁启动）、页面（全部页面与位置，插件前端另列申请的宿主数据能力）、实例；
-// 界面所在的插件停不掉、卸不了。会话服务不在时写提供会话协议的插件的链与根、去根插件，没装时链到市场；
+// 界面所在的插件无法停止、无法卸载。会话服务不在时写提供会话协议的插件的链与根、去根插件，没装时链到市场；
 // 市场装完跳到这个插件详情的配置区。
 // 管理动作做完等最新的一次插件列表取回再跳，不闪「没有这个插件」
 // ════════════════════════════════════════════════════════════
@@ -821,7 +821,7 @@ describe('会话服务未启用', () => {
   it.each([
     [{ error: '缺少配置项 x', unconfigured: ['x'] }, '待配置：x', ['去配置', '/plugins/zz-sessions#config']],
     [{ error: '端口被占用' }, '失败：端口被占用', ['去处理', '/plugins/zz-sessions']],
-  ])('提供会话协议的插件自己没起来（%j）：写它的状态与原因，按钮与「需要处理」那一行同一个去处', async (over, text, [
+  ])('提供会话协议的插件自己未启动（%j）：写它的状态与原因，按钮与「需要处理」那一行同一个去处', async (over, text, [
     name,
     href,
   ]) => {
@@ -1123,7 +1123,7 @@ describe('市场', () => {
     );
     expect(await screen.findByText('可更新 2 项，选了 0 项')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '全选' }));
-    expect(screen.getByText('所选含内核或宿主：更新后整个应用重启，新版本起不来会自动回滚。')).toBeTruthy();
+    expect(screen.getByText('所选含内核或宿主：更新后整个应用重启，新版本启动失败会自动回滚。')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '更新所选（2）' }));
     expect(await screen.findByText('zz-theme-ui@1.0.0 需要 @aalis/core@^0.21.0')).toBeTruthy();
     expect(posts('/api/marketplace/update').map(call => call.body)).toEqual([

@@ -6,7 +6,7 @@ export default defineLocale<Source>()({
   groupSummary: 'System-level tools: shell commands, file operations, system information and HTTP requests',
   workingDirectoryLabel: 'Initial working directory',
   workingDirectoryDescription:
-    'The initial cwd when the process starts (Unix mental model). The agent can switch it within a session with the cd tool; that is not written back to this setting. shell starts from this initial value and is not affected by cd; code-runner uses its own workingDirectory setting.',
+    'Initial working directory of each session. The model can switch it within a session with cd, which is not written back to this setting; shell runs here by default and is not affected by cd.',
   shellLabel: 'Shell tools',
   shellEnabledLabel: 'Enable shell tools',
   maxOutputSizeLabel: 'Max output bytes',
@@ -17,7 +17,7 @@ export default defineLocale<Source>()({
   maxWriteSizeLabel: 'Max write bytes',
   allowedRootsLabel: 'Allowed storage roots',
   allowedRootsDescription:
-    "By default only the agent workspace (workspace/tmp), not system roots such as data (so data:/users.json and the like cannot be read directly). Set * to open all readable roots, or list root names explicitly. Writes and deletes are still limited by each root's own permissions.",
+    "Storage roots the file tools may access; by default only workspace and tmp. Add other roots or choose “All readable roots”; writes and deletes are still limited by each root's own permissions.",
   rootAllReadable: 'All readable roots',
   rootTmp: 'Temporary directory',
   rootPluginData: 'Plugin data',

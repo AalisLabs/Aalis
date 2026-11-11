@@ -13,5 +13,5 @@ export default defineLocale<Source>()({
   modelUnset: 'Not set (same as this session)',
   idleLabel: 'Delete after idle once returned (hours)',
   idleDescription:
-    'Once a turn of the subtask session ends (with a reply, an error or a stop) and no follow-up arrives for this long, the session is deleted along with its conversation; each follow-up restarts the clock. 0 deletes it as soon as the result is returned. It is not deleted while it has background tasks running',
+    'Once a turn of the subtask session ends and no follow-up arrives for this long, the session is deleted along with its conversation; each follow-up restarts the clock. 0 deletes it as soon as the result is returned. It is not deleted while background tasks are running',
 });

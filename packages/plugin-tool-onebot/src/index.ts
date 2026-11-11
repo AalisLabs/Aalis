@@ -1064,7 +1064,7 @@ function registerGroupInfoTools(caps: GroupInfoCaps, bundle: OneBotToolBundle): 
       }
 
       // 适配器交回收到这条转发的会话：展开过的连同 ForwardEntry 形状（fullText / summary / 元信息与截断标志），没展开过的连同
-      // 按 id 现拉的办法。收到它的会话逐个参与者过会话管理的规则（同 onebot_get_msg），几处之一过得了就行，过了才拉；没记会话的
+      // 按 id 当场获取的办法。收到它的会话逐个参与者过会话管理的规则（同 onebot_get_msg），几处之一过得了就行，过了才获取；没记会话的
       // （从没收到过的、别的适配器交回的原始数据）按判不出拒绝
       const reply = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
       const recorded = reply.__aalisForwardEntry === true || reply.__aalisForwardReceipt === true;
@@ -1098,7 +1098,7 @@ function registerGroupInfoTools(caps: GroupInfoCaps, bundle: OneBotToolBundle): 
         const summaryLine = entry.summary ? `\n摘要：${entry.summary}\n` : '\n';
         return `${header}${summaryLine}\n原文：\n${entry.fullText}`;
       }
-      // 没展开过的：过了判定才按 id 现拉
+      // 没展开过的：过了判定才按 id 当场获取
       try {
         data = await (reply.fetch as () => Promise<unknown>)();
       } catch (err) {
@@ -1847,7 +1847,7 @@ function registerSessionHistoryTools(
       try {
         // 能不能读由 session-history 服务按会话管理的规则判（带这次调用的授权身份）。
         // includeArchived 故意不暴露：archived 是 memory 内部细节，被 summary 替代的老消息
-        // 默认就不该再翻原文（会与 summary 内容双重计费）。如需考古应另起独立工具。
+        // 默认就不该再翻原文（会与 summary 内容双重计费）。如需查阅久远的记录，应另写一个独立工具。
         result = await history.getHistory({ sessionId, limit }, callCtx);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

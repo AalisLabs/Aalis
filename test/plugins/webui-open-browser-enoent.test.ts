@@ -8,7 +8,7 @@ import { openBrowser } from '../../packages/plugin-webui-server/src/auth.js';
 // 自动打开浏览器的命令不存在（headless Linux、Docker 没有 xdg-open 是常态）时，spawn 失败
 // 是子进程句柄上异步 emit 的 'error'，外层 try/catch 接不住。句柄上没有 error 监听就成了
 // uncaughtException，runtime 收到即 process.exit(1)。openBrowser 靠「挂上 wait() 并吞掉拒绝」
-// 给句柄挂监听；这一行看上去多余，删掉就会打死整个进程。
+// 给句柄挂监听；这一行看上去多余，删掉就会终止整个进程。
 //
 // 用真实的 LocalProcessService，把命令改写成一个不存在的名字，绕开按平台选命令的分支。
 // vitest 在进程内接住 uncaughtException 不会让用例失败，所以显式挂监听、断言有没有收到。

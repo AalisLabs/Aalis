@@ -1,4 +1,4 @@
-// ----- 托管侧车：拉起 laya-listener，退出后退避重启，停用时关掉 -----
+// ----- 托管侧车：启动 laya-listener 子进程，退出后退避重启，停用时关掉 -----
 //
 // 何时托管由 index.ts 决定（配置了 sidecarDir、应用已就绪、本插件是生效的触发插件）。
 // 目录布局与退出码是侧车的约定，见 models/listener-sidecar/README.md 与 laya_listener.py 的模块说明。
@@ -24,23 +24,23 @@ const LINE_MAX = 64 * 1024;
 const EXIT_CODES: Record<number, TextRef> = { 2: t('exit2'), 3: t('exit3'), 4: t('exit4'), 5: t('exit5') };
 
 export type SidecarState =
-  /** 拉起中，等就绪行；restarts = 此前连续退出的次数，0 为首次启动 */
+  /** 启动中，等就绪行；restarts = 此前连续退出的次数，0 为首次启动 */
   | { kind: 'starting'; since: number; restarts: number }
   | { kind: 'ready' }
-  /** 退出（或没能拉起）后等着重启；reason 如「侧车退出（退出码 4，…）」 */
+  /** 退出（或没能启动侧车进程）后等着重启；reason 如「侧车退出（退出码 4，…）」 */
   | { kind: 'waiting'; until: number; reason: TextRef; restarts: number }
-  /** 首次拉起前地址上已有别的侧车在答：不拉起，直接用它 */
+  /** 首次启动前地址上已有别的侧车在答：不启动，直接用它 */
   | { kind: 'external' }
   | { kind: 'stopped' };
 
 interface SidecarOptions {
-  /** process 服务：拉起时不在就按退出处理，隔一段时间再试 */
+  /** process 服务：启动侧车进程时不在就按退出处理，隔一段时间再试 */
   process: Pick<ServiceSelection<ProcessService>, 'present' | 'use'>;
   /** 侧车目录（绝对路径） */
   dir: string;
   port: number;
   /**
-   * 本进程 pid：侧车发现父进程不是它（本进程已退出，侧车被系统收养）就自行退出。前提是 process 服务直接拉起
+   * 本进程 pid：侧车发现父进程不是它（本进程已退出，侧车被系统收养）就自行退出。前提是 process 服务直接启动
    * 侧车、中间没有别的进程（plugin-process-local 如此）
    */
   parentPid: number;
@@ -48,7 +48,7 @@ interface SidecarOptions {
   probe(signal: AbortSignal): Promise<boolean>;
   log: { info(msg: string): void; warn(msg: string): void; debug(msg: string): void };
   /**
-   * 意外退出（含没能拉起、启动超时被杀）；reason 含退出码的含义、标准错误的最后一行与重启时间。
+   * 意外退出（含没能启动侧车进程、启动超时被杀）；reason 含退出码的含义、标准错误的最后一行与重启时间。
    * newRound：首次退出，或就绪后稳定运行满 STABLE_MS 才退出，算新一轮故障
    */
   onExit(reason: TextRef, newRound: boolean): void;
@@ -125,7 +125,7 @@ export function superviseSidecar(o: SidecarOptions): Sidecar {
   /** 停侧车就是中止它：每次启动都带上这个 signal，process 服务按中止契约整组 SIGTERM、宽限后 SIGKILL，wait() 照常落定 */
   const stopping = new AbortController();
   let child: SpawnHandle | undefined;
-  /** 当前子进程退出（含拉起失败）时落定 */
+  /** 当前子进程退出（含启动失败）时落定 */
   let exited: Promise<void> = Promise.resolve();
   let restartTimer: ReturnType<typeof setTimeout> | undefined;
   let restarts = 0;
@@ -138,16 +138,16 @@ export function superviseSidecar(o: SidecarOptions): Sidecar {
     if (taken) {
       state = { kind: 'external' };
       o.log.warn(
-        `[laya] 侧车端口 ${o.port} 上已有侧车在运行（系统服务或手动启动的），本插件不拉起，直接使用它；要改由本插件托管，` +
-          '先停掉它（系统服务要卸载，直接结束进程会被系统拉回），再重启 Aalis 或把 trigger 偏好切走再切回',
+        `[laya] 侧车端口 ${o.port} 上已有侧车在运行（系统服务或手动启动的），本插件不启动侧车进程，直接使用它；要改由本插件托管，` +
+          '先停掉它（系统服务要卸载，直接结束进程会被系统重新启动），再重启 Aalis 或把 trigger 偏好切走再切回',
       );
       return;
     }
-    o.log.info(`[laya] 正在拉起侧车（${o.dir}，端口 ${o.port}），就绪前判定按兜底只回点名`);
+    o.log.info(`[laya] 正在启动侧车进程（${o.dir}，端口 ${o.port}），就绪前按后备判定只回点名`);
     spawn();
   }
 
-  /** 意外退出（含没能拉起）：记下原因，隔一段时间重启；readyAt = 这次就绪的时刻，没就绪过为 undefined */
+  /** 意外退出（含没能启动侧车进程）：记下原因，隔一段时间重启；readyAt = 这次就绪的时刻，没就绪过为 undefined */
   function crashed(reason: TextRef, readyAt: number | undefined): void {
     child = undefined;
     if (stopping.signal.aborted) return;
@@ -175,7 +175,7 @@ export function superviseSidecar(o: SidecarOptions): Sidecar {
     }
     let handle: SpawnHandle;
     try {
-      // 只用 wait() 的退出码与信号，输出按行读：wait() 不必替常驻进程攒输出
+      // 只用 wait() 的退出码与信号，输出按行读：wait() 不必替常驻进程暂存输出
       handle = o.process.use.spawn(python, args, { cwd: o.dir, maxBuffer: 1, signal: stopping.signal });
     } catch (err) {
       crashed(t('spawnFailed', { error: textOf(err) }), undefined);
@@ -223,7 +223,7 @@ export function superviseSidecar(o: SidecarOptions): Sidecar {
                 : t('exitCode', { code: String(r.code) });
           return lastLine ? t('exitedTail', { why, tail: lastLine.slice(0, TAIL_MAX) }) : t('exited', { why });
         },
-        // 拉起本身失败（如 python 不存在）：子进程的 error 事件让 wait() 拒绝
+        // 启动本身失败（如 python 不存在）：子进程的 error 事件让 wait() 拒绝
         (err: unknown) => t('spawnFailed', { error: textOf(err) }),
       )
       .then(reason => {

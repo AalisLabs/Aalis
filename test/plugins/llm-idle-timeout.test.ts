@@ -384,7 +384,7 @@ describe('时限只有 timeout：底层的默认时限不截断生成请求', ()
     };
   }
 
-  // 每个情形都要停 STALL，同一家的各个情形同时跑；插件都起好之后再换全局 dispatcher，模型发现不受它影响
+  // 每个情形都要停 STALL，同一家的各个情形同时跑；插件都启动好之后再换全局 dispatcher，模型发现不受它影响
   it.each(wires)('$name / timeout 为 0 或比底层时限长：停得比底层时限久也照常读完', async wire => {
     const streamCases = [0, LONG].flatMap(timeout =>
       (['等响应头', '读流中途'] as const).map(at => ({

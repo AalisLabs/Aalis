@@ -12,7 +12,7 @@ const SOURCE = {
   threadsLabel: '线程数',
   timeoutMsLabel: '子进程超时 (ms)',
   timeoutMsDescription:
-    '转码与识别子进程的最长运行时间。这道闸是为了掐断真正卡死的子进程，不是为了给识别限速——CPU 上跑长语音本来就慢，默认给到 10 分钟。设 0 表示不限（届时卡住的子进程会把整轮对话一起挂住）。',
+    '转码与识别子进程的最长运行时间，超时即结束，默认 10 分钟。设 0 不限时，卡死的子进程会让整轮对话一直阻塞。',
 } as const;
 export type Source = typeof SOURCE;
 

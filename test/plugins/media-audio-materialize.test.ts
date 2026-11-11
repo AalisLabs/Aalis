@@ -14,7 +14,7 @@ import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js
 import { ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
-// 音频附件物化：http 下载件与 file:// 件都必须能喂给 LLM 转写。
+// 音频附件物化：http 下载件与 file:// 件都必须能交给 LLM 转写。
 //
 // 两件事都要成立：网址下载件写成临时文件时交回它的 tmp uri（下游按 uri 判「是否落入
 // storage 根」，丢了就必抛），audioToBase64 对没有 uri 的物化结果退回 proc.readExternalFile

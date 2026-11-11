@@ -80,7 +80,7 @@ interface Harness {
   contents: () => string[];
   /** 抵达 agent 的 idle 注入 */
   idles: () => IncomingMessage[];
-  /** 真人入站：走 gateway.ingressMessage（等整条相位链跑完） */
+  /** 真人入站：走 gateway.ingressMessage（等整条相位链执行完毕） */
   send: (msg: IncomingMessage) => Promise<void>;
   /** agent 对某会话的真实回复：gateway.dispatchOutbound，source='agent' */
   reply: (sessionId: string, platform?: string) => Promise<void>;
@@ -440,7 +440,7 @@ describe('禁言', () => {
     expect(h.contents()).not.toContain(`${AT}说句话`);
   });
 
-  it('禁言前攒下的计数在禁言期清零（平台禁言同样适用）', async () => {
+  it('禁言前累计的计数在禁言期清零（平台禁言同样适用）', async () => {
     const h = await setup({ trigger: { intervalMode: 'fixed', fixedInterval: 3 } });
     const G = '20001';
 

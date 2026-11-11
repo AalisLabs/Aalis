@@ -114,7 +114,7 @@ async function run(caps: Caps): Promise<void> {
     if ('document' in change) injectNetwork();
   });
 
-  // ===== 执行守卫：两轴正交闸 —— 轴 A 授权（authorize）+ 轴 B 确认（confirm，owner 也吃）=====
+  // ===== 执行守卫：两轴正交闸 —— 轴 A 授权（authorize）+ 轴 B 确认（confirm，owner 也受它约束）=====
   // 多人的一轮按动作判，对每个参与者各裁决一次：都过照常执行；有人过、有人不过，这一个调用要一道参与者审批，凡自己就能做的人
   // 都能批；都不过照旧拒，没有人能为它担保。一轮里能做的因此不超过参与者里最高的那位，也不用把权限排出高低（权限组让两个人
   // 各能做对方做不了的事时照样判得出）。工具执行中经 approveFor 交来的取用判定按同一条三分，判据换成它
@@ -141,7 +141,7 @@ async function run(caps: Caps): Promise<void> {
     }
     const someCannot = verdicts.some(verdict => !verdict.ok);
 
-    // ── 轴 B · 确认：操作声明了 confirm 仍要 owner 确认（owner 也吃，防注入借权）。免确认（确认覆盖 'off'、没人可问的受信来源
+    // ── 轴 B · 确认：操作声明了 confirm 仍要 owner 确认（owner 也受它约束，防注入借权）。免确认（确认覆盖 'off'、没人可问的受信来源
     // skipConfirm、owner 配的 restrictedPolicy 白名单）只在参与者都是 owner 时生效；always 只有确认覆盖 'off' 能免。
     // 取用判定不再判：确认在这次调用开始时已经判过
     const ownerActs = g.participants.length > 0 && g.participants.every(isOwner);

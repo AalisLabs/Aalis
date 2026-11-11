@@ -43,7 +43,7 @@ type ExecResult = Awaited<ReturnType<ProcessService['execFile']>>;
 // ════════════════════════════════════════════════════════════
 // package-manager — install/uninstall 集成测试（mock process 服务）
 //
-// createPackageManager(deps) 只吃一张显式依赖表：所有文件操作走 process 子进程
+// createPackageManager(deps) 只接收一张显式依赖表：所有文件操作走 process 子进程
 // （npm/cp/test），目标是项目根 package.json 与 node_modules（不经 storage 沙盒）。
 // ════════════════════════════════════════════════════════════
 
@@ -258,7 +258,7 @@ describe('纯函数判据', () => {
       ).toEqual([]);
     });
 
-    it('目标 pending 而缺服务（按共享判据，它自己起不来）→ 卸掉它断不了谁，不列出依赖方', () => {
+    it('目标 pending 而缺服务（按共享判据，它自己无法启动）→ 卸掉它断不了谁，不列出依赖方', () => {
       const target = snap('@aalis/plugin-memory-vector', 'pending', {
         provides: ['semantic-memory'],
         requires: ['embedding'],
@@ -267,7 +267,7 @@ describe('纯函数判据', () => {
       expect(findServiceDependents('@aalis/plugin-memory-vector', [target, dependent], [])).toEqual([]);
     });
 
-    it('目标 pending 而只是在等（它要的在启动，起来就提供）→ 照常列出依赖方', () => {
+    it('目标 pending 而只是在等（它要的在启动，启动后就提供）→ 照常列出依赖方', () => {
       const target = snap('@aalis/plugin-memory-vector', 'pending', {
         provides: ['semantic-memory'],
         requires: ['embedding'],
@@ -455,7 +455,7 @@ describe('install（只有一条路径：写根依赖）', () => {
     expect(toSource(r.message)).toContain('@scope/foo');
   });
 
-  it('并发安装：不把别人的战果算作自己的（旧判据会谎报装了 B）', async () => {
+  it('并发安装：不把别人的结果算作自己的（旧判据会谎报装了 B）', async () => {
     const h = makeHarness({
       rescan: ['@scope/foo', '@other/bar'], // 并发时 rescan 把两个都捞了
       registered: ['@scope/foo', '@other/bar'],
@@ -569,11 +569,11 @@ describe('npm 失败的回执：写认出的原因与修法，整段输出进日
     ],
     [
       'npm error code EBADPLATFORM\nnpm error notsup Unsupported platform for @lancedb/lancedb-darwin-x64@0.27.1: wanted {"os":"darwin","cpu":"x64"}',
-      '依赖 @lancedb/lancedb-darwin-x64 不支持这台机器的系统或 CPU 架构（EBADPLATFORM），这个插件在这里装不了',
+      '依赖 @lancedb/lancedb-darwin-x64 不支持这台机器的系统或 CPU 架构（EBADPLATFORM），这个插件在这里无法安装',
     ],
     [
       'npm error code EBADPLATFORM\nnpm error notsup Unsupported platform',
-      '有一个依赖不支持这台机器的系统或 CPU 架构（EBADPLATFORM），这个插件在这里装不了',
+      '有一个依赖不支持这台机器的系统或 CPU 架构（EBADPLATFORM），这个插件在这里无法安装',
     ],
     [
       'npm error code ERESOLVE\nnpm error peer react@"^19.0.0" from react-dom@19.0.0',
@@ -790,7 +790,7 @@ describe('update — 参数校验（纯函数）', () => {
 describe('update — 流程', () => {
   const rootPkgPath = `${ROOT}/package.json`;
   const lockPath = `${ROOT}/package-lock.json`;
-  /** 已装版本从 `node_modules/<name>/package.json` 读——降级守卫与回滚钉版本都吃这一路。 */
+  /** 已装版本从 `node_modules/<name>/package.json` 读——降级守卫与回滚钉版本都依赖这一路。 */
   const installedAt = (name: string, version: string) => ({
     [`${ROOT}/node_modules/${name}/package.json`]: JSON.stringify({ name, version }),
   });
@@ -1267,7 +1267,7 @@ describe('uninstall', () => {
     const h = makeHarness({ text: { [rootPkgPath]: '{"dependencies":{"@scope/foo":"^1.0.0"}}' } });
     const r = await createPackageManager(h.deps).uninstall('@scope/foo');
     expect(r.ok).toBe(false);
-    // 市场卸不了时给出手动的路
+    // 市场无法卸载时给出手动的路
     expect(toSource(r.message)).toBe(
       '读不到 @scope/foo 的 package.json，无法确认它是什么，市场不卸；确认要卸就在项目目录执行 npm uninstall @scope/foo 后重启',
     );

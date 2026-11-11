@@ -4,10 +4,10 @@ import { OfflineRenderer, type RenderRequest, StepTimeoutError } from '../../pac
 // ════════════════════════════════════════════════════════════
 // 渲染步骤卡住时（真 Chromium）：
 // - 截图卡住：约在步骤时限抛 StepTimeoutError，这一代浏览器被关掉（不等关上下文），下次渲染重新启动。不关浏览器时，
-//   底层截图一直挂着、持有浏览器级的锁，收尾的关上下文要等它，要到 CDP 命令的时限才返回。
+//   底层截图一直未返回、持有浏览器级的锁，收尾的关上下文要等它，要到 CDP 命令的时限才返回。
 // - 同一代里被锁挡住的在飞渲染随之失败，不等到那条截图命令的时限。
-// - 没套步骤时限的 CDP 调用（动画的时长探测）挂住时，以两倍步骤时限为上限。
-// - 取消：signal 一断，渲染立刻以取消原因失败；挂住的那一代照样由步骤时限换掉，之后的渲染照常。
+// - 没套步骤时限的 CDP 调用（动画的时长探测）阻塞时，以两倍步骤时限为上限。
+// - 取消：signal 一断，渲染立刻以取消原因失败；阻塞的那一代照样由步骤时限换掉，之后的渲染照常。
 // 卡死是真的：让渲染进程的主线程陷入死循环，截图等不到新帧（puppeteer 的 launch、上下文与截图外包一层，被测代码不动）。
 // ════════════════════════════════════════════════════════════
 
@@ -117,9 +117,9 @@ afterEach(async () => {
 });
 
 describe('渲染步骤卡住（真浏览器）', () => {
-  it('截图卡住：约在步骤时限抛 StepTimeoutError，这一代浏览器被关掉，下次渲染起新一代', async () => {
+  it('截图卡住：约在步骤时限抛 StepTimeoutError，这一代浏览器被关掉，下次渲染启动新一代', async () => {
     const r = makeRenderer();
-    await r.renderPng(req); // 先把浏览器起好，计时不含冷启动
+    await r.renderPng(req); // 先把浏览器启动好，计时不含冷启动
     expect(probe.browsers).toHaveLength(1);
 
     probe.hangNextScreenshot = true;
@@ -151,7 +151,7 @@ describe('渲染步骤卡住（真浏览器）', () => {
     // 机器忙时第二次渲染走到截图那一步可能超过 waitFor 默认的 1 秒；这里只等它卡上，不计时
     await vi.waitFor(() => expect(probe.hungAt).toBeGreaterThan(0), { timeout: 10_000 });
     await new Promise(res => setTimeout(res, 500));
-    // 截图挂着时，同一浏览器里的另一次渲染要等截图锁
+    // 截图未返回时，同一浏览器里的另一次渲染要等截图锁
     const blocked = r.renderPng(req).then(
       () => null,
       (err: Error) => err,
@@ -165,9 +165,9 @@ describe('渲染步骤卡住（真浏览器）', () => {
     expect(Date.now() - hungDone).toBeLessThan(1000);
   }, 60_000);
 
-  it('没套步骤时限的 CDP 调用挂住时，以两倍步骤时限为上限', async () => {
+  it('没套步骤时限的 CDP 调用阻塞时，以两倍步骤时限为上限', async () => {
     const r = makeRenderer();
-    // 先渲染一次把 Chromium 启起来：冷启动在机器忙时就要好几秒，不该算进被测的上限
+    // 先渲染一次把 Chromium 启动起来：冷启动在机器忙时就要好几秒，不该算进被测的上限
     await r.renderPng(req);
     probe.hangNextProbe = true;
     const started = Date.now();
@@ -184,7 +184,7 @@ describe('渲染步骤卡住（真浏览器）', () => {
 });
 
 describe('取消', () => {
-  it('signal 已断：立刻以取消原因失败，不起浏览器', async () => {
+  it('signal 已断：立刻以取消原因失败，不启动浏览器', async () => {
     const r = makeRenderer();
     const controller = new AbortController();
     controller.abort(new Error('works-取消'));
@@ -192,7 +192,7 @@ describe('取消', () => {
     expect(probe.browsers).toHaveLength(0);
   });
 
-  it('截图卡住时断 signal：渲染立刻失败；挂住的那一代由步骤时限换掉，之后的渲染照常', async () => {
+  it('截图卡住时断 signal：渲染立刻失败；阻塞的那一代由步骤时限换掉，之后的渲染照常', async () => {
     const r = makeRenderer();
     await r.renderPng(req);
 

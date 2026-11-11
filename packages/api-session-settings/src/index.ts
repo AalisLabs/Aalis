@@ -159,7 +159,7 @@ export const appliesIn = (spec: SessionFieldSpec, kind: SessionKind): boolean =>
 /** 层表里这一层的称呼 */
 export const layerLabel = (name: SessionLayerName): TextRef => SESSION_LAYERS.find(layer => layer.name === name)!.label;
 
-/** 会话设置不在（插件没装、没启用，或会话管理没起来）时的说法：读取器写不了，协议的设置方法回 unsupported */
+/** 会话设置不在（插件没装、没启用，或会话管理未启动）时的说法：读取器写不了，协议的设置方法回 unsupported */
 export const SETTINGS_ABSENT = t('settingsAbsent');
 
 /** 日志里点名一层的写法：层的称呼（原文）加选的是哪一份，如「平台类型档 onebot · group」「场所 <场所键>」 */

@@ -1249,7 +1249,7 @@ function runAdapter(caps: Caps): void {
         throw new Error(`OneBot 连接不可用: selfId=${parsed.selfId}`);
       }
 
-      // 合并转发：先查收到时记下的条目（展开结果与收到它的会话），没展开过的交给工具过了取用判定再按 id 拉
+      // 合并转发：先查收到时记下的条目（展开结果与收到它的会话），没展开过的交给工具过了取用判定再按 id 获取
       if (action === 'get_forward_msg') {
         const id = String(params.id ?? '');
         if (id) {
@@ -1257,7 +1257,7 @@ function runAdapter(caps: Caps): void {
           const entry = await getOrLoadForward(id);
           // 展开过的返回完整原文 + 摘要（如果有）、截断标志与收到它的会话。工具层按这些会话过取用判定，再用 fullText 渲染。
           if (entry?.fullText !== undefined) return { __aalisForwardEntry: true, ...entry };
-          // 没展开过的（关掉展开、拉不到、什么也没展开出来、嵌套的）返回收到它的会话与按 id 现拉的办法：工具层过了取用判定才拉。
+          // 没展开过的（关掉展开、获取失败、什么也没展开出来、嵌套的）返回收到它的会话与按 id 当场获取的办法：工具层过了取用判定才获取。
           // 从没收到过的会话为空
           return {
             __aalisForwardReceipt: true,
@@ -1432,7 +1432,7 @@ function runAdapter(caps: Caps): void {
     let reported = false;
 
     // 握手被拒（服务器回了非 101，如鉴权不过的 401）：记下状态码、响应头与响应体后立即断开重连。挂了这个监听时 ws 不自己
-    // 中断握手、也不触发 error，不断开就要干等连接超时。响应体只留开头一段：地址指错到别的服务时它可能很大、一直不结束；
+    // 中断握手、也不触发 error，不断开就要空等连接超时。响应体只留开头一段：地址指错到别的服务时它可能很大、一直不结束；
     // 读完、读到上限、读到一半断开都在这时断开。没到上限又不结束的由连接超时断开，随后响应流关上时照样记下读到的部分
     ws.on('unexpected-response', (_req, res) => {
       reported = true;

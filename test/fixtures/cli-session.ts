@@ -10,7 +10,7 @@ import { memoryStorage } from './memory-files.js';
 
 /**
  * 给终端接上会话服务：钩子与贡献点枢纽、内存记忆、宿主路径（home）、存储替身、会话管理与会话服务，再给终端的会话（cli-default）
- * 建档。在装 plugin-cli 与 app.start 之前调；subscribed 在终端界面起来、订上这个会话之后落定。订上没有别的看得见的信号：会话服务
+ * 建档。在装 plugin-cli 与 app.start 之前调；subscribed 在终端界面启动、订上这个会话之后落定。订上没有别的看得见的信号：会话服务
  * 回了订阅之后为没有用量的会话请 agent 重发用量（token:request），借它认
  */
 export async function attachSessionServer(app: App, home: string): Promise<{ subscribed: Promise<void> }> {

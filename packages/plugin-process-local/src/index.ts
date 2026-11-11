@@ -243,7 +243,7 @@ export class LocalProcessService implements ProcessService {
       // opts.detached 的 fire-and-forget 语义仍由调用方的 stdio:'ignore' + unref() 兑现。
       detached: isWindows ? opts.detached === true : true,
     });
-    // 调用方显式 detached 的（fire-and-forget，如拉起浏览器）不登记：它本就该独立于宿主生存
+    // 调用方显式 detached 的（fire-and-forget，如调用方以 detached 启动的浏览器）不登记：它本就该独立于宿主生存
     if (child.pid !== undefined && opts.detached !== true) {
       const pid = child.pid;
       groups.set(pid, child);
@@ -290,7 +290,7 @@ export class LocalProcessService implements ProcessService {
       wait: () =>
         new Promise<ExecResult>((resolve, reject) => {
           // 累计缓冲上限（stdout+stderr 合计）：边读边计数，超限即停止累积（丢弃后续、标 truncated），
-          // 防失控/恶意输出无上限累积撑爆内存。不杀进程——终止交给 timeout / 调用方：后台进程
+          // 防失控/恶意输出无上限累积耗尽内存。不杀进程——终止交给 timeout / 调用方：后台进程
           // （dev server / --watch 等）本就该长跑，杀掉会误伤，且超 buffer 也不应被误报成 SIGKILL/timedOut。
           const maxBuffer = opts.maxBuffer && opts.maxBuffer > 0 ? opts.maxBuffer : DEFAULT_MAX_BUFFER;
           const chunksOut: Buffer[] = [];
@@ -341,7 +341,7 @@ export class LocalProcessService implements ProcessService {
           child.on('exit', (code, signal) => {
             if (settled) return;
             // 子进程已死但 'close' 未到 = 孙进程扣着 pipe 不放。给一个短宽限收尾，到点仍不来就用已收集的输出返回。
-            // 不销毁读端：销毁会让 `npm run dev &` 这类后台进程在下次写日志时吃 EPIPE 死掉；
+            // 不销毁读端：销毁会让 `npm run dev &` 这类后台进程在下次写日志时收到 EPIPE 而异常退出；
             // 管道保持打开、之后的输出经 collect 丢弃，该进程组留待停机收尸。
             graceTimer = setTimeout(() => finish(code, signal), CLOSE_GRACE_MS);
           });
@@ -372,7 +372,7 @@ export class LocalProcessService implements ProcessService {
     // 契约只收绝对路径或 file://：相对路径会按进程的 cwd 解析，而 cwd 不带语义
     if (!isAbsolute(realPath)) throw new Error(`外部文件路径必须是绝对路径：${realPath}`);
     // 先看大小再读：调用方（如 onebot 附件缓存）拿到的路径来自外部 daemon，
-    // 整份读进堆之后再判限额等于白吃一次峰值内存，大文件足以把进程压垮。
+    // 整份读进堆之后再判限额等于无谓地占用一次峰值内存，大文件足以把进程压垮。
     if (maxBytes !== undefined && Number.isFinite(maxBytes)) {
       const st = await fsStat(realPath);
       if (st.size > maxBytes) {

@@ -17,7 +17,7 @@ import { toolRequest } from '../fixtures/tool-call.js';
 // storage 是 required：晚于本插件上线时等它上线再激活，原有动态任务照常读回。
 // 契约：只有文件不存在算全新；其它失败本次运行拒写，原文件一字不动。
 // 拒写期间 scheduler_create_job 的回执注明新任务仅本次运行生效，别让用户以为已经存下。
-// 真 storage-local 多根（用户根 workspace 在前、内置根 data 在后，映射到数据目录的 state/），任务文件落在 data 根。
+// 真 storage-local 多根（用户根 workspace 在前、内部根 data 在后，映射到数据目录的 state/），任务文件落在 data 根。
 // ════════════════════════════════════════════════════════════
 
 const JOBS = 'scheduler-jobs.json';

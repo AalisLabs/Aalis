@@ -85,7 +85,7 @@ function useLogs(query: string) {
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
-    /** 历史取回之前推来的先攒着 */
+    /** 历史取回之前推来的先暂存 */
     let early: LogEntry[] | undefined = [];
     // 推送与历史走两条连接，先后不定：比历史里最后一条旧的已经在里面了
     const off = admin.on('log', ({ entry }) => {

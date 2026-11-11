@@ -50,7 +50,7 @@ async function boot() {
   await app.plugins.idle();
 
   const manager = host.services.use.get(authority) as AuthorityManager | undefined;
-  if (!manager) throw new Error('authority 服务未注册 —— 插件没起来');
+  if (!manager) throw new Error('authority 服务未注册 —— 插件未启动');
 
   return { manager, pages };
 }

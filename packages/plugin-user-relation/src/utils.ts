@@ -32,7 +32,7 @@ const MAX_ALIASES_PER_ENTITY = 20; // 单实体保留的 aliases 上限，防 pr
  * - 总长度截断到 MAX_ALIASES_PER_ENTITY；超出部分**优先丢弃 incoming 里靠后的新加项**，
  *   保留稳定的旧别名顺序，避免 LLM 反复输出新别名挤掉真有用的旧别名
  *
- * 若 incoming 为 undefined：返回 existing 的去重 + 截断版（顺手清掉历史脏数据）。
+ * 若 incoming 为 undefined：返回 existing 的去重 + 截断版（同时清掉历史脏数据）。
  * 返回值长度为 0 时返回 undefined（避免落库一个空数组）。
  */
 export function mergeAliases(
@@ -1022,7 +1022,7 @@ export function computeAdaptiveResolution(snap: RelationGraphSnapshot): number {
 /**
  * Louvain 社群发现（无向加权图，单次 coarsening）。
  *
- * 适用场景：在 PageRank 算完后顺手把节点聚类成"小圈子"——
+ * 适用场景：在 PageRank 算完后随即把节点聚类成"小圈子"——
  * - 群里有几个核心团体
  * - 某人最常一起出现的是谁
  *

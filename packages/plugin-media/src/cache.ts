@@ -26,7 +26,7 @@ import { createBoundedMap } from '@aalis/util-bounded-map';
 import { getMediaRuntime } from './runtime.js';
 import { t } from './texts.js';
 
-/** 图片内容不会变，描述也就不会过期；长留才吃得到跨天的表情包复用。 */
+/** 图片内容不会变，描述也就不会过期；长留才能让跨天复用的表情包命中缓存。 */
 const TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30d
 const MAX_ENTRIES = 5000;
 const SNAPSHOT_URI = 'data:/media/descriptions.json';
@@ -291,7 +291,7 @@ function schedulePersist(): void {
     persistTimer = undefined;
     void persist();
   }, PERSIST_DEBOUNCE_MS);
-  // 防抖定时器不该拖住进程退出：宿主在 Node 下 unref，其它环境无此方法即跳过。
+  // 防抖定时器不该阻塞进程退出：宿主在 Node 下 unref，其它环境无此方法即跳过。
   (persistTimer as unknown as { unref?: () => void }).unref?.();
 }
 

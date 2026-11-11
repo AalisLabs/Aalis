@@ -92,7 +92,7 @@ async function setup(
   // 回合 id 每轮不同，与 agent 一致
   let turns = 0;
 
-  /** 按 agent 的顺序跑一轮：agent:turn:before 的默认动作里跑完回合，最后发 agent:turn:after */
+  /** 按 agent 的顺序跑一轮：agent:turn:before 的默认动作里执行完回合，最后发 agent:turn:after */
   const turn = async (sessionId: string, during?: () => Promise<void> | void, outcome: Outcome = 'replied') => {
     const message: IncomingMessage = { content: '<占位>', sessionId, platform: 'onebot' };
     const turnId = `t${++turns}`;

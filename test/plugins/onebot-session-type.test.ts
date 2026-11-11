@@ -16,7 +16,7 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 // OneBot 入站带的平台类型名与聊天窗口：适配器把实现端给的消息类型原样带成类型名，会话管理按它的声明记下聊天窗口。
 // 声明里没有的类型（如部分 v11 实现扩展的 guild）按多方记下并告警，不当成一对一：否则第一个发言的若是 owner，
 // 这个多人窗口就成了 owner 的一对一。频道的窗口 id 是 `<guild>:<channel>`，消息上的 groupId 与会话 id 的目标段一致。
-// 本地起一个假的 OneBot 实现端推送消息事件。
+// 本地启动一个假的 OneBot 实现端推送消息事件。
 // ════════════════════════════════════════════════════════════
 
 type WsSocket = { on(event: 'message', cb: (raw: Buffer) => void): void; send(data: string): void; terminate(): void };

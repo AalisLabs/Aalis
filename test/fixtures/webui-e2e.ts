@@ -22,7 +22,7 @@ import { provideHostPaths } from './host-paths.js';
 import { seedRooms } from './rooms.js';
 
 // ════════════════════════════════════════════════════════════
-// WebUI 端到端的共用部分：构建前端、起浏览器、起最少插件组合的运行时（create-aalis 的 minimal 档，加内存记忆、
+// WebUI 端到端的共用部分：构建前端、启动浏览器、启动最少插件组合的运行时（create-aalis 的 minimal 档，加内存记忆、
 // 给定的模型与 webui-server）、按 token 登录打开页面。各个端到端文件自己写场景与探针插件。
 // ════════════════════════════════════════════════════════════
 
@@ -76,7 +76,7 @@ async function closeBrowser(browser: Browser | undefined, clientDir: string): Pr
 }
 
 /**
- * 一个端到端文件的共用部分：文件开始时构建前端、起浏览器，结束时关掉；每个用例结束时按登记的反序执行 cleanups。
+ * 一个端到端文件的共用部分：文件开始时构建前端、启动浏览器，结束时关掉；每个用例结束时按登记的反序执行 cleanups。
  * clientDir 与 browser 在 beforeAll 之后才有
  */
 export function useWebuiE2E() {
@@ -103,7 +103,7 @@ export function framePackage(name: string, files: Record<string, string>, cleanu
 }
 
 /**
- * 起运行时，还没 start：minimal 档的插件、内存记忆、model（模型的插件，不给时不装模型）、webui-server 与 extra，逐个核已激活。
+ * 创建运行时，还没 start：minimal 档的插件、内存记忆、model（模型的插件，不给时不装模型）、webui-server 与 extra，逐个核已激活。
  * webui 是 webui-server 另加的配置（如市场的检索源），slowThresholdMs 是慢激活阈值，doc 是宿主配置文档（如脚手架写的那份），
  * rooms 是会话表里预置的已收录房间（会话 id → 名字）。界面语言写在 plugin-i18n 的插件配置（全局层），是中文（doc 写了的照它）：
  * 哪一层都没设时按英文，用例按中文的文字与读屏名找元素。
@@ -151,7 +151,7 @@ export async function webuiStack(options: {
   host.use(hostLogs, createHostLogs(LogHub.default, fileLog, app.logger), { exclusive: true });
   host.use(webuiClient, { getClientDir: () => clientDir });
   const port = await freePort();
-  // 房间的来源字段只经原生入站记下，而这里起的是整条入站链（发原生入站会跑一轮回合）：要房间时内存记忆先起，
+  // 房间的来源字段只经原生入站记下，而这里启动的是整条入站链（发原生入站会跑一轮回合）：要房间时内存记忆先启动，
   // 在会话管理读表之前把收录过的记录预置进去
   if (rooms) {
     await app.plugin(memoryInMemoryPlugin, {});

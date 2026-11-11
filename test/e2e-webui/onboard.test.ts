@@ -36,7 +36,7 @@ import { freePort, waitListening } from '../helpers/net.js';
 const e2e = useWebuiE2E();
 const { cleanups } = e2e;
 
-/** 要 apiKey 的测试模型：没填起不来（待配置），填了就提供一个能对话的假模型 */
+/** 要 apiKey 的测试模型：没填时无法启动（待配置），填了就提供一个能对话的假模型 */
 const MODEL = 'zz-onboard-model';
 const MODEL_SCHEMA = { apiKey: { type: 'string', label: 'API Key', required: true, secret: true } } as const;
 const REPLY = '你好，我在。';
@@ -115,7 +115,7 @@ async function fakeRegistry(): Promise<string> {
 }
 
 /**
- * 起运行时：没有模型的 minimal 档，市场的检索源是假的（首页的「开始使用」会去取市场）；extra 是装上后不一定起得来的
+ * 启动运行时：没有模型的 minimal 档，市场的检索源是假的（首页的「开始使用」会去取市场）；extra 是装上后不一定能启动的
  * 测试插件，在 start 之前登记
  */
 async function start(extra: PluginDefinition[], options: { slowThresholdMs?: number } = {}) {
@@ -175,7 +175,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(settings.problems).toEqual([]);
   }, 90_000);
 
-  it('需要处理：缺的服务沿链追到根，每个没起来的插件计 1；没有提供者、成环各有写法；只在等别的插件启动的不计数、启动完转为运行', async () => {
+  it('需要处理：缺的服务沿链追到根，每个无法启动的插件计 1；没有提供者、成环各有写法；只在等别的插件启动的不计数、启动完转为运行', async () => {
     const gate = deferred();
     cleanups.push(async () => gate.resolve());
     const slow = definePlugin({

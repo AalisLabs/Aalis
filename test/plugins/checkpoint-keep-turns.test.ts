@@ -21,7 +21,7 @@ describe('checkpoint 按会话保留的回合数', () => {
         await storage.writeFile('ws:/a.txt', `v${i}`);
       });
     }
-    vi.useRealTimers(); // GC 异步跑完再看，等待用真时钟
+    vi.useRealTimers(); // GC 异步执行完毕再看，等待用真时钟
 
     const prefix = `${ROOT}/s/`;
     const turnsOnDisk = () => [
@@ -53,7 +53,7 @@ describe('checkpoint 按会话保留的回合数', () => {
     vi.useRealTimers();
 
     await vi.waitFor(() => expect(disk.has(`${ROOT}/s/t1/manifest.json`)).toBe(false));
-    await new Promise(resolve => setTimeout(resolve, 0)); // 清理剩下的都是微任务，等它们跑完
+    await new Promise(resolve => setTimeout(resolve, 0)); // 清理剩下的都是微任务，等它们执行完毕
     expect(warns).toEqual([]);
   });
 });

@@ -14,7 +14,7 @@ import { emptyMediaCaps } from '../fixtures/service-ref.js';
 // 出口形态变换：主模型 images 字段里绝不能出现附件引用原串
 //
 // 事故：适配器给 attachment.data 的曾是相对路径 `data/images/{会话}/{哈希}.gif`，
-// agent 原样塞进 message.images，而 provider 只认 data URI / http / file:// / 绝对路径 ——
+// agent 原样放入 message.images，而 provider 只认 data URI / http / file:// / 绝对路径 ——
 // 引用原串被当成 base64 送给 Ollama，整轮请求被拒：
 //   Ollama API 错误 (400): {"error":"illegal base64 data at input byte 18"}
 // 以前主模型是 DeepSeek，无 vision 能力、images 被忽略，缺陷潜伏；换成自带 vision 的
@@ -53,7 +53,7 @@ describe('transformModelImages：附件引用不得流向 provider', () => {
 
   it('passthrough 交付：物化不了的附件引用被丢弃，而不是原样外泄', async () => {
     // 无 media 运行时（storage 未注入）→ 规范化必然失败，此时正确行为是丢图，
-    // 而不是把附件引用塞给 provider 让整轮请求 400。
+    // 而不是把附件引用传给 provider 让整轮请求 400。
     expect(await svcWith().transformModelImages([REF], 'passthrough')).toEqual([]);
   });
 

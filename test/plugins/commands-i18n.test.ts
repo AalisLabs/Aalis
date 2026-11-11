@@ -61,7 +61,7 @@ const t = defineTexts({
 
 /** 聊天平台：适配器收 outbound:message 里这个平台的消息 */
 const CHAT = 'zz-chat';
-/** 预置在会话表里的聊天平台房间：经网关的原生入站会跑完整条相位链（兜底回复也是出站），不经它收录 */
+/** 预置在会话表里的聊天平台房间：经网关的原生入站会执行整条相位链（兜底回复也是出站），不经它收录 */
 const ROOMS = [1, 2, 3].map(n => `${CHAT}:bot:group:${n}`);
 const OWNER = { platform: 'webui', userId: 'console' };
 

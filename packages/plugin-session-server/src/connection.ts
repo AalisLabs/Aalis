@@ -3,7 +3,7 @@
 // 每条连接接入它所在的审批面（对端的登记句柄），审批推送经它到达，在场上报与应答也经它。
 // 方法的业务逻辑不在这里，由 index 传入的处理函数表承担。
 //
-// 每条连接的读者都是 owner 自己：出帧（结果、错误、推送、攒着的推送）一律按全局层的语言（i18n 的 { host: true } 读者）
+// 每条连接的读者都是 owner 自己：出帧（结果、错误、推送、暂存的推送）一律按全局层的语言（i18n 的 { host: true } 读者）
 // 渲染帧里的文字对象（i18n 缺席或渲染抛错时按原文）再序列化，日期与时间按服务进程的时区；i18n 抛错时告警一次，出帧与收帧都
 // 不因此抛错。一次推送发给多条连接时只渲染一次，各连接共用。原样数据（工具调用的参数、输出与结果，事实，用户消息正文，设置项
 // 的取值与字段的默认值）不渲染：那里形如文字对象的值可能是伪造的，取值也要原样读回再写。
@@ -67,7 +67,7 @@ export interface ServerConnection {
   /** 调过 background/watch，后台任务的增量推给它 */
   watchingBackground: boolean;
   /**
-   * 订阅一个会话（已订阅的换成新的一份）。返回的 release 调用之前，这个会话的推送先攒着；release 时按序补发，之后照常推送。
+   * 订阅一个会话（已订阅的换成新的一份）。返回的 release 调用之前，这个会话的推送先暂存；release 时按序补发，之后照常推送。
    * 订阅在快照取定的同一拍登记、回应发出之后 release，快照之后的推送一条不漏，也不会跑到快照前面。
    * 取快照失败时 cancel 撤掉这次登记。两者只在这个会话登记的仍是这一次时生效，不碰同一连接之后的另一次订阅
    */
@@ -92,7 +92,7 @@ export type MethodHandlers = {
 type Frame = Record<string, unknown>;
 
 type LiveConnection = ServerConnection & {
-  /** 订阅的会话 → 攒着的推送（已渲染）；null 为照常推送 */
+  /** 订阅的会话 → 暂存的推送（已渲染）；null 为照常推送 */
   readonly subscriptions: Map<string, string[] | null>;
   /** 渲染一帧并发出 */
   send(frame: Frame): void;
@@ -306,7 +306,7 @@ export function createSessionServer(
     for (const conn of targets) conn.sendText(frame);
   }
 
-  /** 推一条通知给订阅了这个会话的连接；订阅还在等快照回应的先攒着 */
+  /** 推一条通知给订阅了这个会话的连接；订阅还在等快照回应的先暂存 */
   function notifySession<N extends SessionNotification>(
     sessionId: string,
     method: N,

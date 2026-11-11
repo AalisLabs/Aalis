@@ -48,7 +48,7 @@ async function cacheAttachmentBuffer(
 
 /**
  * 流式读取响应体并限额：Content-Length 头超限即拒；流式累计超 maxBytes 即 abort 返回 null。
- * 避免无 Content-Length 时全量缓冲撑爆内存（体积上限留在下载消费方，不塞进只做校验的 util-network-guard）。
+ * 避免无 Content-Length 时全量缓冲耗尽内存（体积上限留在下载消费方，不放入只做校验的 util-network-guard）。
  */
 export async function readBodyCapped(res: Response, maxBytes: number): Promise<Buffer<ArrayBuffer> | null> {
   const len = Number(res.headers.get('content-length'));
@@ -89,7 +89,7 @@ async function loadAttachmentBuffer(
     // （根名 data），不能被下面的 data: 分支误当 data-URI。
     if (isStorageUri(source)) {
       // 读前先量：http 分支有 readBodyCapped 限额，这条此前整份读进内存再由
-      // cacheAttachmentBuffer 事后判超限——白吃一次峰值，大文件足以压垮进程。
+      // cacheAttachmentBuffer 事后判超限——白白承受一次内存峰值，大文件足以压垮进程。
       if (Number.isFinite(maxBytes)) {
         const st = await storage.stat(source);
         if (st.size > maxBytes) return null;

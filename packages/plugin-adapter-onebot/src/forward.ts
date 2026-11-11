@@ -53,7 +53,7 @@ export interface ExpandedForward {
   truncatedDepth: boolean;
   /** 是否有节点被截断（命中 maxNodesPerLevel） */
   truncatedNodes: boolean;
-  /** 遇到的嵌套转发的 id（含超过深度没展开、拉不到的：原文里写着它们的 id），按遇到的先后 */
+  /** 遇到的嵌套转发的 id（含超过深度没展开、获取失败的：原文里写着它们的 id），按遇到的先后 */
   nested: string[];
 }
 

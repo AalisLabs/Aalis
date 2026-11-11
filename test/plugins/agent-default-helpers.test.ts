@@ -193,7 +193,7 @@ describe('describeLLMFailure — 让 LLM 解析失败可诊断', () => {
   // ——服务其实注册得好好的，坏的只是那条 ref。
   it('一个 entry 都没有 → 提示去装/启用提供者插件', () => {
     const s = explain([]);
-    expect(s).toContain('未找到任何具备 chat 能力的 LLM');
+    expect(s).toContain('未找到任何具备 chat 能力的模型');
     expect(s).not.toContain('配置指向');
   });
 

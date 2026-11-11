@@ -166,7 +166,7 @@ const configSchema = defineConfig({
     default: true,
   },
 
-  // ────── 自动老化（写后顺手扫，profile 风格，不开独立调度器）──────
+  // ────── 自动老化（写后随即扫描，profile 风格，不开独立调度器）──────
   evictionEnabled: {
     type: 'boolean',
     onInvalid: 'error',

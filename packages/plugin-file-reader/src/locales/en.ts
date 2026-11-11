@@ -7,10 +7,10 @@ export default defineLocale<Source>()({
   maxFileSizeMBDescription: 'Largest file size (MB) allowed for uploads. Files over this limit are rejected.',
   autoInlineLimitLabel: 'Auto inline threshold (characters)',
   autoInlineLimitDescription:
-    'If the extracted text is no longer than this, it is inlined into the attachment description (the model sees the full text without calling a tool); otherwise only the ID is attached and the model pulls it with read_uploaded_file when needed. In sessions whose audience includes other people (groups, multi-person rooms, private chats whose other party is not the owner), nothing is inlined; only the file name, ID and size are given.',
+    'Extracted text up to this length is put into the message directly, so the model sees it without calling a tool; longer text only gets a file ID and is read on demand. Nothing is inlined in sessions with other people present.',
   toolDefaultMaxLengthLabel: 'read_uploaded_file default truncation',
   toolDefaultMaxLengthDescription:
-    'Default number of characters read_uploaded_file truncates to when the tool is not passed maxLength explicitly, so a huge document is not fed into the LLM context at once and blows the token budget. 0 means no truncation; must be a non-negative integer, negative numbers and decimals are reported as configuration errors.',
+    'How many characters the uploaded-file reading tool returns when no length is given; 0 means no truncation. Must be a non-negative integer, otherwise it is a configuration error.',
   badToolDefaultMaxLength: 'toolDefaultMaxLength must be a non-negative integer (0 means no truncation)',
   retentionDaysLabel: 'Retention days',
   retentionDaysDescription:
@@ -20,13 +20,13 @@ export default defineLocale<Source>()({
     'When the uploads directory takes more than this limit, files are evicted from oldest to newest by upload time (uploadedAt) until it is back under the limit. 0 means no limit.',
   historyHintEnabledLabel: 'Inject the session file list hint',
   historyHintEnabledDescription:
-    "When on: if the session has uploaded files, a system hint listing the available files (with IDs) is injected before the LLM call, so the model does not forget earlier uploads. When this turn has new uploads, both this turn's list and the history list are injected (this turn's files marked separately); otherwise only the history list. Only the most recent {count, number} are listed.",
+    "When on and the session has uploaded files, the model is told which files and IDs are available before it is called, with this turn's new uploads marked. Only the most recent {count, number} are listed.",
   recognizeDocImagesLabel: 'Recognize images embedded in documents',
   recognizeDocImagesDescription:
-    'When reading DOCX, call the media service to recognize embedded images and append the descriptions to the end of the text (requires media/vision; skipped automatically without a media service). Recognition adds to the first parse time and vision token cost; the result is cached with the extracted text.',
+    'When reading DOCX, recognize embedded images and append their descriptions to the end of the text; needs image recognition and is skipped without it. Adds to the first parse time and image recognition cost.',
   maxDocImagesLabel: 'Max images recognized per document',
   maxDocImagesDescription:
-    'Embedded images beyond this are not recognized, so that many images do not slow down parsing or use up vision tokens. 0 is the same as turning recognition off.',
+    'Embedded images beyond this are not recognized, so that many images do not slow down parsing or add to image recognition cost. 0 is the same as turning recognition off.',
   uploads: 'Uploaded files',
   delete: 'Delete',
   deleteConfirm: 'Delete this uploaded file? The model will no longer be able to read it.',

@@ -6,7 +6,7 @@ import { fakeTty } from '../helpers/tty.js';
 // ════════════════════════════════════════════════════════════
 // 非 chat 视图期间进入聊天区的消息（意图确认提示走的就是 outbound:message）此前没有任何可见
 // 提示：用户停在 logs 页，确认问题在 chat 页静静等 60 秒后取消。契约：header 的 CHAT 页签带
-// 计数高亮，切回 chat 即清。没有会话服务时不画流式增量，她的回复整条写出时计一次。起真 TUI（mock isTTY + 收集 stdout 帧）看 header。
+// 计数高亮，切回 chat 即清。没有会话服务时不画流式增量，她的回复整条写出时计一次。启动真 TUI（mock isTTY + 收集 stdout 帧）看 header。
 // ════════════════════════════════════════════════════════════
 
 const FRAME_SPLIT = '\x1b[?25l\x1b[H';
@@ -45,7 +45,7 @@ describe('plugin-cli 非 chat 视图的聊天区新消息提示', () => {
       await app.plugin(cliPlugin, { startupView: 'logs' });
       await app.plugins.idle();
       // 激活闸会让缺依赖的插件停在 pending 而不报错：不核一下，下面的 header 断言会
-      // 在「TUI 压根没起来」上变成对空帧的比对。
+      // 在「TUI 根本没有启动」上变成对空帧的比对。
       const state = app.plugins.getPlugin(cliPlugin.name)?.state;
       if (state !== 'active') throw new Error(`plugin-cli 未激活（state=${state}）`);
       await app.start();

@@ -10,7 +10,7 @@ export default defineLocale<Source>()({
   maxSkillsDescription: 'Maximum number of skills loaded per scan.',
   discoveryEnabledLabel: 'Enable discovery injection',
   discoveryEnabledDescription:
-    'Inject a line pointing to the skill library into the system prompt, telling the agent to search with list_skills and load with load_skill; turning it off also stops injecting the bodies of activated skills.',
+    'Add a line pointing to the skill library to the system prompt, telling the model to search for and load skills; turning it off also stops injecting the bodies of activated skills.',
   triggersEnabledLabel: 'Enable trigger-based activation',
   triggersEnabledDescription: 'Load a skill automatically when the triggers regex in its SKILL.md frontmatter matches.',
   skills: 'Skills',

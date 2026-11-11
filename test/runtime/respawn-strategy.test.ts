@@ -15,7 +15,7 @@ import {
 // 进程重启策略的判据：
 // - 新进程报就绪即放手退出，退出前不碰终端（它已归新进程）；
 // - 等 ready 超时按成功处理：不发 ready 的旧 runtime 必须仍能重启，不得因超时触发回滚；
-// - 回滚的依赖重装必须看退出码：非 0 与信号终止（null）都不得宣告「已回滚」并拉起旧版进程。
+// - 回滚的依赖重装必须看退出码：非 0 与信号终止（null）都不得宣告「已回滚」并重新启动旧版进程。
 // 子进程由 spawn 替身按脚本队列逐个出队（下一拍触发），process.exit 抛哨兵中止执行——
 // 只 mock 不抛的话，执行会越过 exit 继续跑进回滚分支。
 // ════════════════════════════════════════════════════════════
@@ -90,12 +90,12 @@ function restart(rollback: RestartRollback): Promise<void> {
 
 describe('createProcessRespawnStrategy', () => {
   it('子进程不发 ready 也不退出：超时按成功处理，exit(0)，不回滚', async () => {
-    // 凭据不带 postRestore：带了的话，把超时误判成夭折的变异会拉起一个永不退出的重装进程，拖到用例超时才挂
+    // 凭据不带 postRestore：带了的话，把超时误判成夭折的变异会启动一个永不退出的重装子进程，拖到用例超时才失败
     await expect(restart({ reason: 't', restore: [{ path: file, content: 'OLD' }] })).rejects.toMatchObject({
       code: 0,
     });
     expect(spawned.calls).toBe(1);
-    // 新进程在启动时的 cwd 里起：命令行里相对的 --data 才解析到同一个数据目录，不随重启时的 cwd 漂移
+    // 新进程在启动时的 cwd 里运行：命令行里相对的 --data 才解析到同一个数据目录，不随重启时的 cwd 漂移
     expect(spawned.cwds).toEqual(['/launch-dir']);
     // 实例锁的交接令牌交给新进程：它凭这个接手旧实例的锁
     expect(spawned.handoffs).toEqual(['token']);
@@ -117,7 +117,7 @@ describe('createProcessRespawnStrategy', () => {
     expect(process.listeners('exit')).toHaveLength(exitHooks);
   });
 
-  it.each([1, null])('回滚重装退出码为 %s：报依赖重装失败并 exit(1)，不拉起旧版进程', async code => {
+  it.each([1, null])('回滚重装退出码为 %s：报依赖重装失败并 exit(1)，不再启动旧版进程', async code => {
     spawned.scripts.push(
       child => child.emit('exit', 1), // 新进程在 ready 前夭折
       child => child.emit('exit', code), // postRestore 重装
@@ -129,13 +129,13 @@ describe('createProcessRespawnStrategy', () => {
         postRestore: { cmd: 'npm', args: ['i'], cwd: '/' },
       }),
     ).rejects.toMatchObject({ code: 1 });
-    // 只看 exit(1) 分不出来：重装被当成成功时拉起旧版那条路也是 exit(1)，区别在多出的第三次 spawn
+    // 只看 exit(1) 分不出来：重装被当成成功时启动旧版进程那条路也是 exit(1)，区别在多出的第三次 spawn
     expect(spawned.calls).toBe(2);
     expect(readFileSync(file, 'utf-8')).toBe('OLD');
     expect(errors.join('\n')).toContain('reinstalling dependencies failed');
   });
 
-  it('回滚成功后拉起的旧版进程同样拿到交接令牌与原有环境，在启动时的 cwd 里起', async () => {
+  it('回滚成功后重新启动的旧版进程同样拿到交接令牌与原有环境，在启动时的 cwd 里运行', async () => {
     spawned.scripts.push(
       child => child.emit('exit', 1), // 新进程在 ready 前夭折
       child => child.emit('exit', 0), // postRestore 重装成功
@@ -156,7 +156,7 @@ describe('createProcessRespawnStrategy', () => {
 });
 
 describe('createServiceRestartStrategy', () => {
-  it('停掉 App 后以服务重启的退出码结束，不自己拉起新进程；带回滚凭据时说明不会自动回滚', async () => {
+  it('停掉 App 后以服务重启的退出码结束，不自行启动新进程；带回滚凭据时说明不会自动回滚', async () => {
     let stopped = false;
     const strategy = createServiceRestartStrategy();
     await expect(

@@ -17,8 +17,8 @@ import { fixedRef } from '../fixtures/service-ref.js';
 // ════════════════════════════════════════════════════════════
 // 合并转发原文（持久化命名空间 onebot:forward 与进程内缓存）是聊天内容，归入 context：
 // 全局清理且类型为空或含 context 时清掉。会话级清理不动它（靠 7 天回收）。
-// 条目记下收到这条转发的会话（工具取原文时按它们过取别的会话的规则）：别的会话再收到同一条时补上；不论展开没展开、拉没拉到都记
-// （关掉展开的、拉不到的与嵌套在里面的只有会话）；持久化层里没记会话或记坏了的条目读回时会话为空，取用判定判不出。
+// 条目记下收到这条转发的会话（工具取原文时按它们过取别的会话的规则）：别的会话再收到同一条时补上；不论展开没展开、获取成功与否都记
+// （关掉展开的、获取失败的与嵌套在里面的只有会话）；持久化层里没记会话或记录损坏的条目读回时会话为空，取用判定判不出。
 // 多实例共用同一命名空间、各有一份内存缓存：每个实例都清，回显合并成一条。回显是文字对象，按读者的语言显示。
 // ════════════════════════════════════════════════════════════
 
@@ -126,7 +126,7 @@ describe('forward-expand: 条目记下收到它的会话', () => {
     expect(await mem.getMetadata(NS, 'F-s')).toMatchObject({ sessionIds: [P, G] });
   });
 
-  it('关掉展开的、顶层拉不到的：只记下收到它的会话，写进持久化层；别的会话再收到时补上', async () => {
+  it('关掉展开的、顶层获取失败的：只记下收到它的会话，写进持久化层；别的会话再收到时补上', async () => {
     const { mem } = await inMemory();
     const off = expanderOn(mem, { ...CFG, enabled: false });
     await off.expandForwards(null, [{ type: 'forward', data: { id: 'F-off' } }], P);
@@ -156,7 +156,7 @@ describe('forward-expand: 条目记下收到它的会话', () => {
     expect(await expander.getOrLoadForward('F-inner')).toEqual({ sessionIds: [P, G] });
   });
 
-  it('持久化层里没记会话或记坏了的条目：读回时会话为空', async () => {
+  it('持久化层里没记会话或记录损坏的条目：读回时会话为空', async () => {
     const { mem } = await inMemory();
     await seed(mem, ['F1']);
     await mem.saveMetadata(NS, 'F2', { ...entry('F2'), sessionIds: [P, 3] });

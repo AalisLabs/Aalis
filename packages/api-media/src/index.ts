@@ -67,7 +67,7 @@ export interface DescribeInput {
   /**
    * 追加约束提示（可选）：在 base prompt 与 context 之后追加，
    * 语义是"再加一条要求"，例如 "请重点描述左上角"。
-   * ⚠️ 不要把另一段完整 prompt 塞进 hint，会与 base 冲突；那种场景请用 basePrompt。
+   * ⚠️ 不要把另一段完整 prompt 放入 hint，会与 base 冲突；那种场景请用 basePrompt。
    */
   hint?: string;
   /**

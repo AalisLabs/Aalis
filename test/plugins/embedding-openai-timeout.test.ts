@@ -70,7 +70,7 @@ describe('plugin-embedding-openai: 请求自带超时', () => {
         try {
           await a.stop();
         } catch {
-          /* 停不掉也要继续 */
+          /* 无法停止也要继续 */
         }
       }
     } finally {

@@ -28,7 +28,7 @@ import { t } from './texts.js';
 // plugin-reach —— 触及服务（契约见 @aalis/api-reach）
 //
 // 按一次工具调用签发凭据：主体取权限服务的 principalOf（类别为人亲手、这次调用的参与者都是 owner 的为 owner；续做与子任务的
-// 类别随起它的那一轮，批过的调用参与者是批的人），不看会话的受众；绑定取会话管理里的记录，主目录是绑定目录、没有绑定的是默认
+// 类别随发起它的那一轮，批过的调用参与者是批的人），不看会话的受众；绑定取会话管理里的记录，主目录是绑定目录、没有绑定的是默认
 // 工作区目录，档位与越界策略固定（工作区档、越界要问），仓库的 git 目录按磁盘找，三张清单在激活时按数据目录布局与真实路径算好；
 // 交给 api-reach 的 resolveReach 定上限。绑定与 git 目录在签发时取好。另管本会话临时区与子进程环境。
 // ════════════════════════════════════════════════════════════
@@ -125,7 +125,7 @@ async function run(caps: Caps): Promise<void> {
     },
   };
 
-  // 删会话时在后台删它的临时区，不拖住删会话；删不掉记 warn
+  // 删会话时在后台删它的临时区，不阻塞删会话；删不掉记 warn
   events.use.on('session:deleted', sessionId => {
     const dir = sessionTmpOf(paths.tmp, sessionId);
     const done = rm(dir, { recursive: true, force: true })
@@ -136,7 +136,7 @@ async function run(caps: Caps): Promise<void> {
     deleting.set(sessionId, done);
   });
 
-  // 清扫在后台排队跑，启动时的那一轮不拖住激活
+  // 清扫在后台排队跑，启动时的那一轮不阻塞激活
   let sweeping = Promise.resolve();
   const sweep = () => {
     sweeping = sweeping

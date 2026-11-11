@@ -8,7 +8,7 @@ import { tryDispatchSubcommand } from '../../packages/runtime/src/subcommand.js'
  *
  * 保证 commands 服务存在时 tryDispatchSubcommand 命中 → 调用 execute → 打印结果 → 返回 0；
  * 未命中 / 服务缺失 → 报错并返回 2——**不存在放行分支**：argv 非空即子命令模式，未命中若返回
- * 「继续」，调用方就会照常起守护进程，打错的命令名变成与运行中实例并存的第二个实例。
+ * 「继续」，调用方就会照常启动守护进程，打错的命令名变成与运行中实例并存的第二个实例。
  *
  * 不依赖具体命令（如 doctor），只用一个内联 mock 的 CommandService 来验证
  * 分发协议本身，避免把测试和具体插件耦合（doctor 命令名将来可能改）。

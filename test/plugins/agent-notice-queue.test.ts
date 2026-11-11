@@ -13,7 +13,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
-// 续做与真人消息互不打断：新消息从不中止在跑的一轮。起它的人在同一会话说话，她的话排在续做那一轮之后单独一轮；宿主通知
+// 续做与真人消息互不打断：新消息从不中止在跑的一轮。发起它的人在同一会话说话，她的话排在续做那一轮之后单独一轮；宿主通知
 // 到达时排在真人的回合之后（带来源的注入各自成一轮，不与别的输入叠加）。
 // ════════════════════════════════════════════════════════════
 
@@ -82,7 +82,7 @@ async function boot() {
 
 const OWNER = { platform: 'webui', userId: 'console' };
 
-/** 后台任务的结束通知：带着起它的那一轮（owner 亲手那一轮） */
+/** 后台任务的结束通知：带着发起它的那一轮（owner 亲手那一轮） */
 const notice: IncomingMessage = {
   content: '后台任务 bg_0a1b2c_1（exec）失败：退出码 1，用时 3 秒。结果与输出用 background_output 查看。',
   sessionId: SESSION,
@@ -95,7 +95,7 @@ const notice: IncomingMessage = {
 const human: IncomingMessage = { content: '停', sessionId: SESSION, ...OWNER };
 
 describe('续做与真人消息互不打断', () => {
-  it('起它的人在同一会话说话：续做那一轮不中止，她的话排在它之后单独一轮', async () => {
+  it('发起它的人在同一会话说话：续做那一轮不中止，她的话排在它之后单独一轮', async () => {
     const h = await boot();
     const noticeTurn = h.agent.handleMessage(notice);
     await waitFor(() => h.held.length === 1, '续做那一轮卡在工具上');

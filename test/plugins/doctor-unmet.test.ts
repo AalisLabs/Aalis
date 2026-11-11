@@ -217,7 +217,7 @@ const CASES: Case[] = [
     },
   },
   {
-    name: '一个服务两个提供者都没起来：各自追到自己的根',
+    name: '一个服务两个提供者都未启动：各自追到自己的根',
     plugins: [
       plugin('a', 'pending', { requires: ['llm'] }),
       plugin('model', 'error', { provides: ['llm'], error: '连不上' }),
@@ -246,7 +246,7 @@ const CASES: Case[] = [
     },
   },
   {
-    name: '提供者自己既缺又等：它起不来，缺的那条是根，在等的那条不算',
+    name: '提供者自己既缺又等：它无法启动，缺的那条是根，在等的那条不算',
     plugins: [
       plugin('a', 'pending', { requires: ['sb'] }),
       plugin('b', 'pending', { requires: ['sc', 'sd'], provides: ['sb'] }),

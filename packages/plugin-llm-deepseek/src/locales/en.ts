@@ -29,16 +29,16 @@ export default defineLocale<Source>()({
     'Model names added by hand (one per line or comma-separated), for models missing from the discovered list. Names that duplicate discovered models are flagged so you can remove them.',
   discoverModelsLabel: 'Discover models',
   discoverModelsDescription:
-    'Request /models at startup to discover the available models. Turn it off when the gateway does not provide /models: no discovery request is sent and only customModels are registered (then required).',
+    'Query the service for available models at startup. Turn it off when the service has no model list; only custom models are then used, and they are required.',
   modelCapabilitiesLabel: 'Per-model capability overrides',
   modelCapabilitiesDescription:
-    "Set a model's capabilities line by line. A line for a model **overrides** the plugin's heuristics and is still combined with the adapter defaults.\nFormat: `<modelId>: <cap1>,<cap2>,...`, one per line. For example: deepseek-flash: chat,tool_calling,streaming,thinking,vision\nAvailable capabilities: chat / tool_calling / vision / streaming / thinking and so on.",
-  providerCapabilitiesLabel: 'Adapter default capabilities (comma-separated)',
+    'Capabilities per model. A listed model is no longer inferred from its name; it gets the capabilities written here plus the adapter default capabilities.\nFormat: `<modelId>: <cap1>,<cap2>,...`, one per line. For example: deepseek-flash: chat,tool_calling,streaming,thinking,vision\nAvailable capabilities: chat / tool_calling / vision / streaming / thinking and so on.',
+  providerCapabilitiesLabel: 'Adapter default capabilities',
   providerCapabilitiesDescription:
-    "Capabilities added to every model of this adapter. A model's capabilities = these ∪ its per-model capabilities. For example: chat,tool_calling,streaming",
+    'Capabilities added to every model, comma-separated. For example: chat,tool_calling,streaming',
   timeoutLabel: 'Idle timeout (s)',
   timeoutDescription:
-    'How long without new output counts as a timeout (seconds). Output that keeps coming (thinking included) never times out; a non-streaming request must receive the whole reply within this time. 0 = no limit.',
+    'How long without new output counts as a timeout; steady output (thinking included) never times out, and a non-streaming request must receive the whole reply within this time. 0 = no limit.',
   temperatureLabel: 'Temperature',
   temperatureDescription: '0-2; higher is more random',
   maxTokensLabel: 'Max tokens',
@@ -48,13 +48,13 @@ export default defineLocale<Source>()({
   contextLengthDescription: "Size of the model's context window",
   strictToolCallsLabel: 'Strict tool calls',
   strictToolCallsDescription:
-    'When on, every tool call uses strict mode and the model output strictly follows the JSON Schema (see api-docs.deepseek.com)',
+    'When on, every tool definition uses strict mode, so the arguments the model gives strictly follow the JSON Schema.',
   forceJsonOutputLabel: 'Force JSON output',
   forceJsonOutputDescription:
-    "When on, every final-reply request carries response_format: '{type:\"json_object\"}'; together with a persona card's outputFormat this improves format compliance. The tool-call phase is not affected (tool responses go through the tool_calls field). The system prompt must contain the word json (persona cards with outputFormat enabled meet this automatically).",
+    "When on, requests without tools ask the model for JSON output, for use with a persona card's output format. The system prompt must contain the word json.",
   thinkingLabel: 'Default thinking level',
   thinkingDescription:
-    'The level used by models that can think (v4, reasoner and so on, or those with thinking in the per-model capability overrides) when a request names no level; the session setting “Thinking” takes precedence. Auto: thinking on, with DeepSeek choosing between High and Max by context. Models that cannot think are always sent with Off.',
+    'The level models that can think use when a request names no level; the session setting “Thinking” takes precedence. Auto: thinking on, with DeepSeek choosing between High and Max.',
   requestTimeout: 'DeepSeek request timed out: no new output within {seconds} s; you can raise timeout in the config',
   pluginClosed: 'The DeepSeek plugin was disabled or reloaded; this request was not sent',
   pluginStopped: 'The DeepSeek plugin was disabled or reloaded; this request was stopped midway',

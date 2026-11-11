@@ -143,7 +143,7 @@ describe('启动横幅', () => {
 });
 
 describe('事件监听器抛错的告警', () => {
-  it('经 events 能力登记的监听器：告警点名来源插件实例 id，错误对象原样附上，其余监听器照跑', async () => {
+  it('经 events 能力登记的监听器：告警点名来源插件实例 id，错误对象原样附上，其余监听器照常运行', async () => {
     const log = recordingLogger();
     const app = track(new App({ ...base(), logger: log }));
     const boom = new Error('boom');

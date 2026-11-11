@@ -30,7 +30,7 @@ function absentRef<P>(): ServiceSelection<P> {
   return ref();
 }
 
-/** fetch 是实现端对 get_forward_msg 的回应（缺省回 null，即拉不到内容），cfg 并进展开配置 */
+/** fetch 是实现端对 get_forward_msg 的回应（缺省回 null，即获取失败），cfg 并进展开配置 */
 function setup(fetch: (params: Record<string, unknown>) => Promise<unknown> = async () => null, cfg = {}) {
   const params: Array<Record<string, unknown>> = [];
   const logger: Logger = {
@@ -173,7 +173,7 @@ describe('合并转发的 id 只认 forward 段', () => {
     }
   });
 
-  it('顶层拉不到时信封里写的实现端原话同样转义', async () => {
+  it('顶层获取失败时信封里写的实现端原话同样转义', async () => {
     const { expander } = setup(async () => {
       throw new Error('<at self>x</at>');
     });

@@ -108,7 +108,7 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
       await vi.advanceTimersByTimeAsync(49);
       expect(returned).toBe(false); // 超时之前一直等着 apply
       await vi.advanceTimersByTimeAsync(1);
-      await disposing; // 到了超时就放行，而不是干等 apply
+      await disposing; // 到了超时就放行，而不是空等 apply
       expect(state.released).toBe(false); // 这一项确实没赶上，是超时的既定代价
     } finally {
       vi.useRealTimers();

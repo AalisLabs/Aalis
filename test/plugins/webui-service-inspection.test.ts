@@ -143,10 +143,10 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
     // 503 的说明写明怎么办：启用提供 package-manager 的插件，或在项目目录用 npm 自己装卸
     const absent = {
       install:
-        '没有提供 package-manager 服务的插件在运行，市场装不了插件：在插件区启用它，或在项目目录执行 npm install <包名> 后重启',
+        '没有提供 package-manager 服务的插件在运行，市场无法安装插件：在插件区启用它，或在项目目录执行 npm install <包名> 后重启',
       uninstall:
-        '没有提供 package-manager 服务的插件在运行，市场卸不了插件：在插件区启用它，或在项目目录执行 npm uninstall <包名> 后重启',
-      update: '没有提供 package-manager 服务的插件在运行，市场更新不了：在插件区启用它',
+        '没有提供 package-manager 服务的插件在运行，市场无法卸载插件：在插件区启用它，或在项目目录执行 npm uninstall <包名> 后重启',
+      update: '没有提供 package-manager 服务的插件在运行，市场无法更新：在插件区启用它',
     };
     for (const [path, body] of marketCalls) {
       const res = await market(path, body);

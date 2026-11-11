@@ -199,7 +199,7 @@ const uses = {
   agent: optional(agent),
   /**
    * 会话设置的管理面：建子会话之前取 childMetadata、按调用者的身份写子会话的设置（setAs：工具参数指定的模型、父会话改子会话的
-   * 设置）、读本插件的子任务模型。不在时不建子会话：子会话没法写下父会话此刻的设置
+   * 设置）、读本插件的子任务模型。不在时不建子会话：子会话无法写下父会话此刻的设置
    */
   sessionSettings: optional(sessionSettings),
   /** 追问经它送达（落定时知道）；不在时追问发不出 */
@@ -254,7 +254,7 @@ function registerSubtask(
   const followUps = new Map<string, number>();
   /**
    * 追问开的那一轮跑在送达它的调用的异步上下文里，回合结束时据此认出这一轮是不是追问开的。每条追问一个令牌，落定时从 live 里删：
-   * 那一轮里起的异步工作（转后台的工具、定时器）继承同一个上下文，之后它们开的一轮拿到的是已落定的令牌，不算追问开的
+   * 那一轮里发起的异步工作（转后台的工具、定时器）继承同一个上下文，之后它们开的一轮拿到的是已落定的令牌，不算追问开的
    */
   const followUpTurn = new AsyncLocalStorage<object>();
   const live = new Set<object>();

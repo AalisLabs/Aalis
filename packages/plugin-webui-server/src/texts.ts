@@ -10,23 +10,21 @@ const SOURCE = {
   hostDescription: '绑定的 IP 地址，0.0.0.0 可对外访问',
   allowedHostsLabel: '主机白名单',
   allowedHostsDescription:
-    '经反向代理或域名访问时浏览器地址栏里的主机名，不带协议与端口。IP 地址、localhost 与监听地址总是认；其余主机名的请求回 421，挡住 DNS 重绑定的网页',
+    '经反向代理或域名访问时，浏览器地址栏里的主机名，不带协议与端口。IP 地址、localhost 与监听地址不用加',
   badAllowedHost: '{entry} 不是主机名：只写主机名，不带协议、用户名与路径',
   autoOpenLabel: '启动时自动打开浏览器',
-  autoOpenDescription:
-    '每次应用启动后首次监听成功时打开默认浏览器；同一应用内沿用 token 的插件重载不重复打开，重新生成 token 时再次打开以便登录。SSH/headless 环境建议关闭',
+  autoOpenDescription: '每次应用启动时打开默认浏览器并登录。SSH 或无图形界面的环境建议关闭',
   tokenModeLabel: 'Token 策略',
   tokenEphemeral: '每次启动随机生成（重启即轮换）',
   tokenPersist: '首次生成后持久化（重启不掉登录）',
   tokenFixed: '使用下方固定 token',
-  tokenModeDescription:
-    'ephemeral=每次启动随机；persist=token 写入 data:/webui/token，读取复用；fixed=使用 fixedToken 字段。所有模式都会写出便利文件 data:/webui/access.txt 含访问 URL。',
-  fixedTokenLabel: '固定 Token（仅 tokenMode=fixed 生效）',
+  tokenModeDescription: '访问 token 怎么生成。各模式都会把访问地址与 token 写进数据目录的 state/webui/access.txt',
+  fixedTokenLabel: '固定 Token',
   fixedTokenDescription:
-    '至少 {min} 个字符的随机字符串（去掉首尾空白后计），短了插件不启动；留空按 persist 处理。存进 secrets.yaml，WebUI 不回显。',
+    '「Token 策略」选「使用下方固定 token」时生效。至少 {min} 个字符的随机字符串，短了插件不启动；留空时按「首次生成后持久化」处理。',
   registryLabel: '插件市场 npm 源',
   registryDescription:
-    '插件市场检索用的 npm registry 基址。注意 npm 的 search API 并非所有镜像都支持（淘宝等国内源不支持），默认官方源；国内可填支持 search 的镜像或代理。安装走 package-manager（遵循本机 npm 配置），卡片上的最新版与可更新也按安装使用的源查。',
+    '插件市场检索用的 npm registry 地址。不是所有镜像都支持 npm 的搜索接口，国内可填支持搜索的镜像或代理。',
   registryInvalid: 'marketplaceRegistry 不是有效 URL',
   tokenTooShort: 'fixedToken 至少要 {min} 个字符（现在 {length} 个）',
   accessTitle: '# Aalis WebUI 访问凭据（自动生成）',
@@ -37,7 +35,7 @@ const SOURCE = {
   pageLanguage: 'zh-CN',
   loginTitle: 'Aalis WebUI 登录',
   loginHint:
-    '访问 token 在数据目录的 state/webui/access.txt 里，启动日志「访问凭据已写入」那行给出它的完整路径；tokenMode 为 fixed 时它是配置项 fixedToken，启动后值存在数据目录的 secrets.yaml 里（配置文件里是引用）。',
+    '访问 token 在数据目录的 state/webui/access.txt 里，完整路径见启动日志「访问凭据已写入」那行；用固定 Token 时，值存在数据目录的 secrets.yaml 里。',
   tokenPlaceholder: '访问 token',
   loginButton: '登录',
   tokenWrong: 'token 不正确',
@@ -150,10 +148,10 @@ const SOURCE = {
   removeConfigNotBoolean: 'removeConfig 字段必须是布尔值',
   targetsRequired: 'targets 必须是非空数组',
   noPackageManagerInstall:
-    '没有提供 package-manager 服务的插件在运行，市场装不了插件：在插件区启用它，或在项目目录执行 npm install <包名> 后重启',
+    '没有提供 package-manager 服务的插件在运行，市场无法安装插件：在插件区启用它，或在项目目录执行 npm install <包名> 后重启',
   noPackageManagerUninstall:
-    '没有提供 package-manager 服务的插件在运行，市场卸不了插件：在插件区启用它，或在项目目录执行 npm uninstall <包名> 后重启',
-  noPackageManagerUpdate: '没有提供 package-manager 服务的插件在运行，市场更新不了：在插件区启用它',
+    '没有提供 package-manager 服务的插件在运行，市场无法卸载插件：在插件区启用它，或在项目目录执行 npm uninstall <包名> 后重启',
+  noPackageManagerUpdate: '没有提供 package-manager 服务的插件在运行，市场无法更新：在插件区启用它',
   urlRequired: '缺少 url 参数',
   upstreamStatus: '上游返回 {status}',
   notImage: '上游返回的不是能显示的图片',

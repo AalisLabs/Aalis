@@ -175,7 +175,7 @@ export async function awaitWithTimeout(
       onTimeout(timeoutMs);
     }
   } finally {
-    // clearTimeout 必须在 finally：悬空定时器会拖住事件循环，延迟进程退出
+    // clearTimeout 必须在 finally：悬空定时器会让事件循环保持活跃，延迟进程退出
     clearTimeout(timer);
   }
 }

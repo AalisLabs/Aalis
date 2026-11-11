@@ -11,5 +11,5 @@ export default defineLocale<Source>()({
   threadsLabel: 'Threads',
   timeoutMsLabel: 'Subprocess timeout (ms)',
   timeoutMsDescription:
-    'Maximum run time of the transcoding and recognition subprocesses. This limit is there to cut off subprocesses that are truly stuck, not to throttle recognition — long audio is slow on a CPU anyway, so the default is 10 minutes. 0 means no limit (a stuck subprocess will then hang the whole turn with it).',
+    'Maximum run time of the transcoding and recognition subprocesses; they are stopped when it runs out. 10 minutes by default. With 0 (no limit), a stuck subprocess blocks the whole turn.',
 });

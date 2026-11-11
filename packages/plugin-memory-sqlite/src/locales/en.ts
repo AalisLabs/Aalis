@@ -5,7 +5,7 @@ export default defineLocale<Source>()({
   displayName: 'SQLite memory',
   pathLabel: 'Database path',
   pathDescription:
-    "Storage URI of the SQLite database file (such as data:/aalis.db; without ':/' the first segment is taken as the storage root name, and a single bare name goes to the data root). When empty it is derived from the instance: the main instance uses data:/aalis.db, and instances with a suffix add it to the file name (such as data:/aalis-b.db for the `:b` instance). Two instances cannot use the same database; the one activated later reports a config error",
+    'Storage URI of the SQLite database file, such as data:/aalis.db. When empty, it is named from the instance; two instances cannot share a database.',
   rangeQueryLimitLabel: 'Range query limit',
   rangeQueryLimitDescription:
     'Maximum messages returned by one range query (such as context-window expansion for vector recall). Results beyond the limit are cut off silently',

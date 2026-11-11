@@ -215,7 +215,7 @@ class InMemoryFallbackService implements MemoryService {
     // 先把全部 op 序列化一遍再落，任一条不可序列化就整批不生效 —— 与 sqlite（事务内
     // JSON.stringify 抛错则回滚）、mongodb（BSON 序列化抛错则一条不执行）语义一致。
     const puts = ops.map(o => (o.op === 'put' ? JSON.parse(JSON.stringify(o.data)) : undefined));
-    // 循环体内无 await：这一段跑完之前没有别的代码能观察到中间态，故整批原子。
+    // 循环体内无 await：这一段执行完毕之前没有别的代码能观察到中间态，故整批原子。
     ops.forEach((o, i) => {
       if (o.op === 'put') this.putSync(o.namespace, o.key, puts[i] as Record<string, unknown>);
       else this.deleteSync(o.namespace, o.key);

@@ -21,9 +21,9 @@ import { toolRequest } from '../fixtures/tool-call.js';
 // ════════════════════════════════════════════════════════════
 // 工具执行器一层的转后台（plugin-tools）：声明了 background 的工具多两项参数（runInBackground、waitSeconds），
 // 过了守卫之后先等让出时限，到时没结束就登记成后台任务、先回给模型；登记表（backgroundTasks）可查、可取输出、可停，
-// 停用与撤回时落成 aborted，会话删除时停掉并删掉，状态变了写进插件数据。正常结束（含失败）时向起它的会话注入结束通知，
-// 身份取起它的那次调用。四个后台任务工具只在有可转后台的工具时下发；停任务声明 2 级加确认，由执行守卫按声明判（这里的守卫
-// 是替身，真权限插件下的裁决见 self-acting-confirm.test.ts）。全程假计时器与替身工具，不起真实进程。
+// 停用与撤回时落成 aborted，会话删除时停掉并删掉，状态变了写进插件数据。正常结束（含失败）时向发起它的会话注入结束通知，
+// 身份取发起它的那次调用。四个后台任务工具只在有可转后台的工具时下发；停任务声明 2 级加确认，由执行守卫按声明判（这里的守卫
+// 是替身，真权限插件下的裁决见 self-acting-confirm.test.ts）。全程假计时器与替身工具，不启动真实进程。
 // ════════════════════════════════════════════════════════════
 
 const SESSION = 'zz-6b-session';
@@ -345,7 +345,7 @@ describe('让出', () => {
 });
 
 describe('上限', () => {
-  it('第 5 个可转后台调用在执行前被拒、列出本会话在跑的任务（不论谁起的），前台在跑的也算数；别的会话不受影响，结束一个就能再起', async () => {
+  it('第 5 个可转后台调用在执行前被拒、列出本会话在跑的任务（不论谁发起的），前台在跑的也算数；别的会话不受影响，结束一个就能再发起', async () => {
     const w = world();
     w.slow();
     const a = parse(await w.registry.execute('zz_slow', { runInBackground: true }, turn().ctx));
@@ -836,7 +836,7 @@ describe('落盘', () => {
     expect(store.saved()?.tasks[0].reason).toMatchObject({ params: { name: name.slice(0, 200) } });
   });
 
-  it('只记字段，不记起它的身份、输出与结果；状态变了才写', async () => {
+  it('只记字段，不记发起它的身份、输出与结果；状态变了才写', async () => {
     const w = world();
     const store = memoryStore();
     await w.tasks.restore(ownView(store.service, 'tools'));
@@ -889,7 +889,7 @@ describe('落盘', () => {
     expect(store.writes()).toBe(0);
   });
 
-  it('读回之前起的任务与读回的并存，读回之后一并写盘', async () => {
+  it('读回之前发起的任务与读回的并存，读回之后一并写盘', async () => {
     const w = world();
     w.slow();
     const early = parse(await w.registry.execute('zz_slow', { runInBackground: true }, turn().ctx));
@@ -960,7 +960,7 @@ describe('结束通知', () => {
   ];
 
   for (const c of cases) {
-    it(`带着起它的那一轮：${c.name}`, async () => {
+    it(`带着发起它的那一轮：${c.name}`, async () => {
       const w = world();
       w.slow();
       const { ctx } = turn(c.ctx);
@@ -992,7 +992,7 @@ describe('结束通知', () => {
     });
   }
 
-  it('回复引用：hostNotice.replyTo 取起它那次调用的入站消息 id', async () => {
+  it('回复引用：hostNotice.replyTo 取发起它那次调用的入站消息 id', async () => {
     const w = world();
     w.slow();
     const ctx = turn({ sessionId: GROUP, platform: 'onebot', userId: '30002', inbound: { messageId: 'zz-msg-1' } }).ctx;
@@ -1127,7 +1127,7 @@ describe('四个后台任务工具', () => {
     expect(w.warnings.some(m => m.includes('background_list'))).toBe(true);
   });
 
-  describe('本会话里谁起的都看得到，别的会话里的回「不存在」；停不另判是谁起的，等级与确认交给执行守卫', () => {
+  describe('本会话里谁发起的都看得到，别的会话里的回「不存在」；停不另判是谁发起的，等级与确认交给执行守卫', () => {
     const starter = { sessionId: GROUP, platform: 'onebot', userId: '30001' };
     const callers: Array<{ name: string; ctx: Partial<ToolCallRequest>; sees: boolean }> = [
       { name: '同一房间的另一个人（守卫放行）', ctx: { ...starter, userId: '30002' }, sees: true },

@@ -44,7 +44,7 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
 });
 
-/** 起一个 agent，模型先调探针工具再收尾，返回探针收到的调用上下文 */
+/** 启动一个 agent，模型先调探针工具再收尾，返回探针收到的调用上下文 */
 async function agentTurn(incoming: IncomingMessage): Promise<ToolCallContext | undefined> {
   return (await observedAgentTurn(incoming)).ctx;
 }
@@ -102,7 +102,7 @@ describe('ToolCallContext.inbound：agent 工具循环填写本回合的入站�
     });
     expect(ctx?.inbound).toBeDefined();
     expect(ctx?.inbound?.source).toBeUndefined();
-    expect(ctx?.inbound?.messageId, '后台任务的结束通知据它引用起它的那条消息').toBe('zz-msg-1');
+    expect(ctx?.inbound?.messageId, '后台任务的结束通知据它引用发起它的那条消息').toBe('zz-msg-1');
     expect(llmBeforeSources).toEqual([undefined, undefined]);
   });
 
@@ -134,7 +134,7 @@ describe('agent:llm:before 带这一轮的中止信号', () => {
   });
 });
 
-describe('续做：工具调用上下文取起它的那一轮（通知的 fromTurn）', () => {
+describe('续做：工具调用上下文取发起它的那一轮（通知的 fromTurn）', () => {
   const QQ = '10001';
   const from = { platform: 'onebot', userId: QQ, participants: [{ platform: 'onebot', userId: QQ }] };
   const notice = (fromTurn?: FromTurn): IncomingMessage => ({

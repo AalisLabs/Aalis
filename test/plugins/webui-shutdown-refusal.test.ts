@@ -16,7 +16,7 @@ import { ref } from '../fixtures/service-ref.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
 
 // 停机开始后 core 的管理动作一律返回 false。插件还在注册表里时，路由要回「拒绝」（409），不能说插件不存在。
-// 真实 App + 真实路由，配置落盘用内存 provider；不起端口、不连任何外部服务。
+// 真实 App + 真实路由，配置落盘用内存 provider；不监听端口、不连任何外部服务。
 
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
 const apps: App[] = [];

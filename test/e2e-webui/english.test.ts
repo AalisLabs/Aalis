@@ -16,7 +16,7 @@ import { waitListening } from '../helpers/net.js';
 
 /** 登录页的说明（plugin-webui-server） */
 const LOGIN_HINT =
-  'The access token is in state/webui/access.txt under the data directory; the startup log line “Access credentials written” gives its full path. With tokenMode set to fixed it is the config item fixedToken, whose value is stored in secrets.yaml under the data directory after startup (the config file holds a reference).';
+  'The access token is in state/webui/access.txt under the data directory; the startup log line “Access credentials written” gives its full path. A fixed token is stored in secrets.yaml under the data directory.';
 /** /help clear 回复卡片的标题（plugin-commands） */
 const CLEAR_TITLE =
   '/clear — Clear the memory of this session; use --type to pick what to clear, such as messages, summaries, vectors and images';
@@ -27,7 +27,7 @@ const SCAFFOLD = 'zz-e2e-english';
 const e2e = useWebuiE2E();
 const { cleanups } = e2e;
 
-/** 起运行时：共用的最少插件组合加 extra，全局层的语言是英文；回地址 */
+/** 启动运行时：共用的最少插件组合加 extra，全局层的语言是英文；回地址 */
 async function start(extra: PluginDefinition[] = []): Promise<string> {
   const { app, port } = await webuiStack({
     clientDir: e2e.clientDir,

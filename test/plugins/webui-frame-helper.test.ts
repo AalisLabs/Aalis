@@ -134,7 +134,7 @@ describe('助手的握手', () => {
     expect(later.sent).toEqual([]);
   });
 
-  it('init 里没有带 tokens 的主题时报错，不挂着', async () => {
+  it('init 里没有带 tokens 的主题时报错，不会一直未决', async () => {
     for (const theme of [undefined, { kind: 'light' }, { kind: 'light', tokens: null }]) {
       vi.resetModules();
       const { connect } = await load();

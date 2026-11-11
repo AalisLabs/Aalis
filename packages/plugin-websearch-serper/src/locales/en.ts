@@ -14,7 +14,7 @@ export default defineLocale<Source>()({
   defaultNumResultsDescription: 'Number of results returned per search',
   enableCompressionLabel: 'Enable search result compression',
   enableCompressionDescription:
-    'When on, search results are first compressed and merged by an LLM before being returned to the agent, using fewer tokens and improving the quality of the information.',
+    'When on, search results are first compressed and merged by a model before being returned to the agent, using fewer tokens and improving the quality of the information.',
   compressionPromptLabel: 'Compression prompt',
   compressionPromptDescription:
     "Custom prompt for compressing search results. Left empty, the default prompt is used. In the prompt, '{query}' stands for the search keywords and '{results}' for the search results (without '{results}', the model gets no results).",

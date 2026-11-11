@@ -7,7 +7,7 @@ import { createWsHeartbeat, type HeartbeatSocket } from '../../packages/plugin-w
 //
 // 缺陷背景：EventEmitter 对无监听者的 'error' 是**抛出**。ws 的帧校验失败
 // （畸形帧 / 坏 UTF-8）走的正是 emit('error')——没人听就抛成
-// uncaughtException，runtime 收到即 process.exit(1)：一条畸形帧打死整进程
+// uncaughtException，runtime 收到即 process.exit(1)：一条畸形帧终止整个进程
 // （连带 onebot 适配器、定时任务）。webui-server 每条连接都过 heartbeat.track，
 // 故兜底监听挂在 track 里，凡登记过的连接天然免疫。
 //

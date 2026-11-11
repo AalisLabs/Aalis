@@ -7,7 +7,7 @@ export default defineLocale<Source>()({
   connectionsDescription: 'One or more OneBot WebSocket connections',
   urlLabel: 'WebSocket URL',
   urlDescription:
-    'Forward WebSocket address served by the OneBot implementation (in NapCat, add a "WebSocket server", not a "WebSocket client"), for example ws://127.0.0.1:8080',
+    'Forward WebSocket address served by the OneBot implementation, for example ws://127.0.0.1:8080; what you add in the implementation must be a WebSocket server, not a client',
   accessTokenLabel: 'Access token',
   accessTokenDescription: 'Optional; must match the OneBot implementation',
   selfIdLabel: 'Bot ID',
@@ -26,7 +26,7 @@ export default defineLocale<Source>()({
   maxDelayDescription: 'Upper limit of the delay between split messages (milliseconds)',
   patternsLabel: 'Split patterns',
   patternsDescription:
-    'Split after each place where one of these strings matches. Each entry is a whole string: a single character (such as 。) splits after that character; several characters (such as ". " or ".\\n") split only where the whole string matches. Escapes are supported: \\n = newline, \\t = tab, \\r = carriage return, \\\\ = backslash.',
+    'Split after each place where one of these strings matches. An entry of several characters (such as ". ") splits only where the whole string matches. Escapes are supported: \\n newline, \\t tab, \\r carriage return, \\\\ backslash.',
   patternFullStop: '。 Chinese full stop',
   patternExclamation: '！ Chinese exclamation mark',
   patternQuestion: '？ Chinese question mark',
@@ -45,10 +45,10 @@ export default defineLocale<Source>()({
   patternSpace: '␣ Space',
   forwardLabel: 'Merged forwards',
   forwardDescription:
-    'How to expand received <forward> messages, and whether to run image recognition and have an LLM write a summary',
+    'How to expand received <forward> messages, and whether to run image recognition and have a model write a summary',
   forwardEnabledLabel: 'Expand automatically',
   forwardEnabledDescription:
-    'When off, the original placeholder is kept and the LLM decides whether to read it with a tool.',
+    'When off, the original placeholder is kept and the model decides whether to read it with a tool.',
   forwardMaxDepthLabel: 'Maximum nesting depth',
   forwardMaxDepthDescription: 'Maximum number of levels of nested merged forwards to expand (top level = 1).',
   maxNodesLabel: 'Maximum nodes per level',
@@ -58,22 +58,22 @@ export default defineLocale<Source>()({
     'Send the images inside a forward to the media service to be described in text. Requires that service.',
   concurrencyLabel: 'Media recognition concurrency',
   concurrencyDescription:
-    'How many media recognition tasks (images, voice, video) may run at the same time while expanding the forwards of one message. With local models, 1-2 is recommended: recognizing forwards in bulk is background work, and low concurrency leaves more room for recognizing live incoming messages (this only helps statistically and is not priority scheduling: each message has its own concurrency budget, and the model has no way to let a request jump the queue).',
+    'How many media recognition tasks (images, voice, video) may run at the same time while expanding the forwards of one message. With local models, 1-2 is recommended.',
   recognitionMaxLabel: 'Media recognition limit per forward',
   recognitionMaxDescription:
-    'How many media items (images, voice and video combined) to recognize at most in one merged forward; the rest keep placeholders such as [图片] and cost no model time. 0 means no limit.',
+    'How many media items (images, voice and video combined) to recognize at most in one merged forward; the rest keep placeholders such as [图片]. 0 means no limit.',
   summarizeLabel: 'Write a summary',
   summarizeDescription:
-    'After expanding, have an LLM write a summary that replaces the original text in the expansion given to the model and goes with the archived message into the conversation, memory and the vector store; the original stays in the cache.',
+    'After expanding, have the summary model write a summary that replaces the original text in the expansion given to the model and goes with the archived message into the conversation, memory and the vector store; the original stays in the cache.',
   summaryMaxCharsLabel: 'Maximum summary characters',
   summaryMaxCharsDescription:
-    'Target length limit given to the summary model. The model may exceed it by 10% to keep the structure of a multi-person conversation. The output limit only guards against runaway output: 3 times this value and at least 2048 tokens; when the model stops at that limit, the end of the summary marks the cut-off.',
+    'Target length limit of the summary, given to the summary model in its prompt; it may be exceeded by 10%.',
   summaryInputLimitLabel: 'Summary input limit (characters)',
   summaryInputLimitDescription:
     'Limit on the original text given to the summary model; only the beginning of longer text is used. 0 means no cut-off (very long text makes summaries cost more).',
-  summaryPromptLabel: 'Summary system prompt (advanced; leave empty to use the built-in one)',
+  summaryPromptLabel: 'Summary system prompt',
   summaryPromptDescription:
-    'Leave empty to use the built-in default prompt (tuned to keep the structure of multi-person conversations). Any non-empty text replaces the default prompt completely.\n\nThe built-in default prompt is below (<输出语言> becomes the first entry of the global-layer language list); use it as a reference when writing your own:\n\n{prompt}',
+    'Leave empty to use the built-in prompt; any text replaces it completely. The built-in prompt is below (<输出语言> becomes the first entry of the global-layer language list); use it as a reference:\n\n{prompt}',
   replyLabel: 'Quoted messages',
   replyDescription: 'How to expand the chain of quoted messages when a quote reply arrives',
   replyMaxDepthLabel: 'Maximum quote chain depth',
@@ -81,7 +81,7 @@ export default defineLocale<Source>()({
     'Maximum number of levels of quoted messages to fetch. 1 = only the directly quoted message; 2 = also the message that one quotes, and so on.',
   cacheLabel: 'Local attachment cache',
   cacheDescription:
-    "Incoming and outgoing image / audio / video / file attachments are all cached under data:/'{kind}'s/'{session directory}'/onebot/ for manual archiving and reuse by tools across turns; this adapter clears them on /clear and when a session is deleted",
+    "Images, voice, video and files sent and received are cached under data:/'{kind}'s/'{session directory}'/onebot/ for archiving and reuse by tools; they are cleared on /clear and when a session is deleted",
   cacheMaxBytesLabel: 'Size limit per file (bytes)',
   cacheMaxBytesDescription:
     'Attachments larger than this are not saved and keep their original URL (typically long videos). Default 10 MiB.',

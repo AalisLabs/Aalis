@@ -17,7 +17,7 @@ const rethrow = (err: unknown) => {
 };
 
 /**
- * 路由测试挂具，不起端口。路由注册器只调用 `app.<method>(path, ...handlers)`：`expressApp` 是把处理器链
+ * 路由测试挂具，不监听端口。路由注册器只调用 `app.<method>(path, ...handlers)`：`expressApp` 是把处理器链
  * 按「METHOD path」记下的假 app；`invoke` 取出链，带 res 桩（status / json 写进回复）经 next 逐个执行。
  * json 写进回复之前按 i18n 缺席渲染（读者语言与跳过原样数据的出口见 test/plugins/webui-i18n.test.ts）。
  * res 桩是事件源：给了 connection 就用它，用例在它上面 emit('close') 模拟客户端断开。

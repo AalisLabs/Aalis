@@ -72,7 +72,7 @@ async function boot(sessions: Record<string, Record<string, unknown>>) {
   await app.start();
   const host = app.bind({ services, hooks });
   const svc = host.services.use.get(persona) as PersonaService;
-  /** 跑一次回复的结构化解析，回钩子跑完的数据：agent 拿到的正文与要不要重试 */
+  /** 跑一次回复的结构化解析，回钩子执行完毕后的数据：agent 拿到的正文与要不要重试 */
   const reply = async (sessionId: string, content: string) => {
     const data: HookContextMap['agent:reply:before'] = { content, sessionId, platform: 'webui', attempt: 0 };
     await host.hooks.use.run('agent:reply:before', data);

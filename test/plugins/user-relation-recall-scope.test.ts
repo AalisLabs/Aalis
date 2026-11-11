@@ -20,7 +20,7 @@ import { turnInput } from '../fixtures/turn-input.js';
 // ════════════════════════════════════════════════════════════
 // 关系图范围（user-relation 的 recallScope，可按会话设）：为「仅本会话」时，关系图注入跳过全局热点与跨会话事件（别的会话里
 // 抽出的事件、所属跨会话话题），只留本会话的事件；人际关系与关注的事物照常注入（它们是按人的摘要，与 user-profile 的参与者
-// 事实同类）。写坏了按「仅本会话」；为「全部」或会话设置不在时维持现状。关系图工具的会话作用域参数同样不超过
+// 事实同类）。填错时按「仅本会话」；为「全部」或会话设置不在时维持现状。关系图工具的会话作用域参数同样不超过
 // 它：为「仅本会话」时只能是调用所在的会话，模型传别的会话或不传都按它；没有这个参数的工具（解析节点、最短路径、联系分数、
 // 共同邻居、列边）同样不带别的会话的事件。公开的 /relation show 与 /relation orphans 与读工具同一判据：不提档，只列本会话的事件。
 // ════════════════════════════════════════════════════════════
@@ -124,7 +124,7 @@ describe('plugin-user-relation：关系图范围', () => {
     expectSessionOnly(await inject({ recallScope: 'session' }));
   });
 
-  it('写坏了按仅本会话：会话层或插件配置里的坏值都收窄', async () => {
+  it('填错时按仅本会话：会话层或插件配置里的坏值都收窄', async () => {
     expectSessionOnly(await inject({}, { [CUR]: { recallScope: 'everything' } }));
     expectSessionOnly(await inject({ recallScope: 'everything' }));
   });

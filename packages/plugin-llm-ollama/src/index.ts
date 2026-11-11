@@ -802,7 +802,7 @@ class OllamaClient {
     } finally {
       clearTimeout(streamStallTimer);
       // cancel 而非仅 releaseLock：中止/提前退出时要主动关闭响应体。releaseLock 只是放锁，
-      // 底层流仍开着——被打断的生成会让 undici 挂着半读的响应与套接字，直到请求超时兜底
+      // 底层流仍开着——被打断的生成会让 undici 一直持有半读的响应与套接字，直到请求超时兜底
       // 才释放（本地慢生成时回合常被停下，这类残留一挂就是整个超时窗）。
       // cancel 自带放锁。三条退出路径的语义：读尽 EOF（done:true）→ 流已 closed，cancel 是
       // 真 no-op；收到终帧即 return（未读到 EOF）与消费方提前 break → cancel 中止残余响应体，
@@ -832,7 +832,7 @@ class OllamaClient {
     const dataMatch = trimmed.match(/^data:[^,]*;base64,(.+)$/);
     if (dataMatch) return sanitize(dataMatch[1]);
 
-    // HTTP(S) URL → 下载并转 base64（流式限额：超限即断，防超大/恶意资源撑爆内存——
+    // HTTP(S) URL → 下载并转 base64（流式限额：超限即断，防超大/恶意资源耗尽内存——
     // 附件缓存侧有 maxBytes 上限，但缓存失败回退原 URL 时会走到这里，此前这一侧不限量）
     if (/^https?:\/\//i.test(trimmed)) {
       try {
@@ -879,7 +879,7 @@ class OllamaClient {
    * `requireImages` 为真时一张都拿不到就抛：视觉识别这类调用里图片就是全部内容，
    * 省掉它降级成纯文本，模型只看得到 prompt 里的占位文字，会照着编出一段描述，
    * 而调用方拿到非空内容便记成识别成功——失败被伪装成幻觉，比报错难查得多。
-   * 为假时（顺手带图）保持宽松，warn 后按剩余的继续，不打断这一轮。
+   * 为假时（同时带图）保持宽松，warn 后按剩余的继续，不打断这一轮。
    */
   private async resolveImages(images: string[], request: ChatModelRequest): Promise<string[]> {
     const resolved = await Promise.all(images.map(img => this.resolveImage(img, request)));

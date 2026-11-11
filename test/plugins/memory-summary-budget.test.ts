@@ -61,7 +61,7 @@ describe('plugin-memory-summary: 摘要预算', () => {
       if (!isTextRef(text)) throw new Error('标签与说明应是文字对象');
       expect(resolveText(text, ['en'])).not.toBe(toSource(text));
     }
-    expect(toSource(field?.label)).toBe('摘要预算（占自动压缩线的比例）');
+    expect(toSource(field?.label)).toBe('摘要预算');
   });
 
   it('要压的比压缩线的一成多时是这一成，不随压掉多少变；请求的输出上限是它的 1.5 倍', async () => {

@@ -5,7 +5,7 @@ import { expect } from 'vitest';
  * 本机服务的默认端口：测试连它们可能打到这台机器上在跑的生产服务。来源是第一方插件的默认配置——
  * WebUI 3000、MCP 服务 7861、OneBot 示例地址 8080、Ollama 11434、Laya 侧车 17878、MongoDB 27017，
  * 加上 NapCat 的默认端口（HTTP 3000、WebSocket 3001、WebUI 6099）。只看端口不看主机：能解析到本机的名字不止
- * localhost 与回环地址。本地桩起在随机端口，不受影响
+ * localhost 与回环地址。本地桩监听在随机端口，不受影响
  */
 const PRODUCTION_PORTS = new Set([3000, 3001, 6099, 7861, 8080, 11434, 17878, 27017]);
 

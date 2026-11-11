@@ -177,7 +177,7 @@ describe('persona / skills 的目录重扫', () => {
     fake.fire(`${DIR}/b.yaml`);
     fake.fire(`${DIR}/b.yaml`);
     fake.fire(`${DIR}/b.yaml`);
-    await sleep(20); // 不串行化时，这三次重扫在此各自跑完并载入 b
+    await sleep(20); // 不串行化时，这三次重扫在此各自执行完毕并载入 b
     gate.resolve(undefined);
     await sleep(50);
 

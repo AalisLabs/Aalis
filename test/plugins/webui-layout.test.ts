@@ -119,7 +119,7 @@ const page = (pageKey: string, open = true) => ({ tab: ref(pageKey), open });
 /** 新记录的会话面板标签：宿主的四个，按计划、设置、用量、后台，都开着 */
 const HOSTS = [host('plan'), host('settings'), host('usage'), host('background')];
 
-/** 先写好布局文件，再起一个读它的 webui-server */
+/** 先写好布局文件，再启动一个读它的 webui-server */
 async function withFile(content: unknown) {
   const first = await setup();
   await first.app.stop();
@@ -269,14 +269,14 @@ describe('会话面板的标签', () => {
     expect((await tab('tab-up', 'n1')).body.panelTabs, '不在表里').toEqual(last);
   });
 
-  it('所属插件停用时，插件标签仍能关闭与挪动，打开不了；重新启用后照旧', async () => {
+  it('所属插件停用时，插件标签仍能关闭与挪动，无法打开；重新启用后照旧', async () => {
     const { app, tab, read } = await setup();
     await tab('open-tab', 'n0');
     await tab('open-tab', 'n1');
     await app.plugins.disable(OWNER);
     expect((await tab('tab-up', 'n1')).body.panelTabs).toEqual([...HOSTS, page('n1'), page('n0')]);
     expect((await tab('close-tab', 'n0')).body.panelTabs).toEqual([...HOSTS, page('n1'), page('n0', false)]);
-    expect(await tab('open-tab', 'n0'), '停用时打开不了').toMatchObject({ status: 404 });
+    expect(await tab('open-tab', 'n0'), '停用时无法打开').toMatchObject({ status: 404 });
     await app.plugins.enable(OWNER);
     await app.plugins.idle();
     expect((await read()).body.panelTabs).toEqual([...HOSTS, page('n1'), page('n0', false)]);

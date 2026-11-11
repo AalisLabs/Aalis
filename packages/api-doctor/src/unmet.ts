@@ -46,7 +46,7 @@ export type UnmetRoot =
 /** 一个没满足的 required 服务，沿一个声明提供它的插件追到的根 */
 export interface UnmetService {
   service: string;
-  /** 从直接提供者往下、一路没起来的插件实例；根是插件时最后一个就是它，没有提供者与成环时是走到那里之前的 */
+  /** 从直接提供者往下、一路未启动的插件实例；根是插件时最后一个就是它，没有提供者与成环时是走到那里之前的 */
   chain: string[];
   root: UnmetRoot;
 }

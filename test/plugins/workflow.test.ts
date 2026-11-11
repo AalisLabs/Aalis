@@ -37,7 +37,7 @@ const boundTools = (toolFn?: (name: string, args: unknown) => Promise<string> | 
       : undefined,
   });
 
-/** 只有 tool 节点会真跑起来的能力桩：events / hooks 收到什么都不做，没有网关 */
+/** 只有 tool 节点会真正运行的能力桩：events / hooks 收到什么都不做，没有网关 */
 const toolCaps = (toolFn?: (name: string, args: unknown) => Promise<string> | string): EngineCaps => ({
   tools: fixedRef(boundTools(toolFn)),
   events: noopEvents(),
@@ -53,7 +53,7 @@ interface AgentReply {
 
 /**
  * 模拟网关与 agent：ingressMessage 按 replyFor 决定这条指令开的那一轮的回复，在送达它的调用里驱动已注册的
- * 'agent:turn:after' 中间件（仿 agent 在送达它的调用的异步上下文里跑完一轮），这一轮结束才返回。replyFor 返回 null 表示
+ * 'agent:turn:after' 中间件（仿 agent 在送达它的调用的异步上下文里执行完一轮），这一轮结束才返回。replyFor 返回 null 表示
  * 这一轮迟迟不结束（用于触发超时路径）
  */
 const agentCaps = (

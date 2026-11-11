@@ -12,9 +12,9 @@ import { deferred } from '../helpers/deferred.js';
 import { fakeTty } from '../helpers/tty.js';
 
 // ════════════════════════════════════════════════════════════
-// 终端界面起来、插件状态静置之后，有插件没起来时聊天页在欢迎行下面指路：数目与 /doctor 的「失败」「未就绪」两项之和一致
+// 终端界面启动、插件状态静置之后，有插件无法启动时聊天页在欢迎行下面指路：数目与 /doctor 的「失败」「未就绪」两项之和一致
 // （缺服务按 api-doctor 的共享判据，只在等别的插件启动的不算），有 doctor 指令时指向它，没有时指向日志页。
-// 起真 TUI（假 TTY，收集 stdout 帧），插件状态与指令都是真的
+// 启动真 TUI（假 TTY，收集 stdout 帧），插件状态与指令都是真的
 // ════════════════════════════════════════════════════════════
 
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
@@ -83,7 +83,7 @@ describe('终端欢迎行下面的指路', () => {
     const { host, frame } = await boot([broken, waiting('zz-waiting-a'), waiting('zz-waiting-b')], {
       withDoctor: true,
     });
-    await vi.waitFor(() => expect(frame()).toContain('有 3 个插件没起来，输入 /doctor 查看原因与修法'));
+    await vi.waitFor(() => expect(frame()).toContain('有 3 个插件无法启动，输入 /doctor 查看原因与修法'));
     expect(frame()).toContain('欢迎使用 Aalis。按 Ctrl+G 查看快捷键。');
     const report = await host.doctor.use.runChecks();
     const listed = (id: string) =>
@@ -107,23 +107,23 @@ describe('终端欢迎行下面的指路', () => {
     const { host, frame } = await boot([broken, slow, patient], { withDoctor: true, slowThresholdMs: 20 });
     // 收尾按登记的反序：先放行慢激活，再停应用
     cleanups.push(() => gate.resolve());
-    await vi.waitFor(() => expect(frame()).toContain('有 1 个插件没起来，输入 /doctor 查看原因与修法'));
+    await vi.waitFor(() => expect(frame()).toContain('有 1 个插件无法启动，输入 /doctor 查看原因与修法'));
     const report = await host.doctor.use.runChecks();
     const listed = (id: string) =>
       toSource(report.checks.find(check => check.id === id)?.detail)?.split('\n').length ?? 0;
     expect(listed('plugins.errored') + listed('plugins.pending')).toBe(1);
   });
 
-  it('插件都起来了：只有欢迎行', async () => {
+  it('插件都已启动：只有欢迎行', async () => {
     const { frame } = await boot([], { withDoctor: true });
     // 指路在静置之后才判，等过几拍渲染再看它没出现
     await new Promise(r => setTimeout(r, 50));
     await settle();
     expect(frame()).toContain('欢迎使用 Aalis。');
-    expect(frame()).not.toContain('没起来');
+    expect(frame()).not.toContain('无法启动');
   });
 
-  it('终端界面起来时还有插件在激活：等插件状态静置再数', async () => {
+  it('终端界面启动时还有插件在激活：等插件状态静置再数', async () => {
     const entered = deferred();
     const gate = deferred();
     const late = definePlugin({
@@ -143,15 +143,15 @@ describe('终端欢迎行下面的指路', () => {
       },
     });
     await settle();
-    expect(frame()).not.toContain('没起来');
+    expect(frame()).not.toContain('无法启动');
     gate.resolve();
     await activating;
-    await vi.waitFor(() => expect(frame()).toContain('有 1 个插件没起来，输入 /doctor 查看原因与修法'));
+    await vi.waitFor(() => expect(frame()).toContain('有 1 个插件无法启动，输入 /doctor 查看原因与修法'));
   });
 
   it('没有 doctor 指令：改为指向日志页', async () => {
     const { frame } = await boot([broken], { withDoctor: false });
-    await vi.waitFor(() => expect(frame()).toContain('有 1 个插件没起来，按 Ctrl+L 看日志'));
+    await vi.waitFor(() => expect(frame()).toContain('有 1 个插件无法启动，按 Ctrl+L 看日志'));
     expect(frame()).not.toContain('/doctor');
   });
 });

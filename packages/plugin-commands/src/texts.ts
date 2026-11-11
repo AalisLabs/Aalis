@@ -53,7 +53,7 @@ const SOURCE = {
   typeContext: '消息历史与会话上下文（含摘要与待办）',
   unknownClearType: '未知清理类型：{type}。可用类型：{types}。说明见 {prefix}help clear',
   noMemoryBackend:
-    '没有在运行的记忆后端，本次未清理任何内容：在 WebUI 插件区启用一个（如 SQLite 记忆），或把它从配置文件的 disabledPlugins 里删掉；启用了还起不来就用 /doctor 看原因。',
+    '没有在运行的记忆后端，本次未清理任何内容：在 WebUI 插件区启用一个（如 SQLite 记忆），或把它从配置文件的 disabledPlugins 里删掉；启用后仍无法启动就用 /doctor 看原因。',
   noGlobalClear: '记忆后端不支持全局清空消息历史，本次未清理任何内容。可用 -t 指定 context 以外的类型单独清理。',
   unhandledType: '{type}：没有已启用的插件处理这一类型，未清理',
   nothingCleared: '无可清除的记忆模块。',

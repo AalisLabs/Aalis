@@ -143,7 +143,7 @@ describe('checkpoint 回滚', () => {
 // 回到 beforeMutate 时，不得记进此刻在跑的别的回合——那边一回滚就把这次回滚再撤掉，且 listTurns 虚高。
 // ════════════════════════════════════════════════════════════
 describe('checkpoint 回滚动作不记进此刻在跑的回合', () => {
-  /** B 回合开着，等 duringB 在回合之外跑完，再执行 afterInB（在 B 的回合里）后结束 */
+  /** B 回合开着，等 duringB 在回合之外执行完毕，再执行 afterInB（在 B 的回合里）后结束 */
   async function whileBRuns(
     svc: ReturnType<typeof makeService>['svc'],
     duringB: () => Promise<void>,

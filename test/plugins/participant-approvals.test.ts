@@ -144,7 +144,7 @@ describe('执行守卫按每个参与者裁决', () => {
     const card = await cardOf(elsewhere);
     expect(card.origin).toEqual({ kind: 'hand', participants: [OWNER_QQ, L0] });
     await vi.waitFor(() => expect(s.webuiCards()).toHaveLength(1));
-    expect(zero.requested, '0 级群友自己做不了，推给他只会让审批白等').toEqual([]);
+    expect(zero.requested, '0 级群友自己做不了，推给他只会让审批空等').toEqual([]);
     expect(otherRoom.requested).toEqual([]);
     expect(ownerChat.requested, 'owner 的 IM 私聊只收只有她能批的').toEqual([]);
     expect(zero.answer(card, 'approve')).toMatchObject({ ok: false, refusal: 'forbidden' });

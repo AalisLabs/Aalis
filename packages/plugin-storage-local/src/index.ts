@@ -51,7 +51,7 @@ const PLUGIN_NAME = '@aalis/plugin-storage-local';
 /**
  * 这个插件不是沙箱。它做四件事：
  *
- * 1. 给若干本机目录起稳定的名字：插件自己的数据在按数据目录布局派生的内置根里，文件工具用的根在 roots 数组里声明
+ * 1. 给若干本机目录起稳定的名字：插件自己的数据在按数据目录布局派生的内部根里，文件工具用的根在 roots 数组里声明
  *    （缺省只有 workspace），让上层用 URI 表示文件，避免到处写宿主机绝对路径。
  * 2. 在每条 API 内对 `..` 穿越做规范化与校验，防止"workspace:/../../etc/passwd"
  *    这类逻辑越界 bug。
@@ -963,7 +963,7 @@ export default definePlugin({
     caps.provide.use(storage, new LocalStorage(scoped), { label: t('provideLabel') });
 
     // 诊断检查项：探测每个 writable root 是否真的可写。
-    // 由 storage 插件按全部根（含内置根）上报，而非 doctor 硬编码 fs.data：
+    // 由 storage 插件按全部根（含内部根）上报，而非 doctor 硬编码 fs.data：
     // 按根上报才能反映用户自定义根（如 host:/、project_x）的真实状态。
     caps.doctor.use.registerCheck({
       id: 'storage.roots',

@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 // 后台任务：把后台任务登记（api-tools 的 backgroundTasks）投影成协议的形状，按它的变化推给 background/watch 的连接；
 // 取输出、停止，以及按会话树全部停止。开始、结束、停止与删除立即推，任务所在会话连同各级父会话的摘要一起推；
-// 只有最后一行与最后输出时间变了的攒起来，每秒推一次。
+// 只有最后一行与最后输出时间变了的先暂存，每秒推一次。
 // ════════════════════════════════════════════════════════════
 
 import type { AgentService } from '@aalis/api-agent';
@@ -18,7 +18,7 @@ import { failure, type MethodHandlers } from './connection.js';
 import type { DisplayOf } from './display.js';
 import { t } from './texts.js';
 
-/** 只有最后一行与最后输出时间变了的，攒起来按这个节拍推 */
+/** 只有最后一行与最后输出时间变了的，暂存起来按这个节拍推 */
 const COALESCE_MS = 1000;
 
 interface BackgroundDeps {
@@ -40,7 +40,7 @@ interface BackgroundDeps {
 export function createBackground(deps: BackgroundDeps) {
   /** 最近推出的状态：与它相同的变化只是最后一行与最后输出时间变了 */
   const statuses = new Map<string, BackgroundTaskStatus>();
-  /** 攒着等节拍的 */
+  /** 暂存着等节拍的 */
   const pending = new Map<string, RegisteredTask>();
   let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -157,7 +157,7 @@ export function createBackground(deps: BackgroundDeps) {
     changed,
     runningBySession,
     taskOf,
-    /** 停用时：攒着的不再推 */
+    /** 停用时：暂存的不再推 */
     dispose: () => clearTimeout(timer),
   };
 }

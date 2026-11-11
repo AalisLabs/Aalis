@@ -14,12 +14,12 @@ const SOURCE = {
   argsDescription: '按顺序传给命令的参数列表，每项一个参数（可含空格）。参数里的文件路径请写绝对路径。',
   envLabel: '环境变量',
   envDescription:
-    '额外传给子进程的环境变量（KEY → VALUE）。整份作为一个密钥存进 secrets.yaml，WebUI 不回显，改时整份重填。token 等凭据放这里，不要放进命令参数（参数会写进日志）。',
+    '额外传给服务器进程的环境变量（KEY → VALUE），整份作为一个密钥保存，改时整份重填。token 等凭据放这里，不要放进命令参数。',
   enabledLabel: '启用',
   enabledDescription: '关闭可临时跳过该 server 而不删除整条配置。',
   visibilityLabel: '工具档位',
   visibilityDescription:
-    '该 server 全部工具的档位。auto=按工具注解分档：自称只读→sensitive（等级 1），有破坏提示或未声明→restricted（等级 2）。public 恢复等级 0 全开（0.x 旧默认）。',
+    '这个服务器全部工具的档位。auto 按工具自报的注解定：只读的为 sensitive（等级 1），其余为 restricted（等级 2）。',
   visibilityAuto: 'auto（按注解分档）',
   visibilityPublic: 'public（等级 0 全开）',
   visibilitySensitive: 'sensitive（等级 1）',

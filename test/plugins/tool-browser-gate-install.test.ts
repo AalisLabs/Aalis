@@ -11,22 +11,22 @@ import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // 浏览器的启动：
-// - 网络闸先于浏览器起好；闸起不来（监听失败）就不启动浏览器，报闸的错误，下次调用重新尝试。
+// - 网络闸先于浏览器启动；闸启动失败（监听失败）就不启动浏览器，报闸的错误，下次调用重新尝试。
 //   「请确保已安装 Chrome」的提示只跟在浏览器本身启动失败后面，闸的错误与 Chrome 装没装无关。提示里的安装命令用 node 跑
 //   util-chromium 依赖的那份 puppeteer 的命令行：puppeteer 是间接依赖，不提升依赖的布局下 npx 会另取一份、装上别的版本的 Chrome。
 // - 并发的首次调用共用同一次启动；启动途中插件被停用时，这一代浏览器由启动方自己关掉（不等关闭落定），调用报错。
-// - 浏览器崩溃后重启沿用同一道闸，不另起监听。
+// - 浏览器崩溃后重启沿用同一道闸，不另行启动监听。
 // - 经管道连浏览器：这里只断言启动参数带 pipe: true；宿主不经停机退出时浏览器随之退出，
 //   由 test/utils/util-chromium-launch.test.ts 守。
 // - SIGINT、SIGTERM、SIGHUP 不交给 puppeteer 处理：它默认在 SIGINT 时先杀浏览器、再 process.exit(130)，宿主的停机无法执行完毕；
 //   信号归宿主，浏览器在插件停用时关。
-// - 只有起了闸（blockPrivate=true）时，browser_navigate 才给 ERR_SOCKS_CONNECTION_FAILED 附拦截说明。
+// - 只有启动了闸（blockPrivate=true）时，browser_navigate 才给 ERR_SOCKS_CONNECTION_FAILED 附拦截说明。
 // - 浏览器先断开时，闸里还在解析或连接的上游随之销毁。
 // - 插件停用时，闸里已接通的连接随之断开，停用不等它们自己结束；闸的关闭不等浏览器关闭落定。
 // - 闸里的 IP 字面量不论写法都按进程级网络策略判定，连的就是判的那个地址；问候与请求限时收齐；与请求同包到达的数据接通后交给上游。
 // - 闸按进程级网络策略的 allowedPorts 判定端口，allowedHosts 里的主机也不例外；回失败应答后随即关闭连接。
 // puppeteer 换成替身（按 util-chromium 的依赖路径 mock），不启动真浏览器；
-// 闸是真的 SOCKS 服务，只监听 127.0.0.1，替身浏览器不经它发任何请求；直连闸的用例只连测试自己在 127.0.0.1 起的服务，
+// 闸是真的 SOCKS 服务，只监听 127.0.0.1，替身浏览器不经它发任何请求；直连闸的用例只连测试自己在 127.0.0.1 启动的服务，
 // 要解析的域名由 DNS 替身作答。
 // ════════════════════════════════════════════════════════════
 
@@ -35,7 +35,7 @@ type Handler = (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<
 const fake = vi.hoisted(() => {
   const instances: { closed: boolean }[] = [];
   const goto = vi.fn(async () => {});
-  /** 替身浏览器 close() 的结果：默认立即落定，用例可换成挂住或失败 */
+  /** 替身浏览器 close() 的结果：默认立即落定，用例可换成一直阻塞或失败 */
   const closeResult = vi.fn(async () => {});
   /** 替身页面的 close()：默认立即落定，用例可换成一直阻塞 */
   const pageClose = vi.fn(async () => {});
@@ -161,8 +161,8 @@ function openConnections(server: Server): Promise<number> {
   return new Promise((resolve, reject) => server.getConnections((err, n) => (err ? reject(err) : resolve(n))));
 }
 
-describe('网络闸起不来', () => {
-  it('不启动浏览器，报闸的错误、不附安装 Chrome 的提示；下次调用重新起闸', async () => {
+describe('网络闸启动失败', () => {
+  it('不启动浏览器，报闸的错误、不附安装 Chrome 的提示；下次调用重新启动闸', async () => {
     const { app, handlers } = await startBrowserTools();
     try {
       gateNet.failListen = true;
@@ -239,9 +239,9 @@ describe('启动单飞与停用', () => {
     expect(gateNet.servers.map(s => s.listening)).toEqual([false]);
   });
 
-  it('启动途中停用：调用报错，这一代浏览器被关掉；停用后到达的调用不再起闸与浏览器', async () => {
+  it('启动途中停用：调用报错，这一代浏览器被关掉；停用后到达的调用不再启动闸与浏览器', async () => {
     const { app, handlers } = await startBrowserTools();
-    // 停用落在闸还没监听上的时候：收尾要等这次启动落定，才关得到随后才起好的闸
+    // 停用落在闸还没监听上的时候：收尾要等这次启动落定，才关得到随后才启动好的闸
     gateNet.listenDelayMs = 100;
     const pending = navigate(handlers);
     await new Promise(r => setTimeout(r, 20));
@@ -256,8 +256,8 @@ describe('启动单飞与停用', () => {
   });
 });
 
-describe('停用时浏览器关闭挂住或失败', () => {
-  it('已交出的浏览器关闭挂住：闸照样关闭', async () => {
+describe('停用时浏览器关闭一直阻塞或失败', () => {
+  it('已交出的浏览器关闭一直阻塞：闸照样关闭', async () => {
     const { app, handlers } = await startBrowserTools(true, { disposeTimeoutMs: 300 });
     expect((await navigate(handlers)).error).toBeUndefined();
     fake.closeResult.mockReturnValueOnce(new Promise<void>(() => {}));
@@ -277,7 +277,7 @@ describe('停用时浏览器关闭挂住或失败', () => {
     await app.stop();
   });
 
-  it('启动途中停用、关闭这一代浏览器挂住：闸照样关闭，调用报「浏览器工具已停用」', async () => {
+  it('启动途中停用、关闭这一代浏览器一直阻塞：闸照样关闭，调用报「浏览器工具已停用」', async () => {
     const { app, handlers } = await startBrowserTools(true, { disposeTimeoutMs: 2_000 });
     fake.closeResult.mockReturnValueOnce(new Promise<void>(() => {}));
     const pending = navigate(handlers);
@@ -323,7 +323,7 @@ describe('浏览器崩溃后重启', () => {
 });
 
 describe('browser_navigate 的拦截说明', () => {
-  it('blockPrivate=false 时不起闸，ERR_SOCKS_CONNECTION_FAILED（如系统 SOCKS 代理连不上）原样返回', async () => {
+  it('blockPrivate=false 时不启动闸，ERR_SOCKS_CONNECTION_FAILED（如系统 SOCKS 代理连不上）原样返回', async () => {
     const { app, handlers } = await startBrowserTools(false);
     try {
       const msg = 'net::ERR_SOCKS_CONNECTION_FAILED at http://example.zz-test/';

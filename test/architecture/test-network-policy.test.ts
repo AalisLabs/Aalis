@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { assertNoRefusedConnections, assertTestNetworkTarget, installConnectGuard } from '../helpers/network-policy.js';
 
 /**
- * 在一层只拦不连的哨兵上面另装一道护栏，跑完 fn 再撤掉，返回哨兵被走到的次数。护栏万一失效，连接落到哨兵上，
+ * 在一层只拦不连的哨兵上面另装一道护栏，执行完 fn 再撤掉，返回哨兵被走到的次数。护栏万一失效，连接落到哨兵上，
  * 不会真连到这些端口
  */
 async function overSentinel(fn: () => unknown): Promise<number> {

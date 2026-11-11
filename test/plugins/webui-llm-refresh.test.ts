@@ -83,7 +83,7 @@ async function thinkingOptions(port: number, dependency?: string): Promise<{ sta
   return { status: res.status, body: await res.json() };
 }
 
-/** 起 webui-server 与两个模型提供者：zz-dynamic 带 refresh、m1 能调思考，zz-static 不带 refresh、不能调思考 */
+/** 启动 webui-server 与两个模型提供者：zz-dynamic 带 refresh、m1 能调思考，zz-static 不带 refresh、不能调思考 */
 async function boot(): Promise<{ app: App; port: number }> {
   const port = await freePort();
   const { app } = hostedApp({ name: 'N' }, { logger: silent });

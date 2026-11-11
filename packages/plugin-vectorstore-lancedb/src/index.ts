@@ -173,7 +173,7 @@ export class LanceDBVectorStore implements VectorStoreService {
 
   /**
    * 达到间隔阈值后后台压实：合并每条 add 产生的碎片，并回收 cleanupRetentionMinutes 以前的作废数据文件
-   * （见 optimize 调用处注释——不显式传窗口会吃默认 7 天保留、data/ 膨胀到数百 GB）。
+   * （见 optimize 调用处注释——不显式传窗口会沿用默认 7 天保留、data/ 膨胀到数百 GB）。
    * 不 await（不阻塞写入延迟）、single-flight（在途压实期间跳过）、经 serialize 与 delete/clear 互斥、
    * 吞错（压实失败不影响写入，下轮重试）。
    */
@@ -199,7 +199,7 @@ export class LanceDBVectorStore implements VectorStoreService {
     this.optimizing = this.serialize(async () => {
       const t = this.table;
       if (!t) return null;
-      // 关键：显式传 cleanupOlderThan（否则吃默认 7 天保留窗 → 压实作废的数据文件要留 7 天，
+      // 关键：显式传 cleanupOlderThan（否则沿用默认 7 天保留窗 → 压实作废的数据文件要留 7 天，
       // 高频压实下 data/ 累到数百 GB）。cleanupOlderThan = 现在 - 保留窗，deleteUnverified 才能真正
       // 回收 <7 天的作废文件。保留窗留足时间缓冲：比它更新的文件(含可能在途写入)一律不动，故对
       // Aalis 单进程写入安全。回收现在-保留窗之前的全部作废数据文件。
@@ -214,7 +214,7 @@ export class LanceDBVectorStore implements VectorStoreService {
             `LanceDB 压实完成：合并 ${removed} 碎片、清理 ${stats.prune.oldVersionsRemoved} 旧版本、回收 ${freedMB} MB`,
           );
         } else {
-          // 零回收也要留痕：否则「跑了没东西可收」与「压根没触发」在日志里不可分辨
+          // 零回收也要留痕：否则「跑了没东西可收」与「根本没触发」在日志里不可分辨
           this.logger?.debug('LanceDB 压实完成：无可回收（碎片已并、无过期版本）');
         }
       })
@@ -308,7 +308,7 @@ export class LanceDBVectorStore implements VectorStoreService {
 
 // ===== 插件入口 =====
 
-// storage 是 required 而非 optional：数据目录经存储服务解析（resolveLocalPath），没有它连库都开不了。
+// storage 是 required 而非 optional：数据目录经存储服务解析（resolveLocalPath），没有它连库都无法打开。
 const uses = { storage, provide, config, logger, lifecycle };
 
 export default definePlugin({

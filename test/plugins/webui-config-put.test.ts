@@ -11,7 +11,7 @@ import { captureRoutes } from '../fixtures/webui-routes.js';
 // PUT /api/config 只收 CORE_CONFIG_SCHEMA 的键（name / logLevel / slowThresholdMs）。别的顶层键回 400 并点名，什么都不写——
 // 不能静默丢弃却回复「已保存」（文档曾把 commandPrefix 记成顶层字段，用户照抄后 API 回 ok 但什么都没发生）。
 // PUT 只保存、不重启，改了要重启的键时回执写明，由前端出「重启以生效」；重启走 POST /api/restart。
-// 路由注册器只调用 app.<method>(path, ...handlers)，这里用记录处理器的假 app 直接调用，不起端口。
+// 路由注册器只调用 app.<method>(path, ...handlers)，这里用记录处理器的假 app 直接调用，不监听端口。
 
 /** 进程里另一份 @aalis/api-host-config 的拒写类：类身份不同，名字相同 */
 class ForeignCopyRefusedError extends Error {

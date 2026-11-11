@@ -6,13 +6,13 @@ export default defineLocale<Source>()({
   groupSummary: 'Define, run and query autonomous workflows (DAGs)',
   defsDirLabel: 'Workflow definitions directory',
   defsDirDescription:
-    'Load the *.yaml definitions in this storage location (a storage URI); definitions the AI creates with workflow_define are written here too.',
+    'Loads the *.yaml definitions in this directory (a storage URI); definitions the model creates with workflow_define are written here too.',
   runsFileLabel: 'Run history file',
   runsFileDescription: 'Keeps the most recent N run instances (a storage URI).',
   maxRunsLabel: 'Recent runs to keep',
   maxRunsDescription: 'Beyond it, the oldest finished runs are trimmed; running ones are not; at least 10.',
   enableToolsLabel: 'Register AI tools',
-  enableToolsDescription: 'When on, tools such as workflow_define / workflow_run are exposed to the LLM.',
+  enableToolsDescription: 'When on, tools such as workflow_define / workflow_run are offered to the model.',
   badUri:
     '{key}="{value}" is not a storage URI: write it as <root>:/<path> (such as {fallback}), or delete the key to use the default',
   everySeconds: 'every {seconds}s',
@@ -33,7 +33,7 @@ export default defineLocale<Source>()({
   defineWorkflow: 'New or overwrite',
   yamlLabel: 'YAML definition',
   yamlDescription:
-    "The complete definition: id, name, trigger, nodes. trigger supports cron, interval, once, event and manual; nodes support tool, send-message, wait and agent (dispatches an instruction to the agent and waits for the reply; combine with deps and '{{outputs.X}}' for multi-agent orchestration). A definition with the same id is overwritten, and its trigger is registered as soon as it is saved. The YAML of existing definitions is in the details of the definitions table, to edit from.",
+    'The complete definition: id, name, trigger, nodes; see the documentation for how to write them. A definition with the same id is overwritten, and its trigger is registered as soon as it is saved. The YAML of existing definitions is in the details of the definitions table, to edit from.',
   persistLabel: 'Write to disk',
   persistDescription: 'When off, it is only registered in memory and lost after a restart',
   yamlFailed: 'Failed to parse the YAML: {error}',

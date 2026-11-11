@@ -12,8 +12,8 @@ import { ABORT_KILL_GRACE_MS, LocalProcessService } from '../../packages/plugin-
 //   - POSIX：对整组先 SIGTERM，宽限后组里还有成员就整组 SIGKILL；wait() 照常落定、execFile 按非零退出 reject；
 //   - 已中止时 spawn 同步抛出 signal.reason，不创建子进程；
 //   - 子进程退出或创建失败后不留监听，之后再中止不对任何进程（可能已被复用的进程组）发信号；
-//   - Windows 没有进程组与优雅终止：趁根进程还活着立即 taskkill 整棵树，不起升级定时器。
-// 起真实进程的用例只在 POSIX 跑；Windows 分支用替身子进程在任何平台跑，未在 Windows 真机实测。
+//   - Windows 没有进程组与优雅终止：趁根进程还活着立即 taskkill 整棵树，不设升级定时器。
+// 启动真实进程的用例只在 POSIX 跑；Windows 分支用替身子进程在任何平台跑，未在 Windows 真机实测。
 // ════════════════════════════════════════════════════════════
 
 const posix = process.platform !== 'win32';
@@ -67,10 +67,10 @@ interface Run {
 
 const runs: Run[] = [];
 
-/** 起进程并立刻挂上 wait()，记下是否落定，供 afterEach 收掉变异验证时停不掉的进程组 */
+/** 启动进程并立刻挂上 wait()，记下是否落定，供 afterEach 收掉变异验证时无法停止的进程组 */
 function start(cmd: string, args: string[], opts: SpawnOptions): Run {
   const handle = proc.spawn(cmd, args, opts);
-  if (handle.pid === undefined) throw new Error(`${cmd} 没起来`);
+  if (handle.pid === undefined) throw new Error(`${cmd} 未能启动`);
   const run: Run = { handle, pid: handle.pid, done: handle.wait(), settled: false };
   run.done.then(
     () => {
@@ -115,7 +115,7 @@ describe('process-local 中止信号（POSIX，真实进程）', () => {
       );
       // 等陷阱装好再中止：只等固定时长的话，负载高时 SIGTERM 先于 trap 到达，孙进程不写标记就退出
       expect(await waitFor(() => existsSync(ready), 3000)).toBe(true);
-      expect(probe(-run.pid)).toBeUndefined(); // 防空跑：进程组确实起来了
+      expect(probe(-run.pid)).toBeUndefined(); // 防空跑：进程组确实启动了
       ac.abort();
       expect(await waitFor(() => probe(-run.pid) === 'ESRCH', 3000)).toBe(true);
       await within(run.done, 3000);
@@ -207,7 +207,7 @@ describe('process-local 中止信号（POSIX，真实进程）', () => {
 });
 
 describe('process-local 中止信号（Windows 分支，替身子进程）', () => {
-  it('中止时趁根进程还活着立即 taskkill 整棵树：不先发 SIGTERM，不起升级定时器', async () => {
+  it('中止时趁根进程还活着立即 taskkill 整棵树：不先发 SIGTERM，不设升级定时器', async () => {
     const pid = 4242;
     const spawned: Array<{ cmd: string; args: string[] }> = [];
     const child = Object.assign(new EventEmitter(), {

@@ -37,7 +37,7 @@ import { freePort, upgrade, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
 // WebUI 的 /session：已认证的 WebSocket 接到会话协议（sessionProtocol.connect）。
-// 前几组起真的 webui-server、会话服务与 agent，经真实的 WebSocket 收发；后几组把会话服务换成替身，
+// 前几组启动真的 webui-server、会话服务与 agent，经真实的 WebSocket 收发；后几组把会话服务换成替身，
 // 只看传输本身：身份、帧的转交、关闭码与原因、拆卸。
 // ════════════════════════════════════════════════════════════
 

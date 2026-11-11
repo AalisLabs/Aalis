@@ -452,7 +452,7 @@ async function run(caps: Caps): Promise<void> {
     });
   });
 
-  // ── 核心：跑一次 workflow（登记进 running，拆卸据此等它收尾）──
+  // ── 核心：执行一次 workflow（登记进 running，拆卸据此等它收尾）──
   function runById(...args: Parameters<typeof execute>): Promise<WorkflowRun> {
     const pending = execute(...args);
     running.add(pending);
@@ -463,7 +463,7 @@ async function run(caps: Caps): Promise<void> {
 
   /**
    * 运行身份：调用者是 owner 时取定义者（没有即匿名），否则取调用者。两者都是 owner 才按 owner 跑，有一方不是 owner 就由
-   * 那一方定：owner 调起别人定义或覆盖过的编排按那个人的等级执行，免确认也只对 owner 生效，借别人的编排提不了权
+   * 那一方定：owner 调用别人定义或覆盖过的编排按那个人的等级执行，免确认也只对 owner 生效，借别人的编排提不了权
    */
   function runIdentity(invoker: UserIdentity | undefined, definer: UserIdentity | undefined): UserIdentity | undefined {
     if (caps.authority.present) {
@@ -504,7 +504,7 @@ async function run(caps: Caps): Promise<void> {
     logger.info(`run=${runId} 启动 (trigger=${triggerSource})`);
 
     try {
-      // 跑完就摘掉中止句柄，再记终态、发收尾事件：之后的 cancelRun 回 false，不对已经落定的运行回「已取消」
+      // 执行完毕就摘掉中止句柄，再记终态、发收尾事件：之后的 cancelRun 回 false，不对已经落定的运行回「已取消」
       const result = await runDag({
         tools,
         events: events.use,
@@ -652,7 +652,7 @@ async function run(caps: Caps): Promise<void> {
     // 中止全部在飞 run：不再调度新节点，阻塞中的 wait / agent 节点立即结束。再等它们收尾、排队中的运行历史 /
     // once 记录写完才结束拆卸：否则 app.stop() 返回后仍有落盘在飞，bounce 时迟到的快照会盖掉新实例的记录。
     // 不响应中止信号的工具节点至多让这里等到 disposeTimeoutMs；放弃等待后旧实例记为 lingering，同 id 的新实例要等那次
-    // run 真正落定、这里返回之后才起
+    // run 真正落定、这里返回之后才启动
     for (const abort of aborts.values()) abort.abort();
     await Promise.allSettled(running);
     await runStore.flushed();
@@ -692,7 +692,7 @@ function registerTools(
           ' 节点支持类型 tool / send-message / wait / agent；deps 形成 DAG；字符串值支持 {{vars.X}} 与 {{outputs.Y}} 插值。' +
           ' agent 节点（instruction 必填，可选 sessionId/platform/timeoutSeconds）会把指令派发给 agent 并等待其回复，' +
           '回复经 out 存入 outputs 供下游插值——用 deps + agent 节点即可表达"分解→依赖→串/并行→管道→聚合"的确定性多智能体编排。' +
-          ' once 触发器一生只触发一次：同 id 覆盖不会重新触发，要再跑一次请先 workflow_remove 再定义，或直接 workflow_run。',
+          ' once 触发器一生只触发一次：同 id 覆盖不会重新触发，要再执行一次请先 workflow_remove 再定义，或直接 workflow_run。',
         parameters: {
           type: 'object',
           properties: {
@@ -780,7 +780,7 @@ function registerTools(
       if (signal?.aborted) return aborted;
       try {
         // 透传调用者的授权身份（这一项要 owner 确认：批过的是批的人，免了的是那位 owner）；运行身份按它与定义者定（见 execute）。
-        // 调起这次运行的会话也带上：这一轮在等这次运行，指向它的 agent 节点立即失败。调用被中止（这一轮被停止键、禁言、/clear
+        // 发起这次运行的会话也带上：这一轮在等这次运行，指向它的 agent 节点立即失败。调用被中止（这一轮被停止键、禁言、/clear
         // 等停下，或本插件停用、重启）时不再等这次运行，这一轮才落定得了。回合停下时运行照常进行；本插件停用、重启时运行随拆卸
         // 取消
         const run = await new Promise<WorkflowRun | undefined>((resolve, reject) => {

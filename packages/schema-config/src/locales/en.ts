@@ -8,7 +8,7 @@ export default defineLocale<Source>()({
   logLevelDescription: 'Log output level',
   slowThresholdLabel: 'Slow operation threshold (ms)',
   slowThresholdDescription:
-    'When a plugin is still activating after this long, a warning is logged and activation continues in the background (the services it provides stay closed to dependents until it finishes); during app startup and shutdown, a single event listener running longer than this is warned about and no longer waited for. 0 means no limit. Takes effect after a restart',
+    'When a plugin is still activating after this long, a warning is logged and activation continues in the background; during startup and shutdown, a single event listener that runs longer is also warned about and no longer waited for. 0 means no limit. Takes effect after a restart',
   missing: 'required but not set',
   expectedGroup: 'expected an object (group), got {got}',
   expectedArray: 'expected an array, got {got}',

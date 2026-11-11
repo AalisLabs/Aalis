@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitest/config';
 import { BROWSER_TESTS, HEAVY_TESTS } from './test/heavy-tests.js';
 
-/** 推送前的快测试：不跑起浏览器、起构建、起真实子进程或联网的重测试（名单见 test/heavy-tests.ts） */
+/** 推送前的快测试：不跑启动浏览器、执行构建、启动真实子进程或联网的重测试（名单见 test/heavy-tests.ts） */
 const quick = process.env.AALIS_TEST_SCOPE === 'quick';
 
 export default defineConfig({

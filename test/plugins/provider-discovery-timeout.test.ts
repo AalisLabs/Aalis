@@ -48,7 +48,7 @@ function captureFetch(): { signalFor: (match: string) => AbortSignal | undefined
 
 /**
  * 装一个插件并等激活落定。激活闸会把依赖不全的插件停在 pending 而不报错，
- * 那时插件压根没发请求——这里当场点名，免得后面的"没带 signal"把原因指错地方。
+ * 那时插件根本没发请求——这里当场点名，免得后面的"没带 signal"把原因指错地方。
  */
 async function load(app: App, plugin: PluginDefinition, config: Record<string, unknown>): Promise<void> {
   await app.plugin(plugin, config);

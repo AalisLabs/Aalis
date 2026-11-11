@@ -396,13 +396,13 @@ function run(caps: Caps): void {
   // 不触碰前缀缓存；dryRun 估算轮跳过（抽帧昂贵且该轮不真正发请求）。
   //
   // WeakSet 标记「已处理过的消息」：本钩子在工具循环的每轮迭代都会重跑（轮数默认不限），
-  // 而抽帧/物化都要拉远端资源——没有标记的话，一张拉不动的远端动图会在每轮重试
+  // 而抽帧/物化都要下载远端资源——没有标记的话，一张获取失败的远端动图会在每轮重试
   // （每轮 15s 超时）。每条消息只处理一次，成败皆不重来；消息对象随回合结束被回收，
   // 无生命周期管理。
   const transformed = new WeakSet<object>();
   caps.hooks.use.middleware('agent:llm:before', async (data, next) => {
     // 所有交付形态都要进来——这道闸此前被模式挡住，于是 describe 模式下
-    // agent 塞进 message.images 的附件引用一路畅通到 provider，
+    // agent 放入 message.images 的附件引用一路畅通到 provider，
     // 被当成 base64 送出去，整轮请求被拒（400 illegal base64 data）。
     if (!data.dryRun) {
       for (const m of data.messages) {

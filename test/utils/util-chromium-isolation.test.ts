@@ -265,7 +265,7 @@ describe('脚本与请求拦截（真浏览器）', () => {
     expect(magentaPixels(png)).toBe(0);
   }, 30_000);
 
-  it('清单外的 http(s) 子资源一律中止，清单里的精确网址被响应，渲染不挂死', async () => {
+  it('清单外的 http(s) 子资源一律中止，清单里的精确网址被响应，渲染不会一直阻塞', async () => {
     const started = Date.now();
     const png = await makeRenderer().renderPng(
       request(

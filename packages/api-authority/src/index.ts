@@ -44,7 +44,7 @@ export type CapabilityConfirm = 'session' | 'always';
 /**
  * 能力风险等级（可选声明糖）：插件自分类风险，框架展开为 (visibility, confirm) 默认：
  * - safe       → (public,     无确认)    查天气/算术等
- * - sensitive  → (restricted, 无确认)    owner 顺手的中危
+ * - sensitive  → (restricted, 无确认)    owner 免确认的中危操作
  * - dangerous  → (restricted, 'session') owner 也确认 —— shell / 写删 / 改系统 等
  *
  * 显式 visibility / confirm 覆盖 risk 推导值；三者皆不声明 → visibility 默认 public（保持向后兼容）。
@@ -130,7 +130,7 @@ export function resolveCapabilityPolicy(
 export interface InboundTurn {
   /** 同 IncomingMessage.source：真人消息为 undefined，内部注入为注入方标识 */
   source?: string;
-  /** 同 IncomingMessage.fromTurn：续做与子任务都带着起它的那一轮，这一轮与它同一类别，主体按同一条判 */
+  /** 同 IncomingMessage.fromTurn：续做与子任务都带着发起它的那一轮，这一轮与它同一类别，主体按同一条判 */
   fromTurn?: FromTurn;
   /** 这一轮最近一条输入的平台消息 id（IncomingMessage.messageId）。转到后台的工具调用结束时，结束通知的回复据它引用这条消息 */
   messageId?: string;
@@ -209,11 +209,11 @@ export function sameParticipant(
 
 /**
  * 由一轮的输入拼这一轮，拼一轮的唯一函数：agent 据它填工具调用上下文，调用方不各自拼。
- * - 参与者：各条输入的授权身份（actor，没有时是发言者，没有发言者的是无主体；插话不带 actor，就是发言者），带起它的那一轮的
+ * - 参与者：各条输入的授权身份（actor，没有时是发言者，没有发言者的是无主体；插话不带 actor，就是发言者），带发起它的那一轮的
  *   注入取那一轮的参与者；按进入先后排、按身份去重，owner 的各个身份算一个参与者、取最先进来的那一个（isOwner 不给时按字面
  *   身份）。历史里别人的话、引用与转发进某条输入的内容都不另算
- * - 发言者：各条输入的物理发言者相同时是他，不同时没有；缺省时取起它的那一轮的（续做的通知不带发言者，工具眼里是起它的人在调）
- * - 入站回合：来源与起它的那一轮取第一条（同一轮的输入来源相同，带来源的注入各自成一轮），平台消息 id 取最近一条
+ * - 发言者：各条输入的物理发言者相同时是他，不同时没有；缺省时取发起它的那一轮的（续做的通知不带发言者，工具眼里是发起它的人在调）
+ * - 入站回合：来源与发起它的那一轮取第一条（同一轮的输入来源相同，带来源的注入各自成一轮），平台消息 id 取最近一条
  */
 export function originTurnOf(
   inputs: readonly [IncomingMessage, ...IncomingMessage[]],
@@ -307,13 +307,13 @@ export interface AuthorityService {
   ownerOn(platform: string): UserIdentity | undefined;
 
   /**
-   * 这一轮从哪里来（契约见 api-approval 的 OriginKind）：只看消息事实（来源、起它的那一轮、授权身份有没有账号），
+   * 这一轮从哪里来（契约见 api-approval 的 OriginKind）：只看消息事实（来源、发起它的那一轮、授权身份有没有账号），
    * 不看会话类型与受众，不判是不是 owner，不按授权身份判。能不能产生审批由审批服务按类别与参与者判
    */
   originOf(turn: OriginTurn): OriginKind;
 
   /**
-   * 这一轮的主体，定本地效果：类别为 hand 且参与者（授权身份）都是 owner 的为 owner；续做与子任务的类别沿 fromTurn 随起它的
+   * 这一轮的主体，定本地效果：类别为 hand 且参与者（授权身份）都是 owner 的为 owner；续做与子任务的类别沿 fromTurn 随发起它的
    * 那一轮，参与者是那一轮交来的（批过的调用是批的人）；其余为 other（owner 与别人同在的一轮也是）。消费方不自己读受众
    */
   principalOf(turn: OriginTurn): 'owner' | 'other';

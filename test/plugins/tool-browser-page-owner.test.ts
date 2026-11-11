@@ -10,7 +10,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 // - 同一根会话里（根会话与它的子会话）能取、能关；别的会话取不到，回的与不存在的页面一样，带别人的 pageId 导航开的是新页面。
 // - 每个根会话的页面开在它自己的浏览器上下文里；没有会话的调用（sessionId 为空）共用一个，不在会话表里的会话按它自己算。
 //   浏览器重启后上下文随之作废，按需重建。登录态确实不跨上下文，由 tool-browser-login-isolation（真浏览器）守着。
-// - 会话删除时关掉它的上下文与页面，别的会话的不动；开页途中被删的，不登记；关上下文卡住时不拖住删除。
+// - 会话删除时关掉它的上下文与页面，别的会话的不动；开页途中被删的，不登记；关上下文卡住时不阻塞删除。
 // puppeteer 换成替身（按 util-chromium 的依赖路径 mock），不启动真浏览器；不启动网络闸（blockPrivate=false）。
 // ════════════════════════════════════════════════════════════
 
@@ -297,7 +297,7 @@ describe('页面归打开它的根会话', () => {
     expect(fake.pages[0]).toMatchObject({ closed: true, context: { closed: true } });
   });
 
-  it('关上下文卡住时不拖住会话删除：页面先从表里摘掉', async () => {
+  it('关上下文卡住时不阻塞会话删除：页面先从表里摘掉', async () => {
     const { call, open, emit } = await start();
     const pageId = await open('root');
     fake.ctl.closeHangs = true;

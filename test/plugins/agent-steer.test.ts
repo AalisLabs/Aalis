@@ -43,7 +43,7 @@ import { deferred } from '../helpers/deferred.js';
 // 经 agent 先停下并按住会话再跑整条清理，清的期间到的输入清完再处理，不看各家清理中间件登记在 agent 之前还是之后；停在等着
 // 别处的工具（wait_subtasks、workflow_run）里的一轮随中止不再等。读历史时夹进工具调用组的别的消息挪到组后，结果没找齐的组与
 // 不在任何组里的结果不发给模型。
-// 模型是能挂住某一次调用的替身（step-llm），工具是探针；会话管理是按 id 现造记录的替身（onebot 的房间带出生平台与聊天窗口）；
+// 模型是能阻塞某一次调用的替身（step-llm），工具是探针；会话管理是按 id 现造记录的替身（onebot 的房间带出生平台与聊天窗口）；
 // 看组内次序的用例换上按时间戳读历史的存储替身（同 Mongo 与 sqlite 的读法）。
 // ════════════════════════════════════════════════════════════
 
@@ -80,7 +80,7 @@ const shape = (m: Message) =>
             ? '停下标记'
             : text(m);
 const label = (inputs: readonly TurnInput[]) => inputs.map(i => i.message.content).join('+');
-/** 让排着的微任务与 I/O 回调跑完：逐条处理之后的入队在这之前落定 */
+/** 让排着的微任务与 I/O 回调执行完毕：逐条处理之后的入队在这之前落定 */
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
 const apps: App[] = [];
@@ -200,7 +200,7 @@ async function boot(
 type Booted = Awaited<ReturnType<typeof boot>>;
 
 /**
- * 换上包着内存后端的存储：onSave 在每次写入之前跑（可以挂住它），读历史按时间戳、同一毫秒按写入先后排（同 Mongo 与 sqlite 的
+ * 换上包着内存后端的存储：onSave 在每次写入之前跑（可以阻塞它），读历史按时间戳、同一毫秒按写入先后排（同 Mongo 与 sqlite 的
  * 读法；内存后端本身按写入先后存，排序是稳定的）
  */
 function tapMemory(s: Booted, onSave: (message: Message) => Promise<void>) {
@@ -227,7 +227,7 @@ function tapMemory(s: Booted, onSave: (message: Message) => Promise<void>) {
   s.host.provide.use(memory, tapped, { priority: 1000 });
 }
 
-/** 按时间戳读历史的存储，挂住工具调用组的第二条写入（第一条结果），时钟停在组内：组的调用是 T0、结果是 T0+1，之后的写入都在 T0 */
+/** 按时间戳读历史的存储，阻塞工具调用组的第二条写入（第一条结果），时钟停在组内：组的调用是 T0、结果是 T0+1，之后的写入都在 T0 */
 function holdGroupWrite(s: Booted) {
   const entered = deferred();
   const release = deferred();
@@ -965,7 +965,7 @@ describe('回合记录', () => {
 /** 不在流控生效范围里的会话：流控只管禁言 */
 const GROUP_FREE = { sessionId: 'zz-steer-muted', platform: 'test', userId: 'u1' };
 
-/** 逐条处理里挂住某一条输入的预处理器：正文是 content 的那条等 gate 落定才往下 */
+/** 逐条处理里阻塞某一条输入的预处理器：正文是 content 的那条等 gate 落定才往下 */
 function slowPreprocessor(content: string, gate: Promise<void>) {
   return definePlugin({
     name: 'zz-slow-preprocessor',

@@ -92,7 +92,7 @@ describe('宿主回答的可选项来源', () => {
     });
   });
 
-  it('platform 不再由宿主回答：按服务名合起各提供者的 listModels()，平台适配器没有它', async () => {
+  it('platform 不再由宿主回答：按服务名合并各提供者的 listModels()，平台适配器没有它', async () => {
     expect(await get('/api/models/platform')).toEqual({ models: [] });
   });
 });

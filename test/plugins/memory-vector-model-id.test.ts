@@ -462,7 +462,7 @@ describe('plugin-memory-vector: embedding 模型标识', () => {
   });
 
   // 标记的读写与全局清空的删除在 mongodb 等异步后端上会交错：清空时在途的读写须先落定再删，
-  // 否则读到的旧标记在删除之后进缓存、写入在删除之后落库。放行挂住的操作前先发起清空，
+  // 否则读到的旧标记在删除之后进缓存、写入在删除之后落库。放行阻塞的操作前先发起清空，
   // 清空要等它落定，反过来就是测试自己等自己
   it('清空时标记读取在途：读到的旧标记不在清空之后进缓存，之后按当时的模型重新记下', async () => {
     const mem = makeMetaMemory({ seed: { [MARKER]: { modelId: 'test:A' } } });
@@ -546,8 +546,8 @@ describe('plugin-memory-vector: embedding 模型标识', () => {
 });
 
 /**
- * 挂住记忆替身的下一次元数据读或写：读在取到结果之后挂住（响应晚到），写在落库之前挂住（落库晚到）。
- * entered 在挂住时兑现，release 后继续
+ * 阻塞记忆替身的下一次元数据读或写：读在取到结果之后阻塞（响应晚到），写在落库之前阻塞（落库晚到）。
+ * entered 在阻塞时兑现，release 后继续
  */
 function holdFirst(service: MemoryService, method: 'getMetadata' | 'saveMetadata') {
   let release!: () => void;

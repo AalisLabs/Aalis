@@ -6,7 +6,7 @@ const SOURCE = {
   displayName: 'SQLite 记忆',
   pathLabel: '数据库路径',
   pathDescription:
-    "SQLite 数据库文件的 storage URI（如 data:/aalis.db；不含 ':/' 时首段视为存储根名，单段裸名归 data 根）。留空按实例派生：主实例用 data:/aalis.db，带后缀的实例在文件名上加后缀（如 `:b` 实例用 data:/aalis-b.db）。两个实例不能用同一个库，后激活的那个会报配置错误",
+    'SQLite 数据库文件的存储地址（storage URI），如 data:/aalis.db。留空时按实例自动命名；两个实例不能共用一个库。',
   rangeQueryLimitLabel: '范围查询返回上限',
   rangeQueryLimitDescription: '区间消息查询（向量召回的上下文窗口扩展等）单次返回的最大条数。命中上限会静默截断',
   crossSessionMaxLimitLabel: '跨会话查询返回上限',

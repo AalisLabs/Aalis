@@ -7,7 +7,7 @@ import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
 // MaimaiClient.request 的 fetch 此前不带 signal。工具执行面没有外层超时，对端不应答即那轮
-// 对话永久挂住——与已修的 embedding-openai 同形状。client 未导出，经 tools.execute 走完整路径。
+// 对话一直阻塞——与已修的 embedding-openai 同形状。client 未导出，经 tools.execute 走完整路径。
 // ════════════════════════════════════════════════════════════
 
 function hangingFetch(): typeof fetch {
@@ -56,7 +56,7 @@ describe('plugin-maimai: 查分器请求必须带超时', () => {
     return registry!;
   }
 
-  it('对端不应答时在 timeoutMs 内以错误结果返回，而不是永久挂住', async () => {
+  it('对端不应答时在 timeoutMs 内以错误结果返回，而不是一直阻塞', async () => {
     vi.stubGlobal('fetch', hangingFetch());
     const registry = await setup(1000); // 实现有 1000ms 地板
     const outcome = await Promise.race([
@@ -65,7 +65,7 @@ describe('plugin-maimai: 查分器请求必须带超时', () => {
         .then(r => `result:${r.content}`),
       new Promise<string>(r => setTimeout(() => r('still-hanging'), 2500)),
     ]);
-    expect(outcome, '没有 signal 就会一直挂着').not.toBe('still-hanging');
+    expect(outcome, '没有 signal 就会一直未返回').not.toBe('still-hanging');
     // handler 把异常包成「查询失败：<message>」纯文本回给模型，不是 JSON error 键
     expect(outcome, '超时应作为工具错误结果返回').toMatch(
       /^result:查询失败：查分器暂时连不上，稍后再试（.*timeout.*）$/i,

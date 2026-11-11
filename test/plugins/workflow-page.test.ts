@@ -291,7 +291,7 @@ describe('工作流页', () => {
     expect((await slow).status).toBe('cancelled');
   });
 
-  it('运行历史按上限裁剪时不裁在跑的：上限之内有一次在跑，再跑满上限次，它仍在历史里，收尾时照常更新', async () => {
+  it('运行历史按上限裁剪时不裁在跑的：上限之内有一次在跑，再运行满上限次数，它仍在历史里，收尾时照常更新', async () => {
     writeFileSync(join(base, 'workspace', 'workflows', 'zz-slow.yaml'), SLOW_YAML);
     const svc = await boot({ maxRuns: 10 });
     const slow = svc.runWorkflow('zz-slow', {}, 'manual');
@@ -358,7 +358,7 @@ describe('工作流页', () => {
     );
   });
 
-  it('运行已经记下终态、收尾的监听还没跑完时点取消：回这次运行已经结束，运行照旧成功', async () => {
+  it('运行已经记下终态、收尾的监听还没执行完毕时点取消：回这次运行已经结束，运行照旧成功', async () => {
     const svc = await boot();
     let release!: () => void;
     const held = new Promise<void>(resolve => {

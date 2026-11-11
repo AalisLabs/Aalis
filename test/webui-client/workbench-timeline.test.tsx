@@ -869,7 +869,7 @@ describe('时间线', () => {
     await dialog.findByText((_, node) => node?.tagName === 'PRE' && node.textContent === 'ok');
   });
 
-  it('读取挂住时关掉对话框：这次读取收到中止', async () => {
+  it('读取阻塞时关掉对话框：这次读取收到中止', async () => {
     const href = '/api/session-file?sessionId=s1&handle=h-hang';
     app = await renderApp(
       '/s/s1',

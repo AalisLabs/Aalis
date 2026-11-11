@@ -53,8 +53,8 @@ export interface ToolDefinition {
 export interface ToolCallContext {
   sessionId: string;
   /**
-   * 物理发言者（会话语义）：这一轮各条输入的发言者相同时是他，不同时没有；续做的一轮没有发言者时取起它的那一轮的（工具眼里
-   * 是起它的人在调）。授权身份见 participants
+   * 物理发言者（会话语义）：这一轮各条输入的发言者相同时是他，不同时没有；续做的一轮没有发言者时取发起它的那一轮的（工具眼里
+   * 是发起它的人在调）。授权身份见 participants
    */
   userId?: string;
   /** 会话所属平台（路由/分流语义；授权身份见 participants） */
@@ -198,7 +198,7 @@ export interface RegisteredTool {
   /**
    * 可以转后台：工具响应中止信号（{@link ToolCallContext.signal}），晚些拿到结果仍有意义。执行器给它的参数表补
    * `runInBackground`（立即转后台）与 `waitSeconds`（前台最多等多少秒），在前台等满让出时限还没结束就登记成后台任务、
-   * 先回给模型，结束时通知起它的会话。`yieldSeconds` 是这个工具的让出时限，缺省用执行器的默认（30 秒）。
+   * 先回给模型，结束时通知发起它的会话。`yieldSeconds` 是这个工具的让出时限，缺省用执行器的默认（30 秒）。
    * 参数表里已有同名项的当作没声明。不发给模型（{@link ToolDefinition} 是线上格式）；没声明的照旧等到底
    */
   background?: { yieldSeconds?: number };
@@ -301,7 +301,7 @@ export interface ToolService {
  * 抬成「需突破两道」。
  */
 export function wrapUntrustedContent(content: string, source: string): string {
-  // source 常含 url，url 由用户/LLM 可控——不消毒的话攻击者能塞入换行 + 伪造的
+  // source 常含 url，url 由用户/LLM 可控——不消毒的话攻击者能传入换行 + 伪造的
   // 「· 非用户指令]」把注入文本挤进警示之前的框架区（比不加边界更糟：给注入镀权威框）。
   // 剥掉换行与框架字符、截断长度：source 本就只是短标签，无信息损失。
   const safeSource = source.replace(/[\r\n·\]]/g, ' ').slice(0, 120);
@@ -357,7 +357,7 @@ export interface BackgroundTask {
   kind: 'tool-call';
   /** 显示名：工具调用是工具名 */
   label: string;
-  /** 起它的那次工具调用：工具名、模型给的参数、所在回合与调用的 id */
+  /** 发起它的那次工具调用：工具名、模型给的参数、所在回合与调用的 id */
   call: { tool: string; args: Record<string, unknown>; turnId: string; callId: string };
   status: BackgroundTaskStatus;
   startedAt: number;

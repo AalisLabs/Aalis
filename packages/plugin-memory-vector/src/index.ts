@@ -1036,7 +1036,7 @@ async function run(caps: Caps): Promise<void> {
 
         // 片段含非 user 角色（扩窗带出的 Assistant/Notice/Tool）时在标题行内附加自指说明，
         // 防模型把自己的历史回复当他人发言引用（自我强化事故的入口形态）。
-        // 刻意并入标题行而非另起一行：本块会被 memoryTokenBudget 按字符比例掐尾截断，
+        // 刻意并入标题行而非另起一行：本块会被 memoryTokenBudget 按字符比例截掉末尾，
         // 多一行说明会在预算贴线时挤掉一条真实记忆（实测 8→7 条）。
         const hasNonUser = sortedAll.some(({ msg }) => msg.role !== 'user');
         const selfNote = hasNonUser ? '；标注 Assistant·你自己 的条目是你自己当时的回复' : '';
@@ -1099,7 +1099,7 @@ async function run(caps: Caps): Promise<void> {
             crossSession: {
               type: 'boolean',
               description:
-                '若命中消息来自其他会话（user/all 模式可能发生），是否对那个会话也取上下文。' +
+                '命中消息来自其他会话时，是否对那个会话也取上下文。' +
                 `默认沿用插件配置（当前=${cfg.contextExpand.crossSession}）；若插件已禁用则本参数传 true 也无效。`,
             },
           },

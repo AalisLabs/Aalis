@@ -8,7 +8,7 @@ import { fakeTty } from '../helpers/tty.js';
 
 // ════════════════════════════════════════════════════════════
 // 终端显示的人设名按终端会话取：人设服务按 { sessionId, platform: 'cli' } 取这个会话的卡，欢迎行、头部与回复前的署名都写
-// 这张卡的名字，与回合同一口径，不是人设服务的主卡。会话设置或宿主配置变了时立即按新的名字重绘。起真 TUI（假 TTY，收集
+// 这张卡的名字，与回合同一口径，不是人设服务的主卡。会话设置或宿主配置变了时立即按新的名字重绘。启动真 TUI（假 TTY，收集
 // stdout 帧），人设服务是按会话给名字的替身
 // ════════════════════════════════════════════════════════════
 
@@ -23,7 +23,7 @@ afterEach(async () => {
 });
 
 describe('终端显示的人设名', () => {
-  /** 起终端界面；返回发一条回复之后的最后一帧（去掉控制序列）与收到的人设选项 */
+  /** 启动终端界面；返回发一条回复之后的最后一帧（去掉控制序列）与收到的人设选项 */
   async function terminal(getPersonaName: (options?: PersonaSessionOptions) => string) {
     const writes: string[] = [];
     vi.spyOn(process.stdout, 'write').mockImplementation(chunk => {

@@ -12,7 +12,7 @@ import { createState, type TriggerSessionState } from '../../packages/plugin-tri
 import { fixedRef } from '../fixtures/service-ref.js';
 import { resolveTriggerPolicySettings } from './trigger-policy-config.js';
 
-// 背景：platform 档 all-quiet 策略在「已达标但无候选」和「压根没有活动记录」两种情形下
+// 背景：platform 档 all-quiet 策略在「已达标但无候选」和「根本没有活动记录」两种情形下
 // 都把重排间隔压成 1s，形成 1 Hz 死转（每秒一个 timer + 一条 debug）。契约是**每轮之间至少隔
 // 一个阈值量级**，一轮只发一条。
 // 背景：platform 档挑候选时不看按会话设的参数，单独设了 idleTriggerScope:'off'

@@ -48,7 +48,7 @@ const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: ()
 /** 可转后台的测试工具：命令种类的展示，退出码取自结果的 exitCode */
 const BG = 'zz_bg';
 
-/** 让排着的微任务与 I/O 回调跑完（setImmediate 不在假计时器里） */
+/** 让排着的微任务与 I/O 回调执行完毕（setImmediate 不在假计时器里） */
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
 interface Run {
@@ -56,7 +56,7 @@ interface Run {
   finish(result: string): void;
 }
 
-/** 登记可转后台的测试工具：每次调用挂着，直到 finish 或这次调用的中止信号 */
+/** 登记可转后台的测试工具：每次调用一直未返回，直到 finish 或这次调用的中止信号 */
 function registerBackgroundTool(host: { tools: { use: { register(tool: never): unknown } } }, runs: Run[]): void {
   host.tools.use.register({
     definition: {
@@ -79,7 +79,7 @@ function registerBackgroundTool(host: { tools: { use: { register(tool: never): u
 
 /**
  * 会话服务连同会话管理、工具注册表（后台任务登记）、消息归档与内存记忆。agent 是替身：abort 记下停了哪个会话，
- * 并以 aborted 结束这个会话挂着的回合。registry 为假时不装工具注册表（没有后台任务登记）
+ * 并以 aborted 结束这个会话未结束的回合。registry 为假时不装工具注册表（没有后台任务登记）
  */
 async function setup({ registry = true }: { registry?: boolean } = {}) {
   const app = new App({ name: 'T', logLevel: 'error', logger: silent });
@@ -96,7 +96,7 @@ async function setup({ registry = true }: { registry?: boolean } = {}) {
 
   /** agent.abort 收到的会话与选项 */
   const aborted: Array<[string, Parameters<AgentService['abort']>[1]]> = [];
-  /** 各会话挂着的回合：agent.abort 以 aborted 结束它们 */
+  /** 各会话未结束的回合：agent.abort 以 aborted 结束它们 */
   const hanging = new Map<string, Array<() => void>>();
   const agentDouble: AgentService = {
     handleMessage: async () => {},
@@ -126,7 +126,7 @@ async function setup({ registry = true }: { registry?: boolean } = {}) {
   if (registry) registerBackgroundTool(host, runs);
 
   let calls = 0;
-  /** 在会话里起一次测试工具，带 runInBackground 立即转后台；回任务 id */
+  /** 在会话里调用一次测试工具，带 runInBackground 立即转后台；回任务 id */
   const start = async (sessionId: string, command = 'npm run dev') => {
     calls++;
     const result = await host.tools.use.execute(
@@ -147,7 +147,7 @@ async function setup({ registry = true }: { registry?: boolean } = {}) {
   };
 
   let turns = 0;
-  /** 在会话里开一轮，一直挂着：finish 以给的结局收尾，agent.abort 以 aborted 收尾 */
+  /** 在会话里开一轮，一直不结束：finish 以给的结局收尾，agent.abort 以 aborted 收尾 */
   const openTurn = (sessionId: string) => {
     const turnId = `turn-${++turns}`;
     const message: IncomingMessage = { content: '<提问>', sessionId, platform: 'webui', userId: 'console' };

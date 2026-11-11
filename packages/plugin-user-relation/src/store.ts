@@ -25,7 +25,7 @@ export const RELATION_NAMESPACE = 'user-relation';
  * embedding 向量的独立命名空间（2026-08 OOM 事故后拆出）。
  *
  * 向量只有 consolidate 的相似度召回用，却曾内嵌在节点文档里——每次 loadAll 都把
- * 全部 4096 维向量拉成 JS 装箱数组（每条 ~96KB），快照被并发持有 20+ 份时堆里
+ * 全部 4096 维向量加载成 JS 装箱数组（每条 ~96KB），快照被并发持有 20+ 份时堆里
  * 全是向量（实测 1.8GB，进程 OOM）。拆到独立命名空间后 loadAll 永不触碰向量，
  * 只有按需的 getVector 逐条取。节点上保留 embeddingHash（短字符串）做失效判断。
  * 历史内嵌文档无需迁移：读出口一律剥离（stripInlineVector），召回真用到某节点的
@@ -279,7 +279,7 @@ export class RelationStore {
       }
     }
     await this.deletePerson(platform, userId);
-    // 顺手清掉这个人的 mergeReject 缓存（pair metadata 会变孤儿）
+    // 同时清掉这个人的 mergeReject 缓存（pair metadata 会变孤儿）
     await this.deleteMergeRejectsByNode(id);
     return { deletedEdges };
   }

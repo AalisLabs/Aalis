@@ -10,7 +10,7 @@
 // 只有真死的连接才会在 1~2 个周期内被踢。
 //
 // 登记（track）同时挂 'error' 兜底监听：无监听者的 'error' 会抛成
-// uncaughtException 打死整进程，而每条连接都要过 track，挂在这里最不易漏。
+// uncaughtException 终止整进程，而每条连接都要过 track，挂在这里最不易漏。
 //
 // 独立小模块 + 依赖注入的最小 socket 面，同 auth/gate 的可单测形态。
 // ============================================================
@@ -78,7 +78,7 @@ export function createWsHeartbeat<T extends HeartbeatSocket>(
       }
     }
   }, intervalMs);
-  // 心跳不该拖住进程退出；正常路径由 dispose() 清
+  // 心跳不该阻塞进程退出；正常路径由 dispose() 清
   (timer as unknown as { unref?: () => void }).unref?.();
 
   return {
@@ -88,7 +88,7 @@ export function createWsHeartbeat<T extends HeartbeatSocket>(
       ws.on('pong', () => alive.set(ws, true));
       // 'error' 兜底监听：EventEmitter 对无监听者的 'error' 是**抛异常**——ws 帧校验
       // 失败（畸形帧/坏 UTF-8）走的正是这条路，抛出后成 uncaughtException，runtime
-      // 直接 process.exit(1)：一条畸形帧打死整进程。登记时一并挂上，凡 track 过的
+      // 直接 process.exit(1)：一条畸形帧终止整进程。登记时一并挂上，凡 track 过的
       // 连接天然免疫。
       ws.on('error', err => opts.onError?.(ws, err));
     },

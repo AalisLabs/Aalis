@@ -16,7 +16,7 @@ import { validateConfig } from '../../packages/schema-config/src/index.js';
 // webui-server auth — 单 token（单 owner）
 //
 // 认证挂到一个按登记先后分派的假 app 上（只认方法与完整路径），用最小 req/res mock 走登录/识别/注销流程、token 比较、
-// 主机名与来源判定、登录失败限速，不起 HTTP 服务器。没有 i18n：登录页与回应里的文字是原文（按读者语言的见 webui-i18n.test.ts）。
+// 主机名与来源判定、登录失败限速，不启动 HTTP 服务器。没有 i18n：登录页与回应里的文字是原文（按读者语言的见 webui-i18n.test.ts）。
 // 固定 token 的长度与主机白名单每一项的写法在插件激活时校验，那两组只激活插件、不启动应用，同样不监听端口。
 // ════════════════════════════════════════════════════════════
 
@@ -498,8 +498,8 @@ describe('未认证拦截', () => {
     const page = await run(makeAuth(), makeReq({ path: '/' }));
     const hint = page.res.htmlBody?.match(/<h1>Aalis WebUI<\/h1>\s*<p>([^<]*)<\/p>/)?.[1];
     expect(hint).toBe(
-      '访问 token 在数据目录的 state/webui/access.txt 里，启动日志「访问凭据已写入」那行给出它的完整路径；' +
-        'tokenMode 为 fixed 时它是配置项 fixedToken，启动后值存在数据目录的 secrets.yaml 里（配置文件里是引用）。',
+      '访问 token 在数据目录的 state/webui/access.txt 里，完整路径见启动日志「访问凭据已写入」那行；' +
+        '用固定 Token 时，值存在数据目录的 secrets.yaml 里。',
     );
   });
 

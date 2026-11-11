@@ -296,7 +296,7 @@ function registerBuiltinChecks(
       const active = status.filter(s => s.state === 'active');
       // 激活超过 core 慢操作阈值、已转入后台的（依赖它服务的插件在它完成前保持 pending）
       const slow = status.filter(s => s.state === 'activating' && s.slow);
-      // 旧实例超过宽限仍未停下的：停下之前同一 id 不起新实例，说法与依赖链的根（api-doctor）一致
+      // 旧实例超过宽限仍未停下的：停下之前同一 id 不启动新实例，说法与依赖链的根（api-doctor）一致
       const lingering = status.filter(s => s.lingering);
       // 缺与在等：与 runtime 启动告警、WebUI 同一判据（api-doctor），缺的沿链追到根；只在等提供者启动的不算未就绪。
       // 没有缺的时只说「无缺服务」：pending 的插件可能还在等别的插件启动或等自己的旧实例停下，各在 plugins.waiting 与

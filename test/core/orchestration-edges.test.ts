@@ -72,12 +72,12 @@ describe('插件拓扑：required 真环', () => {
       }),
     );
     await w.app.plugins.idle();
-    // 两者互为 required 且没有别的提供者：谁也起不来
+    // 两者互为 required 且没有别的提供者：谁也无法启动
     expect(stateOf(w.app, 'cyc-a')).toBe('pending');
     expect(stateOf(w.app, 'cyc-b')).toBe('pending');
     expect(w.at('warn')).toContain('topoSortByDeps: 检测到 required 依赖环，残留 2 个按声明序追加');
 
-    // 后注册、未声明 provides 的 seed 同时补上两项：它在拓扑前缀里先起，环内两者随后按声明序激活
+    // 后注册、未声明 provides 的 seed 同时补上两项：它在拓扑前缀里先激活，环内两者随后按声明序激活
     await w.app.plugin(
       definePlugin({
         name: 'seed',

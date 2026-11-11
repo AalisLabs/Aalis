@@ -14,7 +14,7 @@ import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js
 // 两个 ASR 插件的远程音频下载与 plugin-media 同口径：带超时信号、20 MiB 流式限额。
 //
 // 此前两者都是裸 safeFetch(url) 后整读 arrayBuffer()：safeFetch 只管 SSRF 与重定向，
-// 对端不应答就把整轮语音回合挂住，超大响应（无 Content-Length 时尤甚）整个读进内存。
+// 对端不应答就让整轮语音回合一直阻塞，超大响应（无 Content-Length 时尤甚）整个读进内存。
 // 入站语音 URL 由外部平台给出（OneBot 附件缓存失败时回退原 URL），这条路径可达。
 // ════════════════════════════════════════════════════════════
 
@@ -130,7 +130,7 @@ describe.each([
     const r = await service.transcribe({ attachment: { kind: 'audio', data: `http://127.0.0.1:${port}/ok` } });
     expect(r.text).toBe('转写文本');
     const signal = probe.signals.get('/ok');
-    expect(signal, '下载未带 AbortSignal，对端不应答会挂住整轮').toBeInstanceOf(AbortSignal);
+    expect(signal, '下载未带 AbortSignal，对端不应答会让整轮一直阻塞').toBeInstanceOf(AbortSignal);
     expect(signal?.aborted).toBe(false);
     // 钉住时长：下载信号由 AbortSignal.timeout(15_000) 与中止信号合成（openai 的转写上传另有一只超时信号）
     const merged = anySpy.mock.results.findIndex(res => res.value === signal);

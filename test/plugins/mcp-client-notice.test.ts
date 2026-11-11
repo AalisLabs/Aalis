@@ -12,8 +12,8 @@ import { makeToolRegistry } from '../fixtures/tool-registry.js';
 // mcp-client 连不上某个 MCP 服务器时发 error 提示（标题写哪个服务器，detail 先写怎么修再接原因，跳转去配置），出现在「需要处理」
 // 与插件详情；提示归属这次激活，改好配置重载后连上了，提示随旧激活撤回、新激活不再发。
 //
-// MCP 服务器用测试替身：node -e 起的 stdio 进程，按行收 JSON-RPC，答 initialize 与 tools/list；连不上的替身一启动就退出。
-// 提示收在 webui-server 的真实登记表里（page-host），不起端口
+// MCP 服务器用测试替身：node -e 启动的 stdio 进程，按行收 JSON-RPC，答 initialize 与 tools/list；连不上的替身一启动就退出。
+// 提示收在 webui-server 的真实登记表里（page-host），不监听端口
 // ════════════════════════════════════════════════════════════
 
 const DOUBLE = `

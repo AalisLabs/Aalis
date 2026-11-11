@@ -13,7 +13,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 const MAX = 4096;
 const CHUNK = 1024;
 
-/** 响应体桩：每次 pull 吐 1KB、不带 Content-Length；有限流（16 块后结束），回归时快速失败而不是挂到超时 */
+/** 响应体桩：每次 pull 吐 1KB、不带 Content-Length；有限流（16 块后结束），回归时快速失败而不是一直阻塞到超时 */
 const stream = vi.hoisted(() => ({ pulled: 0, cancelled: false }));
 vi.mock(import('../../packages/util-network-guard/src/index.js'), async importOriginal => ({
   ...(await importOriginal()),

@@ -260,7 +260,7 @@ function wrapLLMAsProcessor(
     proc.describe = async (input: DescribeInput): Promise<DescribeResult> => {
       // base 优先级：调用方显式 basePrompt > wrap 时注入的 opts.prompt > 内置默认
       // 调用方需要切换 prompt（如详细/专业模板或自路由）时必须传 input.basePrompt，
-      // 不要塞进 hint —— 否则会和默认 base 同时存在产生指令冲突。
+      // 不要放入 hint —— 否则会和默认 base 同时存在产生指令冲突。
       const explicitBase = input.basePrompt;
       const base =
         explicitBase ??

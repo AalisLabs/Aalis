@@ -58,7 +58,7 @@ async function setup({ withI18n = true, language }: { withI18n?: boolean; langua
     const state = app.plugins.getPlugin(name)?.state;
     if (state !== 'active') throw new Error(`${name} 未激活（state=${state}）`);
   }
-  /** 可转后台的测试工具：一直挂着，直到这次调用被中止 */
+  /** 可转后台的测试工具：一直未返回，直到这次调用被中止 */
   const withdraw = host.tools.use.register({
     definition: {
       type: 'function',

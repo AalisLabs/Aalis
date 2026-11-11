@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════
 // 后台任务：可转后台的工具调用（RegisteredTool.background）在前台等满让出时限还没结束，就登记成后台任务、先回给模型。
 // 做在执行器一层，所有声明了的工具一样。登记表即 backgroundTasks 服务：可查、可取输出、可停；变化发 background:changed，
-// 状态变了写进插件数据。正常结束（含失败）时向起它的会话注入一条宿主通知，身份取起它的那次调用。
+// 状态变了写进插件数据。正常结束（含失败）时向发起它的会话注入一条宿主通知，身份取发起它的那次调用。
 // ════════════════════════════════════════════════════════════
 
 import type { UserIdentity, Verdict } from '@aalis/api-authority';
@@ -63,7 +63,7 @@ const STATUSES: ReadonlySet<unknown> = new Set<BackgroundTaskStatus>([
 ]);
 
 /**
- * 对话回合里的调用：在入站回合里（inbound 在）、有 turnId 与 callId，转到后台后有可以通知的对话。结束通知带着起它的那一轮，
+ * 对话回合里的调用：在入站回合里（inbound 在）、有 turnId 与 callId，转到后台后有可以通知的对话。结束通知带着发起它的那一轮，
  * 只有入站回合里的调用给得出它
  */
 export function inTurn<C extends ToolCallRequest>(ctx: C): ctx is C & { turnId: string; callId: string } {
@@ -166,7 +166,7 @@ interface Call {
 }
 
 /**
- * 结束通知带着的起它的那一轮（结束通知开的那一轮与它同一类别、按它的参与者运行，平台同它）与回复时引用哪条消息：起它那次调用
+ * 结束通知带着的发起它的那一轮（结束通知开的那一轮与它同一类别、按它的参与者运行，平台同它）与回复时引用哪条消息：发起它那次调用
  * 上下文的快照，会话取任务的。只在本次运行里有，不落盘：读回的任务不通知
  */
 interface NoticeTarget {
@@ -186,7 +186,7 @@ interface TaskRecord {
   markEnded: () => void;
 }
 
-/** 执行器跑一次可转后台的调用要的东西 */
+/** 执行器执行一次可转后台的调用要的东西 */
 interface RunSpec {
   /** 工具名，即任务的显示名 */
   tool: string;
@@ -412,7 +412,7 @@ export class BackgroundTasks implements BackgroundTaskService {
   }
 
   /**
-   * 跑一次占到位置、过了守卫的可转后台调用。让出时限从这里算起，前台时回合中止一并中止它。到时没结束或要求立即转后台：
+   * 执行一次占到位置、过了守卫的可转后台调用。让出时限从这里算起，前台时回合中止一并中止它。到时没结束或要求立即转后台：
    * 对话回合里的调用登记成后台任务、摘掉与回合的联动，先回给模型任务 id 与已有输出的末尾；不在对话回合里的（没有可通知的对话）
    * 中止并回报已有输出。处理函数里的取用判定在前台时可能等一道审批，等着时不让出，到了让出时限还在等的，等审批都结了重新计一个
    * 让出时限；转到后台之后（要求立即转的从一开始）只按参与者都过判、不出审批：回合结束时没结的审批会被撤掉。审批随这次调用中止撤销
@@ -470,7 +470,7 @@ export class BackgroundTasks implements BackgroundTaskService {
   // ---- 插件接线 ----
 
   /**
-   * 读回插件数据里的登记：还在跑的落成 aborted（重启时还在跑），每个会话留最近的结束的，与读回之前起的任务并存，之后状态
+   * 读回插件数据里的登记：还在跑的落成 aborted（重启时还在跑），每个会话留最近的结束的，与读回之前发起的任务并存，之后状态
    * 变了就写。文件不存在按没有记录起步；内容读不懂告警后同样起步，下次写盘时覆盖；读不出来（权限、存储不可用）告警，
    * 本次运行只记在内存里，不覆盖它
    */
@@ -575,7 +575,7 @@ export class BackgroundTasks implements BackgroundTaskService {
         ...(lastAt !== undefined ? { lastOutputAt: lastAt } : {}),
       },
       output: call.output,
-      // 起它的那一轮就是这次调用所在那一轮：平台、发言者、这次调用的参与者（批过的是批的人）、来源，以及那一轮自己的 fromTurn
+      // 发起它的那一轮就是这次调用所在那一轮：平台、发言者、这次调用的参与者（批过的是批的人）、来源，以及那一轮自己的 fromTurn
       ...(chained
         ? {}
         : {
@@ -604,7 +604,7 @@ export class BackgroundTasks implements BackgroundTaskService {
 
   /**
    * 后台任务的调用落定：按结局落成 completed、failed 或 stopped，记下结果与命令的退出码；失败的原因只取结果里的 error。
-   * 正常结束（含失败）的通知起它的会话
+   * 正常结束（含失败）的通知发起它的会话
    */
   private finish(record: TaskRecord, result: ToolExecutionResult, display: ToolDisplay | undefined): void {
     const call = record.call;
@@ -711,7 +711,7 @@ export class BackgroundTasks implements BackgroundTaskService {
     });
   }
 
-  /** 并进读回的登记：读回之前起的任务照留，id 相同的以内存为准 */
+  /** 并进读回的登记：读回之前发起的任务照留，id 相同的以内存为准 */
   private adopt(text: string, where: string): void {
     let entries: unknown[];
     try {
@@ -746,7 +746,7 @@ export class BackgroundTasks implements BackgroundTaskService {
     for (const sessionId of sessions) this.prune(sessionId);
   }
 
-  /** 写盘排队：整份写入，只记字段，不记起它的身份、输出与结果；已排上、还没开始的那次写会带上之后的变化 */
+  /** 写盘排队：整份写入，只记字段，不记发起它的身份、输出与结果；已排上、还没开始的那次写会带上之后的变化 */
   private persist(): void {
     const storage = this.storage;
     if (!storage || this.writeQueued) return;

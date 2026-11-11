@@ -18,7 +18,7 @@ import { type PageHost, pageHost } from '../fixtures/page-host.js';
 // 旧写法 `void authority.init()`：apply 返回后等级表还是空的，这个窗口里的裁决按默认
 // 0 级走 —— 封禁用户（负等级）照样通过。窗口短但真实（load 要过一次真 fs 读）。
 // 装载**之后**刻意不调 app.plugins.idle()：要测的就是「apply 自己把加载等完了」，
-// 一 idle 就把所有异步收尾都等掉，这条回归会被静默吃掉。装载**之前**那次 idle 是另一回事：
+// 一 idle 就把所有异步收尾都等掉，这条回归会被静默掩盖。装载**之前**那次 idle 是另一回事：
 // 它只让 App 回到静置，好让这次装载在返回前完成激活。
 // ════════════════════════════════════════════════════════════
 
@@ -73,7 +73,7 @@ describe('authority：storage 已在线时 apply 等完等级表加载', () => {
     const host = app.bind({ provide, authority });
     host.provide.use(storage, fsStorage() as never);
     // provide 触发的反应式 recompute 还在飞时，装载请求会排队、在激活发生前就返回。
-    // 先静置一次，下面这次装载才是「返回即 apply 已跑完」——被测的正是 apply 自己。
+    // 先静置一次，下面这次装载才是「返回即 apply 已执行完毕」——被测的正是 apply 自己。
     await app.plugins.idle();
     await app.plugin(authorityPlugin, {});
     // 激活若被排队，下面读到的空表说明的是「还没轮到激活」，不是「加载没被等待」：
@@ -145,7 +145,7 @@ describe('authority：storage 晚于本插件上线，首载在飞时的等级�
   });
 });
 
-// storage 还没上线时首次读取尚未开始，入口无从等待，内存表是空的：删除扑空，改等级也带不上文件里的备注。
+// storage 还没上线时首次读取尚未开始，入口无从等待，内存表是空的：删除时找不到目标，改等级也带不上文件里的备注。
 // 删除要作为墓碑记下、改等级只盖过内存里有的字段，降为 0 级也要留下记录（记成删除会连同文件里的备注删掉），
 // 否则首次读取按文件重建时，删掉的封禁与降为 0 级前的等级又回来，备注被丢掉；回执也不能报成功——这时改动还没写进 users.json。
 describe('authority：storage 上线前（首次读取尚未开始）的等级改动', () => {

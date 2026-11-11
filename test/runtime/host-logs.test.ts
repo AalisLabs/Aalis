@@ -21,8 +21,8 @@ afterEach(async () => {
 });
 
 /**
- * 中枢、照它写的文件日志与读它的宿主服务。文件日志攒着没写的，flush 时写下：flush 取的是调用那一刻攒下的
- * （`snapshot`），或是放行那一刻攒下的；放行由 `release` 控制
+ * 中枢、照它写的文件日志与读它的宿主服务。文件日志暂存着没写的，flush 时写下：flush 取的是调用那一刻暂存的
+ * （`snapshot`），或是放行那一刻暂存的；放行由 `release` 控制
  */
 function world(snapshot: boolean) {
   const dir = mkdtempSync(join(tmpdir(), 'aalis-host-logs-'));

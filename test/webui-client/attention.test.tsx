@@ -49,7 +49,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-/** 没起来的原因都为空 */
+/** 未启动的原因都为空 */
 const clear = { lacking: [], waiting: [], unconfigured: [] };
 const MODEL_FAILED = {
   service: 'zz-model',

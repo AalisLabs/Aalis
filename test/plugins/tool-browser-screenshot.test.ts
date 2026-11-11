@@ -19,7 +19,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 // ════════════════════════════════════════════════════════════
 // 浏览器工具的两条实证缺陷（真 Chromium + 真本机 http 服务 + 真 fs）：
 //
-//   1) browser_screenshot 把整张 PNG 的 base64 塞进工具文本结果——模型看不到图，
+//   1) browser_screenshot 把整张 PNG 的 base64 放入工具文本结果——模型看不到图，
 //      几十万字符灌进上下文还落进历史。交付形态定死：一律先落盘 tmp 根拿 URI，
 //      content 恒带 storage_uri（文件名取内容哈希，同图零增量），调用方接得住图
 //      时再把图随结果附上；两种情况 content 都不含 base64，note 按有没有附图分写。
@@ -95,7 +95,7 @@ beforeAll(async () => {
 
   app = new App({ name: 'T', logLevel: 'error' });
   provideHostPaths(app, base);
-  // tmp 是 storage-local 的内置根，映射到数据目录的 tmp/
+  // tmp 是 storage-local 的内部根，映射到数据目录的 tmp/
   await app.plugins.register(storageLocal, {});
   host = app.bind(hostUses);
   handlers = {};
@@ -108,7 +108,7 @@ beforeAll(async () => {
     registerGroup: () => () => {},
   } as never);
   host.provide.use(webuiServer, pages.service);
-  // blockPrivate:false 才连得上本机测试服务（同时不起网络闸）
+  // blockPrivate:false 才连得上本机测试服务（同时不启动网络闸）
   await app.plugins.register(browserPlugin, { headless: true, blockPrivate: false });
   await app.plugins.idle();
 }, 60_000);

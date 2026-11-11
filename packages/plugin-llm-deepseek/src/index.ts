@@ -451,7 +451,7 @@ class DeepSeekClient {
     }
 
     // 强制 JSON 输出。带 tools 时必须不加 response_format：json_object 与 tool_calls 互斥会破坏工具循环，
-    // 兑现配置文案"工具调用阶段不受影响"的承诺。
+    // 与配置说明一致：只对不带工具的请求生效。
     if (this.forceJsonOutput && !(tools && tools.length > 0)) {
       body.response_format = { type: 'json_object' };
     }
@@ -752,7 +752,7 @@ class DeepSeekClient {
     } finally {
       clearTimeout(streamStallTimer);
       // cancel 而非仅 releaseLock：中止/提前退出时要主动关闭响应体。releaseLock 只是放锁，
-      // 底层流仍开着——被打断的生成会让 undici 挂着半读的响应与套接字，直到请求超时兜底
+      // 底层流仍开着——被打断的生成会让 undici 一直持有半读的响应与套接字，直到请求超时兜底
       // 才释放（本地慢生成时回合常被停下，这类残留一挂就是整个超时窗）。
       // cancel 自带放锁。三条退出路径的语义：读尽 EOF（done:true）→ 流已 closed，cancel 是
       // 真 no-op；收到终帧即 return（未读到 EOF）与消费方提前 break → cancel 中止残余响应体，

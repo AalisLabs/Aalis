@@ -83,7 +83,7 @@ function readQuote(r: Reader): string {
   return text;
 }
 
-/** 消息体：顶层读到串尾，分支读到收尾的 }（不吃掉它）。`inPlural`：直接所在的是 plural 分支，# 是数 */
+/** 消息体：顶层读到串尾，分支读到收尾的 }（不消耗它）。`inPlural`：直接所在的是 plural 分支，# 是数 */
 function readMessage(r: Reader, depth: number, inPlural: boolean): Message {
   if (depth > MAX_DEPTH) fail();
   const parts: (string | Argument)[] = [];

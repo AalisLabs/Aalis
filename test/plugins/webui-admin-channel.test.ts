@@ -27,7 +27,7 @@ import { provideHostLogs } from '../fixtures/host-logs.js';
 import { freePort, upgrade, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
-// WebUI 的 /admin：会话之外的管理面事件推送。起真的 webui-server，经真实的 WebSocket 收发：
+// WebUI 的 /admin：会话之外的管理面事件推送。启动真的 webui-server，经真实的 WebSocket 收发：
 // 认证、日志的订阅与退订、插件与页面登记表变化、重启与换前端，以及多个标签页的连接都是 WebSocket 升级。
 // 事件只有 TypeScript 类型，帧的形状在这里逐字核对。末尾一组是各端点共用的升级来源校验。
 // ════════════════════════════════════════════════════════════

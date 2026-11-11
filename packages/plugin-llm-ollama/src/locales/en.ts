@@ -26,16 +26,16 @@ export default defineLocale<Source>()({
     'Model names added by hand (one per line or comma-separated), for models missing from the discovered list. Names that duplicate discovered models are flagged so you can remove them.',
   discoverModelsLabel: 'Discover models',
   discoverModelsDescription:
-    'Request /api/tags at startup to discover the installed models; the WebUI can refresh the model list. Turn it off when the service does not provide /api/tags: no discovery request is sent, only customModels are registered (then required), and refreshing is not supported.',
+    'Query Ollama for installed models at startup; the WebUI can refresh them later. Turn it off when the service has no model list; only custom models (then required) are used and refreshing is not available.',
   modelCapabilitiesLabel: 'Per-model capability overrides',
   modelCapabilitiesDescription:
-    "Force a model's capabilities (highest priority, above /api/show detection and the built-in family table), combined with the adapter defaults.\nFormat: `<modelId>: <cap1>,<cap2>,...`, one per line. For example: nemotron3:33b: chat,vision,tool_calling",
-  providerCapabilitiesLabel: 'Adapter default capabilities (comma-separated)',
+    'Capabilities per model, taking precedence over automatic detection and the family table; a listed model gets the capabilities written here plus the adapter default capabilities.\nFormat: `<modelId>: <cap1>,<cap2>,...`, one per line. For example: nemotron3:33b: chat,vision,tool_calling',
+  providerCapabilitiesLabel: 'Adapter default capabilities',
   providerCapabilitiesDescription:
-    'Fallback default capabilities: only used when a model can neither be probed through Ollama /api/show nor found in the built-in family table. Capabilities are now detected automatically, so this is usually left empty (filling it in may mislabel models that lack those capabilities). For example: chat,tool_calling,streaming',
+    'Capabilities for models whose capabilities can neither be detected nor found in the built-in family table, comma-separated. Usually left empty; filling it in may label models with capabilities they lack. For example: chat,tool_calling,streaming',
   timeoutLabel: 'Idle timeout (s)',
   timeoutDescription:
-    'How long without new output counts as a timeout (seconds). Output that keeps coming (thinking included) never times out; tool calls only arrive once Ollama has generated them in full, and the time spent generating them does not count as output; a non-streaming request (including requests with audio) must receive the whole reply within this time. Raise it for large models or long contexts that are slow to produce their first output, or for long tool arguments. 0 = no limit.',
+    'How long without new output counts as a timeout; steady output (thinking included) never times out, and a non-streaming request must receive the whole reply within this time. Raise it for large models, long contexts or long tool arguments. 0 = no limit.',
   temperatureLabel: 'Temperature',
   temperatureDescription: '0-2; higher is more random',
   maxTokensLabel: 'Max tokens',
@@ -47,7 +47,7 @@ export default defineLocale<Source>()({
   keepAliveDescription: 'How long the model stays in GPU memory, such as 5m, 1h, or 0 (unload immediately)',
   thinkingLabel: 'Default thinking level',
   thinkingDescription:
-    'The level used by models that report the thinking capability (or have thinking in the per-model capability overrides) when a request names no level; the session setting “Thinking” takes precedence. Models without the thinking capability are not sent the think parameter.',
+    'The level models that can think use when a request names no level; the session setting “Thinking” takes precedence.',
   requestTimeout: 'Ollama request timed out: no new output within {seconds} s; you can raise timeout in the config',
   pluginClosed: 'The Ollama plugin was disabled or reloaded; this request was not sent',
   pluginStopped: 'The Ollama plugin was disabled or reloaded; this request was stopped midway',

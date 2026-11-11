@@ -178,7 +178,7 @@ export function createFsPluginLoader(rootDir: string): PluginLoader {
 export const READY_MESSAGE = 'aalis:ready';
 
 /**
- * 重启回滚凭据——「更新后新实例起不来」时把工程恢复到更新前的手段。
+ * 重启回滚凭据——「更新后新实例无法启动」时把工程恢复到更新前的手段。
  *
  * 由发起方（市场的 core/runtime 更新）在改写 `package.json` **之前**构造，经
  * `app.restart({ rollback })` 交给策略，**全程只在父进程内存里**：触发条件（新进程
@@ -197,7 +197,7 @@ export interface RestartRollback {
   restore: Array<{ path: string; content: string; deleteIfEmpty?: boolean }>;
   /**
    * 还原文件后需要跑的命令——`package.json` 回退了，`node_modules` 还停在新版，
-   * 必须再跑一次安装才能真正回到旧状态。省略则只还原文件。
+   * 必须再执行一次安装才能真正回到旧状态。省略则只还原文件。
    */
   postRestore?: { cmd: string; args: string[]; cwd: string };
 }
@@ -232,7 +232,7 @@ export function buildRespawnCommand(
 ): { exec: string; args: string[] } {
   const scriptFile = argv[1];
   if (scriptFile?.endsWith('.ts')) {
-    // tsx 是包装脚本，node 层 flag 由它自己转交，不能塞在它前面。
+    // tsx 是包装脚本，node 层 flag 由它自己转交，不能放在它前面。
     const tsxBin = resolve(appDir, 'node_modules', '.bin', 'tsx');
     return { exec: existsSync(tsxBin) ? tsxBin : 'tsx', args: [...argv.slice(1)] };
   }
@@ -243,14 +243,14 @@ export function buildRespawnCommand(
   return { exec: exec ?? process.execPath, args: [...execArgv, ...rest] };
 }
 
-/** 服务形态下重启以这个退出码结束：服务管理器（launchd 的 KeepAlive={SuccessfulExit=false}、systemd 的 Restart=on-failure）据此重新拉起 */
+/** 服务形态下重启以这个退出码结束：服务管理器（launchd 的 KeepAlive={SuccessfulExit=false}、systemd 的 Restart=on-failure）据此重新启动进程 */
 export const SERVICE_RESTART_EXIT_CODE = 75;
 
 /**
- * 服务形态的重启策略：停掉 App 后以 {@link SERVICE_RESTART_EXIT_CODE} 退出，由服务管理器拉起新进程，
+ * 服务形态的重启策略：停掉 App 后以 {@link SERVICE_RESTART_EXIT_CODE} 退出，由服务管理器启动新进程，
  * 新进程取锁时本进程的锁已随退出释放。不自己 spawn：detached 的新进程会脱离服务管理器的监管
  * （launchd 不再看着它，systemd 随 cgroup 把它一起杀掉）。
- * 服务形态下没有「新版起不来就回滚」：带回滚凭据的重启（市场更新）照常退出，并记一条说明。
+ * 服务形态下没有「新版启动失败就回滚」：带回滚凭据的重启（市场更新）照常退出，并记一条说明。
  */
 export function createServiceRestartStrategy(): RestartStrategy {
   let restarting = false;
@@ -277,7 +277,7 @@ export function createServiceRestartStrategy(): RestartStrategy {
 }
 
 /**
- * Node 进程重启策略：spawn 一个 detached 子进程接管，确认其起得来后再退出当前进程。
+ * Node 进程重启策略：spawn 一个 detached 子进程接管，确认其启动成功后再退出当前进程。
  *
  * 时序：
  * 1. 等 500ms 让正在飞行的 HTTP/WS 响应有机会先返回客户端
@@ -288,7 +288,7 @@ export function createServiceRestartStrategy(): RestartStrategy {
  *    - ready 或超时 → 放手、`exit(0)`
  *    - **ready 前夭折** → 有回滚凭据则还原工程并重生旧版；否则记 fatal 后 `exit(1)`
  *
- * 第 4 步是「更新 core 从不可逆赌博变成可接受操作」的关键：没有它，新 core 起不来时
+ * 第 4 步是「更新 core 从不可逆赌博变成可接受操作」的关键：没有它，新 core 启动失败时
  * 父进程已经退了，用户只剩手改 package.json 一条路。
  *
  * **单飞**：重启期间的第二次调用直接忽略。窗口是 500ms + stop 耗时 + 等 ready 的全程
@@ -324,7 +324,7 @@ export function createProcessRespawnStrategy(opts: RespawnOptions): RestartStrat
       try {
         await stop();
       } catch (err) {
-        // 停不干净也要往下走：僵尸态比一次不完全的重启更糟。
+        // 无法完全停止也要往下走：僵尸态比一次不完全的重启更糟。
         console.error('[aalis] Error while stopping the app; restarting anyway:', err);
       }
 
@@ -389,7 +389,7 @@ export function createProcessRespawnStrategy(opts: RespawnOptions): RestartStrat
         const { cmd, args, cwd } = rollback.postRestore;
         // **必须看退出码**。这条命令把 node_modules 装回旧版，文件还原只完成了一半的工作。
         // 它失败的途径是现实的：回滚窗口内 registry 不可达、私有源 token 过期、旧版被
-        // unpublish、npm cache 为空（pnpm 装的工程正是这种）、原生模块 postinstall 挂掉。
+        // unpublish、npm cache 为空（pnpm 装的工程正是这种）、原生模块 postinstall 异常退出。
         // 不看退出码就宣告「已回滚」的话，留下的是比原状态更糟的错位树——package.json 声明
         // 旧版、node_modules 实装新版、锁已被删；而 caret 范围仍满足新版，后续 `npm install`
         // 也不会自愈。然后拿旧版进程去加载新版代码，进 crash loop，用户却被告知回滚成功。

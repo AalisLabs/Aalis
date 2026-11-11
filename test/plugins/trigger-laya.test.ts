@@ -41,7 +41,7 @@ import { freePort } from '../helpers/net.js';
 //
 // 侧车一律用本地 http.createServer 做的假侧车（不碰真实侧车）；memory、flow-control、message-archive、
 // media、persona、doctor、process 用内存替身。经 inbound:trigger 钩子链驱动，验证判定各步骤、请求体、阈值、
-// 兜底（只回点名）与熔断告警、诊断项、托管侧车（起停时机、退出与重启、停机）；末段是运行期自检（判定时的
+// 后备判定（只回点名）与熔断告警、诊断项、托管侧车（启停时机、退出与重启、停机）；末段是运行期自检（判定时的
 // cur 与归档正文比对），联调用真实 message-archive 与内存 memory。托管状态机本身见 trigger-laya-sidecar.test.ts，
 // 与 trigger-policy 二选一的联调见 trigger-select.test.ts。
 // ════════════════════════════════════════════════════════════
@@ -363,7 +363,7 @@ describe('plugin-trigger-laya：请求与判定', () => {
     expect(sidecar.requests.map(r => r.body.curNick)).toEqual(['30009', '30010']);
   });
 
-  it('孤代理：请求体里的字符串先换成 U+FFFD 再发（侧车分词器不收孤代理，整条只能兜底）', async () => {
+  it('孤代理：请求体里的字符串先换成 U+FFFD 再发（侧车分词器不收孤代理，整条只能按后备判定）', async () => {
     const lone = '😀'.slice(0, 1); // 截在 emoji 中间
     const mem = fakeMemory([
       { role: 'user', content: `乙: 转发${lone}`, name: '30002', metadata: { userId: '30002', nickname: `乙${lone}` } },
@@ -579,7 +579,7 @@ describe('plugin-trigger-laya：判定各步骤', () => {
     expect(r.message.triggerType).toBe('interval');
   });
 
-  it('群友互戳照常问模型，但不算点名；模型不可用时不按点名兜底', async () => {
+  it('群友互戳照常问模型，但不算点名；模型不可用时后备判定不把它算作点名', async () => {
     const { send, archived } = await setup();
     const message = () =>
       groupMsg('[戳一戳: 甲(30001) 戳了30002]', {
@@ -603,7 +603,7 @@ describe('plugin-trigger-laya：判定各步骤', () => {
       getPersonaName: () => name,
       getNickNames: () => nicks,
     });
-    // 判定不了时兜底 speak = 是否被点名：用 422 让判定落到兜底，放行与否即点名与否
+    // 判定不了时后备判定 speak = 是否被点名：用 422 让判定落到后备判定，放行与否即点名与否
     sidecar.reply = () => ({ status: 422, body: { error: 'empty_cur' } });
     const tooLong = '长'.repeat(33);
     const { send } = await setup({
@@ -672,7 +672,7 @@ describe('plugin-trigger-laya：判定各步骤', () => {
       getPersonaName: o => pick(o)[0],
       getNickNames: o => pick(o)[1],
     };
-    // 兜底 speak = 是否被点名：用 422 让判定落到兜底，放行与否即点名与否
+    // 后备判定 speak = 是否被点名：用 422 让判定落到后备判定，放行与否即点名与否
     sidecar.reply = () => ({ status: 422, body: { error: 'empty_cur' } });
     const { send } = await setup({ personas: [card] });
     const inOther = (content: string) => groupMsg(content, { sessionId: 'onebot:10000:group:20002', groupId: '20002' });
@@ -690,7 +690,7 @@ describe('plugin-trigger-laya：判定各步骤', () => {
   });
 });
 
-describe('plugin-trigger-laya：兜底（只回点名）', () => {
+describe('plugin-trigger-laya：后备判定（只回点名）', () => {
   const failures: Array<[what: string, reply: Reply]> = [
     ['超时', 'hang'],
     ['响应体发一半停住（读体也在超时窗口内）', 'stall'],
@@ -736,9 +736,9 @@ describe('plugin-trigger-laya：兜底（只回点名）', () => {
     ]);
     expect(plain.reached).toBe(false);
     expect(archived).toEqual(['带图闲聊']);
-    expect(calls, '兜底不等附件识别').toHaveLength(0);
+    expect(calls, '后备判定不等附件识别').toHaveLength(0);
     expect(sidecar.requests).toHaveLength(3);
-    expect(decisions(logs).at(-1)?.message).toContain('兜底=侧车熔断中');
+    expect(decisions(logs).at(-1)?.message).toContain('后备判定=侧车熔断中');
   });
 
   it('转入不可用的 error 不写死点名的类型：triggerOnPoke 关闭时不说戳一戳照常回复，戳一戳被吞', async () => {
@@ -752,7 +752,7 @@ describe('plugin-trigger-laya：兜底（只回点名）', () => {
     expect((await send(pokeMsg())).reached).toBe(false);
   });
 
-  it('等附件识别期间熔断：等完不再发请求，本条兜底，也不把熔断往后推', async () => {
+  it('等附件识别期间熔断：等完不再发请求，本条按后备判定，也不把熔断往后推', async () => {
     sidecar.reply = () => ({ status: 500, body: { error: 'internal' } });
     const gate = deferred();
     const { svc, calls } = fakeMedia(() => gate.promise);
@@ -768,7 +768,7 @@ describe('plugin-trigger-laya：兜底（只回点名）', () => {
     expect((await withImage).reached).toBe(false);
     expect(sidecar.requests, '熔断期不发请求').toHaveLength(3);
     expect(byLevel(logs, 'debug').some(m => m.includes('连续 4 次失败'))).toBe(false);
-    expect(decisions(logs).at(-1)?.message).toContain('兜底=侧车熔断中');
+    expect(decisions(logs).at(-1)?.message).toContain('后备判定=侧车熔断中');
   });
 
   it('连不上侧车同样计失败并熔断', async () => {
@@ -843,7 +843,7 @@ describe('plugin-trigger-laya：兜底（只回点名）', () => {
 
   const unsuitable: Array<[what: string, reply: Reply]> = [
     ['422（消息不适合交给模型）', { status: 422, body: { error: 'system_notice' } }],
-    ['413（请求体超限，发请求前判断的兜底）', { status: 413, body: { error: 'too_large' } }],
+    ['413（请求体超限，发请求前已判断，这里是最后一道检查）', { status: 413, body: { error: 'too_large' } }],
   ];
   it.each(unsuitable)('%s：本条只回点名，不计失败，并把此前的失败计数清零', async (_what, reply) => {
     let next: Reply = reply;
@@ -869,7 +869,7 @@ describe('plugin-trigger-laya：兜底（只回点名）', () => {
     expect(byLevel(logs, 'error')).toEqual([]);
   });
 
-  it('熔断到期后先回 422 / 413：不算恢复，诊断仍报尚未确认恢复；之后再攒满 3 次失败属同一次故障，不另记 error', async () => {
+  it('熔断到期后先回 422 / 413：不算恢复，诊断仍报尚未确认恢复；之后再累计 3 次失败属同一次故障，不另记 error', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     let next: Reply = { status: 500, body: { error: 'internal' } };
     sidecar.reply = () => next;
@@ -890,7 +890,7 @@ describe('plugin-trigger-laya：兜底（只回点名）', () => {
 
     next = { status: 500, body: { error: 'internal' } };
     for (let i = 0; i < 3; i++) await send(groupMsg(`又失败 ${i}`));
-    expect(sidecar.requests, '422 清零了失败计数：要再攒满 3 次才重新熔断').toHaveLength(7);
+    expect(sidecar.requests, '422 清零了失败计数：要再累计 3 次才重新熔断').toHaveLength(7);
     expect(byLevel(logs, 'error'), '同一次故障只在转入时告警').toHaveLength(1);
 
     vi.setSystemTime(Date.now() + 30_001);
@@ -963,7 +963,7 @@ describe('plugin-trigger-laya：兜底（只回点名）', () => {
 
     expect((await send(unmarked(GROUP_SID))).reached).toBe(true);
     expect((await send(unmarked(child))).reached).toBe(true);
-    expect((await send(unmarked('onebot:10000:group:20009'))).reached, '没有记下账号的会话照旧兜底').toBe(false);
+    expect((await send(unmarked('onebot:10000:group:20009'))).reached, '没有记下账号的会话照旧按后备判定').toBe(false);
     expect(sidecar.requests.map(r => r.body.selfId)).toEqual(['10000', '10000']);
   });
 
@@ -995,7 +995,7 @@ describe('plugin-trigger-laya：兜底（只回点名）', () => {
     await send(other('1'));
     await send(other('2'));
     await send(groupMsg('照常'));
-    const warns = byLevel(logs, 'warn').filter(m => m.includes('一律按兜底只回点名'));
+    const warns = byLevel(logs, 'warn').filter(m => m.includes('一律按后备判定只回点名'));
     expect(warns).toHaveLength(1);
     expect(warns[0]).toContain('discordx:group');
     expect(sidecar.requests).toHaveLength(1);
@@ -1014,7 +1014,7 @@ describe('plugin-trigger-laya：诊断项', () => {
     expect(result.message).toBe('Laya 触发判定生效中：侧车在线（版本 v-test）');
   });
 
-  it('生效时侧车不可达：error，并说明判定按兜底只回点名', async () => {
+  it('生效时侧车不可达：error，并说明按后备判定只回点名', async () => {
     sidecar.health = { status: 500, body: { error: 'internal' } };
     const { diagnose } = await setup();
     const result = await diagnose();
@@ -1032,7 +1032,7 @@ describe('plugin-trigger-laya：诊断项', () => {
         'HTTP 500 internal; circuit open, retrying in 30s); judging falls back to replying only when mentioned',
     );
     expect((await diagnose()).message).toBe(
-      'Laya 触发判定生效中：判定不可用（侧车连续 3 次失败，最近一次：HTTP 500 internal；熔断 30s 后重试），判定按兜底只回点名',
+      'Laya 触发判定生效中：判定不可用（侧车连续 3 次失败，最近一次：HTTP 500 internal；熔断 30s 后重试），按后备判定只回点名',
     );
     expect(byLevel(logs, 'error')).toEqual([
       '[laya] 判定不可用（侧车连续 3 次失败，最近一次：HTTP 500 internal；熔断 30s 后重试），' +
@@ -1089,9 +1089,9 @@ describe('plugin-trigger-laya：诊断项', () => {
     const IMAGE = { kind: 'image', data: 'https://example.invalid/a.jpg' } as const;
     const POINTER = '[图片 | ref:data/images/a.png]';
     const BLIND =
-      '条判定时只有图片指针、没有内容描述：media 未开启图片到达即识别（vision.recognizeOnArrival），或没有可用的识别模型';
+      '条判定时只有图片指针、没有内容描述：「多模态媒体识别」未开启「图像识别 → 接触到图片立即识别」（vision.recognizeOnArrival），或没有可用的识别模型';
 
-    /** 按给定写法写图片描述位的 media 替身（undefined = 识别跑完但没有描述） */
+    /** 按给定写法写图片描述位的 media 替身（undefined = 识别完成但没有描述） */
     function describing(desc: () => string | undefined) {
       return {
         async processMessage(msg: IncomingMessage) {
@@ -1244,7 +1244,7 @@ describe('plugin-trigger-laya：托管侧车', () => {
   const FALLBACK_TAIL = '已转为只回点名（按 triggerOnAt / triggerOnPoke / 名字识别），其余消息吞掉并归档';
 
   /**
-   * process 替身：拉起的「侧车」不是真进程。ready() 让假侧车的 /health 转为在线并打出就绪行；
+   * process 替身：插件经它启动的「侧车」不是真进程。ready() 让假侧车的 /health 转为在线并打出就绪行；
    * exit() 让它退出（/health 随之下线），与真实子进程一样到下一轮事件循环才报告。
    * exitOnAbort（默认 true）：spawn 的 signal 一中止即以 SIGTERM 退出；false 时由用例调 exit()
    */
@@ -1288,7 +1288,7 @@ describe('plugin-trigger-laya：托管侧车', () => {
 
   const logged = (logs: LogEntry[], prefix: string) => logs.filter(e => e.message.startsWith(prefix)).length;
 
-  /** 托管侧车、Laya 生效、应用已就绪；返回时侧车已拉起、还没就绪 */
+  /** 托管侧车、Laya 生效、应用已就绪；返回时侧车进程已由插件启动、还没就绪 */
   async function managed(opts: { exitOnAbort?: boolean } = {}) {
     sidecar.health = DOWN;
     const proc = fakeProcess(opts);
@@ -1311,20 +1311,20 @@ describe('plugin-trigger-laya：托管侧车', () => {
     );
   }
 
-  it('应用就绪前不托管（CLI 子命令进程与冷启动期间）：不拉起，诊断只探地址', async () => {
+  it('应用就绪前不托管（CLI 子命令进程与冷启动期间）：不启动侧车进程，诊断只探地址', async () => {
     sidecar.health = DOWN;
     const proc = fakeProcess();
     const { logs, diagnose } = await setup({ laya: { sidecarDir: DIR }, process: proc.service });
     await new Promise(r => setTimeout(r, 50));
     expect(proc.children).toHaveLength(0);
-    expect(logged(logs, '[laya] 正在拉起侧车')).toBe(0);
+    expect(logged(logs, '[laya] 正在启动侧车进程')).toBe(0);
     const result = await diagnose();
     expect(result.level).toBe('error');
     expect(result.message).toContain('侧车不可达（HTTP 503 down）');
     expect(sidecar.healthCalls, '只有诊断这一次探活').toBe(1);
   });
 
-  it('生效时拉起侧车，端口取侧车地址；就绪前按兜底只回点名、不发请求、不记 error；就绪后照常判定', async () => {
+  it('生效时启动侧车进程，端口取侧车地址；就绪前按后备判定只回点名、不发请求、不记 error；就绪后照常判定', async () => {
     const { send, logs, diagnose, proc } = await managed();
     const args = proc.children[0].args;
     expect(args[args.indexOf('--port') + 1]).toBe(new URL(sidecar.url).port);
@@ -1333,12 +1333,12 @@ describe('plugin-trigger-laya：托管侧车', () => {
 
     const starting = await diagnose();
     expect(starting.level).toBe('warn');
-    expect(starting.message).toMatch(/^Laya 触发判定生效中：侧车启动中（已 \d+s），就绪前判定按兜底只回点名$/);
+    expect(starting.message).toMatch(/^Laya 触发判定生效中：侧车启动中（已 \d+s），就绪前按后备判定只回点名$/);
     expect(starting.detail).toBe(`endpoint=${sidecar.url}; sidecarDir=${DIR}`);
     expect((await send(groupMsg('随便聊聊'))).reached).toBe(false);
     expect((await send(groupMsg(`${AT}在吗`))).reached).toBe(true);
     expect(sidecar.requests).toHaveLength(0);
-    expect(decisions(logs).at(-1)?.message).toContain('兜底=侧车启动中');
+    expect(decisions(logs).at(-1)?.message).toContain('后备判定=侧车启动中');
     expect(byLevel(logs, 'error')).toEqual([]);
 
     proc.children[0].ready();
@@ -1352,7 +1352,7 @@ describe('plugin-trigger-laya：托管侧车', () => {
     expect(byLevel(logs, 'info')).toContainEqual(expect.stringContaining(`侧车=托管 ${DIR}`));
   });
 
-  it('侧车意外退出：一次故障只记一条 error，退出与重启期间按兜底、不发请求、诊断报 error；重启就绪后首次成功判定记恢复', async () => {
+  it('侧车意外退出：一次故障只记一条 error，退出与重启期间按后备判定、不发请求、诊断报 error；重启就绪后首次成功判定记恢复', async () => {
     const { send, logs, diagnose, proc } = await managed();
     proc.children[0].ready();
     await vi.waitFor(() => expect(logged(logs, '[laya] 侧车就绪')).toBe(1));
@@ -1365,18 +1365,18 @@ describe('plugin-trigger-laya：托管侧车', () => {
     const waiting = await diagnose();
     expect(waiting.level).toBe('error');
     expect(waiting.message).toMatch(
-      /^Laya 触发判定生效中：侧车退出（退出码 4，自愈退出：推理连续失败），\ds 后重启（连续 1 次），判定按兜底只回点名$/,
+      /^Laya 触发判定生效中：侧车退出（退出码 4，自愈退出：推理连续失败），\ds 后重启（连续 1 次），按后备判定只回点名$/,
     );
     expect((await send(groupMsg('随便聊聊'))).reached).toBe(false);
-    expect(decisions(logs).at(-1)?.message).toContain('兜底=侧车重启中');
+    expect(decisions(logs).at(-1)?.message).toContain('后备判定=侧车重启中');
 
     // 重启后还没就绪：仍判定不了，报 error；这时又退出属同一次故障，不另记 error
     await vi.waitFor(() => expect(proc.children).toHaveLength(2), { timeout: 3_000 });
     const restarting = await diagnose();
     expect(restarting.level).toBe('error');
-    expect(restarting.message).toMatch(/侧车重启中（已 \d+s，此前连续 1 次没起来）/);
+    expect(restarting.message).toMatch(/侧车重启中（已 \d+s，此前连续退出 1 次）/);
     expect((await send(groupMsg('还在吗'))).reached).toBe(false);
-    expect(decisions(logs).at(-1)?.message).toContain('兜底=侧车重启中');
+    expect(decisions(logs).at(-1)?.message).toContain('后备判定=侧车重启中');
     proc.children[1].exit(2);
     await vi.waitFor(() => expect(proc.children).toHaveLength(3), { timeout: 4_000 });
     expect(byLevel(logs, 'error')).toHaveLength(1);
@@ -1479,34 +1479,36 @@ describe('plugin-trigger-laya：托管侧车', () => {
     expect(proc.children).toHaveLength(1);
   });
 
-  it('首次拉起前地址上已有侧车：不拉起、直接用它（不需要 process 服务），记 warn；诊断报 warn 并说明怎么改由本插件托管', async () => {
+  it('首次启动侧车进程前地址上已有侧车：不启动、直接用它（不需要 process 服务），记 warn；诊断报 warn 并说明怎么改由本插件托管', async () => {
     const { app, send, logs, diagnose } = await setup({ laya: { sidecarDir: DIR } });
     await app.start();
     await vi.waitFor(() => expect(byLevel(logs, 'warn')).toHaveLength(1));
-    expect(byLevel(logs, 'warn')[0]).toContain('上已有侧车在运行（系统服务或手动启动的），本插件不拉起，直接使用它');
+    expect(byLevel(logs, 'warn')[0]).toContain(
+      '上已有侧车在运行（系统服务或手动启动的），本插件不启动侧车进程，直接使用它',
+    );
     expect((await send(groupMsg('随便聊聊'))).reached).toBe(true);
     expect(byLevel(logs, 'error')).toEqual([]);
     expect(await diagnose()).toMatchObject({
       level: 'warn',
       message:
-        'Laya 触发判定生效中：侧车在线（版本 v-test）；侧车不由本插件托管：首次拉起前端口上已有别的侧车在运行；' +
+        'Laya 触发判定生效中：侧车在线（版本 v-test）；侧车不由本插件托管：本插件首次启动侧车进程前，端口上已有别的侧车在运行；' +
         '要改由本插件托管，先停掉它（系统服务要卸载），再重启 Aalis 或把 trigger 偏好切走再切回',
     });
   });
 
-  it('没有 process 服务：拉不起侧车，记一条 error、按兜底、诊断报 error；服务装上后下一次重试照常拉起', async () => {
+  it('没有 process 服务：无法启动侧车进程，记一条 error、按后备判定、诊断报 error；服务装上后下一次重试照常启动侧车进程', async () => {
     sidecar.health = DOWN;
     const { app, host, send, logs, diagnose } = await setup({ laya: { sidecarDir: DIR } });
     await app.start();
     await vi.waitFor(() => expect(byLevel(logs, 'error')).toHaveLength(1));
     expect(byLevel(logs, 'error')[0]).toBe(
-      `[laya] 判定不可用（process 服务缺席，拉不起侧车，1s 后重启），${FALLBACK_TAIL}`,
+      `[laya] 判定不可用（process 服务缺席，无法启动侧车进程，1s 后重启），${FALLBACK_TAIL}`,
     );
     expect((await send(groupMsg('随便聊聊'))).reached).toBe(false);
     expect(sidecar.requests).toHaveLength(0);
     const result = await diagnose();
     expect(result.level).toBe('error');
-    expect(result.message).toContain('process 服务缺席，拉不起侧车');
+    expect(result.message).toContain('process 服务缺席，无法启动侧车进程');
 
     const proc = fakeProcess();
     host.provide.use(processService, proc.service);
@@ -1636,7 +1638,7 @@ describe('plugin-trigger-laya：运行期自检', () => {
     expect(c.lines).toEqual([summary(1, 0, 0, 1, 1)]);
   });
 
-  it('发请求前就记下：侧车回 422、请求失败、超时时照样比对（兜底吞掉的消息由本插件归档）', async () => {
+  it('发请求前就记下：侧车回 422、请求失败、超时时照样比对（后备判定吞掉的消息由本插件归档）', async () => {
     const { send, logs } = await setup({ realArchive: true, laya: { timeoutMs: 500 } });
     let n = 0;
     const next = () => groupMsg(`第 ${++n} 条正文`, { messageId: String(1000 + n) });
@@ -1671,7 +1673,7 @@ describe('plugin-trigger-laya：运行期自检', () => {
       await archive.archiveIncoming(m);
     };
 
-    // 不发请求的判定不记：生效范围外的私聊；请求体超限（窗口里有一条 1.2 MB 的行，没点名的兜底吞掉并由本插件归档）
+    // 不发请求的判定不记：生效范围外的私聊；请求体超限（窗口里有一条 1.2 MB 的行，没点名的按后备判定吞掉并由本插件归档）
     await decideThenArchive({ ...privateMsg('私聊'), messageId: 'p1' });
     await archive.archiveIncoming(groupMsg('字'.repeat(400_000), { sessionId: 'onebot:10000:group:20003' }));
     expect((await send(next({ sessionId: 'onebot:10000:group:20003', groupId: '20003' }))).reached).toBe(false);

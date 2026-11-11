@@ -53,7 +53,7 @@ type State = keyof typeof STATES;
 const choicesOf = (labels: Readonly<Record<string, TextRef>>) =>
   Object.entries(labels).map(([value, label]) => ({ value, label: text(label) }));
 
-/** 非 registry 来源：市场更新不了，写明原因 */
+/** 非 registry 来源：市场无法更新，写明原因 */
 const ORIGINS: Record<Exclude<Origin, 'registry'>, TextRef> = {
   workspace: t('originWorkspace'),
   link: t('originLink'),

@@ -45,7 +45,7 @@ describe('高危工具不得退回 public', () => {
     for (const name of ['create_subtask', 'send_to_subtask', 'delete_subtask']) {
       const t = all.find(x => x.name === name);
       expect(t, `${name} 未注册`).toBeDefined();
-      expect(t?.visibility, `${name} 退回 public：level-0 用户可连续创建子任务烧 API 预算`).not.toBe('public');
+      expect(t?.visibility, `${name} 退回 public：level-0 用户可连续创建子任务消耗 API 预算`).not.toBe('public');
     }
   });
 

@@ -12,7 +12,7 @@ const SOURCE = {
   historyCursorExpired: '历史游标已失效：{before}',
   noTaskRegistry: '没有后台任务登记',
   noTask: '后台任务不存在：{id}',
-  noAgentForSubsessions: '没有能停止回合的 agent 服务，子会话的回合停不了',
+  noAgentForSubsessions: '没有能停止回合的 agent 服务，子会话的回合无法停止',
   noAgent: '没有能停止回合的 agent 服务',
   turnNotRunning: '这一轮不在跑：{turnId}',
   noCompression: '没有压缩服务',

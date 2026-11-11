@@ -45,7 +45,7 @@ export class PluginManager implements PluginManagerService {
   /** 已转入后台、尚未落定也未被接手的激活（getStatus 据此给出 slow；abort 时据此判断 flight 是否早已放开它） */
   readonly #background = new Set<Activation>();
   /**
-   * 旧实例关完仍有工作没落定（清理或被拆的初始化超过宽限）的实例 id：落定之前不起同 id 的新实例，条目卸载后照样记着
+   * 旧实例关完仍有工作没落定（清理或被拆的初始化超过宽限）的实例 id：落定之前不启动同 id 的新实例，条目卸载后照样记着
    * （getStatus 据此给出 lingering）。落定后补一次重算
    */
   readonly #lingering = new Set<string>();
@@ -60,7 +60,7 @@ export class PluginManager implements PluginManagerService {
   }
   /**
    * 有被推迟的重算：在飞 recompute 或挂起段期间到来的请求合并成一次。
-   * 目标态只看容器里此刻有没有服务，合并不丢信息。消费前先摘下，执行期间的新请求另起一次。
+   * 目标态只看容器里此刻有没有服务，合并不丢信息。消费前先摘下，执行期间的新请求另排一次。
    */
   #queued = false;
   /**
@@ -482,7 +482,7 @@ export class PluginManager implements PluginManagerService {
    * 每轮：
    * 1. 按 required 依赖正序（提供者→消费者）拓扑排序。
    * 2. Phase A：把目标不再是 active 的成批关闭，它们之间的次序由关停编排按实际依赖定。
-   * 3. Phase B：正向遍历，激活目标 active 且依赖满足的 pending entry（提供者先起、消费者后起）。
+   * 3. Phase B：正向遍历，激活目标 active 且依赖满足的 pending entry（提供者先激活、消费者后激活）。
    * 4. 本轮有变动则继续下一轮，直到稳定；最后发 plugins:changed。
    *
    * 判据只有一条：服务此刻在不在容器里（别的计划正关着的提供者不算在）。

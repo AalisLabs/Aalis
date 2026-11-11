@@ -8,13 +8,14 @@ const SOURCE = {
   groupSummary: '按 Aalis sessionId 读取近期会话历史，用于核实跨会话上下文',
   enabledLabel: '启用会话历史读取工具',
   maxLimitLabel: '单次最多读取条数',
-  maxLimitDescription: 'session_get_history 一次能返回的硬上限；LLM 传入 limit 超过此值会被 cap。建议 50~200。',
-  defaultLimitLabel: '默认读取条数（LLM 不传 limit 时）',
-  defaultLimitDescription: '不能超过 maxLimit。调高可让 agent 被动获取更多上下文，代价是 token 预算。',
+  maxLimitDescription: '读取会话历史一次最多返回的条数，模型要的更多时按这个值算。建议 50~200。',
+  defaultLimitLabel: '默认读取条数',
+  defaultLimitDescription:
+    '模型没指定条数时读取的条数，不能超过「单次最多读取条数」。调高能给模型更多上下文，也更耗 token。',
   includeArchivedDefaultLabel: '默认包含已归档消息',
   perMessageMaxCharsLabel: '每条消息截断字数',
   perMessageMaxCharsDescription:
-    '返给 LLM 的每条历史消息的字符上限；0 = 不截断（推荐）。超出会以「剩余 N 字符未展示」明示。',
+    '返给模型的每条历史消息的字符上限；0 = 不截断（推荐）。超出的部分截掉，末尾标「…[已截断，还剩 N 个字符未展示]」。',
 } as const;
 export type Source = typeof SOURCE;
 

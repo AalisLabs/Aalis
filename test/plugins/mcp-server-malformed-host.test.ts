@@ -9,7 +9,7 @@ import { freePort } from '../helpers/net.js';
 // createServer 的 async 回调此前全程无 try/catch，且第一行用 Host 头拼 URL base。
 // Node 把 `Host:`（空值）解析成空字符串——空串非 nullish，`??` 兜不住，base 退化成
 // 'http://' → ERR_INVALID_URL → 回调返回的 Promise 无人接 → runtime 的
-// unhandledRejection 处理器判为致命并结束进程。一行请求打死整个 bot。
+// unhandledRejection 处理器判为致命并结束进程。一行请求终止整个 bot。
 // ════════════════════════════════════════════════════════════
 
 /** 直接用裸 socket 发畸形请求：http.request 不允许构造空 Host */
@@ -29,14 +29,14 @@ function rawRequest(port: number, raw: string): Promise<string> {
   });
 }
 
-describe('plugin-mcp-server: 畸形 Host 不得打死进程', () => {
+describe('plugin-mcp-server: 畸形 Host 不得终止进程', () => {
   const apps: App[] = [];
   afterEach(async () => {
     for (const a of apps.splice(0)) {
       try {
         await a.stop();
       } catch {
-        /* 停不掉也继续 */
+        /* 无法停止也继续 */
       }
     }
   });

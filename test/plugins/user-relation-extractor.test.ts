@@ -734,7 +734,7 @@ describe('plugin-user-relation: extractor', () => {
     expect(userContent).toContain('part-of');
     // 2. candidate 行带 scope 标签（sessA 事件相对 sessB 是 other）
     expect(userContent).toMatch(/A群工会战集结.*scope=other:sessA/);
-    // 3. 消息行带 [sid:] 前缀（两个 session 都拉到了）
+    // 3. 消息行带 [sid:] 前缀（两个 session 都获取到了）
     expect(userContent).toContain('[sid:sessA]');
     expect(userContent).toContain('[sid:sessB]');
   });

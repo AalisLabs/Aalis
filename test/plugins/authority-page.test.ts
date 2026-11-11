@@ -133,7 +133,7 @@ async function boot(opts: BootOptions = {}) {
   await app.plugins.idle();
 
   const manager = host.services.use.get(authority) as AuthorityManager | undefined;
-  if (!manager) throw new Error('authority 服务未注册 —— 插件没起来');
+  if (!manager) throw new Error('authority 服务未注册 —— 插件未启动');
   /** 调一个动作，成功时回那句结果（原文），失败时把状态码与原因抛出来 */
   const act = async (action: string, body: Record<string, unknown> = {}): Promise<string> => {
     const reply = await pages.act('authority', action, body);
@@ -549,12 +549,11 @@ describe('禁用与免确认', () => {
     const rulesTab = 'tabs' in view.content ? view.content.tabs.find(tab => tab.key === 'rules') : undefined;
     expect(toSource(rulesTab?.content[0])).toMatchObject({
       description:
-        '禁用压过一切，连 owner 也拒。免确认只对以 owner 身份做的事生效：owner 本人、owner 派的子任务、owner 建的定时任务、' +
-        '定义者与调用者都是 owner 的编排；别人发起的、有别人的话一起进来的照旧要 owner 批准，不能产生审批的直接拒绝；不放宽等级。' +
-        '都可以写通配，如 tool:*。',
+        '禁用压过一切，连 owner 也拒。免确认只对以 owner 身份做的事生效，不放宽等级；别人发起或参与的照旧要 owner 批准，' +
+        '无法发起审批的直接拒绝。可写通配，如 tool:*。',
     });
     expect(toSource(view.actions?.waiveConfirm.input?.pattern.description)).toBe(
-      '能力键或通配，如 tool:shell_exec、command:level、tool:*。只免以 owner 身份做的事的确认，别人发起的、有别人的话一起进来的照旧要 owner 批准',
+      '能力键或通配，如 tool:shell_exec、command:level、tool:*。只免以 owner 身份做的事的确认，别人发起或参与的照旧要 owner 批准',
     );
     expect(toSource(await pages.data('authority', 'rules'))).toEqual([
       { key: 'deny:tool:shell.exec', rule: 'tool:shell.exec', kind: '禁用（连 owner 也拒）' },

@@ -2,7 +2,7 @@
  * Shell 工具 —— exec：在本机 shell 里执行命令并返回结果
  *
  * exec 声明可转后台（RegisteredTool.background）：在前台等满让出时限还没结束，执行器把它登记成后台任务、先回给模型，
- * 结束时通知起它的会话；查看输出、等待与停止都经执行器的后台任务工具。命令的输出边跑边写进执行器给的输出口
+ * 结束时通知发起它的会话；查看输出、等待与停止都经执行器的后台任务工具。命令的输出边跑边写进执行器给的输出口
  * （ToolCallContext.output），停只认执行器给这次调用的中止信号（ToolCallContext.signal），不另设超时。
  */
 
@@ -68,7 +68,7 @@ export function registerShellTools(tools: BoundTools, config: ShellConfig): void
           '适用于运行脚本、安装依赖、编译项目、git 操作、系统管理等。' +
           '命令在服务器本地执行，拥有当前进程的完整权限。' +
           '要跑很久的命令（构建、测试、开发服务器、文件监视）同样用它：到时没结束会转到后台。' +
-          '命令按前台写法给出，不要再加 & 或 nohup：命令自己放到后台的子进程在 shell 退出后不受管理，停不掉，也没有结束通知。' +
+          '命令按前台写法给出，不要再加 & 或 nohup：命令自己放到后台的子进程在 shell 退出后不受管理，无法停止，也没有结束通知。' +
           '长驻进程正常运行时不会结束，也就没有结束通知，是否就绪看它的输出。',
         parameters: {
           type: 'object',
@@ -98,8 +98,8 @@ export function registerShellTools(tools: BoundTools, config: ShellConfig): void
 
       logger.debug(`exec: ${command} (cwd: ${cwd.uri})`);
 
-      // 不自起无上限累加器：直接用 process-local wait() 内部有 maxBuffer 上限的 result.stdout/stderr。
-      // 自起 `stdout += chunk` 无上限——「超限只停累积不杀进程」语义下会无界增长 → OOM。
+      // 不自行创建无上限的累加器：直接用 process-local wait() 内部有 maxBuffer 上限的 result.stdout/stderr。
+      // 自行累加 `stdout += chunk` 没有上限——「超限只停累积不杀进程」语义下会无界增长 → OOM。
       try {
         // exec 不传 env，继承守护进程的完整环境（含代理与密钥类变量）——owner 工具的既定取舍。
         // 需要环境隔离的执行走 code-sandbox-os（env -i 真清）。

@@ -25,9 +25,9 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 // ════════════════════════════════════════════════════════════
 // 出站正文默认按纯文字发：只有带 markup 的（她的回复）才把 <at>、<image|record|video url>、<reply>、<face> 解析成
 // 平台的 @、媒体与引用并分条；指令回显、宿主提示与第三方插件的文字原样整条发出。她回复里媒体标记的网址由适配器
-// 经 safeFetch 取下来内联，不交给实现端去拉；地址不是网址的标记去掉（这里没装 plugin-image-sender，存储地址的也一样）。
+// 经 safeFetch 取下来内联，不交给实现端去下载；地址不是网址的标记去掉（这里没装 plugin-image-sender，存储地址的也一样）。
 // 一条回复最多内联 10 个媒体（多出的不下载、去掉，投递报失败），同时最多下载 4 个；各条按顺序发，前面的文字不等后面的下载。
-// 本地起一个假的 OneBot 实现端记录发出的 action。
+// 本地启动一个假的 OneBot 实现端记录发出的 action。
 // ════════════════════════════════════════════════════════════
 
 type WsServer = {
@@ -57,7 +57,7 @@ let httpBase: string;
 const fetched: string[] = [];
 /** /pair-* 里还在等另一个请求的回应 */
 const pairWaiting: Array<() => void> = [];
-/** /held-* 的回应：测试放行之前一直挂着 */
+/** /held-* 的回应：测试放行之前一直未返回 */
 const held: Array<() => void> = [];
 /** /slow-* 同时在途的请求数与它的峰值 */
 const slow = { inFlight: 0, peak: 0 };

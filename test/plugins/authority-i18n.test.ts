@@ -38,7 +38,7 @@ import { freePort, waitListening } from '../helpers/net.js';
 const CHAT = 'zz-chat';
 const USER = 'zz-user';
 const OWNER = 'zz-owner';
-/** 预置在会话表里的房间：经网关的原生入站会跑完整条相位链，不经它收录 */
+/** 预置在会话表里的房间：经网关的原生入站会执行整条相位链，不经它收录 */
 const ROOMS = [1, 2, 3, 4, 5, 6].map(n => `${CHAT}:bot:group:${n}`);
 const DENIED = '权限不足："command:zz-admin" 需等级 2（当前 0）';
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };

@@ -4,7 +4,7 @@
  * 设计动机：
  *   plugin-doctor 是开放注册中心（DoctorService.registerCheck）。其它插件应
  *   贡献自己领域的检查项（例如 storage 检查存储根可写、embedding-ollama 检查
- *   模型可用），而不是把所有逻辑塞回 doctor 内部。
+ *   模型可用），而不是把所有逻辑放回 doctor 内部。
  *
  *   为避免 storage 等下游插件直接 runtime depend 实现包 plugin-doctor
  *   （会形成「实现包 ↔ 业务插件」的双向耦合），仿照 api-storage /
@@ -14,7 +14,7 @@
  *   AalisEvents 的模块增强统一在本文件做，避免多包
  *   重复声明导致 TS 合并冲突。
  *
- *   另有「缺」与「在等」的共享判据（unmet.ts）：插件没起来时沿依赖链追到根，
+ *   另有「缺」与「在等」的共享判据（unmet.ts）：插件未启动时沿依赖链追到根，
  *   runtime 的启动告警、plugin-doctor、WebUI、终端界面与市场的卸载闸都用它；
  *   以及插件失败给人看的说明（failure.ts）：core 只存失败的原值，说明按它现取。
  *

@@ -84,7 +84,7 @@ async function extract(history: Message[], reply: unknown, facts?: Array<{ id: s
   };
 }
 
-/** 等这一轮提取跑完：调够次数之后再让写入落完 */
+/** 等这一轮提取执行完毕：调够次数之后再让写入落完 */
 async function settle(chat: ReturnType<typeof vi.fn>, calls: number): Promise<void> {
   await vi.waitFor(() => expect(chat).toHaveBeenCalledTimes(calls));
   await new Promise(resolve => setTimeout(resolve, 50));

@@ -208,7 +208,7 @@ describe('user-relation: deleteNode 守门', () => {
       role: 'participant',
       evidence: [ev()],
     });
-    // 先钉住「边真的建起来了」——本用例曾传错字段名（personId/eventId），两个端点都成了
+    // 先钉住「边确实建立了」——本用例曾传错字段名（personId/eventId），两个端点都成了
     // undefined，下面的级联断言又去查不存在的 `to`/`toId`，于是**两端同时空转**：
     // 把 deleteNode 改成完全不级联，全量测试照样全绿。tsconfig.test.json 现在会拦住这类错。
     const before = await store.loadAll();

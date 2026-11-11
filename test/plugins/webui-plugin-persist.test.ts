@@ -706,7 +706,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
   });
 
   it('删实例的级联重算期间外部改了配置文件：热重载不会把它按旧文件重新登记成文件里没有的在跑实例', async () => {
-    // provider:x 是 zz-s 的首选提供者，删除时 dependent 在卸载收尾的重算里改接主实例；让它的 apply 挂住，
+    // provider:x 是 zz-s 的首选提供者，删除时 dependent 在卸载收尾的重算里改接主实例；让它的 apply 一直阻塞，
     // 热重载就能落进这段重算（没有真实的异步工作时窗口只有微任务长）
     const initial: Partial<AalisConfig> = {
       name: 'T',

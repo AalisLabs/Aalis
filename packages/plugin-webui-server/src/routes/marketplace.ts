@@ -177,7 +177,7 @@ export function resolveLocalInfo(
   }
   // resolve 不到（不在 node_modules）却被扫描扫出来 → 只能来自 monorepo 的 packages/ 源码目录。
   // 此处不可沿用 classifyDepSpec(undefined)=transitive：那是「在 node_modules 里但非直接依赖」
-  // 的语义，而这里的包压根不在 node_modules。实测本仓库的第一方插件全走这条分支。
+  // 的语义，而这里的包根本不在 node_modules。实测本仓库的第一方插件全走这条分支。
   //
   // 元数据取自扫描时读到的那份 package.json：pnpm 工作区下根 node_modules 只链根依赖
   // （本仓库根 dependencies 仅 core 与 runtime），packages/ 下的包一律 resolve 不到，故这条
@@ -391,7 +391,7 @@ export function toManifest(packument: {
   const dependencies = [...new Set([...Object.keys(v?.dependencies ?? {}), ...Object.keys(v?.peerDependencies ?? {})])]
     .filter(n => PKG_NAME_RE.test(n))
     .slice(0, MAX_DEPS);
-  // 只校形状不丢字段：optional 等其余键原样透传（未来扩展不被这层吃掉）
+  // 只校形状不丢字段：optional 等其余键原样透传（未来扩展不被这层丢弃）
   const strList = (x: unknown): string[] | undefined =>
     x === undefined ? undefined : Array.isArray(x) ? x.filter((s): s is string => typeof s === 'string') : [];
   const rawSvc = v?.aalis?.service;
@@ -611,7 +611,7 @@ export function registerMarketplaceRoutes(
 
   // 依赖图：本地 import 依赖图（name→deps 扫描）+ 运行时服务图（getStatus）合成，供装/卸/装前展示。
   // 两类边：import（链路树，可传递）+ service（每节点直接标注 + 根的提供者解析）。
-  // 装前（target 本地不存在）：拉一次 packument 取其直接依赖作根种子，深层仍走本地图。
+  // 装前（target 本地不存在）：下载一次 packument 取其直接依赖作根种子，深层仍走本地图。
   route(expressApp, 'GET /api/marketplace/depgraph', gate(), async (req, res) => {
     const name = typeof req.query.name === 'string' ? req.query.name.trim() : '';
     if (!name || !PKG_NAME_RE.test(name)) {
@@ -630,7 +630,7 @@ export function registerMarketplaceRoutes(
         },
       ]),
     );
-    // target 本地没有（装前浏览）→ 向安装源拉 packument 取 latest 的直接依赖 + 服务，注入工作图当根种子。
+    // target 本地没有（装前浏览）→ 向安装源下载 packument 取 latest 的直接依赖 + 服务，注入工作图当根种子。
     let rootServices: { provides: string[]; requires: string[] } | undefined;
     let upstreamMap = depMap;
     const source = depMap.has(name) ? undefined : await versionSource();
@@ -647,7 +647,7 @@ export function registerMarketplaceRoutes(
           }
         }
       } catch {
-        /* 拉不到就给空根，不阻断 */
+        /* 获取失败就给空根，不阻断 */
       }
     }
     // upstream 放宽 isRelevant 到 @aalis scope：看得见缺失的生态依赖（中断），又不带 express 这类库噪声。

@@ -161,7 +161,7 @@ async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
 
   let turns = 0;
   /**
-   * 开一轮：agent:turn:before 的默认动作一直挂着，用例经 inside 把动作放进这一轮的异步上下文里执行，
+   * 开一轮：agent:turn:before 的默认动作一直未返回，用例经 inside 把动作放进这一轮的异步上下文里执行，
    * finish 发 agent:turn:after 收尾；finish('blocked') 是被下游拦下的一轮，不发 turn:after。
    */
   const openTurn = (sessionId: string, from: Partial<IncomingMessage> = {}) => {
@@ -405,7 +405,7 @@ describe('订阅与快照', () => {
     // 订阅在这里拿到快照的 seq，读历史卡在闸口
     const subscribing = c.subscribe(s.id);
 
-    // 读历史卡住的时候：在跑的那轮说完收尾，一条消息落库，排在它之后的一轮从头跑完（同一会话一轮接一轮）
+    // 读历史卡住的时候：在跑的那轮说完收尾，一条消息落库，排在它之后的一轮从头执行完毕（同一会话一轮接一轮）
     await running.text('，另一半');
     // 与在跑那轮已产出的条目错开一毫秒以上：在途条目按时间并进历史
     await new Promise(resolve => setTimeout(resolve, 5));

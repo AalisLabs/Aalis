@@ -109,7 +109,7 @@ afterEach(async () => {
     try {
       await a.stop();
     } catch {
-      /* 停不掉也要继续停下一个 */
+      /* 无法停止也要继续停下一个 */
     }
   }
 });
@@ -254,7 +254,7 @@ describe('停机等本实例自己发起的写盘落定', () => {
     return { opened, open };
   }
 
-  /** 起本插件并等到监听之后（access.txt 此时已开始写）；不给 initial 时本插件在没有存储的情况下起来，存储由用例之后再提供 */
+  /** 启动本插件并等到监听之后（access.txt 此时已开始写）；不给 initial 时本插件在没有存储的情况下启动，存储由用例之后再提供 */
   async function start(tokenMode: 'ephemeral' | 'persist', initial?: StorageService) {
     const app = new App({ name: 'T', logLevel: 'error', logger: makeCapturingLogger([]) });
     apps.push(app);

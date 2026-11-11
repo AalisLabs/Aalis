@@ -15,7 +15,7 @@ import { type SandboxBackend, wrapForSandbox } from './sandbox.js';
 import { t } from './texts.js';
 
 /**
- * 各平台的最小沙箱命令：跑通即有该后端，跑不通时按 fix 修。Linux 与正式运行（sandbox.ts 的 buildBwrapArgs）一样挂 /dev 与 /proc：
+ * 各平台的最小沙箱命令：运行成功即有该后端，运行失败时按 fix 修。Linux 与正式运行（sandbox.ts 的 buildBwrapArgs）一样挂 /dev 与 /proc：
  * 只放开 seccomp、挂不了 /proc 的容器里，不挂的探测会报 bwrap 可用，之后每次运行都失败
  */
 const PROBES: Partial<Record<NodeJS.Platform, { backend: SandboxBackend; cmd: string; args: string[]; fix: TextRef }>> =
@@ -38,10 +38,10 @@ const PROBES: Partial<Record<NodeJS.Platform, { backend: SandboxBackend; cmd: st
 const NONE = t('none');
 
 /**
- * 功能性探测：经 process 服务真正跑一次最小沙箱命令，退出码为 0 才算有后端。
+ * 功能性探测：经 process 服务真正执行一次最小沙箱命令，退出码为 0 才算有后端。
  * 比「命令是否存在」更强——一次覆盖 存在性 + Linux unprivileged userns 是否真能用。
  * 没有后端时 problem 写怎么修与原因（日志取原文，诊断交文字对象）。
- * 停用、停机时随 signal 中止并抛出（不落成「无后端」），启动器挂住也不拖满停机宽限。
+ * 停用、停机时随 signal 中止并抛出（不落成「无后端」），启动器阻塞时也不拖满停机宽限。
  */
 async function probeBackend(
   proc: ProcessService,

@@ -27,7 +27,7 @@ export async function loadImage(
 }
 
 /**
- * safeFetch 只管 SSRF 与重定向，不带超时也不限体积：源地址来自模型或用户，慢速对端会挂住整轮工具调用，超大响应整块读进
+ * safeFetch 只管 SSRF 与重定向，不带超时也不限体积：源地址来自模型或用户，慢速对端会让整轮工具调用一直阻塞，超大响应整块读进
  * 内存。体积按流式累计判定——无 Content-Length 的响应要全部读完才看得到大小。
  */
 async function downloadImage(source: string, signal: AbortSignal | undefined): Promise<Buffer> {

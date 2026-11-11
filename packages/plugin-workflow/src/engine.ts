@@ -167,7 +167,7 @@ interface ExecCtx extends EngineCaps {
   vars: Record<string, unknown>;
   outputs: Record<string, unknown>;
   toolCallContext: ToolCallRequest;
-  /** 调起这次运行的会话（经 workflow_run 调起时有）：它所在的一轮在等这次运行 */
+  /** 发起这次运行的会话（经 workflow_run 调用时有）：它所在的一轮在等这次运行 */
   callerSessionId?: string;
   signal: AbortSignal;
 }
@@ -220,9 +220,9 @@ const DEFAULT_AGENT_TIMEOUT_SEC = 120;
  * 排在那里在跑的一轮之后；送达在节点自己的异步上下文里调用，agent 让那一轮跑在送达它的调用的上下文里，节点据此只认自己那一轮的
  * agent:turn:after（同一会话里别的回合、同一编排别的运行的同名节点都不认）。回复文本作为节点结果，可被 `{{outputs.X}}` 下游引用。
  *
- * 失败：outcome 为 error/aborted；指向调起这次运行的会话（那一轮在等这次运行，节点开不了轮）立即失败、不送达；网关不在时失败；
+ * 失败：outcome 为 error/aborted；指向发起这次运行的会话（那一轮在等这次运行，节点无法开始一轮）立即失败、不送达；网关不在时失败；
  * 送达返回（这条输入落定）时还没认到结局，就是在网关相位被吞（禁言、限速等）或被放掉，立即失败；超时；run 取消时立即停止等待
- * （已送达的回合不随之中止，照常跑完，回复不再被捕获）。
+ * （已送达的回合不随之中止，照常执行完毕，回复不再被捕获）。
  */
 async function execAgent(node: AgentNodeSpec, ec: ExecCtx): Promise<string> {
   const instruction = interpolateString(node.instruction, ec.vars, ec.outputs);
@@ -312,7 +312,7 @@ interface RunOptions extends EngineCaps {
   runId: string;
   vars: Record<string, unknown>;
   toolCallContext: ToolCallRequest;
-  /** 调起这次运行的会话（经 workflow_run 调起时有）：指向它的 agent 节点立即失败 */
+  /** 发起这次运行的会话（经 workflow_run 调用时有）：指向它的 agent 节点立即失败 */
   callerSessionId?: string;
   /**
    * 取消信号：中止后不再调度新节点，阻塞中的 wait / agent 节点立即失败；tool 节点经 toolCallContext.signal 收到，

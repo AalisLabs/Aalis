@@ -5,7 +5,7 @@ export default defineLocale<Source>()({
   displayName: 'Languages',
   pageTitle: 'Translation',
   dictionariesDescription:
-    'How the source dictionaries of each package stand in every language. Translated includes what language packs fill in; stale entries are pack entries whose source wording has changed, conflicts are entries with differing translations, and broken entries are translations that fail to parse or whose parameters do not match the source. Select a row to see the keys and the skeletons to translate.',
+    'How the dictionary of each package stands in every language: stale means the source wording has changed, conflicts are entries with differing translations, and broken entries are translations that fail to parse or whose parameters do not match the source. Select a row to see the keys and the skeletons to translate.',
   dictionary: 'Dictionary',
   language: 'Language',
   translated: 'Translated',

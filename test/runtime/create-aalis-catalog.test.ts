@@ -36,7 +36,7 @@ describe('toPluginCatalog（npm search → 插件目录）', () => {
     expect(toPluginCatalog(data).map(e => e.name)).toEqual(['@aalis/plugin-llm-openai', '@aalis/plugin-mcp-client']);
   });
 
-  it('契约/前端/工具库不必剔除——它们带的是 aalis-api / aalis-interface / aalis-util，压根不进检索结果', () => {
+  it('契约/前端/工具库不必剔除——它们带的是 aalis-api / aalis-interface / aalis-util，根本不进检索结果', () => {
     // 判据是**关键词**不是包名。此前按 `/-api$/` 与 `/webui-client/` 剔名，是关键词收敛之前的
     // 遗留；收敛后即成死代码，且改名（plugin-*-api → api-*）会让按名判定整体失配。
     // 这里断言的是「即便它们真的混进来了，也不该靠包名去挡」——挡它们的是检索关键词。

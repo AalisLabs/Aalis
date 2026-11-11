@@ -186,7 +186,7 @@ describe('plugin-usage-stats', () => {
     ]);
   });
 
-  it('账本读不出来（不是不存在）时插件起不来，不会照空账本往下记', async () => {
+  it('账本读不出来（不是不存在）时插件无法启动，不会照空账本往下记', async () => {
     const home = tempHome();
     mkdirSync(ledgerOf(home), { recursive: true });
     const stack = await start(home);
@@ -270,7 +270,7 @@ describe('plugin-usage-stats', () => {
     expect(await second.pages.data(PAGE, 'days')).toEqual(expected);
   });
 
-  it('填了单价才有费用：按每百万 token 的输入、缓存命中、输出价估算，没填单价的模型那一格空着；单价写错时插件起不来', async () => {
+  it('填了单价才有费用：按每百万 token 的输入、缓存命中、输出价估算，没填单价的模型那一格空着；单价写错时插件无法启动', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     const stack = await start(tempHome(), { prices: { a: '2, 0.5, 8' }, currency: 'USD' });
     await seed(stack);

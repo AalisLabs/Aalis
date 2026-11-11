@@ -20,7 +20,7 @@ interface HttpConfig {
   storage: Pick<ServiceSelection<StorageService>, 'present' | 'use'>;
 }
 
-/** 流式读取响应体，累计超过 maxBytes 立即中止并抛错——防无 Content-Length 时全量缓冲撑爆内存。 */
+/** 流式读取响应体，累计超过 maxBytes 立即中止并抛错——防无 Content-Length 时全量缓冲耗尽内存。 */
 async function readBodyCapped(response: Response, maxBytes: number): Promise<Buffer> {
   if (!response.body) return Buffer.from(await response.arrayBuffer());
   const reader = response.body.getReader();
@@ -156,7 +156,7 @@ export function registerHttpTools(tools: BoundTools, config: HttpConfig): void {
           });
         }
 
-        // 流式读取并设上限：无 Content-Length 时也不会全量缓冲撑爆内存
+        // 流式读取并设上限：无 Content-Length 时也不会全量缓冲耗尽内存
         const bodyBuf = await readBodyCapped(response, config.maxResponseSize);
         // 是不是文本按内容判（服务端声明的类型是标签）：按声明的编码解不开的（二进制，或编码与声明的不符）只返回元信息；
         // 声明是 JSON 的美化
@@ -253,16 +253,16 @@ export function registerHttpTools(tools: BoundTools, config: HttpConfig): void {
           });
         }
 
-        // 流式读取并设上限：无 Content-Length 时也不会全量缓冲撑爆内存（超限即中止抛错）
+        // 流式读取并设上限：无 Content-Length 时也不会全量缓冲耗尽内存（超限即中止抛错）
         const buffer = await readBodyCapped(response, config.maxResponseSize);
 
         if (typeof savePath !== 'string' || !savePath.trim()) throw new Error('保存路径不能为空');
         const storageUri = resolveAgainstCwd(savePath, 'workspace:/');
-        // 与 file_write 一致：下载只准落 agent 工作区，禁止写入 data:/pluginData:/logs 等系统根
+        // 下载只准落 agent 工作区（workspace、tmp），禁止写入 data:/pluginData:/logs 等其他根
         // （防被提示注入诱导 http_download 覆盖凭据/配置文件）。
         const root = parseUriRoot(storageUri);
         if (root !== 'workspace' && root !== 'tmp') {
-          throw new Error(`http_download 仅允许写入 workspace:/ 或 tmp:/，不允许 ${root}:/（系统根受保护）`);
+          throw new Error(`http_download 仅允许写入 workspace:/ 或 tmp:/，不允许 ${root}:/`);
         }
         await storage.writeFile(storageUri, buffer);
 

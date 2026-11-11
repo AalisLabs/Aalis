@@ -94,7 +94,7 @@ async function buildBlock(
   ];
   if (personIds.length === 0) return null;
 
-  // 全图只加载一次，喂给下面几处消费者（各人的子图遍历 + 全局热点）。`loadAll()` 是 O(全图)
+  // 全图只加载一次，交给下面几处消费者（各人的子图遍历 + 全局热点）。`loadAll()` 是 O(全图)
   // （实测 3090 条 / 41 MB / ≈540 ms），读两遍是本插件最大的一笔固定开销。
   const graph = await service.loadAll();
   const sections: string[][] = [];

@@ -6,7 +6,7 @@ import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
 // 终端的会话视图（plugin-cli 的 session-view.ts）与会话服务之间的帧规则：请求按 id 配对；订阅的回应到达的那一拍就写上快照的
-// 位置（会话服务回应之后紧接着同步补发取快照期间攒着的推送）；推送的 epoch 变了、收到 session/resync 都重新订阅，seq 不大于
+// 位置（会话服务回应之后紧接着同步补发取快照期间暂存的推送）；推送的 epoch 变了、收到 session/resync 都重新订阅，seq 不大于
 // 快照的丢掉；取后台任务列表期间到的增量取完补上，连接断开时后台任务清空；握手出错时告警、关掉这条连接，不再订阅。她的回复
 // 由不由条目画，等到没有在途的订阅再答。
 // 会话服务是假的：按方法回应，推送由用例发
@@ -184,7 +184,7 @@ describe('终端的会话视图：帧的规则', () => {
     });
     const v = attach(fake);
     await v.view.ensureSubscribed();
-    // 取第二份快照期间历史又变了：会话服务攒着的 resync 在回应之后同一拍补发
+    // 取第二份快照期间历史又变了：会话服务暂存的 resync 在回应之后同一拍补发
     fake.afterSubscribe.push({ method: 'session/resync', params: { sessionId: SESSION, epoch: EPOCH, seq: 1 } });
     fake.push('session/resync', { sessionId: SESSION, epoch: EPOCH, seq: 1 });
     let drawn: boolean | undefined;

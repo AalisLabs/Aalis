@@ -27,10 +27,10 @@ import { captureRoutes } from '../fixtures/webui-routes.js';
 import { deferred } from '../helpers/deferred.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
-// 插件区要的列表字段与管理动作：列表给子系统（插件声明的原样给）、版本、没起来的原因（缺与在等沿链追到根、待配置）与「界面所在」的标记；
+// 插件区要的列表字段与管理动作：列表给子系统（插件声明的原样给）、版本、未启动的原因（缺与在等沿链追到根、待配置）与「界面所在」的标记；
 // 界面所在的插件经这些路由停用不了；重载经 bounce 重建插件，失败的插件重载即重试。
 // 真实 App 与真实路由，配置落盘用内存 provider。路由挂在一个叫 console 的插件里，它就是「界面所在」；
-// webui-server 自己的配置校验另起真的 webui-server
+// webui-server 自己的配置校验另行启动真的 webui-server
 
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
 const apps: App[] = [];
@@ -225,7 +225,7 @@ describe('界面自我保护', () => {
 });
 
 describe('webui-server 自己的配置', () => {
-  it('会让它起不来的端口与监听地址在保存前就被拒（400）：它照常运行，配置文件不动', async () => {
+  it('会让它无法启动的端口与监听地址在保存前就被拒（400）：它照常运行，配置文件不动', async () => {
     const TOKEN = 'zz-self-config-token-placeholder-0';
     const port = await freePort();
     const saved: AalisConfig[] = [];

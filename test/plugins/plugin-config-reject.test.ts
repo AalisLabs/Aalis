@@ -180,7 +180,7 @@ describe('请求基址解析不了或带用户名、密码：读配置时报错�
 });
 
 // 缺了就整体用不了的配置项在 schema 里标必填、不带默认值：parseConfig 抛出点名缺项的配置错误，插件激活失败而不是
-// 起来了却什么都不做；validateConfig 报 missing，WebUI 据此把插件标成「待配置」并列出没填的键
+// 启动了却什么都不做；validateConfig 报 missing，WebUI 据此把插件标成「待配置」并列出没填的键
 describe('缺必填配置：激活失败并点名缺的键，WebUI 标「待配置」', () => {
   it.each([
     { plugin: maimai, missing: ['developerToken'], withProcess: false },

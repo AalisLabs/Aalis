@@ -35,8 +35,8 @@ export const defaultForwardSummaryPrompt = (language: string): string =>
 export type ForwardExpansion = Omit<ExpandedForward, 'id'> & { summary: string | null; expandedAt: number };
 
 /**
- * 收到过的一条合并转发：收到它的会话（按收到的先后，同一会话只记一次）。不论展开没展开、拉没拉到都记——关掉展开的、顶层拉不到
- * 的、什么也没展开出来的、展开出错的与嵌套在里面的同样记；工具按 id 取原文（命中展开结果或向实现端现拉）时按它们过取别的会话的
+ * 收到过的一条合并转发：收到它的会话（按收到的先后，同一会话只记一次）。不论展开没展开、获取成功与否都记——关掉展开的、顶层获取失败
+ * 的、什么也没展开出来的、展开出错的与嵌套在里面的同样记；工具按 id 取原文（命中展开结果或向实现端当场获取）时按它们过取别的会话的
  * 规则，从没收到过的判不出。展开了的另带展开结果与摘要
  */
 export type ForwardEntry = { sessionIds: string[] } & (
@@ -55,7 +55,7 @@ export interface ForwardConfig {
   recognitionMaxItems: number;
   summarize: boolean;
   summaryMaxChars: number;
-  /** 喂给摘要 LLM 的原文最大字符数。原文超过则前段截断；<=0 表示不截断 */
+  /** 交给摘要 LLM 的原文最大字符数。原文超过时保留开头、截掉后面；<=0 表示不截断 */
   summaryInputLimit: number /**
    * 摘要使用的 system prompt。为空字符串 / undefined 时使用 `defaultForwardSummaryPrompt`，输出语言取全局层语言列表的
    * 第一项。
@@ -230,7 +230,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
   /**
    * 回收过期的持久化条目。**惰性触发 + 限频**。
    *
-   * 惰性：跟在写入之后跑，不另起定时器——没有消息进来就没有增长，也就不需要清理。
+   * 惰性：跟在写入之后跑，不另设定时器——没有消息进来就没有增长，也就不需要清理。
    *
    * 限频是必须的，不是优化。`listMetadata` 没有投影，一次调用会把整表连**完整原文**
    * 一起读回来并逐条 JSON.parse；实测库内 2000 条时每次约 5.69 MB / 41 ms。跟在每条
@@ -462,7 +462,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     const forwards = collectForwardSegments(segments);
     const expandIds = [...new Set(forwards.map(f => f.id))];
     if (!forwardCfg.enabled) {
-      // 关掉展开：只记下收到它的会话，工具按 id 现拉时按它们判
+      // 关掉展开：只记下收到它的会话，工具按 id 当场获取时按它们判
       await Promise.all(expandIds.map(id => remember(id, sessionId)));
       return expandIds.map(id => ({ id, content: forwardPlaceholder(id) }));
     }
@@ -489,8 +489,8 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
           return forwardedChat({ id, ...entry }, entry.summary);
         }
 
-        // 没展开过的先记下收到它的会话：下面拉不到、什么也没展开出来、展开出错的，工具照常按 id 现拉，按它判。
-        // 顶层拉不到时信封写拉取失败与实现端原话、不带展开结果，之后的工具调用照常重新拉；嵌套的拉不到写「拉取失败」一行，原话进日志。
+        // 没展开过的先记下收到它的会话：下面获取失败、什么也没展开出来、展开出错的，工具照常按 id 当场获取，按它判。
+        // 顶层获取失败时信封写拉取失败与实现端原话、不带展开结果，之后的工具调用照常重新获取；嵌套的获取失败写「拉取失败」一行，原话进日志。
         // 实现端回了成功却什么也没展开出来（数据为空或没有节点）的同一条规则：不带事实、不带展开结果、不拿那一行去调摘要，信封照常写出那一行
         await remember(id, sessionId);
         let fetchFailure: unknown;

@@ -110,7 +110,7 @@ function withFileLock<T>(uris: readonly string[], fn: () => Promise<T>): Promise
     const key = keys[i];
     const prev = fileLocks.get(key) ?? Promise.resolve();
     const run = prev.then(() => acquire(i + 1));
-    // tail 吞掉失败：前一个出错也要放行后来者；只有队尾自己跑完才清键，避免 Map 无界增长
+    // tail 吞掉失败：前一个出错也要放行后来者；只有队尾自己执行完毕才清键，避免 Map 无界增长
     const tail = run.then(
       () => undefined,
       () => undefined,
@@ -440,7 +440,7 @@ async function readLineRange(
     stream.destroy();
   }
 
-  // 循环自然跑完 = 读到了文件末尾，此时行号即总行数
+  // 循环自然运行结束 = 读到了文件末尾，此时行号即总行数
   return { lines, truncated, firstLineCut, ...(stopped ? {} : { totalLines: lineNumber }) };
 }
 
@@ -508,7 +508,7 @@ export function compileGlob(pattern: string): CompiledGlob {
 }
 
 /**
- * 段级双指针：`**` 记回溯点吃任意多段，其余段交给 `matchGlob`（段内同样无回溯）。
+ * 段级双指针：`**` 记回溯点匹配任意多段，其余段交给 `matchGlob`（段内同样无回溯）。
  *
  * **不编译成正则**：`*` 译成 `[^/]*` 后，在无斜杠的单段路径上退化为 `.*`，与 `matchGlob`
  * 同源的灾难性回溯——`*?*?…` 这类 pattern 数十字符即可耗时数秒，而 V8 正则同步执行、
@@ -1405,7 +1405,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
  * 与文件名内容无关（`?` 匹配任意字符），几十字符即可让匹配耗时数十秒；而 V8 正则同步执行，
  * 事件循环被整段阻塞、任何超时都打不断，且 `file_tree` 对每个 entry 各调一次。
  *
- * 双指针通配匹配：遇 `*` 记回溯点继续，失配则退回上一个 `*` 让它多吃一个字符。
+ * 双指针通配匹配：遇 `*` 记回溯点继续，失配则退回上一个 `*` 让它多匹配一个字符。
  * 最坏 O(name × pattern)，无回溯爆炸，也不需要拍脑袋的长度阈值。
  */
 export function matchGlob(name: string, pattern: string): boolean {
@@ -1425,7 +1425,7 @@ export function matchGlob(name: string, pattern: string): boolean {
       si++;
       pi++;
     } else if (starPi >= 0) {
-      // 失配：退回最近的 `*`，让它多吃一个字符
+      // 失配：退回最近的 `*`，让它多匹配一个字符
       pi = starPi + 1;
       si = ++starSi;
     } else {

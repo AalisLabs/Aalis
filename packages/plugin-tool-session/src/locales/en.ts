@@ -8,12 +8,12 @@ export default defineLocale<Source>()({
   enabledLabel: 'Enable the session history reading tool',
   maxLimitLabel: 'Max messages per read',
   maxLimitDescription:
-    'Hard upper limit of what session_get_history can return at once; a limit above it passed by the LLM is capped. 50 to 200 is recommended.',
-  defaultLimitLabel: 'Default messages per read (when the LLM passes no limit)',
+    'Most messages a single history read returns; larger requests from the model are capped to it. 50 to 200 is recommended.',
+  defaultLimitLabel: 'Default messages per read',
   defaultLimitDescription:
-    'Cannot exceed maxLimit. Raising it lets the agent passively get more context, at the cost of token budget.',
+    'Used when the model gives no limit; cannot exceed “Max messages per read”. Raising it gives the model more context but costs more tokens.',
   includeArchivedDefaultLabel: 'Include archived messages by default',
   perMessageMaxCharsLabel: 'Per-message truncation length',
   perMessageMaxCharsDescription:
-    'Character limit of each history message returned to the LLM; 0 = no truncation (recommended). Anything beyond it is cut off with a note of how many characters were not shown.',
+    'Character limit of each history message returned to the model; 0 = no truncation (recommended). Anything beyond it is cut off, ending with “…[已截断，还剩 N 个字符未展示]”.',
 });

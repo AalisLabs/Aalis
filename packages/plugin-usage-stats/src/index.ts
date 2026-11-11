@@ -105,7 +105,7 @@ function isLedgerLine(value: unknown): value is LedgerLine {
   );
 }
 
-/** 配置里的单价：三个不小于 0 的数，写错时插件起不来 */
+/** 配置里的单价：三个不小于 0 的数，写错时插件无法启动 */
 function parsePrices(prices: Record<string, string>): Map<string, Price> {
   const parsed = new Map<string, Price>();
   for (const [model, text] of Object.entries(prices)) {

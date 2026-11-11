@@ -14,7 +14,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 // ════════════════════════════════════════════════════════════
 // 出站的回复引用（OutgoingMessage.replyTo）：onebot 只给第一条分条加引用段，v11 与 v12 各按自己的消息段写法；
 // 没有 replyTo 的不加；她的回复（markup）正文里模型已经写了引用标记的，不再加第二个。投递结果带各分条的平台消息 id。
-// 本地起一个假的 OneBot 实现端记录发出的 action，发消息的 action 回一个递增的消息 id。
+// 本地启动一个假的 OneBot 实现端记录发出的 action，发消息的 action 回一个递增的消息 id。
 // ════════════════════════════════════════════════════════════
 
 type WsServer = {

@@ -14,7 +14,7 @@ import { freePort } from '../helpers/net.js';
 // 切换前端偏好的处理器要做三件事：改服务偏好、写配置、重挂静态目录。前两件与第三件同属
 // 内存态，必须在等落盘之前一起生效。若重挂排在 await save 之后，落盘失败时会留下
 // 「服务解析已选 B、HTTP 静态目录仍挂 A」的不一致，且处理器退出后无人修复。
-// 本文件真起 webui-server，用落盘写入失败的配置文档 provider 钉住「重挂不依赖落盘成功」。
+// 本文件真启动 webui-server，用落盘写入失败的配置文档 provider 钉住「重挂不依赖落盘成功」。
 // ════════════════════════════════════════════════════════════
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -81,7 +81,7 @@ describe('webui-server 前端偏好切换：重挂不依赖落盘成功', () => 
       try {
         await a.stop();
       } catch {
-        /* 停不掉也要继续 */
+        /* 无法停止也要继续 */
       }
     }
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });

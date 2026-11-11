@@ -11,7 +11,7 @@ import { OfflineRenderer, type RenderRequest, RenderUnavailableError } from '../
 // - sandbox 为真：不带这两项启动，启动失败就抛 RenderUnavailableError，不加 --no-sandbox 再启动，下次渲染照样带沙箱启动。
 // - 宿主这一侧的连接一断，浏览器随之退出：宿主不经停机退出（崩溃、被 SIGKILL、未捕获异常）时系统关掉宿主持有的
 //   全部句柄，浏览器不能整组留下（崩溃与 SIGKILL 时 exit 钩子也不跑）。用例照此关掉与浏览器的连接和子进程的全部管道来模拟。
-// 「沙箱起不来」由外包的 launch 模拟：参数里没有 --no-sandbox 就抛错。
+// 「带沙箱启动失败」由外包的 launch 模拟：参数里没有 --no-sandbox 就抛错。
 // ════════════════════════════════════════════════════════════
 
 const probe = vi.hoisted(() => ({

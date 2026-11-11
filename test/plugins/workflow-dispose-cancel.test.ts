@@ -22,11 +22,11 @@ import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
 // 拆卸时在飞 run 必须真被取消：只清掉登记表的话，在飞 run 手里仍握着自己的取消信号，
-// 它会在已关闭的激活上跑完剩余节点、emit 事件，并把结果写回旧 RunStore 的历史快照。
+// 它会在已关闭的激活上执行完剩余节点、emit 事件，并把结果写回旧 RunStore 的历史快照。
 // 拆卸还要等它收尾：被取消的 run 也要把终态写进运行历史，否则这笔写入落在拆卸返回之后，
 // bounce 时会盖掉新实例的运行历史与 once 记录。
 // 既然拆卸要等，取消就得打断阻塞中的节点：一小时的 wait、等不来回复的 agent 节点会让旧实例超过宽限、
-// 滞留不退，同一 id 的新实例要等它落定才起，插件在整段等待里都不可用。
+// 滞留不退，同一 id 的新实例要等它落定才启动，插件在整段等待里都不可用。
 // 触发器关掉之后再调到旧实例的定义不得重新挂上：没人再撤它，卸载后旧实例照样按时触发。
 // 驱动面全部走公开面：真 fs storage + 真 tools + app.plugins.unload / bounce（生产卸载与重启路径）。
 // ════════════════════════════════════════════════════════════
@@ -61,7 +61,7 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
     await registerHubs(app);
     provideHostPaths(app, base);
     await app.plugin(storageLocalPlugin, {
-      // data:/ 是内置根（数据目录的 state/），用户 roots 里只声明工作根
+      // data:/ 是内部根（数据目录的 state/），用户 roots 里只声明工作根
       roots: [
         {
           name: 'workspace',

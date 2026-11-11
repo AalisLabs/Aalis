@@ -13,8 +13,8 @@ const SOURCE = {
   npmDisk: '磁盘空间不够（ENOSPC）：腾出空间后重试',
   npmPermission:
     '没有写入权限（EACCES）：把项目目录与 npm 的缓存目录（npm config get cache 查看）改回运行 Aalis 的用户所有后重试，不要用 sudo',
-  npmPlatform: '依赖 {pkg} 不支持这台机器的系统或 CPU 架构（EBADPLATFORM），这个插件在这里装不了',
-  npmPlatformUnknown: '有一个依赖不支持这台机器的系统或 CPU 架构（EBADPLATFORM），这个插件在这里装不了',
+  npmPlatform: '依赖 {pkg} 不支持这台机器的系统或 CPU 架构（EBADPLATFORM），这个插件在这里无法安装',
+  npmPlatformUnknown: '有一个依赖不支持这台机器的系统或 CPU 架构（EBADPLATFORM），这个插件在这里无法安装',
   npmPeer: 'peer 依赖冲突（市场安装不沿用 .npmrc 里的 legacy-peer-deps）：{conflicts}',
   npmBrowser:
     '下载浏览器失败：这个插件装的时候要下载 Chrome。把镜像地址（环境变量 PUPPETEER_CHROME_DOWNLOAD_BASE_URL）设进启动 Aalis 的环境，重新启动 Aalis 后再装（应用内的重启沿用原来的环境变量）',

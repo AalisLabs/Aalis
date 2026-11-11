@@ -81,7 +81,7 @@ interface ServiceConfig {
  * - plugin-storage-local 在执行 writeFile/delete/rename 之前先探测 checkpoint 服务，
  *   在场就调它的 `beforeMutate(...)` 留一次快照机会。
  * - 本插件在 `agent:turn:before` 里用 agent 给的 turnId 把这一轮包进 `runTurn`：回合的异步上下文里发生的改动
- *   记进这一轮，回合跑完（含被下游拦下、出错）即提交。
+ *   记进这一轮，回合执行完毕（含被下游拦下、出错）即提交。
  * - 命令与外部工具的副作用不经存储，不在本服务保护范围内（回滚对话框写明）。
  */
 export class CheckpointServiceImpl implements CheckpointService {
@@ -177,7 +177,7 @@ export class CheckpointServiceImpl implements CheckpointService {
     toUri?: string,
   ): Promise<void> {
     // 只记进写入所在的那一轮：异步上下文带着的回合还没结束才算。回合外的改动（WebUI 发起的回滚、别的插件在后台的写入）
-    // 不属于任何一轮；回合里起的异步任务在回合提交之后才写入的仍带着这一轮的上下文，改动也已不属于任何一轮。存储每次写入
+    // 不属于任何一轮；回合里发起的异步任务在回合提交之后才写入的仍带着这一轮的上下文，改动也已不属于任何一轮。存储每次写入
     // 都会调到这里，这些写入先在这一步返回
     const turn = this.scope.getStore();
     if (!turn || this.turns.get(turn.manifest.turnId) !== turn) return;

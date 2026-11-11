@@ -426,7 +426,7 @@ describe('assertAddressesSafe（pin dispatcher 与 assertSafeHost 共用的地�
 // 两个档位各有一条端到端用例守着。
 //
 // 本文件其余用例都 stub 掉 global fetch，dispatcher 从来没被走过，
-// 这正是上面那个缺陷得以逃逸的口子。下面这条起本地服务真连一次堵住它。
+// 这正是上面那个缺陷得以逃逸的口子。下面这条启动本地服务真连一次堵住它。
 // ════════════════════════════════════════════════════════════
 describe('pinnedLookup 与真实连接', () => {
   const UNDICI_OPTIONS = { hints: ADDRCONFIG, all: true } as const;

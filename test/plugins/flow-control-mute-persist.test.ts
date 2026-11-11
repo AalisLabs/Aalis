@@ -14,7 +14,7 @@ import { memoryStorage } from '../fixtures/memory-storage.js';
 
 // ════════════════════════════════════════════════════════════
 // 禁言表持久化：storage 是 required，激活时读回整表，禁言改动整表写回；storage 下线时本插件随之停下，重新上线后重新读回。
-// 真 storage-local 多根（用户根 workspace 在前、内置根 data 在后，映射到数据目录的 state/），禁言表落在 data 根。
+// 真 storage-local 多根（用户根 workspace 在前、内部根 data 在后，映射到数据目录的 state/），禁言表落在 data 根。
 // ════════════════════════════════════════════════════════════
 
 const MUTES = 'flow-control-mutes.json';

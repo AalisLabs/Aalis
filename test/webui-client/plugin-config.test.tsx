@@ -496,7 +496,7 @@ describe('清空与校验', () => {
 });
 
 describe('失败的插件', () => {
-  it('缺必填配置起不来：详情写着待配置与没填的键，照样能改配置；保存即重新激活，转为运行中', async () => {
+  it('缺必填配置无法启动：详情写着待配置与没填的键，照样能改配置；保存即重新激活，转为运行中', async () => {
     const schema = { endpoint: { type: 'string', label: '服务地址', required: true } } satisfies ConfigSchema;
     const { app, puts } = await boot(
       'flaky',

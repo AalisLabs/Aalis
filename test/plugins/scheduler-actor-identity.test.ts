@@ -30,7 +30,7 @@ import { pageHost } from '../fixtures/page-host.js';
 
 type Actor = { platform: string; userId: string } | undefined;
 
-/** 起一个装了 scheduler 的实例，触发指定任务，返回它发出的 inbound:message 上的 actor。 */
+/** 启动一个装了 scheduler 的实例，触发指定任务，返回它发出的 inbound:message 上的 actor。 */
 async function actorOfTriggeredJob(
   schedulerConfig: Record<string, unknown>,
   setup?: (svc: SchedulerService) => void,

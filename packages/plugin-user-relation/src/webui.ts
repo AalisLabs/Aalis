@@ -104,7 +104,7 @@ const EDGE_KINDS = [
   { kind: 'entity-entity', label: t('entityEntity'), tone: 6 },
 ] as const;
 
-/** 删除动作核对的种类：扑空时的报错 */
+/** 删除动作核对的种类：找不到时的报错 */
 const NO_SUCH: Record<'person' | 'event' | 'entity', TextRef> = {
   person: t('noSuchPerson'),
   event: t('noSuchEvent'),
@@ -237,7 +237,7 @@ export function registerRelationPages(webui: BoundWebui, service: RelationServic
     ],
   });
 
-  /** 删除前先核节点在且种类对：删除本身对不存在的节点什么也不做，不核就会把扑空当成成功 */
+  /** 删除前先核节点在且种类对：删除本身对不存在的节点什么也不做，不核就会把找不到当成成功 */
   async function removeNode(id: string, kind: 'person' | 'event' | 'entity', remove: () => Promise<unknown>) {
     const found = await service.findNodeById(id);
     if (found?.kind !== kind) throw new TextError(NO_SUCH[kind]);

@@ -694,7 +694,7 @@ describe('转发', () => {
     expect(await screen.findByText('清空了 3 张')).toBeTruthy();
   });
 
-  it('500 毫秒从对话框真正打开时算起、按点按发生的时刻判断：渲染被拖住、点按排队晚到都不算数', async () => {
+  it('500 毫秒从对话框真正打开时算起、按点按发生的时刻判断：渲染被阻塞、点按排队晚到都不算数', async () => {
     app = await renderApp(pagePath(BOARD), {}, boardRest({ [actionPath(BOARD, 'purge')]: { message: '清空了' } }));
     const peer = await connect();
     const time = clock();

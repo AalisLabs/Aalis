@@ -110,7 +110,7 @@ function chatProbe(seen: Array<InboundPhaseData['chat']>) {
 
 /**
  * 网关、会话管理、会话设置、两个回复策略插件（trigger-policy 与 flow-control）与 agent 替身；doc 是宿主配置文档，
- * types 是 onebot 适配器声明的类型（null 不装平台适配器）。入站经网关的 ingressMessage，等整条相位链跑完
+ * types 是 onebot 适配器声明的类型（null 不装平台适配器）。入站经网关的 ingressMessage，等整条相位链执行完毕
  */
 async function setup({
   doc = {},

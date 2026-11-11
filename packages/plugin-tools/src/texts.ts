@@ -10,8 +10,7 @@ const SOURCE = {
   maxWaitSecondsDescription:
     '可转后台的工具调用在前台最多等多少秒，模型给的 waitSeconds 超过它按它算；到时还没结束就转到后台',
   maxPerSessionLabel: '每个会话同时在跑的上限',
-  maxPerSessionDescription:
-    '同一会话里对话回合中同时在跑的可转后台工具调用（前台与后台一起数），满了时新的调用在执行之前就被拒绝；不在对话回合里的调用不会转后台，不占名额',
+  maxPerSessionDescription: '同一会话里同时在运行的可转后台工具调用上限，前台与后台一起数；满了时新的调用直接被拒绝。',
   restarted: 'Aalis 重启时还在跑',
   closed: '工具注册表停用时还在跑',
   withdrawn: '工具 {name} 已撤回登记',

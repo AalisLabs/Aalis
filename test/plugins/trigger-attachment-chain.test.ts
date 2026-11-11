@@ -25,7 +25,7 @@ import { deferred } from '../helpers/deferred.js';
 // 附件识别整条链：Laya 判定前启动的识别，放行与吞掉都不等它
 //
 // Laya 要看附件描述：判定前启动识别并最多等 mediaWaitMs；之后放行（交给 flow 相位与 agent）和吞掉
-// （影子归档）都不等识别跑完。agent 预处理器与归档对同一个消息对象调 processMessage，按对象记忆命中
+// （影子归档）都不等识别完成。agent 预处理器与归档对同一个消息对象调 processMessage，按对象记忆命中
 // 这次识别（在途则等它），整条链只识别一次。
 //
 // 真实插件：gateway + flow-control + trigger-laya + message-archive（内存 memory 与 storage）；侧车是本地假服务。

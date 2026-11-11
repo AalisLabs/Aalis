@@ -597,7 +597,7 @@ export function readFieldValue(field: SchemaField, value: unknown): { value: unk
  * 所以它的键集就是完整的白名单：不在 schema 里的字段，要么是用户手写的错别字，
  * 要么是已废弃的旧字段，裁掉即归位。无 schema 的插件不裁（见调用方守卫）。
  *
- * 被裁的键写入 `removed`（带点号前缀）——静默裁剪会让「字段被吃掉」与「用户没配」不可分辨。
+ * 被裁的键写入 `removed`（带点号前缀）——静默裁剪会让「字段被丢弃」与「用户没配」不可分辨。
  * `type: 'array'` 的值整段保留（数组元素结构由 validateConfig / parseConfig 解释，不在这里拆）。
  */
 export function removeExtraFields(
@@ -1039,7 +1039,7 @@ function parseArray(entry: SchemaArray, value: unknown, path: string, warn: Warn
       warn(`配置项 ${at} 已忽略：期望对象元素，得到 ${describeType(item)}`);
       continue;
     }
-    // 元素内的告警先攒着：这条元素整条丢弃时只报丢弃原因
+    // 元素内的告警先暂存：这条元素整条丢弃时只报丢弃原因
     const pending: string[] = [];
     try {
       out.push(parseEntries(entry.items, item, `${at}.`, message => pending.push(message)));

@@ -69,7 +69,7 @@ export function parseCronField(field: string, min: number, max: number): Set<num
       lo = n;
       hi = stepPart !== undefined ? max : n; // `lo/step` → lo..max 步进；裸单值 → 仅该值
     }
-    // 夹到 [min,max]，避免越界（如分钟字段 "1-100" 不塞入 60-99 这些非法分钟）
+    // 夹到 [min,max]，避免越界（如分钟字段 "1-100" 不放入 60-99 这些非法分钟）
     for (let i = Math.max(min, lo); i <= Math.min(max, hi); i += step) result.add(i);
   }
   return result;

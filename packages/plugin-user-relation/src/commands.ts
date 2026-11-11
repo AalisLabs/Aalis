@@ -200,7 +200,7 @@ export function registerRelationCommands(
   // ---- forget-me：用户自助清理自己的节点 ----
   // 注意：只能清掉「自己作为发言者」被记录的节点和直接挂在节点上的边；
   // 别人在事件 title / evidence 里**提及**你的名字（纯字符串）无法清理——
-  // 因为这种情况下系统压根没把"你"识别为一个节点，没有 id 可定位。
+  // 因为这种情况下系统根本没把"你"识别为一个节点，没有 id 可定位。
   cmds.command('relation.forget-me', t('forgetMeDescription')).action(async argv => {
     const { platform, userId } = argv.session;
     if (!platform || !userId) return t('noIdentity');

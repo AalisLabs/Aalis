@@ -25,16 +25,16 @@ const SOURCE = {
     '手动添加的模型名称（每行一个或逗号分隔）。用于补充自动发现列表中未出现的模型。与自动发现重复时会提示去重。',
   discoverModelsLabel: '自动发现模型',
   discoverModelsDescription:
-    '启动时请求 /api/tags 发现已安装的模型，WebUI 可刷新模型列表。服务不提供 /api/tags 时关闭：不发发现请求，只注册 customModels（此时必填），也不支持刷新。',
+    '启动时向 Ollama 查询已安装的模型，之后可在 WebUI 刷新。服务不提供模型列表时关闭，这时只用自定义模型（必填），也不能刷新。',
   modelCapabilitiesLabel: '单模型能力覆盖',
   modelCapabilitiesDescription:
-    '强制覆盖某模型的能力（优先级最高，高于 /api/show 自动探测与家族表），与 adapter 默认能力取并集。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：nemotron3:33b: chat,vision,tool_calling',
-  providerCapabilitiesLabel: '适配器默认能力（逗号分隔）',
+    '逐个模型指定能力，优先于自动探测与家族表，能力为这里写的加上适配器默认能力。\n格式：`<modelId>: <cap1>,<cap2>,...`，每行一条。如：nemotron3:33b: chat,vision,tool_calling',
+  providerCapabilitiesLabel: '适配器默认能力',
   providerCapabilitiesDescription:
-    '兜底默认能力：仅当某模型既无法从 Ollama /api/show 探测、又不在内置家族表时才使用。能力现已自动探测，通常留空即可（填了反而可能给不支持的模型乱标能力）。例：chat,tool_calling,streaming',
+    '模型既探测不到能力、又不在内置家族表里时用的能力，逗号分隔。通常留空，填了可能给模型标上它没有的能力。例：chat,tool_calling,streaming',
   timeoutLabel: '停顿超时（秒）',
   timeoutDescription:
-    '多久收不到新的生成内容算超时（秒）。一直在输出（含思考内容）不算超时；工具调用要等 Ollama 生成完整才一次给出，生成期间不算输出；不流式的请求（含带音频的请求）要在这段时间内收到整份回复。大模型或长上下文出第一段内容慢、工具参数很长时，建议适当调大。0 = 不限制。',
+    '多久收不到新的生成内容算超时，持续输出（含思考）不算；不流式的请求要在这段时间内收到完整回复。模型大、上下文长或工具参数很长时宜调大。0 为不限。',
   temperatureLabel: '温度',
   temperatureDescription: '0-2，越高越随机',
   maxTokensLabel: '最大 Token',
@@ -44,8 +44,7 @@ const SOURCE = {
   keepAliveLabel: '模型保活时间',
   keepAliveDescription: '模型在显存中保留的时间，如 5m、1h、0（立即卸载）',
   thinkingLabel: '默认思考档位',
-  thinkingDescription:
-    '报告了思考能力的模型（或单模型能力覆盖里写了 thinking 的）在请求没指定档位时用这一档，会话设置的「深度思考」压过它。没有思考能力的模型不发 think 参数。',
+  thinkingDescription: '能思考的模型在请求没指定档位时用这一档，会话设置的「深度思考」优先。',
   requestTimeout: 'Ollama 请求超时：{seconds} 秒内没有收到新的生成内容，可在配置里调大 timeout',
   pluginClosed: 'Ollama 插件已停用或重载，这次请求没有发出',
   pluginStopped: 'Ollama 插件已停用或重载，这次请求中途停下',

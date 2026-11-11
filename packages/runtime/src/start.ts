@@ -49,7 +49,7 @@ import { tryDispatchSubcommand } from './subcommand.js';
 // 模式——`node index.mjs <name> [args]` ≡ 聊天里的 `/<name> args`，命中即执行并退出，未命中报错退出
 // （exit 2），**两种情况都不进守护进程**。宿主自己解析命令行时传 `argv: []` 或显式数组。
 //
-// 数据目录没初始化就拒绝启动，只提示怎样初始化：绝不在找不到数据目录时静默起一个空的家。
+// 数据目录没初始化就拒绝启动，只提示怎样初始化：绝不在找不到数据目录时静默创建一个空的家。
 //
 // 子命令进程是与守护进程零通信的一次性实例，因此不装文件日志（会把守护进程正在写的 latest.log 轮转走）、
 // 不注入重启策略（`restart` 会 spawn 出 argv 仍带 restart 的 detached 子进程，无限连环——实测）。
@@ -81,7 +81,7 @@ export interface StartAalisOptions {
   fileLog?: boolean;
   /**
    * 命令行参数，默认 `process.argv.slice(2)`。开头的宿主参数先取走：`--data <目录>`、`--profile <名>`、
-   * `--init`（初始化数据目录后退出）、`--service`（由服务管理器拉起：实例锁被占时以 0 退出，重启交给服务管理器）。余下的非空即子命令模式：命中执行后退出，未命中报错退出（exit 2），不进守护进程。
+   * `--init`（初始化数据目录后退出）、`--service`（由服务管理器启动：实例锁被占时以 0 退出，重启交给服务管理器）。余下的非空即子命令模式：命中执行后退出，未命中报错退出（exit 2），不进守护进程。
    * 宿主自管命令行时传显式数组（`[]` 即守护进程）。
    */
   argv?: string[];
@@ -171,7 +171,7 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   // 交给插件的数据目录是真实路径：符号链接、大小写与末尾分隔符不同的写法指向同一个目录时，插件拿到的是同一个路径
   // （记忆库按它记归属）
   const paths = derivePaths(realpathSync.native(declared.data), appDir, resolved.profile);
-  // 默认加载器从安装集的 package.json 找插件：缺了它会一个插件都不加载、照样起来，只留一行「发现 0 个插件」
+  // 默认加载器从安装集的 package.json 找插件：缺了它会一个插件都不加载、照样启动，只留一行「发现 0 个插件」
   if (!opts.pluginLoader && !existsSync(join(paths.app, 'package.json'))) {
     console.error(
       `[aalis] The install directory ${paths.app} has no package.json, so there are no plugins to load.\n` +
@@ -181,8 +181,8 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   }
   const subcommands = hostArgs.rest;
 
-  // ── 实例锁：同一数据目录只许一个守护进程。要在写日志之前取到，否则第二个实例一起来就把正在写的 latest.log 轮转走 ──
-  // 交接令牌读到就从环境里删掉，不让插件起的子进程与侧车继承它。子命令进程不取锁（它们以后经 socket 连实例）。
+  // ── 实例锁：同一数据目录只许一个守护进程。要在写日志之前取到，否则第二个实例一启动就把正在写的 latest.log 轮转走 ──
+  // 交接令牌读到就从环境里删掉，不让插件启动的子进程与侧车继承它。子命令进程不取锁（它们以后经 socket 连实例）。
   const handoffToken = process.env[HANDOFF_ENV];
   delete process.env[HANDOFF_ENV];
   let instanceLock: InstanceLock | undefined;
@@ -203,7 +203,7 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
         '[aalis] If you are sure no instance is running (for example, the process was killed and this machine cannot look up ' +
         'process start times, or a container was killed and restarted within the same boot), delete this lock file and start again.';
       if (hostArgs.service) {
-        // 服务形态按正常退出：配合 KeepAlive={SuccessfulExit=false}，不会被服务管理器反复拉起再抢锁
+        // 服务形态按正常退出：配合 KeepAlive={SuccessfulExit=false}，不会被服务管理器反复重新启动再抢锁
         console.error(`${occupied}\n[aalis] Started as a service, so this counts as a normal exit.`);
         process.exit(0);
       }
@@ -218,7 +218,7 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   // ── 最早期：任何日志之前先装 console sink ──
   const subcommandMode = subcommands.length > 0;
   // console sink 在 App 之前装：此时尚无事件总线（根绑定），sink 处于「无条件写」状态以打印早期启动日志，
-  // 待 App 起来再 bindEvents 接管 terminal:claimed/released。子命令模式日志走 stderr，stdout 只留命令结果。
+  // 待 App 启动后再 bindEvents 接管 terminal:claimed/released。子命令模式日志走 stderr，stdout 只留命令结果。
   // consoleSink: false 仍装 stderr + minLevel warn：加载器拒载「另一份 @aalis/core」的插件记 error，不能只剩下游的指令服务不可用报错。
   const consoleHandle: ConsoleSinkHandle = consoleSink
     ? installConsoleSink(subcommandMode ? { target: 'stderr' } : {})
@@ -333,7 +333,7 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
 
   // ── 不变量②：子命令短路在 app.start 之前 ──
   // `aalis <name> [args...]` 等价于聊天里 `/<name> args...`：命中则执行返回串，未命中则报错，
-  // 两种情况都干净退出、**绝不进守护进程**——打错的命令名若照常起守护，就是与运行中实例并存的
+  // 两种情况都干净退出、**绝不进守护进程**——打错的命令名若照常启动守护进程，就是与运行中实例并存的
   // 第二个实例（同时连 onebot、每条消息回两遍）。与具体命令解耦——各插件自行注册命令。
   if (subcommandMode) {
     const exitCode = await tryDispatchSubcommand(host.services.use, subcommands);
@@ -357,7 +357,7 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
     else if (unmet.waiting.length > 0) app.logger.info(`插件 "${instance}" 在等依赖启动：${why}`);
   }
 
-  // 向重启我们的父进程回报「起来了」。父进程据此决定放手退出，还是判定本次
+  // 向重启我们的父进程回报「已启动」。父进程据此决定放手退出，还是判定本次
   // 更新失败并回滚（见 providers.ts 的 createProcessRespawnStrategy）。
   //
   // 两道防护缺一不可，都为了「本进程绝不能因为报喜而死」：
@@ -367,7 +367,7 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   // 2. callback —— 通道在判断与发送之间关闭（TOCTOU）时，错误改走 callback。没有它，
   //    Node 会在 nextTick 往 process 上 emit 无监听者的 'error'，直接升级成
   //    uncaughtException 被 start.ts 顶部的 handler 捕获并 exit(1)——**同步 try/catch
-  //    接不住**（错误是异步抛的）。症状会是「一重启就没、手动起就好」。
+  //    接不住**（错误是异步抛的）。症状会是「一重启就没、手动启动就好」。
   if (process.connected) process.send?.({ type: READY_MESSAGE }, undefined, undefined, () => {});
   // 握手完成后解除 IPC 对事件循环的持有——否则父进程退出前本进程无法自然结束。
   process.channel?.unref();

@@ -341,7 +341,7 @@ describe('syncPluginDefaults 政策', () => {
     await app.plugin(mod);
     syncPluginDefaults(app, store);
     const hit = warned.find(w => w.includes('裁掉 schema 外字段'));
-    // 静默裁剪会让「字段被吃掉」与「用户没配」不可分辨——必须点名
+    // 静默裁剪会让「字段被丢弃」与「用户没配」不可分辨——必须点名
     expect(hit).toContain('junk');
     expect(hit).toContain('g.deepJunk');
     await app.stop();

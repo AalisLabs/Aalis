@@ -23,7 +23,7 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
 });
 
-/** 起插件，工具服务只有一个公开工具 echo，calls 记下每次执行的参数，logs 记下应用的每条日志（级别与正文） */
+/** 启动插件，工具服务只有一个公开工具 echo，calls 记下每次执行的参数，logs 记下应用的每条日志（级别与正文） */
 async function start(config: Record<string, unknown>) {
   const port = await freePort();
   const logs: [level: string, message: string][] = [];

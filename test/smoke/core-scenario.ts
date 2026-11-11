@@ -84,7 +84,7 @@ export async function smoke(core: typeof Core): Promise<SmokeResult> {
         await Promise.resolve();
         flushed.push(`provider#${generation}`);
       });
-      // 超过宽限才落定：拆卸等满 disposeTimeoutMs 后放弃它、接着执行先登记的那一项；它落定之前同 id 不起新实例
+      // 超过宽限才落定：拆卸等满 disposeTimeoutMs 后放弃它、接着执行先登记的那一项；它落定之前同 id 不启动新实例
       lifecycle.use.onDispose(() => new Promise<void>(resolve => setTimeout(resolve, LIMIT_MS * 3)), 'hang');
     },
   });
@@ -122,7 +122,7 @@ export async function smoke(core: typeof Core): Promise<SmokeResult> {
   );
   await app.plugins.idle();
 
-  // bounce 提供者：依赖方先拆后建；提供者卡住的清理超时放弃，其后的异步清理照常执行，旧实例停下后才起新实例
+  // bounce 提供者：依赖方先拆后建；提供者卡住的清理超时放弃，其后的异步清理照常执行，旧实例停下后才启动新实例
   loaded.length = 0;
   const reloaded = nextLoad('consumer');
   await app.plugins.bounce('provider');

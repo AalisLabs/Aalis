@@ -41,7 +41,7 @@ async function setup(chat: Chat = async () => ({ content: '装修预算' }), lan
   await app.plugin(sessionManagerPlugin, {});
   if (language) await app.plugin(i18nPlugin);
   await app.plugins.idle();
-  // required 依赖缺席时插件停在 pending 且不报错——核激活状态，别让「压根没跑起来」冒充绿
+  // required 依赖缺席时插件停在 pending 且不报错——核激活状态，别让「根本没有运行」冒充绿
   const state = app.plugins.getPlugin(sessionManagerPlugin.name)?.state;
   if (state !== 'active') throw new Error(`session-manager 未激活（state=${state}）`);
   const sm = host.sessionManager.use;
@@ -99,7 +99,7 @@ describe('自动标题按创建来源', () => {
     await app.stop();
 
     expect(titles).toEqual([undefined, undefined, undefined]);
-    expect(llmCalls.chats, '不该为起标题烧一次 LLM').toBe(0);
+    expect(llmCalls.chats, '不该为起标题消耗一次 LLM 调用').toBe(0);
   });
 
   it('已有标题的会话不重复生成', async () => {
@@ -113,7 +113,7 @@ describe('自动标题按创建来源', () => {
     await app.stop();
 
     expect(title).toBe('旧标题');
-    // 标题没变还可能是「生成了但写不回」；真正的契约是**压根没调 LLM**（有成本），破闸即红
+    // 标题没变还可能是「生成了但写不回」；真正的契约是**根本没调 LLM**（有成本），破闸即红
     expect(llmCalls.chats, '已有标题不该再发一次 LLM chat').toBe(0);
   });
 });

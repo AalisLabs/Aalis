@@ -76,7 +76,7 @@ describe('process-local 子进程生命周期', () => {
     const started = Date.now();
     const handle = proc.spawn('bash', ['-c', `exec -a ${marker} sleep 30 & sleep 30`], { timeout: 300 });
     await sleep(150);
-    expect(alive(marker)).toBe(true); // 防空跑：孙进程确实起来了
+    expect(alive(marker)).toBe(true); // 防空跑：孙进程确实启动了
     const res = await handle.wait();
     expect(Date.now() - started).toBeLessThan(1500);
     expect(res.signal).toBe('SIGKILL');

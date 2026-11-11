@@ -5,25 +5,26 @@ export default defineLocale<Source>()({
   displayName: 'User fact profiles',
   extractEveryLabel: 'Extract every N messages',
   extractEveryDescription:
-    'Fact extraction runs once every N messages from the same user. Messages count whether or not they get a reply, and each person in a group chat is counted separately. 1 tries to extract on every message (not recommended); 0 or a negative number turns extraction off (existing profiles are still injected)',
+    'Facts are extracted once every N messages from the same user, counting messages whether or not they get a reply, with each person in a group counted separately. 0 or negative turns extraction off; existing profiles are still injected',
   historyLabel: 'History messages for extraction',
-  historyDescription: 'How many recent messages the LLM gets when extraction runs',
+  historyDescription: 'How many recent messages the model gets when extraction runs',
   maxFactsLabel: 'Maximum facts per user',
   maxFactsDescription:
-    'Beyond this, the facts updated longest ago (by updatedAt) are dropped automatically. The smallest effective value is 5 (enforced when writing), and 0 does not turn extraction off; to turn extraction off, set extractEveryNMessages to 0',
+    'At most this many facts per person; beyond it, the facts updated longest ago are dropped. The minimum is 5; to stop extraction, set “Extract every N messages” to 0',
   maxFactCharsLabel: 'Maximum characters per fact',
-  maxFactCharsDescription: 'Longer facts are cut off, so the LLM cannot write long paragraphs instead of facts',
+  maxFactCharsDescription: 'Longer facts are cut off, so the model cannot write long paragraphs instead of facts',
   maxOthersLabel: 'Maximum other participants in group chats',
   maxOthersDescription:
-    'In group chats, how many people besides the current speaker have their profile summaries injected for the LLM at most. 0 turns off injecting several users in group chats',
+    'In group chats, how many people besides the current speaker have their profile summaries injected into the prompt at most. 0 turns off injecting several users in group chats',
   maxFactsForOthersLabel: 'Maximum facts per other participant',
   maxFactsForOthersDescription:
     'Each background participant in a group chat shows only the N most recently updated facts, to keep the prompt short',
   temporaryMaxAgeLabel: 'Days to keep temporary facts',
   temporaryMaxAgeDescription:
-    'Facts with temporality=temporary that have not been updated for this many days are no longer injected into the prompt (they stay in the profile until a later update or remove). 0 means they never fade',
+    'Temporary facts not updated for this many days are no longer injected into the prompt (they stay in the profile). 0 means they are always injected',
   decayLabel: 'Daily relationship strength decay',
-  decayDescription: 'How much relationScore decays each day while a user does not interact. 0 means no decay',
+  decayDescription:
+    'How much the relationship strength decays each day while a user does not interact. 0 means no decay',
   directLabel: 'Private chat increment',
   directDescription: 'Relationship strength added per message on a direct trigger',
   immediateLabel: 'Mention increment',
@@ -32,12 +33,12 @@ export default defineLocale<Source>()({
   intervalLabel: 'Passive group chat increment',
   intervalDescription:
     'Relationship strength added per message by a passive trigger (frequency or activity) or an ordinary incoming message in a group chat',
-  witnessLabel: 'Bystander (no reply) increment',
+  witnessLabel: 'Bystander increment',
   witnessDescription:
-    'The lowest increment, added for every incoming message whether or not the agent replies. If the agent replies, one of direct/immediate/interval is added on top. 0 means watching adds nothing; the interaction count and the last interaction time are still recorded (the only source for the decay baseline and for sorting by recent interaction)',
+    'The lowest increment, added for every incoming message whether or not there is a reply; with a reply, one of the private chat, mention or passive group chat increments is added on top. 0 means watching adds nothing, while the interaction count and time are still recorded',
   backfillLabel: 'Fill in background profiles from other sessions',
   backfillDescription:
-    'When the current group or session has too few candidates, whether users who interacted recently in other groups, private chats and other sessions may fill up the “other participants” background summaries. When off, only users seen in the current context are used',
+    "When the current session has too few candidates, people who interacted recently in other groups and private chats fill up the other participants' profile summaries. When off, only people seen in the current session are used",
   categoryInterests: 'Interests',
   categoryOccupation: 'Occupation',
   categoryRelationships: 'Relationships',
