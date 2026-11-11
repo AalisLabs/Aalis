@@ -1032,6 +1032,17 @@ function registerUserProfile({
     await next();
   });
 
+  // 本插件自己发起的后台写（旁观关系更新、事实提取）记在这里：收尾时等它们落定再撤回。信号在收尾开始时已断，提取停在当前
+  // 这一步，已经开始的写入写完
+  const running = new Set<Promise<void>>();
+  const track = (work: Promise<void>): void => {
+    running.add(work);
+    void work.then(() => running.delete(work));
+  };
+  lifecycle.use.onDrain(async () => {
+    while (running.size > 0) await Promise.all(running);
+  }, '等在途的档案写入');
+
   // ─── 事实提取触发：每条入站消息落库后立即计数，与 agent 是否回复无关 ───
   // 监听 message-archive 在 archiveIncoming 落库成功后发出的 inbound:message:archived 事件，
   // 确保缓冲消息（onebot saveBufferedMessage 等不触发 agent 回复的路径）也能纳入计数。
@@ -1047,16 +1058,20 @@ function registerUserProfile({
     // lastInteractionAt 的唯一写点，设门会连带关掉计数与时戳（衰减基准、最近互动
     // 排序全失效）。增量为 0 时 relationIncrementFor 自然返回 0，不加分即可。
     const userKey = userKeyOf(platform, userId);
-    void updateRelationForUser(userKey, 'witness').catch((err: unknown) =>
-      logger.use.debug(`witness 关系更新异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`),
+    track(
+      updateRelationForUser(userKey, 'witness').catch((err: unknown) =>
+        logger.use.debug(`witness 关系更新异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`),
+      ),
     );
 
     const countKey = extractionCountKeyOf(sessionId, platform, userId);
     const count = (userMessageCount.get(countKey) ?? 0) + 1;
     userMessageCount.set(countKey, count);
     if (cfg.extractEveryNMessages > 0 && count % cfg.extractEveryNMessages === 0) {
-      void triggerExtractionForUser(sessionId, userId, platform ?? '', nickname).catch((err: unknown) =>
-        logger.use.debug(`事实提取异常 (${countKey}): ${err instanceof Error ? err.message : String(err)}`),
+      track(
+        triggerExtractionForUser(sessionId, userId, platform ?? '', nickname).catch((err: unknown) =>
+          logger.use.debug(`事实提取异常 (${countKey}): ${err instanceof Error ? err.message : String(err)}`),
+        ),
       );
     }
   });

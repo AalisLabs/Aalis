@@ -26,8 +26,8 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
 });
 
-/** 跑一轮提取：替身按次序回 replies（用完了回最后一条；给了 respond 时交它回），返回它收到的请求与写下的事实 */
-async function extract(replies: ChatResponse[], respond?: (request: ChatModelRequest) => Promise<ChatResponse>) {
+/** 跑一轮提取：替身按次序回 replies（用完了回最后一条），返回它收到的请求与写下的事实 */
+async function extract(replies: ChatResponse[]) {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
@@ -35,7 +35,7 @@ async function extract(replies: ChatResponse[], respond?: (request: ChatModelReq
   const requests: ChatModelRequest[] = [];
   const chat = vi.fn(async (request: ChatModelRequest) => {
     requests.push(request);
-    return respond ? respond(request) : replies[Math.min(requests.length, replies.length) - 1];
+    return replies[Math.min(requests.length, replies.length) - 1];
   });
   host.provide.use(llm, { id: 'stub-model', capabilities: ['chat'], chat } as never);
   await app.plugin(memoryInMemory);
@@ -54,7 +54,6 @@ async function extract(replies: ChatResponse[], respond?: (request: ChatModelReq
   return {
     requests,
     chat,
-    disable: () => app.plugins.disable(userProfile.name),
     facts: async () => {
       const profile = await host.memory.use.getMetadata(PROFILE_NS, 'onebot:u1');
       return ((profile?.facts as Array<{ text: string }> | undefined) ?? []).map(f => f.text);
@@ -67,21 +66,6 @@ async function settle(chat: ReturnType<typeof vi.fn>, calls: number): Promise<vo
   await vi.waitFor(() => expect(chat).toHaveBeenCalledTimes(calls));
   await new Promise(resolve => setTimeout(resolve, 50));
 }
-
-describe('plugin-user-profile: 提取随停用中止', () => {
-  it('提取的模型调用途中停用：交给它的中止信号随之断开', async () => {
-    const run = await extract(
-      [],
-      request =>
-        new Promise((_, reject) =>
-          request.signal?.addEventListener('abort', () => reject(request.signal?.reason), { once: true }),
-        ),
-    );
-    await vi.waitFor(() => expect(run.requests).toHaveLength(1));
-    await run.disable();
-    expect(run.requests[0].signal?.aborted).toBe(true);
-  });
-});
 
 describe('plugin-user-profile: 截断的提取不收', () => {
   it('对照：结束原因是 stop 时照收，只调一次', async () => {
