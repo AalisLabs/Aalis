@@ -19,7 +19,7 @@ export default defineLocale<Source>()({
   headlessDescription: 'Can be turned off while debugging to watch the rendering page',
   executablePathLabel: 'Chrome path (left empty, detected automatically)',
   executablePathDescription:
-    'Left empty, the Chrome cached by puppeteer is used (the same binary as the browser tools, in a separate process)',
+    'Left empty, the executable in the puppeteer configuration (PUPPETEER_EXECUTABLE_PATH, .puppeteerrc) is used, or, if none is configured, the Chrome bundled with puppeteer (the same binary as the browser tools, in a separate process)',
   sandboxLabel: 'Chromium sandbox',
   sandboxDescription:
     'When on, Chromium starts with its sandbox, so markup that takes over the renderer process still cannot leave it. As root on Linux, or in a container without a usable sandbox, Chromium then cannot start.',

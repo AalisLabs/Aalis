@@ -13,7 +13,8 @@ const SOURCE = {
   maxPagesLabel: '最大页面数',
   maxPagesDescription: '同时打开的最大页面数量。超出后关闭最早打开的页面。',
   executablePathLabel: 'Chrome 路径',
-  executablePathDescription: '自定义 Chrome/Chromium 可执行文件的绝对路径。留空则使用 Puppeteer 内置 Chromium。',
+  executablePathDescription:
+    '自定义 Chrome/Chromium 可执行文件的绝对路径。留空时用 puppeteer 配置里的可执行文件（PUPPETEER_EXECUTABLE_PATH、.puppeteerrc），没配时用 puppeteer 自带的 Chrome。',
   sandboxLabel: 'Chromium 沙箱',
   sandboxDescription:
     '打开后 Chromium 带沙箱启动，网页即使攻破渲染进程也出不了沙箱。Linux 上以 root 运行或容器里没有可用的沙箱时，打开后浏览器无法启动。',

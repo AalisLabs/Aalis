@@ -13,7 +13,7 @@ export default defineLocale<Source>()({
   maxPagesDescription: 'Maximum number of pages open at once. Beyond it, the earliest opened page is closed.',
   executablePathLabel: 'Chrome path',
   executablePathDescription:
-    'Absolute path to a custom Chrome/Chromium executable. Left empty, the Chromium bundled with Puppeteer is used.',
+    'Absolute path to a custom Chrome/Chromium executable. Left empty, the executable in the puppeteer configuration (PUPPETEER_EXECUTABLE_PATH, .puppeteerrc) is used, or, if none is configured, the Chrome bundled with puppeteer.',
   sandboxLabel: 'Chromium sandbox',
   sandboxDescription:
     'When on, Chromium starts with its sandbox, so a web page that takes over the renderer process still cannot leave it. As root on Linux, or in a container without a usable sandbox, the browser then cannot start.',

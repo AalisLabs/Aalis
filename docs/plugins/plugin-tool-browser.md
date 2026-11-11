@@ -38,7 +38,7 @@ export default definePlugin({
 | `viewportWidth` | number | `1280` | 视口宽度 |
 | `viewportHeight` | number | `720` | 视口高度 |
 | `maxPages` | number | `5` | 最大页面数：同时打开的最大页面数量。超出后关闭最早打开的页面。 |
-| `executablePath` | string | `''` | Chrome 路径：自定义 Chrome/Chromium 可执行文件的绝对路径。留空则使用 Puppeteer 内置 Chromium。 |
+| `executablePath` | string | `''` | Chrome 路径：自定义 Chrome/Chromium 可执行文件的绝对路径。留空时用 puppeteer 配置里的可执行文件（`PUPPETEER_EXECUTABLE_PATH`、`.puppeteerrc`），没配时用 puppeteer 自带的 Chrome。 |
 | `sandbox` | boolean | `false` | Chromium 沙箱：打开后 Chromium 带沙箱启动，网页即使攻破渲染进程也出不了沙箱。Linux 上以 root 运行或容器里没有可用的沙箱时，打开后浏览器无法启动。 |
 | `maxContentLength` | number | `50000` | 最大内容长度：返回给 Agent 的页面文本最大字符数。 |
 | `blockPrivate` | boolean | `true` | 封锁内网与本地：拒绝 localhost / 127.x / ::1 / 10.x / 172.16-31.x / 192.168.x / 169.254.x / 0.0.0.0，防止 SSRF。 |
