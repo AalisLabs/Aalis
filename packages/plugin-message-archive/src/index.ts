@@ -106,13 +106,22 @@ function outboundRecords(msg: OutgoingMessage): OutboundRecord[] {
   });
 }
 
-/** work 在 ms 内没有结果就以「超时」拒绝 */
-function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`识图超时（${ms / 1000} 秒）`)), ms);
+/**
+ * 限时识别：时限作中止信号，与 signal 合并后交给 describe，到时识别随之停下，以「超时」拒绝（describeVideo 中止时不抛、回空串，
+ * 到时回的空串同样按超时）
+ */
+async function describeWithin(
+  ms: number,
+  signal: AbortSignal,
+  describe: (signal: AbortSignal) => Promise<string>,
+): Promise<string> {
+  const deadline = AbortSignal.timeout(ms);
+  const timedOut = () => new Error(`识图超时（${ms / 1000} 秒）`);
+  const desc = await describe(AbortSignal.any([signal, deadline])).catch((err: unknown) => {
+    throw deadline.aborted ? timedOut() : err;
   });
-  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+  if (!desc && deadline.aborted) throw timedOut();
+  return desc;
 }
 
 const uses = {
@@ -199,11 +208,12 @@ function createArchiveService(
     const mem = memory.use;
     if (!mem.updateMessageContent || !media.present) return;
     const service = media.use;
-    // 补描述是本插件自己发起的：识别接本插件这次激活的信号，停用、停机时随之停下
-    const { signal } = lifecycle.use;
-    const described =
-      kind === 'image' ? service.describeImage(url, { signal }) : service.describeVideo(url, { signal });
-    const desc = (await withTimeout(described, DESCRIBE_TIMEOUT_MS[kind])).trim();
+    // 补描述是本插件自己发起的：识别接本插件这次激活的信号，停用、停机时随之停下；时限同样交给识别
+    const desc = (
+      await describeWithin(DESCRIBE_TIMEOUT_MS[kind], lifecycle.use.signal, signal =>
+        kind === 'image' ? service.describeImage(url, { signal }) : service.describeVideo(url, { signal }),
+      )
+    ).trim();
     if (!desc) return;
     const before = outboundMediaMessage(kind, url, { source: 'agent' }).content;
     const { content } = outboundMediaMessage(kind, url, { desc, source: 'agent' });

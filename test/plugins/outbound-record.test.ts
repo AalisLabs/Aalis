@@ -240,20 +240,37 @@ describe('IM 房间的出站在送达之后记进历史', () => {
     expect(warns.filter(line => line.includes('补上描述'))).toEqual([]);
   });
 
-  it('识图超时：这一条保持不带描述，记一条 warn', async () => {
-    const { host, history, warns } = await setup({ describe: () => new Promise<string>(() => {}) });
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    const url = 'https://example.invalid/slow.mp4';
+  it.each([
+    ['图片', 'image', 'https://example.invalid/slow.png', 25_000, '图片'],
+    ['视频', 'video', 'https://example.invalid/slow.mp4', 30_000, '视频'],
+  ] as const)('识别%s到时限：交给识别的信号随之断开，这一条保持不带描述，记一条超时的 warn', async (_label, kind, url, ms, tag) => {
+    // 时限信号换成用例手里的，到时由用例断开
+    const deadline = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
+    const signals: Array<AbortSignal | undefined> = [];
+    // 与媒体服务一样：中止时 describeImage 抛中止原因，describeVideo 回空串
+    const { host, history, warns } = await setup({
+      describe: (_url, signal) =>
+        new Promise<string>((resolve, reject) => {
+          signals.push(signal);
+          signal?.addEventListener('abort', () => (kind === 'video' ? resolve('') : reject(signal.reason)), {
+            once: true,
+          });
+        }),
+    });
     await host.events.use.emit('outbound:message', {
       sessionId: ROOM,
       platform: 'onebot',
       content: '',
       source: 'agent',
-      attachments: [{ kind: 'video', data: url }],
+      attachments: [{ kind, data: url }],
     });
-    await vi.advanceTimersByTimeAsync(31_000);
-    expect((await history(ROOM)).map(m => m.content)).toEqual([`[视频 | ref:${url}]`]);
-    expect(warns).toEqual([expect.stringContaining('超时')]);
+    await vi.waitFor(() => expect(signals).toHaveLength(1));
+    expect(timeout).toHaveBeenCalledWith(ms);
+    deadline.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+    expect(signals[0]?.aborted).toBe(true);
+    await vi.waitFor(() => expect(warns).toEqual([expect.stringContaining(`识图超时（${ms / 1000} 秒）`)]));
+    expect((await history(ROOM)).map(m => m.content)).toEqual([`[${tag} | ref:${url}]`]);
   });
 
   it('记忆后端没有 updateMessageContent：她发的网址图片照记，不识图，也不记 warn', async () => {
