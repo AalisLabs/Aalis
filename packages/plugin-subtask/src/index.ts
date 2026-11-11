@@ -9,7 +9,7 @@ import { messageArchive } from '@aalis/api-message-archive';
 import { type SessionInfo, type SessionManagerService, sessionLabel, sessionManager } from '@aalis/api-session-manager';
 import { type SessionFieldReader, sessionSettings } from '@aalis/api-session-settings';
 import { actingIdentity, backgroundTasks, type ToolCallContext, tools } from '@aalis/api-tools';
-import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
+import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { toSource } from '@aalis/schema-i18n';
 import { type IncomingMessage, type TurnRecord, WellKnownMetadataKeys } from '@aalis/schema-message';
@@ -208,6 +208,8 @@ const uses = {
   document: optional(ownHostConfig),
   /** 子会话在跑的后台任务：有的不到期销毁；不在时没有 */
   backgroundTasks: optional(backgroundTasks),
+  /** 收尾时等已到点的到期销毁做完 */
+  lifecycle,
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -240,6 +242,7 @@ function registerSubtask(
     sessionSettings,
     gateway,
     backgroundTasks,
+    lifecycle,
   }: Caps,
   cfg: PluginConfig,
   fields: SubtaskFields,
@@ -280,6 +283,11 @@ function registerSubtask(
   /** 本插件记下的一轮结束时刻；重启或重载之后没有，取会话记录上的 lastTurn.endedAt */
   const endedAt = new Map<string, number>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** 已到点、正在往下走的到期销毁：收尾时等它们做完再撤回 */
+  const expiring = new Set<Promise<void>>();
+  lifecycle.use.onDrain(async () => {
+    while (expiring.size > 0) await Promise.all(expiring);
+  }, '等在途的到期销毁');
   /** 父会话这一轮的提醒里列出过的回报（子会话 id）：这一轮回复或静默收尾时删 */
   const listed = new Map<string, Set<string>>();
   /** 一轮的结局（回合 id → 结局）：agent:turn:after 记下，同一轮的 agent:turn:before 收尾时取走 */
@@ -1081,7 +1089,14 @@ function registerSubtask(
     const left = start + cfg.idleDeleteHours * HOUR_MS - Date.now();
     timers.set(
       childId,
-      setTimeout(() => void expire(childId), Math.min(Math.max(left, 0), MAX_TIMER_MS)),
+      setTimeout(
+        () => {
+          // 到点的这次在途：收尾时等它做完（写回报、删子会话）；还没到点的随会话管理下线时清掉
+          const work = expire(childId).finally(() => expiring.delete(work));
+          expiring.add(work);
+        },
+        Math.min(Math.max(left, 0), MAX_TIMER_MS),
+      ),
     );
   }
 
