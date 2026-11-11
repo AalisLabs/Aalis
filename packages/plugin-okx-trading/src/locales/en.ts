@@ -35,4 +35,6 @@ export default defineLocale<Source>()({
     'baseUrl must not contain a query string or fragment (anything after ? or #): the plugin appends paths to it',
   abortedAfterSent:
     'The request was aborted after it had been sent, so whether OKX carried it out is unknown: check the order, position or funding status first, then decide whether to retry',
+  outcomeUnknown:
+    'The request got no definite result from OKX ({error}), so whether OKX carried it out is unknown: check the order, position or funding status first, then decide whether to retry',
 });

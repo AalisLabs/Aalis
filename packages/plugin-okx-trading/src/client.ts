@@ -45,6 +45,23 @@ function prehash(timestamp: string, method: string, requestPath: string, body: s
   return timestamp + method + requestPath + body;
 }
 
+/** fetch 的报错写成一句：连接层的原因（ECONNRESET、ENOTFOUND 等）在 cause 的 code 里，message 只是 fetch failed 或 terminated */
+function describeFetchError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const code = (err.cause as { code?: unknown } | undefined)?.code;
+  return typeof code === 'string' ? `${err.message}: ${code}` : err.message;
+}
+
+/** 响应体是 OKX 的回执（带字符串业务码）时交回它，否则（含不是 JSON）为 undefined */
+function okxReply<T>(text: string): OkxApiResponse<T> | undefined {
+  try {
+    const reply = JSON.parse(text) as Partial<OkxApiResponse<T>> | null;
+    return typeof reply?.code === 'string' ? (reply as OkxApiResponse<T>) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export class OkxClient {
   private opts: OkxClientOptions;
 
@@ -59,7 +76,9 @@ export class OkxClient {
 
   /**
    * 发送已签名的 API 请求。POST 一律是改变状态的请求（下单、撤单、改单、平仓、杠杆、保证金、策略委托、划转）：发出之后被
-   * 中止或超时的，OKX 可能已经执行，抛「结果未知」并提示先查询，不报成失败；发出之前已中止的不发，抛中止原因
+   * 中止或超时的，OKX 可能已经执行，抛「结果未知」并提示先查询，不报成失败；发出之前已中止的不发，抛中止原因。没拿到确切结果
+   * 的（连接出错、读到一半断开、2xx 而响应体不是 OKX 的回执、网关或服务端报 5xx、OKX 的业务码 50004）同样可能已经执行，抛「结果
+   * 未知」并带上出错原因；别的照常报失败。不按连接错误的错误码猜请求发没发出：误报结果未知只多一次查询，误报失败可能让模型重下一单
    */
   async request<T = unknown>(
     method: 'GET' | 'POST',
@@ -112,18 +131,33 @@ export class OkxClient {
       if (method === 'POST' && (signal?.aborted || timeout.aborted)) {
         throw new TextError(t('abortedAfterSent'), { cause: err });
       }
+      if (method === 'POST') {
+        throw new TextError(t('outcomeUnknown', { error: describeFetchError(err) }), { cause: err });
+      }
       throw err;
     }
 
-    if (!response.ok) {
+    if (method === 'POST' && response.status >= 500) {
+      throw new TextError(t('outcomeUnknown', { error: `HTTP ${response.status}` }), { cause: new Error(text) });
+    }
+    const reply = okxReply<T>(text);
+    // OKX 的 50004 是它那边的接口超时，按它的说明不代表成功或失败、要查询结果（不论 HTTP 状态）
+    if (method === 'POST' && reply?.code === '50004') {
+      throw new TextError(t('outcomeUnknown', { error: 'OKX 50004' }), { cause: new Error(text) });
+    }
+    // 4xx 照常报失败。2xx 而响应体不是 OKX 的回执：按连接关闭定界的响应读到一半断开时 fetch 不报错，读到的是截断的 JSON；
+    // 中转或代理也可能回 200 的网页或别的 JSON
+    if (!response.ok || !reply) {
+      if (method === 'POST' && response.ok) {
+        const error = `HTTP ${response.status}, not an OKX reply`;
+        throw new TextError(t('outcomeUnknown', { error }), { cause: new Error(text) });
+      }
       throw new Error(`OKX HTTP ${response.status}: ${text}`);
     }
-
-    const result = JSON.parse(text) as OkxApiResponse<T>;
-    if (result.code !== '0') {
-      throw new Error(`OKX API 错误 [${result.code}]: ${result.msg}`);
+    if (reply.code !== '0') {
+      throw new Error(`OKX API 错误 [${reply.code}]: ${reply.msg}`);
     }
-    return result;
+    return reply;
   }
 
   // ========== 账户 ==========

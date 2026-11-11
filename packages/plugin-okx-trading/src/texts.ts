@@ -1,4 +1,4 @@
-// 本插件自己的原文字典：显示名（同为工具分组名）与分组概述（模拟盘、实盘两句）、配置项与配置报错，改变状态的请求发出之后中止或超时、结果未知的说明
+// 本插件自己的原文字典：显示名（同为工具分组名）与分组概述（模拟盘、实盘两句）、配置项与配置报错，改变状态的请求结果未知的两种说明（发出之后中止或超时、没拿到确切结果）
 import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
@@ -30,6 +30,8 @@ const SOURCE = {
   baseUrlNotPlain: 'baseUrl 需为不带用户名或密码的完整 URL',
   baseUrlHasQuery: 'baseUrl 不能带查询串或片段（? 或 # 之后的部分）：插件在它后面拼接路径',
   abortedAfterSent: '请求已发出后中止，OKX 是否已执行未知：先查询订单、持仓或资金状态，确认之后再决定是否重试',
+  outcomeUnknown:
+    '请求没拿到 OKX 的确切结果（{error}），是否已执行未知：先查询订单、持仓或资金状态，确认之后再决定是否重试',
 } as const;
 export type Source = typeof SOURCE;
 
