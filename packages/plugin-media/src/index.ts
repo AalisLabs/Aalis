@@ -28,7 +28,7 @@ import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig, type SchemaField } from '@aalis/schema-config';
 import { type TextRef, textOf } from '@aalis/schema-i18n';
-import { clearDescriptionCache, DESCRIPTION_KINDS, flushDescriptionCache, loadDescriptionCache } from './cache.js';
+import { clearDescriptionCache, closeDescriptionCache, DESCRIPTION_KINDS, loadDescriptionCache } from './cache.js';
 import { DEFAULT_AUDIO_PROMPT, DEFAULT_VISION_BATCH_PROMPT, DEFAULT_VISION_PROMPT } from './llm-adapter.js';
 import { buildPreprocessor } from './preprocessor.js';
 import { setMediaRuntime } from './runtime.js';
@@ -344,7 +344,7 @@ function run(caps: Caps): void {
   void loadDescriptionCache(logger).then(n => {
     if (n > 0) logger.info(`图片描述缓存已恢复 ${n} 条（跨重启复用，免去重复识别）`);
   });
-  caps.lifecycle.use.onDispose(() => flushDescriptionCache());
+  caps.lifecycle.use.onDispose(() => closeDescriptionCache());
 
   // 参与 memory:clear（/clear 与删除会话），按所选类型清理，各行标 type：
   // - 上传的图片（本插件在会话媒体目录里的子目录）归 image：会话级清这个会话的，全局清各会话的；
@@ -370,7 +370,7 @@ function run(caps: Caps): void {
       if (kinds.length > 0) {
         const source = 'media-description';
         try {
-          const removed = await clearDescriptionCache(sessionId, kinds);
+          const removed = await clearDescriptionCache(sessionId, kinds, caps.lifecycle.use.signal);
           for (const type of kinds) {
             const params = { kind: t(DESCRIPTION_KIND_NOUNS[type]), count: removed[type] };
             const message = t(sessionId ? 'descriptionsClearedSession' : 'descriptionsClearedAll', params);

@@ -87,7 +87,7 @@ async function boot(seed: Record<string, string>, opts: StorageOpts = {}) {
     return data.results.filter(r => r.source === SOURCE).map(r => ({ ...r, message: toSource(r.message) }));
   };
   // 交出提供者实例本身：用例要替换它的方法，业务句柄上的写落不到提供者
-  return { files: store.files, clear, media: host.services.use.get(mediaService)! };
+  return { app, files: store.files, clear, media: host.services.use.get(mediaService)! };
 }
 
 function gate(): { wait: Promise<void>; release: () => void } {
@@ -255,6 +255,19 @@ describe('全局清理（/clear all）', () => {
     read.release();
     expect((await clearing).every(r => r.success)).toBe(true);
     expect(lookupCachedDescription('data:/images/x/onebot/cdcd0000cdcd0000.png')).toBeNull();
+  });
+
+  it('排到时本插件这次激活已开始关闭：不清，回执报中止原因，快照不动', async () => {
+    const read = gate();
+    const seed = { [SNAPSHOT]: '[]' }; // 空快照：灌回不往共享的缓存里留东西
+    const { app, files, clear } = await boot(seed, { readGate: read.wait });
+    // 只清视频：中间件不先清上传的图片，清理在关闭之前就排进队，排在停在读盘的灌回之后
+    const clearing = clear({ scope: 'all', types: ['video'] });
+    await app.plugins.disable(media.name);
+    read.release();
+    const failed = '视频描述缓存清空失败：激活 "@aalis/plugin-media" 已开始关闭';
+    expect(await clearing).toEqual([{ source: SOURCE, type: 'video', success: false, message: failed }]);
+    expect(files.get(SNAPSHOT)).toBe(seed[SNAPSHOT]);
   });
 });
 

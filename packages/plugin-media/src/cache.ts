@@ -47,6 +47,8 @@ const aliases = createBoundedMap<string, string>({ max: MAX_ENTRIES, ttlMs: TTL_
 type CacheLogger = { debug: (msg: string) => void; warn: (msg: string) => void };
 
 let persistLogger: CacheLogger | null = null;
+/** 关掉的次数：灌回读完时与开始时不同，说明发起它的那次激活已关掉 */
+let closes = 0;
 let persistTimer: ReturnType<typeof setTimeout> | undefined;
 /**
  * /clear all 已删掉快照文件。只在禁写运行（persistLogger 为 null）里查：这时本进程不会再写快照，
@@ -146,10 +148,12 @@ function cacheKey(key: string, shareable: boolean, variant?: string): string {
 }
 
 /**
- * 从快照灌回缓存并启用落盘。apply() 时调用一次；读不到快照（首次运行）不是错误。
+ * 从快照灌回缓存并启用落盘。apply() 时调用一次；读不到快照（首次运行）不是错误。发起它的那次激活在读完之前已关掉的，
+ * 读到的照样灌进内存（缓存是模块级共享的），不开落盘。
  * 返回灌回条数。
  */
 export function loadDescriptionCache(logger: CacheLogger): Promise<number> {
+  const opened = closes;
   return queueSnapshotIO(async () => {
     try {
       const { storage } = getMediaRuntime();
@@ -162,14 +166,14 @@ export function loadDescriptionCache(logger: CacheLogger): Promise<number> {
         cache.set(pair[0], pair[1]);
         n++;
       }
-      persistLogger = logger; // 读成功才开落盘：读失败还写盘，会用一份空缓存整体覆盖掉磁盘上的好快照
+      if (closes === opened) persistLogger = logger; // 读成功才开落盘：读失败还写盘，会用一份空缓存整体覆盖掉磁盘上的好快照
       return n;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       // 首次运行读不到文件是正常的；其余错因（存储根未就绪、权限、JSON 损坏）要能被看见，
       // 否则表现只是「重启后缓存莫名从头开始」。两种情况都不开落盘，宁可不复用也不覆盖。
       if (isStorageNotFound(err)) {
-        persistLogger = logger;
+        if (closes === opened) persistLogger = logger;
         logger.debug(`图片描述缓存快照不存在，按首次运行处理: ${msg}`);
       } else {
         logger.warn(`图片描述缓存快照读取失败，本次运行不落盘（避免覆盖磁盘上的旧快照）: ${msg}`);
@@ -179,7 +183,7 @@ export function loadDescriptionCache(logger: CacheLogger): Promise<number> {
   });
 }
 
-/** 立即落盘并解除防抖定时器。dispose 时调用，避免最后一段识别结果白丢。 */
+/** 立即落盘并解除防抖定时器 */
 export async function flushDescriptionCache(): Promise<void> {
   if (persistTimer !== undefined) {
     clearTimeout(persistTimer);
@@ -187,6 +191,17 @@ export async function flushDescriptionCache(): Promise<void> {
   }
   if (!persistLogger) return;
   await persist();
+}
+
+/**
+ * 本插件这次激活关掉（dispose）时调用：落盘一次，避免最后一段识别结果白丢；之后不再排落盘，直到下一次 loadDescriptionCache。
+ * 缓存是模块级共享的，关掉之后晚到的描述只进内存，不由已关掉的这次激活写快照
+ */
+export async function closeDescriptionCache(): Promise<void> {
+  closes++;
+  const flushing = flushDescriptionCache(); // persist 开头已取走落盘用的 logger
+  persistLogger = null;
+  await flushing;
 }
 
 /**
@@ -201,12 +216,17 @@ export async function flushDescriptionCache(): Promise<void> {
  * 描述与文件名不是内容哈希的描述以存储地址为键；内容哈希键跨会话共享，无从按会话归属，保留。别名不进快照，删掉了
  * 条目时重写快照。禁写时磁盘上的旧快照无从改写，内存侧清完后抛错说明；本次运行里全局清理已删掉快照文件时不抛，
  * 那时磁盘上已没有会在重启时恢复的描述。
+ *
+ * signal 是本插件这次激活的中止信号：排到时已断（这次激活已开始关闭）的不清，抛它的中止原因。信号在关闭一开始就断，
+ * 早于 {@link closeDescriptionCache} 停掉落盘，没断时落盘停没停只取决于读快照成没成
  */
 export function clearDescriptionCache(
   sessionId: string | undefined,
   kinds: readonly DescriptionKind[],
+  signal: AbortSignal,
 ): Promise<Record<DescriptionKind, number>> {
   return queueSnapshotIO(async () => {
+    signal.throwIfAborted();
     const prefixes =
       sessionId === undefined
         ? undefined
