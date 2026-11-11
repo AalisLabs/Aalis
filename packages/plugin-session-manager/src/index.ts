@@ -154,6 +154,8 @@ class SessionManager implements SessionManagerService {
   private caps: ManagerCaps;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private dirty = false;
+  /** shutdown 刷过盘之后为真：之后的改动不再排落盘定时器（本激活已关掉，不在关掉之后写） */
+  private closed = false;
   /**
    * 本进程显式删除、尚未落盘的记录（墓碑），按表分开。persist 写全量快照，但只删这些键，不按「后端有、内存无」清扫：
    * 后端里还可能有本进程没读到的记录，按差集清扫会把它们当孤儿删掉。每条墓碑带令牌，提交成功后只清掉
@@ -321,7 +323,7 @@ class SessionManager implements SessionManagerService {
   /** 标记需要持久化并延迟刷盘 */
   private markDirty(): void {
     this.dirty = true;
-    if (!this.persistTimer) {
+    if (!this.persistTimer && !this.closed) {
       this.persistTimer = setTimeout(() => {
         this.persistTimer = null;
         this.persist().catch(err => this.caps.logger.use.warn('持久化会话失败:', err));
@@ -1182,6 +1184,7 @@ class SessionManager implements SessionManagerService {
 
   /** 强制持久化并清理定时器 */
   async shutdown(): Promise<void> {
+    this.closed = true;
     if (this.persistTimer) {
       clearTimeout(this.persistTimer);
       this.persistTimer = null;
@@ -1438,18 +1441,25 @@ async function run(caps: Caps): Promise<void> {
 
   // 自动标题：只给带创建来源的根会话（WebUI 新建的、终端建的）生成，在首条消息时生成、不等回复；IM 房间不生成，
   // owner 从 WebUI 往房间插话也不拿来给房间起名。异步生成，不阻塞消息处理；直接传入这条消息，不依赖历史
-  const titleGenerating = new Set<string>();
+  /**
+   * 在途的标题生成，按会话 id：同一会话同时只生成一份；收尾时等它们落定（信号已断，模型调用停在当前这一步），之后
+   * onDispose 刷盘
+   */
+  const titling = new Map<string, Promise<unknown>>();
   events.use.on('inbound:message', (msg: IncomingMessage) => {
     const { sessionId } = msg;
     const session = manager.getSession(sessionId);
-    if (!session?.createdFrom || session.title || titleGenerating.has(sessionId)) return;
-    titleGenerating.add(sessionId);
+    if (!session?.createdFrom || session.title || titling.has(sessionId)) return;
     logger.use.info(`开始生成会话标题: ${sessionId}`);
-    manager
+    const work = manager
       .generateTitle(sessionId, msg.content)
       .catch(err => logger.use.warn('标题生成失败:', err))
-      .finally(() => titleGenerating.delete(sessionId));
+      .finally(() => titling.delete(sessionId));
+    titling.set(sessionId, work);
   });
+  lifecycle.use.onDrain(async () => {
+    while (titling.size > 0) await Promise.all(titling.values());
+  }, '等在途的标题生成');
 
   // 关停收尾：仍 active 的会话在 onDrain 收口并落盘。
   // 第一方栈由 core 关停编排（optional 环成员先全部 drain）与回合结束时的收口处理；
