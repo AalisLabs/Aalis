@@ -623,6 +623,23 @@ describe('停止、撤回、停用与会话删除', () => {
     expect(w.notices()).toEqual([]);
   });
 
+  it('普通工具在处理函数里等取用判定的审批时撤回登记：交给守卫的信号随之断开', async () => {
+    let approve = () => {};
+    const approval = new Promise<null>(resolve => {
+      approve = () => resolve(null);
+    });
+    // 过守卫即放行，处理函数里的取用判定（带 check）一直等审批
+    const w = world({ guard: ctx => (ctx.check ? approval : Promise.resolve(null)) });
+    const off = w.plain('zz_plain', async (_args, ctx) => JSON.stringify(await ctx.approveFor(() => ({ ok: true }))));
+    const result = w.registry.execute('zz_plain', {}, turn().ctx);
+    await flush();
+    expect(w.guarded).toHaveLength(2);
+    off();
+    expect(w.guarded[1].signal?.aborted).toBe(true);
+    approve();
+    await result;
+  });
+
   // 守卫可能等一道审批，这时登记工具的插件被停用或重启：批下来时旧登记的处理函数是旧实例的闭包，状态已作废；
   // 重启后同名登记的新实例也不替这次调用执行，审批是按旧登记的声明判的
   it('等审批时工具撤回登记，批下来也不执行，重启后的同名新登记也不执行（可转后台与否都一样）', async () => {

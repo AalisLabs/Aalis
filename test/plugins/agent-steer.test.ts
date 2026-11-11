@@ -940,7 +940,7 @@ async function stopInTool(s: Booted, name: string) {
   );
   await Promise.all([a, b]);
   const result = (await s.history(WEBUI.sessionId)).find(m => m.role === 'tool');
-  expect(JSON.parse(text(result as Message))).toEqual({ error: '回合已中止，不再等' });
+  expect(JSON.parse(text(result as Message))).toEqual({ error: '调用已中止，不再等' });
 }
 
 describe('回合记录', () => {

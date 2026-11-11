@@ -47,7 +47,7 @@ export default definePlugin({
 
 ## 主要能力
 
-- **注册 / 注销**：插件侧 `tools.use.register(tool)` → disposer；登记归属本次激活，激活撤回时按条目退订，避免遗留。不要自己传 `contextId`。
+- **注册 / 注销**：插件侧 `tools.use.register(tool)` → disposer；登记归属本次激活，激活撤回时按条目退订，避免遗留。不要自己传 `contextId`。登记撤回（所属插件停用、重启）时，它在跑的调用一并中止：普通调用的处理函数与取用判定收到的信号随之断开，中止原因是「工具 X 已撤回登记」，处理函数按它抛出时回执就是这句话。
 - **分组过滤**：`getDefinitions({ groups })` / `getSummaries({ groups })`
   按分组返回工具：无分组的通用工具恒可见；带分组的只在命中 `groups` 时返回，`'*'` 表示全部分组；
   未指定 `groups`（或为空）时只返回通用工具。多人平台上 public 工具的可达性靠这道分组闸

@@ -1033,7 +1033,7 @@ describe('检索管线：被动注入与 memory_recall 共用', () => {
     expect(seen).toEqual([controller.signal]);
   });
 
-  it('memory_recall 的扩窗取数同样受中止信号约束：回合已中止 → 返回「回合已中止」', async () => {
+  it('memory_recall 的扩窗取数同样受中止信号约束：调用已中止 → 返回「调用已中止」', async () => {
     const { host, toolHandlers } = await setup({
       withMemory: true,
       contextExpand: { window: 1 },
@@ -1049,7 +1049,7 @@ describe('检索管线：被动注入与 memory_recall 共用', () => {
     const out = JSON.parse(
       await toolHandlers.get('memory_recall')!({ query: '记忆' }, { sessionId: 's-cur', signal: controller.signal }),
     );
-    expect(out).toEqual({ error: '回合已中止' });
+    expect(out).toEqual({ error: '调用已中止' });
   });
 
   it('memory_recall 的 contextWindow：命中点带出前后邻居，命中本身不重复', async () => {

@@ -41,7 +41,7 @@ export default definePlugin({
 | `send_to_subtask` | 向子任务追加消息（追问/补充指令）；已完成或出错的重新进入进行中 |
 | `set_subtask_setting` | 改一个直接子任务本会话层的一项设置（只写值，不能恢复继承） |
 | `delete_subtask` | 递归删除子任务会话 |
-| `wait_subtasks` | 阻塞直到指定子任务全部结束（完成、出错、被停止或会话已不存在）或超时；超时取 `timeout_seconds` 与 `maxWaitMs` 中的较小者（事件驱动，非轮询）。被停止的报 `stopped`，不算完成；出错的另带 `reason`（出错原因）；到期销毁了的同 `check_subtask`；`timedOut` 只在等满时还有没结束的才为真。调用被中止（所在的一轮被停止键、禁言、`/clear` 等停下）时不再等，回 `error`「回合已中止，不再等」 |
+| `wait_subtasks` | 阻塞直到指定子任务全部结束（完成、出错、被停止或会话已不存在）或超时；超时取 `timeout_seconds` 与 `maxWaitMs` 中的较小者（事件驱动，非轮询）。被停止的报 `stopped`，不算完成；出错的另带 `reason`（出错原因）；到期销毁了的同 `check_subtask`；`timedOut` 只在等满时还有没结束的才为真。调用被中止（所在的一轮被停止键、禁言、`/clear` 等停下，或本插件停用、重启）时不再等，回 `error`「调用已中止，不再等」 |
 
 `create_subtask`、`send_to_subtask`、`set_subtask_setting`、`delete_subtask` 声明 `risk: 'dangerous'`（2 级加确认）：子任务替发起的人在后台接着做，与编排、定时任务、停后台任务同一规则。别人单独发起的一轮没人能批，拒绝；有 owner 在的一轮出审批卡给她批，批过的调用按她执行；她一个人的回合在免确认白名单（`restrictedPolicy`）里不问，不在就出卡，常要连续派几个并行子任务时把 `tool:create_subtask` 等加进白名单。`check_subtask` 与 `wait_subtasks` 只看不改，2 级、不确认（`visibility: 'restricted'`），低于 2 级的看不到别人派出的子任务的任务与结果。
 

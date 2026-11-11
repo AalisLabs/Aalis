@@ -1232,8 +1232,8 @@ async function run(caps: Caps): Promise<void> {
           results,
         });
       } catch (err) {
-        // 回合被停下（停止键、禁言、停机等）不是检索故障，与被动注入同样不告警
-        if (callCtx.signal?.aborted) return JSON.stringify({ error: '回合已中止' });
+        // 调用被中止（回合被停下，或本插件停用、重启）不是检索故障，与被动注入同样不告警
+        if (callCtx.signal?.aborted) return JSON.stringify({ error: '调用已中止' });
         const msg = err instanceof Error ? err.message : String(err);
         logger.use.warn(`memory_recall 失败: ${msg}`);
         return JSON.stringify({ error: `检索失败: ${msg}` });

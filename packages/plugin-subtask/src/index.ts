@@ -758,7 +758,7 @@ function registerSubtask(
       const { signal } = callCtx;
       if (!ids.every(isTerminal) && !signal?.aborted) {
         // 事件驱动 + 超时，替代轮询：会话完成、状态变了、被删（结果里按不存在回）或追问落定时重判；调用被中止（这一轮被停止键、
-        // 禁言、/clear 等停下）时不再等，这一轮才落定得了
+        // 禁言、/clear 等停下，或本插件停用、重启）时不再等，这一轮才落定得了
         await new Promise<void>(resolve => {
           const pending = new Set(ids.filter(id => !isTerminal(id)));
           const disposers: Array<() => void> = [];
@@ -783,7 +783,7 @@ function registerSubtask(
           signal?.addEventListener('abort', finish, { once: true });
         });
       }
-      if (signal?.aborted) return JSON.stringify({ error: '回合已中止，不再等' });
+      if (signal?.aborted) return JSON.stringify({ error: '调用已中止，不再等' });
 
       // 收集结果：等着时销毁了的取回报
       const results = [];

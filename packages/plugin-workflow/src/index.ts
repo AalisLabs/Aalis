@@ -776,12 +776,13 @@ function registerTools(
     },
     handler: async (args, callCtx) => {
       const { signal } = callCtx;
-      const aborted = JSON.stringify({ error: '回合已中止，不再等' });
+      const aborted = JSON.stringify({ error: '调用已中止，不再等' });
       if (signal?.aborted) return aborted;
       try {
         // 透传调用者的授权身份（这一项要 owner 确认：批过的是批的人，免了的是那位 owner）；运行身份按它与定义者定（见 execute）。
         // 调起这次运行的会话也带上：这一轮在等这次运行，指向它的 agent 节点立即失败。调用被中止（这一轮被停止键、禁言、/clear
-        // 等停下）时不再等这次运行，这一轮才落定得了；运行不取消
+        // 等停下，或本插件停用、重启）时不再等这次运行，这一轮才落定得了。回合停下时运行照常进行；本插件停用、重启时运行随拆卸
+        // 取消
         const run = await new Promise<WorkflowRun | undefined>((resolve, reject) => {
           const stop = () => resolve(undefined);
           signal?.addEventListener('abort', stop, { once: true });

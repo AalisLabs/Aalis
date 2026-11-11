@@ -61,12 +61,12 @@ async function setup() {
 }
 
 describe('plugin-memory-vector: memory_recall 遇回合中止', () => {
-  it('中止：返回「回合已中止」，不记检索失败的 warn', async () => {
+  it('中止：返回「调用已中止」，不记检索失败的 warn', async () => {
     const { app, recall, recallWarns } = await setup();
     const abort = new AbortController();
     abort.abort();
     const out = JSON.parse(await recall({ query: '上次' }, { sessionId: 'webui:s1', signal: abort.signal }));
-    expect(out).toEqual({ error: '回合已中止' });
+    expect(out).toEqual({ error: '调用已中止' });
     expect(recallWarns()).toEqual([]);
     await app.stop();
   });

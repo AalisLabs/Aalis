@@ -22,7 +22,7 @@ import {
   toolFailed,
 } from '@aalis/api-tools';
 import type { Logger } from '@aalis/core';
-import { toSource } from '@aalis/schema-i18n';
+import { TextError, toSource } from '@aalis/schema-i18n';
 import { type BackgroundTasks, DEFAULT_YIELD_SECONDS, errorIn, exitCodeOf, inTurn, type Plan } from './background.js';
 import { backgroundTaskTools } from './background-tools.js';
 import { t } from './texts.js';
@@ -96,9 +96,10 @@ export class ToolRegistry implements ToolService {
     this.tools.set(name, entry);
     this.logger.debug(`注册工具: ${name} (来自 ${contextId})`);
     // 退订按条目引用比对：同名重注册后，旧退订闭包不得误删新登记（按 name + contextId 比对会）。
-    // 这个登记在跑的调用随撤回一并中止（所属插件停用），不论它是否已被同名登记顶掉；还在过守卫的（可转后台与否）不再执行
+    // 这个登记在跑的调用随撤回一并中止（所属插件停用），不论它是否已被同名登记顶掉；还在过守卫的（可转后台与否）不再执行。
+    // 中止原因写明撤回登记：普通调用的处理函数按它抛出时，回执就是这句话
     return () => {
-      entry.withdrawn.abort();
+      entry.withdrawn.abort(new TextError(t('withdrawn', { name })));
       this.tasks.withdraw(entry, name);
       if (this.tools.get(name) !== entry) return;
       this.tools.delete(name);
@@ -321,10 +322,12 @@ export class ToolRegistry implements ToolService {
       // 批过的调用按批的人执行：交给处理函数与转后台登记的都是参与者换成他的这一份，它派生的（子任务、结束通知、定时任务）随之
       const request: ToolCallRequest = verdict.by ? { ...callCtx, participants: [verdict.by] } : callCtx;
       if (!call) {
+        // 处理函数与取用判定收到的信号与守卫的同一份：这条登记撤回时在跑的普通调用随之中止
+        const running: ToolCallRequest = { ...request, signal };
         return this.invoke(tool, toolArgs, {
-          ...request,
+          ...running,
           output: this.tasks.outputFor(request),
-          approveFor: check => this.approveFor(tool, toolArgs, request, check, true),
+          approveFor: check => this.approveFor(tool, toolArgs, running, check, true),
         });
       }
       handedOver = true;
