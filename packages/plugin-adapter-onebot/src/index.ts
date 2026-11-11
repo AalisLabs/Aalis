@@ -2536,6 +2536,9 @@ function runAdapter(caps: Caps): void {
     }
   });
 
+  // 收尾：等在后台写的转发原文落定再撤回
+  lifecycle.use.onDrain(() => forwardExpander.settled(), '等转发原文落盘');
+
   lifecycle.use.onDispose(() => {
     selfMuted.clear();
     muteRecoveryChecked.clear();

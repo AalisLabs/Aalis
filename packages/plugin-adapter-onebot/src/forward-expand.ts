@@ -108,6 +108,8 @@ export interface ForwardExpander<TState> {
    * 没有按会话清理的版本：条目记下的会话只用于取用判定。
    */
   clearAll(): Promise<number>;
+  /** 等在后台写的转发原文（持久化与过期清理）都落定：本插件收尾时调 */
+  settled(): Promise<void>;
 }
 
 const FORWARD_CACHE_TTL_MS = 60 * 60 * 1000;
@@ -191,6 +193,8 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     signal,
   } = deps;
   const forwardCache = new Map<string, { entry: ForwardEntry; expiresAt: number }>();
+  /** 在后台写的转发原文（持久化与过期清理）：本插件收尾时等它们落定 */
+  const persisting = new Set<Promise<void>>();
   /** 上次回收过期持久化条目的时刻。0 = 本次启动还没扫过，首条消息即扫一次。 */
   let lastSweepAt = 0;
 
@@ -210,13 +214,16 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     // 只回收死条目（原本永不删→堆积成泄漏），绝不淘汰未过期的有效缓存。
     const now = Date.now();
     for (const [k, v] of forwardCache) if (v.expiresAt < now) forwardCache.delete(k);
-    const store = memory.present ? memory.use : undefined;
+    // 本插件这次激活已中止（收尾已开始）时不再开始写：收尾只等此前开始的
+    const store = !signal.aborted && memory.present ? memory.use : undefined;
     if (store) {
-      // 持久化失败（含同步抛出的）只记日志：内存里已经记下，展开与记会话照常
-      void Promise.resolve()
+      // 持久化失败（含同步抛出的）只记日志：内存里已经记下，展开与记会话照常。在后台写，记进 persisting，收尾时等它落定
+      const work = Promise.resolve()
         .then(() => store.saveMetadata(FORWARD_METADATA_NS, id, entry as unknown as Record<string, unknown>))
         .then(() => sweepPersisted())
         .catch((err: unknown) => logger.debug(`forward metadata 持久化失败 id=${id}: ${err}`));
+      persisting.add(work);
+      void work.then(() => persisting.delete(work));
     }
   }
 
@@ -540,5 +547,8 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     fetchForward,
     expandForwards,
     clearAll,
+    async settled() {
+      while (persisting.size > 0) await Promise.all(persisting);
+    },
   };
 }
