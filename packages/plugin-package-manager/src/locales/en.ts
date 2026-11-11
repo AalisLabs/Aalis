@@ -18,7 +18,7 @@ export default defineLocale<Source>()({
     'A dependency does not support the system or CPU architecture of this machine (EBADPLATFORM); this plugin cannot be installed here',
   npmPeer: 'Peer dependency conflict (market installs do not use legacy-peer-deps from .npmrc): {conflicts}',
   npmBrowser:
-    'Downloading the browser failed: this plugin downloads Chrome while installing. Set a mirror for the Aalis process (environment variable PUPPETEER_CHROME_DOWNLOAD_BASE_URL), restart, and install again',
+    'Downloading the browser failed: this plugin downloads Chrome while installing. Set a mirror (environment variable PUPPETEER_CHROME_DOWNLOAD_BASE_URL) in the environment Aalis is launched from, relaunch Aalis and install again (an in-app restart keeps the previous environment variables)',
   npmNative:
     'Native module {pkg} failed to compile: this machine lacks C/C++ build tools. On macOS run xcode-select --install; on Linux install build-essential and python3; on Windows install Visual Studio “Desktop development with C++”; then retry',
   npmNativeUnknown:

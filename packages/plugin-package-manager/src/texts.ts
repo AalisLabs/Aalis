@@ -17,7 +17,7 @@ const SOURCE = {
   npmPlatformUnknown: '有一个依赖不支持这台机器的系统或 CPU 架构（EBADPLATFORM），这个插件在这里装不了',
   npmPeer: 'peer 依赖冲突（市场安装不沿用 .npmrc 里的 legacy-peer-deps）：{conflicts}',
   npmBrowser:
-    '下载浏览器失败：这个插件装的时候要下载 Chrome。给 Aalis 的进程设好镜像地址（环境变量 PUPPETEER_CHROME_DOWNLOAD_BASE_URL）后重启再装',
+    '下载浏览器失败：这个插件装的时候要下载 Chrome。把镜像地址（环境变量 PUPPETEER_CHROME_DOWNLOAD_BASE_URL）设进启动 Aalis 的环境，重新启动 Aalis 后再装（应用内的重启沿用原来的环境变量）',
   npmNative:
     '原生模块 {pkg} 编译失败：本机缺 C/C++ 编译工具。macOS 执行 xcode-select --install；Linux 装 build-essential 与 python3；Windows 装 Visual Studio 的「使用 C++ 的桌面开发」，装好后重试',
   npmNativeUnknown:

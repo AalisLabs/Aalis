@@ -581,7 +581,7 @@ describe('npm 失败的回执：写认出的原因与修法，整段输出进日
     ],
     [
       'npm error path /abs/node_modules/puppeteer\nnpm error command failed\nnpm error Error: Failed to set up chrome v130.0.6723.58!',
-      '下载浏览器失败：这个插件装的时候要下载 Chrome。给 Aalis 的进程设好镜像地址（环境变量 PUPPETEER_CHROME_DOWNLOAD_BASE_URL）后重启再装',
+      '下载浏览器失败：这个插件装的时候要下载 Chrome。把镜像地址（环境变量 PUPPETEER_CHROME_DOWNLOAD_BASE_URL）设进启动 Aalis 的环境，重新启动 Aalis 后再装（应用内的重启沿用原来的环境变量）',
     ],
     [
       'npm error path /abs/node_modules/zz-native-addon\nnpm error command failed\nnpm error gyp ERR! stack Error: not found: make',

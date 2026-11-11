@@ -70,7 +70,7 @@ PUPPETEER_CHROME_HEADLESS_SHELL_DOWNLOAD_BASE_URL=<镜像地址> \
 npm install
 ```
 
-也可以先不装这些插件：从 `package.json` 的 `dependencies` 删掉它们再 `npm install`（`npm ls puppeteer` 查是哪几个）。经插件市场安装时，把这两个环境变量设给运行 Aalis 的进程，重启后再装。
+也可以先不装这些插件：从 `package.json` 的 `dependencies` 删掉它们再 `npm install`（`npm ls puppeteer` 查是哪几个）。经插件市场安装时，把这两个环境变量设进启动 Aalis 的环境，重新启动 Aalis 后再装（应用内的重启沿用原来的环境变量）。
 
 ### 原生模块编译失败
 

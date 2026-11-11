@@ -41,6 +41,8 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 | `createProcessRespawnStrategy({ appDir })` | 进程级重启策略（`app.restart()` → 子进程重生；开发模式在安装集里找本地 tsx）。 |
 | `createServiceRestartStrategy()` / `SERVICE_RESTART_EXIT_CODE` | 服务形态的重启策略：停掉 App 后以 75 退出，由服务管理器拉起（见「实例锁」的服务形态重启）。 |
 
+两种重启都沿用原来的环境变量：前台重启的新进程继承当前进程的环境，服务形态由服务管理器按服务配置里的环境重新启动进程，都不重读 shell 的配置。改了环境变量要从改过的环境重新启动 Aalis：前台运行的先停掉，再从新开的终端启动；服务形态改了服务配置要让服务管理器重新载入（launchd 先 `bootout` 再 `bootstrap`，systemd 先 `daemon-reload` 再 `restart`）。这样重启不会丢掉启动时在命令前临时给的变量，也不与服务管理器给的环境冲突。
+
 `startAalis` 的 `opts`：`appDir`（安装集，即部署目录，绝对路径，必填；不传时在解析数据目录之前报错并以 2 退出；数据目录缺省在它下面）、`pluginLoader`、`consoleSink` / `fileLog`（默认开）、`argv`（默认 `process.argv.slice(2)`）、`devMode`、`configSync`。
 
 文件日志写数据目录的 `logs/latest.log`，`fileLog: false` 关掉。启动时先轮转旧日志：上一轮的改名为
