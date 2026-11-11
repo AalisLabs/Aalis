@@ -152,13 +152,25 @@ export default definePlugin({
   uses,
   apply(caps) {
     const cfg = parseConfig(configSchema, caps.config.use, caps.logger.use);
-    const archive = createArchiveService(caps, cfg.debugLogs);
+    // 本插件自己发起的后台写（送达之后记出站、补描述）记在这里：收尾时等它们落定再撤回。信号在收尾开始时已断，识图停在
+    // 当前这一步，已经开始的写入写完
+    const running = new Set<Promise<unknown>>();
+    const track = (work: Promise<unknown>): void => {
+      running.add(work);
+      void work.then(() => running.delete(work));
+    };
+    caps.lifecycle.use.onDrain(async () => {
+      while (running.size > 0) await Promise.all(running);
+    }, '等在途的出站记录与补描述');
+    const archive = createArchiveService(caps, cfg.debugLogs, track);
     caps.provide.use(messageArchive, archive);
     // 适配器送达之后发的快照记进会话历史；不等它写完，免得拖住同一事件的其它监听
     caps.events.use.on('outbound:delivered', msg => {
-      archive
-        .recordOutbound(msg)
-        .catch(err => caps.logger.use.warn('[message-archive] 出站消息没能记进会话历史:', err));
+      track(
+        archive
+          .recordOutbound(msg)
+          .catch(err => caps.logger.use.warn('[message-archive] 出站消息没能记进会话历史:', err)),
+      );
     });
     // 子会话没有窗口，任何适配器都不认领它的出站：还没人认领的由这里认领，记进子会话自己的历史即算送达
     caps.events.use.on('outbound:message', msg => {
@@ -175,6 +187,8 @@ export default definePlugin({
 function createArchiveService(
   { memory, media, storage, sessionManager, authority, events, logger, lifecycle }: Caps,
   debugLogs: boolean,
+  /** 记下本插件自己发起的后台写，收尾时等它们落定 */
+  track: (work: Promise<unknown>) => void,
 ): MessageArchiveService {
   // 经 memory 的业务句柄调用：一次激活内胜者也可能换人（偏好变更、更高优先级的提供者登场），
   // 句柄每次调用都打到当时选中的那一家。
@@ -244,13 +258,15 @@ function createArchiveService(
       // 补描述等这一条的落库通知派发完再开始：改写通知赶在它前面到的话，收录它的一方（memory-vector）删不到还没收录的旧条目
       records.forEach(({ message, pending }, i) => {
         if (!pending) return;
-        announced[i]
-          .then(() => describeLater(sessionId, message, pending))
-          .catch(err => {
-            // 停用、停机时中止不是补不上：不告警
-            if (!lifecycle.use.signal.aborted)
-              logger.use.warn('[message-archive] 发出的附件没能补上描述，这一条不带描述:', err);
-          });
+        track(
+          announced[i]
+            .then(() => describeLater(sessionId, message, pending))
+            .catch(err => {
+              // 停用、停机时中止不是补不上：不告警
+              if (!lifecycle.use.signal.aborted)
+                logger.use.warn('[message-archive] 发出的附件没能补上描述，这一条不带描述:', err);
+            }),
+        );
       });
     },
 
