@@ -272,7 +272,7 @@ function runBrowserTools(caps: Caps): void {
 
   async function ensureChrome(): Promise<void> {
     const fs = await import('node:fs');
-    // puppeteer 的配置指定了别的可执行文件或别的浏览器的不下载：启动只认配置里的那个，它不在时由 puppeteer 报错
+    // 交回 undefined 的（puppeteer 的配置指定了别的可执行文件，或默认浏览器不是 Chrome）不下载，没装时由启动报错
     const bundled = await bundledChromePath();
     if (bundled === undefined || fs.existsSync(bundled)) return;
 
@@ -352,7 +352,7 @@ function runBrowserTools(caps: Caps): void {
       if (lifecycle.use.signal.aborted) throw new Error('浏览器工具已停用');
       const msg = err instanceof Error ? err.message : String(err);
       logger.error(`启动浏览器失败: ${msg}`);
-      // 只在带沙箱时 Chromium 本身起不来才提沙箱：准备 Chrome、加载 puppeteer 失败与沙箱无关
+      // 只在带沙箱而 Chromium 本身启动失败时提沙箱
       const sandboxHint =
         config.sandbox && err instanceof ChromiumLaunchError
           ? '；若是沙箱不可用（如 Linux 上以 root 运行、容器里），可在浏览器工具的配置里关掉「Chromium 沙箱」（sandbox）'

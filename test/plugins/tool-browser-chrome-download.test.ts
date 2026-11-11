@@ -94,7 +94,7 @@ function fakeProcess(wait: (args: readonly string[], opts?: SpawnOptions) => Pro
 }
 
 /** 启动浏览器工具，process 服务换成给的替身；debugs、errors 收调试与错误日志 */
-async function start(proc: object, disposeTimeoutMs?: number) {
+async function start(proc: object, disposeTimeoutMs?: number, config: Record<string, unknown> = {}) {
   const hub = new LogHub();
   const debugs: string[] = [];
   const errors: string[] = [];
@@ -114,7 +114,7 @@ async function start(proc: object, disposeTimeoutMs?: number) {
     registerGroup: () => () => {},
   } as never);
   host.provide.use(processService, proc as never);
-  await app.plugins.register(browserPlugin, { blockPrivate: false });
+  await app.plugins.register(browserPlugin, { blockPrivate: false, ...config });
   await app.plugins.idle();
   const navigate = async () =>
     JSON.parse(
@@ -158,7 +158,7 @@ describe('自动下载自带的 Chrome', () => {
         fake.cache.browser = 'firefox';
       },
     ],
-  ])('puppeteer 配置里%s：不下载自带的，照常交给 puppeteer 启动', async (_label, configure) => {
+  ])('puppeteer 配置里%s：不下载自带的，交给 puppeteer 按 Chrome 启动', async (_label, configure) => {
     configure();
     const proc = fakeProcess(async () => {
       throw new Error('不该下载');
@@ -167,6 +167,38 @@ describe('自动下载自带的 Chrome', () => {
     await navigate();
     expect(proc.spawn).not.toHaveBeenCalled();
     expect(fake.launch).toHaveBeenCalledTimes(1);
+    expect(fake.launch).toHaveBeenCalledWith(expect.objectContaining({ browser: 'chrome' }));
+  });
+
+  it('puppeteer 配置里默认浏览器不是 Chrome、又指定了可执行文件（那是它的）：不当 Chrome 启动，报错写明原因与改法，不提沙箱', async () => {
+    fake.cache.browser = 'firefox';
+    fake.cache.configured = join(fake.cache.dir, 'zz-firefox');
+    const proc = fakeProcess(async () => {
+      throw new Error('不该下载');
+    });
+    const { navigate } = await start(proc.service, undefined, { sandbox: true });
+    const { error } = await navigate();
+    expect(error).toContain(
+      `puppeteer 配置里的可执行文件（${fake.cache.configured}）是默认浏览器 firefox 的，这里只启动 Chrome：在插件配置里给 Chrome 的 ` +
+        'executablePath，或去掉 puppeteer 配置里的可执行文件（PUPPETEER_EXECUTABLE_PATH，或 .puppeteerrc 的 executablePath）后重新启动 ' +
+        'Aalis（应用内的重启沿用原来的环境变量），改用自带的 Chrome。',
+    );
+    expect(error).not.toContain('沙箱');
+    expect(proc.spawn).not.toHaveBeenCalled();
+    expect(fake.launch).not.toHaveBeenCalled();
+  });
+
+  it('同样的 puppeteer 配置，插件配置给了 Chrome 的路径：照常用它启动', async () => {
+    fake.cache.browser = 'firefox';
+    fake.cache.configured = join(fake.cache.dir, 'zz-firefox');
+    const proc = fakeProcess(async () => {
+      throw new Error('不该下载');
+    });
+    const { navigate } = await start(proc.service, undefined, { executablePath: '/zz-chrome' });
+    expect((await navigate()).error).toBeUndefined();
+    expect(fake.launch).toHaveBeenCalledWith(
+      expect.objectContaining({ browser: 'chrome', executablePath: '/zz-chrome' }),
+    );
   });
 
   it.each([

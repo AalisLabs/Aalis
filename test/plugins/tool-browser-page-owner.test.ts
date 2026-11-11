@@ -93,7 +93,7 @@ const fake = vi.hoisted(() => {
   return { launch, newPage, pages, contexts, browsers, ctl };
 });
 vi.mock('../../packages/util-chromium/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js', () => ({
-  default: { launch: fake.launch },
+  default: { launch: fake.launch, defaultBrowser: 'chrome', configuration: {} },
   launch: fake.launch,
 }));
 

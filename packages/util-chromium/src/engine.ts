@@ -16,7 +16,7 @@
 
 import type { Browser, BrowserContext, HTTPRequest, Page } from 'puppeteer';
 import { type AnimationOptions, type FramesResult, PAUSE_AND_PROBE, planFrames, seekScript } from './animation.js';
-import { ChromiumLaunchError, type ChromiumLaunchOptions, launchChromium } from './launch.js';
+import { ChromiumLaunchError, type ChromiumLaunchOptions, launchChromium, PuppeteerConfigError } from './launch.js';
 
 export interface OfflineRendererOptions {
   /** 为真时带 Chromium 沙箱启动，无法启动就报 RenderUnavailableError、不回落；为假时带 --no-sandbox 启动 */
@@ -59,7 +59,7 @@ export interface RenderRequest {
   signal?: AbortSignal;
 }
 
-/** 浏览器起不来：puppeteer 加载失败，或 Chromium 启动失败（含带沙箱时沙箱不可用）。 */
+/** 浏览器无法启动：puppeteer 加载失败、puppeteer 的配置用不了，或 Chromium 启动失败（含带沙箱时沙箱不可用）。 */
 export class RenderUnavailableError extends Error {
   override name = 'RenderUnavailableError';
 }
@@ -195,7 +195,12 @@ export class OfflineRenderer {
       return browser;
     } catch (err) {
       const launchFailed = sandbox ? 'Chromium 带沙箱启动失败' : 'Chromium 启动失败';
-      const failed = err instanceof ChromiumLaunchError ? launchFailed : '加载 puppeteer 失败';
+      const failed =
+        err instanceof ChromiumLaunchError
+          ? launchFailed
+          : err instanceof PuppeteerConfigError
+            ? 'puppeteer 的配置用不了'
+            : '加载 puppeteer 失败';
       throw new RenderUnavailableError(`离线渲染不可用：${failed}（${errorText(err)}）`, { cause: err });
     }
   }

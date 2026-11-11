@@ -99,7 +99,7 @@ base64 任何情况下都不进文本结果：整张 PNG 的 base64 有几十万
 
 Chromium 按需启动，进程级共享一个实例与一张页面表；并发的首次调用共用同一次启动。是否带 Chromium 沙箱由 `sandbox` 决定：默认不带（以 `--no-sandbox --disable-setuid-sandbox` 启动）；打开后带沙箱启动失败时，调用报启动失败并写明可以在配置里关掉 `sandbox`，不回落到不带沙箱，下次调用照样带沙箱启动。取实例时检查连接是否存活：崩溃或被杀之后再调工具会重新启动浏览器，并清空页面表（此前的 `pageId` 随之失效，需重新 `browser_navigate`）。插件停用时若浏览器正在启动，启动完成后随即关闭，发起启动的调用返回错误。
 
-没配 `executablePath`、puppeteer 的配置（`PUPPETEER_EXECUTABLE_PATH`、`PUPPETEER_BROWSER`、`.puppeteerrc`）也没指定别的可执行文件或别的浏览器、自带的 Chrome 又没装时，首次启动前经 process 服务跑 puppeteer 包里的命令行下载它，时限 5 分钟。下载的输出不写进宿主的终端，全文记在调试日志里；失败时报错带上命令行 stderr 的结尾（命令行失败时先打一整屏用法，报错在最后）。插件停用时在途的下载随之中止，在途的调用报「浏览器工具已停用」。下载先装进 puppeteer 缓存目录下本次新建的临时目录，装完整体改名到位（见 [util-chromium](../utils/util-chromium.md#启动器)）：下载或解压途中被打断（停用、停机或超时）不在缓存里留下不完整的安装，下次调用照常重新下载。
+没配 `executablePath`、puppeteer 的配置（`PUPPETEER_EXECUTABLE_PATH`、`.puppeteerrc`）也没指定别的可执行文件、自带的 Chrome 又没装时，首次启动前经 process 服务跑 puppeteer 包里的命令行下载它，时限 5 分钟。起的一律是 Chrome，不随 puppeteer 配置里的默认浏览器（网络闸的参数 Firefox 不认）；默认浏览器配成别的时不自动下载，没装时由启动报错，puppeteer 配置里又指定了那个浏览器的可执行文件、而本插件没配 `executablePath` 时不去起它，报错写明原因。下载的输出不写进宿主的终端，全文记在调试日志里；失败时报错带上命令行 stderr 的结尾（命令行失败时先打一整屏用法，报错在最后）。插件停用时在途的下载随之中止，在途的调用报「浏览器工具已停用」。下载先装进 puppeteer 缓存目录下本次新建的临时目录，装完整体改名到位（见 [util-chromium](../utils/util-chromium.md#启动器)）：下载或解压途中被打断（停用、停机或超时）不在缓存里留下不完整的安装，下次调用照常重新下载。
 
 每个页面（`pageId`）独占一个浏览器窗口，`headless=false` 时即各自一个系统窗口。`browser_click`、`browser_type` 与 `browser_screenshot` 操作前先把目标页切到前台：页面自己用 `window.open` 或 `target=_blank` 开出的窗口会把原页压到后台，而无头 Chrome 的后台页不做渲染，点击、默认先清空的输入与按选择器截图会一直等不到结果。
 

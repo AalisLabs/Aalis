@@ -77,7 +77,7 @@ afterEach(async () => {
 });
 
 describe('启动参数（真浏览器）', () => {
-  it('sandbox 为假时带 --no-sandbox --disable-setuid-sandbox 启动；SIGINT/SIGTERM/SIGHUP 不交给 puppeteer 处理', async () => {
+  it('sandbox 为假时带 --no-sandbox --disable-setuid-sandbox 启动；SIGINT/SIGTERM/SIGHUP 不交给 puppeteer 处理；启动的是 Chrome', async () => {
     const { renderer } = makeRenderer(false);
     await renderer.renderPng(req);
     expect(probe.launches).toHaveLength(1);
@@ -87,6 +87,8 @@ describe('启动参数（真浏览器）', () => {
     expect(options.handleSIGINT).toBe(false);
     expect(options.handleSIGTERM).toBe(false);
     expect(options.handleSIGHUP).toBe(false);
+    // 不随 puppeteer 配置里的默认浏览器（PUPPETEER_BROWSER、.puppeteerrc）：启动 Firefox 时调用方给的 Chromium 参数它不认
+    expect(options.browser).toBe('chrome');
   }, 30_000);
 });
 
