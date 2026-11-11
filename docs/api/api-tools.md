@@ -61,7 +61,7 @@ interface RegisteredTool {
 
 - 发给模型的参数表多两项：`runInBackground`（布尔，立即转后台）与 `waitSeconds`（前台最多等多少秒）。执行时这两项先取出，再做参数校验、过守卫、交给工具；审批事实与工具拿到的参数里都没有它们。参数表里已有同名项的工具当作没声明，执行器记一条警告，工具照常登记。`takenBackgroundParams(parameters)` 回参数表里已有的这两项的名字，执行器按它判断；桥接远端工具的插件据此不声明，等多久照远端调用自己的超时。
 - 过了守卫之后先在前台等让出时限：`waitSeconds`，缺省取 `yieldSeconds`，再缺省是 30 秒；上限取执行器的配置。在前台时回合被停下（停止键、禁言、停机等）一并中止它。处理函数经 `approveFor` 等审批时不转后台：到了让出时限还在等的，等审批结了再重新计一个让出时限。
-- 到时没结束、或带了 `runInBackground`，对话回合里的调用登记成后台任务（见下文「后台任务登记」），先回给模型任务 id、已有输出的末尾与一句「已转到后台，结束时会通知你；不必等它，可以先回复」；此后回合怎样都不动它，结束时通知起它的会话。不在对话回合里的调用（不在入站回合里，或没有 `turnId`、`callId`，如 workflow 的工具节点、mcp-server）没有可以通知的对话：带 `runInBackground` 直接回错，到让出时限还没结束就中止并回报已有输出。
+- 到时没结束、或带了 `runInBackground`，对话回合里的调用登记成后台任务（见下文「后台任务登记」），先回给模型任务 id、已有输出的末尾与一句「已转到后台，结束时会通知你；不必等它，可以先回复」；此后回合怎样都不动它，结束时通知发起它的会话。不在对话回合里的调用（不在入站回合里，或没有 `turnId`、`callId`，如 workflow 的工具节点、mcp-server）没有可以通知的对话：带 `runInBackground` 直接回错，到让出时限还没结束就中止并回报已有输出。
 - 同一会话里对话回合中在跑的可转后台调用有上限（前台与后台一起数），满了时新的调用在过守卫之前就被拒绝。不在对话回合里的调用不会转后台，不占名额。
 
 没声明的工具照旧等到底，照它们自己的超时。`background` 不进 `ToolDefinition`（那是发给模型的线上格式）。
@@ -91,7 +91,7 @@ interface ToolCallContext {
   enabledGroups?: string[];                         // 当前会话启用的工具分组
   acceptsImages?: boolean;                          // 这次调用的主模型能亲眼看图
   signal?: AbortSignal;                             // 调用方回合的中止信号
-  inbound?: InboundTurn;                            // 调用所在的入站回合（source、起它的那一轮 fromTurn、入站消息 id messageId；类型见 api-authority），只由 agent 工具循环填写
+  inbound?: InboundTurn;                            // 调用所在的入站回合（source、发起它的那一轮 fromTurn、入站消息 id messageId；类型见 api-authority），只由 agent 工具循环填写
   turnId?: string;                                  // 调用所在回合的 id，只由 agent 工具循环填写
   callId?: string;                                  // 这次调用的 id，只由 agent 工具循环填写
   output?: (text: string) => void;                  // 执行中的输出口，执行器给每次调用一份
@@ -105,7 +105,7 @@ type ToolCallRequest = Omit<ToolCallContext, 'approveFor'>;
 function actingIdentity(ctx: { platform?: string; participants: readonly UserIdentity[] }): UserIdentity;
 ```
 
-`participants` 是这一轮的参与者，即授权身份，与 `platform`、`userId` 解耦。agent 按 api-authority 的 `originTurnOf` 算：各条输入的 `actor`，没有时是发言者，带起它的那一轮的取那一轮的参与者，owner 的各个身份算一个；执行守卫对每个参与者各裁决一次（见 [api-authority](./api-authority.md#守卫流程-授权与确认)）。不在入站回合里的调用方填它自己的身份：编排填运行身份，mcp-server 填 `mcp:mcp-client`，没有身份的填一个无主体（`{ platform, userId: '' }`）。`userId` 只在这一轮各条输入的发言者相同时有；续做的一轮没有发言者时取起它的那一轮的，工具眼里是起它的人在调。
+`participants` 是这一轮的参与者，即授权身份，与 `platform`、`userId` 解耦。agent 按 api-authority 的 `originTurnOf` 算：各条输入的 `actor`，没有时是发言者，带发起它的那一轮的取那一轮的参与者，owner 的各个身份算一个；执行守卫对每个参与者各裁决一次（见 [api-authority](./api-authority.md#守卫流程-授权与确认)）。不在入站回合里的调用方填它自己的身份：编排填运行身份，mcp-server 填 `mcp:mcp-client`，没有身份的填一个无主体（`{ platform, userId: '' }`）。`userId` 只在这一轮各条输入的发言者相同时有；续做的一轮没有发言者时取发起它的那一轮的，工具眼里是发起它的人在调。
 
 要记一个人的（定时任务的创建者、编排的定义者与调用者）取 `actingIdentity(ctx)`：参与者只有一个时是他；批过的调用参与者已换成批的人，记的就是批的人；几个人都能做、没经审批的按无主体记。按条过滤的取用（`recent_messages`）同样取它，几个人的一轮不带谁自己的私聊。
 
@@ -218,7 +218,7 @@ interface BackgroundTask {
   sessionId: string;
   kind: 'tool-call';                 // 宿主维护的封闭集合，以后按加法加
   label: string;                     // 显示名：工具调用是工具名
-  call: { tool: string; args: Record<string, unknown>; turnId: string; callId: string }; // 起它的那次调用，参数是模型给的原样
+  call: { tool: string; args: Record<string, unknown>; turnId: string; callId: string }; // 发起它的那次调用，参数是模型给的原样
   status: 'running' | 'completed' | 'failed' | 'stopped' | 'aborted';
   startedAt: number;
   endedAt?: number;
@@ -260,7 +260,7 @@ type BackgroundTaskNoticeFacts = {
 };
 ```
 
-任务正常结束（含失败）时，执行器向起它的会话注入一条宿主通知（[schema-message](./schema-message.md#宿主通知-hostnotice)）：`hostNotice.kind` 为 `BACKGROUND_TASK_NOTICE`，`id` 为任务 id，`facts` 为 `BackgroundTaskNoticeFacts`；正文写给模型，只写同样的事实，结果与输出由模型用 `background_output` 取。通知的身份、引用与链只延续一层等约定见 [plugin-tools](../plugins/plugin-tools.md#转后台与后台任务)。界面按 `BACKGROUND_TASK_NOTICE` 认出结束通知（会话协议的通知条目带 `noticeId` 与 `facts`，见 [api-session-protocol](./api-session-protocol.md)），按事实画成一行状态，不显示写给模型的正文，也不认工具名。
+任务正常结束（含失败）时，执行器向发起它的会话注入一条宿主通知（[schema-message](./schema-message.md#宿主通知-hostnotice)）：`hostNotice.kind` 为 `BACKGROUND_TASK_NOTICE`，`id` 为任务 id，`facts` 为 `BackgroundTaskNoticeFacts`；正文写给模型，只写同样的事实，结果与输出由模型用 `background_output` 取。通知的身份、引用与链只延续一层等约定见 [plugin-tools](../plugins/plugin-tools.md#转后台与后台任务)。界面按 `BACKGROUND_TASK_NOTICE` 认出结束通知（会话协议的通知条目带 `noticeId` 与 `facts`，见 [api-session-protocol](./api-session-protocol.md)），按事实画成一行状态，不显示写给模型的正文，也不认工具名。
 
 ## 典型用法
 

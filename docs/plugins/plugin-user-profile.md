@@ -41,24 +41,30 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `extractEveryNMessages` | number | `5` | 每 N 条消息提取一次：同一用户每发 N 条消息触发一次事实提取。无论是否回复都会计数，群聊中每人独立计数。设为 1 表示每条消息都尝试提取（不推荐）；设为 0 或负数则禁用提取（仍会注入已有档案） |
-| `historyForExtraction` | number | `8` | 提取参考历史条数：触发提取时，喂给 LLM 的最近消息条数 |
-| `maxFactsPerUser` | number | `30` | 单用户事实上限：超出后按 updatedAt 升序淘汰最久未更新的，旧事实自动淘汰。最小有效值为 5（写入时自动下限），不支持设为 0 来禁用提取；若要禁用提取请将 extractEveryNMessages 设为 0 |
-| `maxFactCharsPerItem` | number | `80` | 单条事实字符数上限：超出会被裁断，避免 LLM 输出长段落代替事实 |
-| `maxOtherParticipants` | number | `3` | 群聊其他参与者档案上限：群聊中除当前发言者外，最多加载多少人的档案摘要注入 LLM。0 表示禁用群聊多用户注入 |
+| `extractEveryNMessages` | number | `5` | 每 N 条消息提取一次：同一用户每发 N 条消息提取一次事实，不论是否回复都计数，群里每人分开计。0 或负数表示不提取，已有档案照常注入 |
+| `historyForExtraction` | number | `8` | 提取参考历史条数：触发提取时交给模型的最近消息条数 |
+| `maxFactsPerUser` | number | `30` | 单用户事实上限：每人最多记多少条事实，超出时淘汰最久没更新的。最小为 5；要停止提取，把「每 N 条消息提取一次」设为 0 |
+| `maxFactCharsPerItem` | number | `80` | 单条事实字符数上限：超出会被裁断，避免模型输出长段落代替事实 |
+| `maxOtherParticipants` | number | `3` | 群聊其他参与者档案上限：群聊中除当前发言者外，最多加载多少人的档案摘要注入提示词。0 表示禁用群聊多用户注入 |
 | `maxFactsForOthers` | number | `5` | 其他参与者摘要条数上限：群聊背景参与者每人只显示最近更新的 N 条事实，避免 prompt 过长 |
-| `temporaryFactMaxAgeDays` | number | `90` | 临时事实保留天数：temporality=temporary 的事实超过该天数未更新后不再主动注入 prompt（仍保留在档案中，等待后续 update/remove）。0 表示不淡出 |
-| `relationScoreDecayPerDay` | number | `0.5` | 关系强度每日衰减：用户长期未互动时，relationScore 每天衰减的分数。0 表示不衰减 |
+| `temporaryFactMaxAgeDays` | number | `90` | 临时事实保留天数：临时事实超过这么多天没更新，就不再注入提示词（仍留在档案里）。0 表示一直注入 |
+| `relationScoreDecayPerDay` | number | `0.5` | 关系强度每日衰减：用户长期未互动时，关系强度每天衰减的分数。0 表示不衰减 |
 | `relationIncrementDirect` | number | `1` | 私聊关系增量：direct 触发时每条消息增加的关系强度 |
 | `relationIncrementImmediate` | number | `1.5` | 主动呼叫关系增量：群聊 @/名字主动触发时每条消息增加的关系强度 |
 | `relationIncrementInterval` | number | `0.5` | 群聊被动参与关系增量：群聊频率/活跃度被动触发或普通入站消息增加的关系强度 |
-| `relationIncrementWitness` | number | `0.1` | 旁观（不回复）关系增量：每条入站消息无论 agent 是否回复都加上的最低档增量。若 agent 触发回复，会再叠加 direct/immediate/interval 之一。0 表示旁观不加分；互动次数与最近互动时戳仍照记（衰减基准与最近互动排序的唯一来源） |
-| `extractLLM` | llm-ref | — | 提取用模型：留空则使用当前 LLM 服务的默认模型。事实提取是简单结构化任务，推荐选择廉价/快速模型（如 deepseek-chat）以降低成本 |
-| `allowGlobalBackfill` | boolean | `false` | 允许跨会话补齐副档案：当前群/会话中的候选不足时，是否允许从其他群、私聊等跨会话中选取最近互动过的用户来补全「其他参与者背景摘要」。关闭后仅限当前上下文内出现过的用户 |
+| `relationIncrementWitness` | number | `0.1` | 旁观关系增量：每条入站消息不论是否回复都加的最低一档增量；回复时再叠加私聊、主动呼叫或被动参与三档之一。0 表示旁观不加分，互动次数与时间照记 |
+| `allowGlobalBackfill` | boolean | `false` | 允许跨会话补齐副档案：当前会话里的候选不足时，从别的群与私聊里最近互动过的人补齐其他参与者的档案摘要。关闭时只用当前会话里出现过的人 |
+
+表中略去的细节：
+
+- `extractEveryNMessages` 设为 1 表示每条消息都尝试提取，不推荐。
+- `maxFactsPerUser` 按 `updatedAt` 升序淘汰；小于 5 时写入按 5 算，设为 0 也不能停止提取。
+- `temporaryFactMaxAgeDays` 管的是 `temporality=temporary` 的事实：过期的不再主动注入，仍留在档案里，等之后的提取更新或删除。
+- 关系强度即档案里的 `relationScore`。互动次数与最近互动时间是衰减的基准与最近互动排序的唯一来源。
 
 ## 「用户档案」页
 
-位置为插件详情（`/p/@aalis%2Fplugin-user-profile/profiles`），声明式，只删不改：档案里的事实是从对话里自动提取的，写错的或被人故意塞进去的（档案投毒）在这里删掉，不在界面上改写。不装 webui-server 时照常记档案，只是没有页面。
+位置为插件详情（`/p/@aalis%2Fplugin-user-profile/profiles`），声明式，只删不改：档案里的事实是从对话里自动提取的，写错的或被人故意放入的（档案投毒）在这里删掉，不在界面上改写。不装 webui-server 时照常记档案，只是没有页面。
 
 - **表格：** 有事实的人一行（只有关系分、没有事实的不列），列出用户键（`platform:userId`）、事实条数与最近一条事实记下的时间，最近的在前。窄时只留用户与条数。
 - **详情：** 选中一个人，列出各条事实（正文、分类、时效「长期」或「近期」、记下的时间），最近的在前；底下是「清空档案」。

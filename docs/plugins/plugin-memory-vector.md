@@ -41,19 +41,21 @@ export default definePlugin({
 | `search` | object | — | 搜索设置 |
 | `search.topK` | number | `5` | 最大返回数：语义搜索返回的命中条数（每条会再带上下文窗口） |
 | `search.timeWeight` | number | `0.3` | 时间权重：0=纯语义，1=纯时间近因 |
-| `search.userPriorityBoost` | number | `2` | 同用户加权系数：在 user 模式下对同一用户消息的命中分数乘以该系数（&gt;1 表示优先） |
-| `search.perItemMaxChars` | number | `0` | 单条截断字数：每条消息呈现给 LLM 时的字符上限；0 = 不截断（推荐）。超出会以「…[已截断，还剩 N 个字符未展示]」明示。 |
+| `search.userPriorityBoost` | number | `2` | 同用户加权系数：「跨会话检索模式」选「同用户增强」时，同一用户消息的命中分数乘以该系数（&gt;1 表示优先） |
+| `search.perItemMaxChars` | number | `0` | 单条截断字数：每条消息呈现给模型时的字符上限；0 = 不截断（推荐）。超出会以「…[已截断，还剩 N 个字符未展示]」明示。 |
 | `search.minScore` | number | `0` | 最低相似度阈值：0~1，命中分数（时间加权前的语义分）低于该值则丢弃。0 表示不过滤 |
-| `contextExpand` | object | — | 上下文情景扩展：命中后自动取该消息在原会话中的前后 N 条相邻消息（含 user/assistant/notice/tool）还原情景。0 = 关闭。 |
-| `contextExpand.window` | number | `2` | 扩展窗口（前后各 N 条消息）：0 = 仅命中本身。建议 2~5 |
-| `contextExpand.crossSession` | boolean | `true` | 跨会话也扩展：若命中消息来自其他会话（user/all 模式可能发生），是否对那个会话也取上下文 |
+| `contextExpand` | object | — | 上下文情景扩展：命中后取它在原会话里前后相邻的消息，还原当时的情景。 |
+| `contextExpand.window` | number | `2` | 扩展窗口：命中前后各取 N 条消息。0 = 仅命中本身，建议 2~5 |
+| `contextExpand.crossSession` | boolean | `true` | 跨会话也扩展：命中消息来自其他会话时，是否对那个会话也取上下文 |
 | `indexing` | object | — | 索引设置：控制后台向量索引的削峰与并发。搜索路径不受该队列影响。 |
-| `indexing.concurrency` | number | `10` | 最大并发索引数：同时进行的后台 embedding + 向量写入任务数。0 或负数表示不限制；建议 2~10，过高可能压垮本地 embedding 服务。 |
+| `indexing.concurrency` | number | `10` | 最大并发索引数：同时进行的后台向量化与写入任务数。0 或负数表示不限制；建议 2~10，过高可能压垮本地向量化服务。 |
 | `indexing.maxQueueSize` | number | `500` | 最大索引队列长度：待索引消息队列上限。0 或负数表示不限制；超出后丢弃最旧待索引消息，避免内存无限增长。 |
-| `recallRoles` | select | `'all'` | 召回角色范围：AI 自己的历史回复（role=assistant）是否作为语义命中参与召回。others-only 档过滤的是**命中点**（候选池自动放大一倍补偿）；命中点的上下文扩窗邻居不过滤、仍可能以「Assistant·你自己」标注出现（保留情景完整性）。无论何档，assistant 条目渲染必带角色标注（防自我强化地基，不随开关关闭）。存量未打 role 的旧向量按 user（对方）对待 |
+| `recallRoles` | select | `'all'` | 召回角色范围：AI 自己过去的回复是否作为命中参与召回。「只召回对方」只让对方的消息作为命中，命中前后扩展出的消息不过滤；不论哪档，召回的 AI 回复都标明是 AI 自己说的。 |
 | `crossSessionMode` | select | `'all'` | 跨会话检索模式：控制向量记忆的跨会话可见范围 |
 
-`contextExpand.window` 必须是非负整数（schema 的 `min: 0`、`integer: true`）；显式给出无效类型、负数或小数时插件激活失败，报「配置项 contextExpand.window 小于下限 0」或「期望整数」，WebUI 保存时就拦下，不会带默认扩展窗口继续检索。
+`contextExpand.window` 必须是非负整数（schema 的 `min: 0`、`integer: true`）；显式给出无效类型、负数或小数时插件激活失败，报「配置项 contextExpand.window 小于下限 0」或「期望整数」，WebUI 保存时就拦下，不会带默认扩展窗口继续检索。扩展带出的相邻消息含 user、assistant、notice 与 tool 各种角色（细节见「工作原理」）。
+
+`recallRoles: others-only` 不过滤命中点前后扩展出的邻居，是为了保留情景完整；角色标注不随这个开关关闭，是为了防止自我强化。
 
 ## 工作原理
 
@@ -64,7 +66,7 @@ export default definePlugin({
    embed 前经 `prefixSender` 加自身发送者前缀；
    带 `source` 的内部注入不入库（宿主通知、定时任务、编排、子任务派发、好友与入群申请等平台事件合成的通知，
    与用户档案同一判据：不是谁在跟她说话）；插件发出的媒体记成通知（role `notice`），不进向量库。入站条目的被 @ 的人
-   取存档记下的 `Mentions`（只算发言人自己写的），另记存档的 `SenderLabel`（存档记了才记，消息表老化后兜底渲染用）
+   取存档记下的 `Mentions`（只算发言人自己写的），另记存档的 `SenderLabel`（存档记了才记，消息表老化后渲染时作后备）
    - 已落库的消息被改写（`memory:messages-rewritten`，如她发出的网址图片补上了识图描述）：排进同一个索引队列，
      同一条（会话与时间戳）的收录或前一次改写还在做时先等它落定，同一条的几次改写按到达的先后落定。只管她与对方的发言：先按改写后的正文算出条目（assistant 按她的
      发言，user 按存档消息的元数据，与入站收录同一份事实），算成了才按会话与时间戳删掉旧条目、写进新的；删不到的
@@ -100,7 +102,7 @@ export default definePlugin({
 
 ## 按会话设检索范围
 
-`crossSessionMode` 可按会话设（[api-session-settings](../api/api-session-settings.md)，只有 owner 能改）：能按平台档、平台类型档、群与单个会话分别设，被动召回与 `memory_recall` 都按调用所在会话的生效值，每次检索现读。它是这个会话的上限：`memory_recall` 的 `scope` 参数只能比它窄，传 `all` 也放不宽。某一层写坏了的值按最窄（不互通）处理，不回落到更宽的层。「同用户增强」只在这个会话的生效值就是 `user` 时加权：某个群收窄成 `platform` 时它在这个群里没有同用户加权。
+`crossSessionMode` 可按会话设（[api-session-settings](../api/api-session-settings.md)，只有 owner 能改）：能按平台档、平台类型档、群与单个会话分别设，被动召回与 `memory_recall` 都按调用所在会话的生效值，每次检索现读。它是这个会话的上限：`memory_recall` 的 `scope` 参数只能比它窄，传 `all` 也放不宽。某一层填错的值按最窄（不互通）处理，不回落到更宽的层。「同用户增强」只在这个会话的生效值就是 `user` 时加权：某个群收窄成 `platform` 时它在这个群里没有同用户加权。
 
 ## embedding 模型与存量向量
 

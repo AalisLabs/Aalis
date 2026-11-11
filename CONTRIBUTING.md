@@ -59,14 +59,14 @@ pnpm dev                        # 运行 tsx src/index.ts
 git push   →   build → biome → knip → 快测试   全过才放行
 ```
 
-快测试不跑重测试：起真浏览器、起构建、中止真实子进程并断言时限的测试，以及起真实子进程与联网的集成测试，名单在 `test/heavy-tests.ts`。快测试的范围：
+快测试不跑重测试：启动真浏览器、执行构建、中止真实子进程并断言时限的测试，以及启动真实子进程与联网的集成测试，名单在 `test/heavy-tests.ts`。快测试的范围：
 
 - 架构守卫 `test/architecture`，每次都跑；
 - 与这次改动相关的测试：基准是远端上要推的那个分支现在的提交，由 `vitest --changed` 按依赖图找出受影响的测试；
 - 改到 `packages/core` 时另跑 core 覆盖率（四项 100%）；
 - 远端还没有这个分支，或改到了依赖图判不准的公共件（`package.json`、锁文件、`vitest*.ts`、`tsconfig*.json`、`test/setup`、`test/helpers`、`test/fixtures`）时，改为跑全部快测试与 core 覆盖率。
 
-依赖图找不到所有关联：靠读文件、起子进程或文件名约定关联的测试会被漏掉，这些问题要等手动跑全量才暴露，所以全量那一步不能省。手动跑全部快测试：
+依赖图找不到所有关联：靠读文件、启动子进程或文件名约定关联的测试会被漏掉，这些问题要等手动跑全量才暴露，所以全量那一步不能省。手动跑全部快测试：
 
 ```sh
 AALIS_TEST_SCOPE=quick pnpm exec vitest run

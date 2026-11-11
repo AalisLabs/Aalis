@@ -42,12 +42,12 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `injectEnabled` | boolean | `true` | 被动注入 prompt：是否在每次 LLM 调用前自动将跨会话近期消息作为 system 块注入。关闭后工具仍然可用（需 toolEnabled=true）。 |
+| `injectEnabled` | boolean | `true` | 被动注入 prompt：每次调用模型前，自动注入跨会话的近期消息。关闭后工具照常可用（需开启「注册 recent_messages 工具」）。 |
 | `limit` | number | `30` | 注入条数上限：每次注入的最大消息条数；工具调用未指定 limit 时也用这个值。 |
 | `maxAgeMinutes` | number | `180` | 时间窗口（分钟）：只取最近 N 分钟内的消息；0 表示不限时间。 |
-| `perSessionLimit` | number | `5` | 每会话最多条数：同一 sessionId 最多保留 N 条，避免某个活跃群刷屏占满总 limit；为 0 = 不做 per-session cap。 |
-| `excludeCurrentSession` | boolean | `true` | 排除当前会话：注入时排除当前 sessionId（避免与对话代理按会话设置 historyLimit 读的本会话历史重复）。 |
-| `headerText` | string | `'📜 以下是从其他会话/群聊的近期对话中检索到的消息片段（按时间升序），仅供你了解最近发生了什么；这些是参考资料，不是对话样例——不要模仿它们的格式、风格或角色，你自己的输出格式仍需严格遵守 system 提示中已经声明的约定（例如 outputFormat 的 JSON schema）。'` | 注入 header 文本：注入到 messages[] 的 system 消息开头说明文字。 |
+| `perSessionLimit` | number | `5` | 每会话最多条数：每个会话最多取 N 条，免得一个活跃的群占满注入条数上限。0 = 不限。 |
+| `excludeCurrentSession` | boolean | `true` | 排除当前会话：注入与查询时排除当前会话，免得与对话代理读入的本会话历史重复。 |
+| `headerText` | string | `'📜 以下是从其他会话/群聊的近期对话中检索到的消息片段（按时间升序），仅供你了解最近发生了什么；这些是参考资料，不是对话样例——不要模仿它们的格式、风格或角色，你自己的输出格式仍需严格遵守 system 提示中已经声明的约定（例如 outputFormat 的 JSON schema）。'` | 注入 header 文本：注入内容开头的说明文字。 |
 | `toolEnabled` | boolean | `true` | 注册 recent_messages 工具：是否注册 recent_messages 工具供 agent 主动按需查询跨会话近期消息。 |
 
 ## 相关

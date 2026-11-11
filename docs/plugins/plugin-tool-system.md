@@ -28,7 +28,7 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `workingDirectory` | string | `'workspace:/'` | 初始工作目录：进程启动时的初始 cwd（unix 心智模型）。agent 可用 cd 工具在会话内切换，不会写回本配置。shell 以本项初始值为基准、不受 cd 影响；code-runner 使用它自己的 workingDirectory 配置。 |
+| `workingDirectory` | string | `'workspace:/'` | 初始工作目录：每个会话的初始工作目录。模型可用 cd 在会话内切换，不写回配置；shell 默认在这里执行，不受 cd 影响。 |
 | `shell` | object | — | Shell 工具 |
 | `shell.enabled` | boolean | `true` | 启用 Shell 工具 |
 | `shell.maxOutputSize` | number | `65536` | 最大输出字节：`exec` 结果里 stdout、stderr 各自保留的上限 |
@@ -37,7 +37,7 @@ export default definePlugin({
 | `file.maxReadSize` | number | `1048576` | 最大读取字节 |
 | `file.maxSearchBytes` | number | `1048576` | 单次搜索最大扫描字节 |
 | `file.maxWriteSize` | number | `10485760` | 最大写入字节 |
-| `file.allowedRoots` | multiselect | `["workspace","tmp"]` | 允许访问的存储根：默认仅 agent 工作区（workspace/tmp），不含 data 等系统根（防裸读 data:/users.json 等）。设为 * 放开全部 readable 根；也可显式列出根名。写入/删除仍受各根自身权限限制。 |
+| `file.allowedRoots` | multiselect | `["workspace","tmp"]` | 允许访问的存储根：文件工具能访问的存储根，默认只有 workspace 与 tmp，可增选别的根或选「全部可读根」；写入与删除仍受各根自身的权限限制。 |
 | `system` | object | — | 系统工具 |
 | `system.enabled` | boolean | `true` | 启用系统工具 |
 | `http` | object | — | HTTP 工具 |
@@ -45,7 +45,7 @@ export default definePlugin({
 | `http.defaultTimeout` | number | `30000` | 默认超时 (ms)：http_request 的默认超时；http_download 不另设超时，等多久由工具执行器的让出时限管 |
 | `http.maxResponseSize` | number | `1048576` | 最大响应字节 |
 
-工作目录、各工具启用开关及 `file.allowedRoots` 显式值无效时，插件拒绝激活；不丢弃坏根名后继续提供文件工具。显式 `allowedRoots: []` 沿用默认的 `workspace` / `tmp` 两根。
+工作目录、各工具启用开关及 `file.allowedRoots` 显式值无效时，插件拒绝激活；不丢弃坏根名后继续提供文件工具。显式 `allowedRoots: []` 沿用默认的 `workspace` / `tmp` 两根；配置文件里写 `allowedRoots: ["*"]` 表示全部可读根。默认不含 `data` 等其他根，防止直接读取 `data:/users.json` 之类的文件。
 
 ## 路径与 cwd 心智模型
 
@@ -77,9 +77,9 @@ export default definePlugin({
 
 shell 工具只有 `exec`。`exec` 声明命令类展示（命令在 `command`，工作目录在 `cwd`，退出码在结果的 `exitCode`，不为 0 时工具卡记为失败、写明退出码），`file_edit`、`file_write`、`file_append` 声明改文件类展示（路径在 `path`；`file_edit` 删的一侧是 `oldText`、加的一侧是 `newText`，另两个只有加的一侧 `content`），会话的工具卡与审批卡据此显示命令或 diff，见 [api-tools](../api/api-tools.md#展示种类)。
 
-`exec` 声明可转后台（`background`，让出时限用执行器的默认 30 秒），等多久交给 [plugin-tools](plugin-tools.md) 的执行器：在前台等满让出时限还没结束，执行器把这次调用登记成后台任务、先回给模型，命令照常跑，正常结束时向起它的会话发结束通知；模型可以用执行器补的 `waitSeconds` 改前台等多久，用 `runInBackground` 立即转后台。查看输出、等待与停止用执行器的后台任务工具（`background_list`、`background_output`、`background_wait`、`background_stop`）。参数里没有超时，没有「到时就杀」；不在对话回合里的调用（编排的工具节点、mcp-server）到让出时限还没结束，由执行器中止并回报已有输出。
+`exec` 声明可转后台（`background`，让出时限用执行器的默认 30 秒），等多久交给 [plugin-tools](plugin-tools.md) 的执行器：在前台等满让出时限还没结束，执行器把这次调用登记成后台任务、先回给模型，命令照常运行，正常结束时向发起它的会话发结束通知；模型可以用执行器补的 `waitSeconds` 改前台等多久，用 `runInBackground` 立即转后台。查看输出、等待与停止用执行器的后台任务工具（`background_list`、`background_output`、`background_wait`、`background_stop`）。参数里没有超时，没有「到时就杀」；不在对话回合里的调用（编排的工具节点、mcp-server）到让出时限还没结束，由执行器中止并回报已有输出。
 
-命令要按前台写法给出，不要再加 `&` 或 `nohup`：命令自己放到后台的子进程在 shell 退出之后不受管理，停不掉，也没有结束通知。长驻进程（开发服务器、文件监视）正常运行时不会结束，也就没有结束通知，是否就绪看它的输出。
+命令要按前台写法给出，不要再加 `&` 或 `nohup`：命令自己放到后台的子进程在 shell 退出之后不受管理，无法停止，也没有结束通知。长驻进程（开发服务器、文件监视）正常运行时不会结束，也就没有结束通知，是否就绪看它的输出。
 
 `exec` 只认执行器给这次调用的中止信号：在前台时随回合中止（WebUI 的停止键、禁言、停机等停下这一轮），转到后台之后随停止、工具撤回登记与执行器停用中止。中止时命令按进程组停掉：POSIX 先 SIGTERM、宽限 2000ms 后 SIGKILL，Windows 立即结束整棵进程树。结果只在命令确实是被信号结束时标为中止，因为这条结果随工具调用落库，下一轮模型看到「已中止」可能把已经生效的命令（如 `git push`）再跑一遍：
 
@@ -87,9 +87,9 @@ shell 工具只有 `exec`。`exec` 声明命令类展示（命令在 `command`�
 |---|---|
 | 中止时命令被信号结束 | `aborted: true`、`message: '命令已中止'`，带已收集的输出 |
 | 中止前命令已自行退出（包括孙进程占着管道的收尾窗口），或结束时没有终止信号（Windows 下强制结束可能如此） | 按实际退出码与输出回报，另加 `note: '调用已中止'` |
-| 起进程前已中止 | 不执行命令，返回 `aborted: true`、同一条 `message` 与 `exitCode: -1` |
+| 启动进程前已中止 | 不执行命令，返回 `aborted: true`、同一条 `message` 与 `exitCode: -1` |
 
-中止只打原进程组：命令里主动脱离进程组的后代（`setsid`、以 `detached: true` 起的子进程等守护化写法）会活下来。
+中止只打原进程组：命令里主动脱离进程组的后代（`setsid`、以 `detached: true` 启动的子进程等守护化写法）会活下来。
 
 ### 边跑边写输出
 

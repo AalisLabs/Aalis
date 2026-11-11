@@ -37,7 +37,7 @@ export default definePlugin({
 | `maxSkillBytes` | number | `200000` | 单 skill 最大字节数：SKILL.md 单文件最大字节数，避免一次加载过大内容污染上下文。 |
 | `maxSkills` | number | `200` | 技能数量上限：扫描时最多加载的 skill 数量。 |
 | `enabledSkills` | multiselect | `['*']` | 启用的技能：`*` 即全部技能，空列表一个都不启用；可选项是现有的技能。可按会话设（平台档、平台类型档、群与会话），只有 owner 能改 |
-| `discoveryEnabled` | boolean | `true` | 启用 Discovery 注入：往 system prompt 注入一行技能库路标，提示 agent 用 list_skills 检索、load_skill 加载技能；关闭时激活正文注入也一并停用。 |
+| `discoveryEnabled` | boolean | `true` | 启用 Discovery 注入：在系统提示里加一行技能库指引，提示模型检索与加载技能；关闭时已激活技能的正文也不再注入。 |
 | `triggersEnabled` | boolean | `true` | 启用 triggers 自动激活：匹配 SKILL.md frontmatter 中的 triggers regex 时自动加载该 skill。 |
 
 ## 注册工具

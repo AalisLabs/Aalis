@@ -113,7 +113,7 @@ const md = fixGfmTables(rawMarkdown);
 
 ### `plugin-webui-client`：前端渲染预处理复用
 
-`packages/plugin-webui-client/src/markdown/latex.ts` 导入 `fixGfmTables`，在 `preprocessLaTeX` 开头先跑一次表格归一：模型常多打或少打一根竖线，渲染器遇到列数不等会把整张表退成纯文字。只改显示，存下的原文不动；表格只在这里修。
+`packages/plugin-webui-client/src/markdown/latex.ts` 导入 `fixGfmTables`，在 `preprocessLaTeX` 开头先执行一次表格归一：模型常多打或少打一根竖线，渲染器遇到列数不等会把整张表退成纯文字。只改显示，存下的原文不动；表格只在这里修。
 
 ---
 

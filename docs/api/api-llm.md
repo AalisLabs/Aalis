@@ -160,7 +160,7 @@ export function idleTimeout(
 - 交出一段之前调 `pause`，调用方回来取下一段时调 `resume`：其间不计时，之后接着计、不从头计。调用方处理一段的时间不算停顿，没有生成内容的帧也不会因为交出过而重新计时。已暂停时再调 `pause`、没暂停时调 `resume` 都不起作用。
 - 不流式的请求都不调：整份回复是唯一的一段，`ms` 内没读完就中止。
 - Node 自带的 `fetch` 等响应头与读响应体默认各有 300 秒时限，到了就断开连接，报错也不是 `TimeoutError`。生成请求要换一个不设这两个时限的 dispatcher（如 undici 的 `Agent`，`headersTimeout` 与 `bodyTimeout` 设 0），`ms` 才是唯一的时限，为 0 或大于 300 秒时才管得住。带了自己的 dispatcher 的请求不走全局 dispatcher，经 `NODE_USE_ENV_PROXY` 或 `setGlobalDispatcher` 配的代理对它不起作用。
-- 计时器不拖住进程退出，请求结束后不用收尾。
+- 计时器不阻塞进程退出，请求结束后不用收尾。
 
 ## 模型引用解析
 

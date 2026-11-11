@@ -191,7 +191,7 @@ const vec = await embedding.use.embed(text);
 
 ### 错误边界
 
-`embed()` 会抛（网络错误 / 非 2xx）。消费者批量索引时要自己兜异常，不要让单条失败中断整批——memory-vector 是逐条入队 + 后台并发索引（`indexing.concurrency`，`index.ts`、默认 10），并提示「过高可能压垮本地 embedding 服务」。
+`embed()` 会抛（网络错误 / 非 2xx）。消费者批量索引时要自己兜异常，不要让单条失败中断整批——memory-vector 是逐条入队 + 后台并发索引（`indexing.concurrency`，`index.ts`、默认 10），并提示「过高可能压垮本地向量化服务」。
 
 ## 6. 能力 / 风险 → 影响
 

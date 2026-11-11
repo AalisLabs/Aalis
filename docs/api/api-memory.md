@@ -77,7 +77,7 @@ export default definePlugin({
 | [plugin-memory-vector](../plugins/plugin-memory-vector.md) | `crossSessionMode` | `isolated`、`user`、`platform`、`all` |
 | [plugin-user-relation](../plugins/user-relation.md) | `recallScope` | `session`、`all` |
 
-向量记忆召回的是原文片段，默认全部打通（群里的一轮也可能召回别人私聊里的原文，见 [安全模型](../concepts/security-model.md)）；关系图给的是整理出的人物、关系与事件摘要。这些字段都标 `onInvalid: 'error'`：某一层写坏了的值原样交给插件，插件按最窄处理，不回落到更宽的层。后装的记忆插件按它自己的作者默认取，已经设好的收窄管不到它，要另外设。
+向量记忆召回的是原文片段，默认全部打通（群里的一轮也可能召回别人私聊里的原文，见 [安全模型](../concepts/security-model.md)）；关系图给的是整理出的人物、关系与事件摘要。这些字段都标 `onInvalid: 'error'`：某一层填错的值原样交给插件，插件按最窄处理，不回落到更宽的层。后装的记忆插件按它自己的作者默认取，已经设好的收窄管不到它，要另外设。
 
 ## 压缩服务
 

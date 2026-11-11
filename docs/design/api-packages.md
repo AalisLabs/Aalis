@@ -97,7 +97,7 @@ await entry?.use.chat({ messages });
 
 | api 包 | 注入到 `HookContextMap` | 描述符（服务名） | 注入到 `ContributionPointMap` | 主要服务接口 |
 |---|---|---|---|---|
-| `api-llm` | — | `llm` | — | `LLMModel`, `ChatModelRequest`, `ChatResponse`, `ChatStreamChunk`；业务层给请求盖上调用方 `caller`；导出 `resolveLLMModel` / `listLLMModels` helper（吃选择层的 `list`，按能力过滤，返回 `ProviderEntry`）；向 schema-config 注入 `'llm-ref'` 字段类型 |
+| `api-llm` | — | `llm` | — | `LLMModel`, `ChatModelRequest`, `ChatResponse`, `ChatStreamChunk`；业务层给请求盖上调用方 `caller`；导出 `resolveLLMModel` / `listLLMModels` helper（基于选择层的 `list`，按能力过滤，返回 `ProviderEntry`）；向 schema-config 注入 `'llm-ref'` 字段类型 |
 | `schema-config` | — | — | — | 配置表单词汇：`ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` + `SchemaFieldTypes` 扩展点、`CORE_CONFIG_SCHEMA`；声明与读取插件配置的 `defineConfig` / `ConfigOf` / `parseConfig`；密钥字段的引用 `SecretRef` 与 `isSecretRef` / `mapSecretFields`（零运行时依赖，对 `@aalis/core` 只有 type-only 锚点；另含对词汇的中立解释函数与配置危险键闸；经 declaration merging 把 `configSchema` 挂到 `PluginMeta`） |
 | `api-memory` | `memory:clear` | `memory` / `compression` | `memory:clear-type` | `MemoryService`, `CompressionService`（压缩，默认提供者 plugin-memory-summary） |
 | `api-storage` | — | `storage` | — | `StorageService`；业务层 `BoundStorage` 恒定义 `resolveLocalPath` / `readFileRange` / `watch`，另带本插件私有目录的视图 `own`；导出 URI 文法 helper（`isStorageUri` / `toStorageUri` / `resolveAgainstCwd` 等） |
@@ -127,7 +127,7 @@ await entry?.use.chat({ messages });
 | `api-message-archive` | — | `message-archive` | — | `MessageArchiveService` |
 | `api-package-manager` | — | `package-manager` | — | `PackageManagerService`, `UpdateTarget`, `UpdateResult`；默认提供者 plugin-package-manager |
 | `api-persona` | — | `persona` | — | `PersonaService`, `PersonaSessionOptions` |
-| `api-platform` | — | `platform` | — | `PlatformAdapter`, `PlatformConnection`；导出 `getPlatformAdapters` / `resolvePlatformBySession` / `sendPlatformMessage` 等 helper（吃选择层的 `list`，条目是 `ProviderEntry`） |
+| `api-platform` | — | `platform` | — | `PlatformAdapter`, `PlatformConnection`；导出 `getPlatformAdapters` / `resolvePlatformBySession` / `sendPlatformMessage` 等 helper（基于选择层的 `list`，条目是 `ProviderEntry`） |
 | `api-process` | — | `process` | — | `ProcessService`, `SpawnOptions`, `ExecResult`；导出 `makeTempDirViaStorage` helper |
 | `api-session-history` | — | `session-history` | — | `SessionHistoryService`；默认提供者 plugin-tool-session |
 | `api-session-manager` | — | `session-manager` | — | `SessionManagerService`, `SessionInfo`, `PlaceInfo`；导出 `sessionKind` / `roomClass` / `isUnfiled` / `placeLabel` / `takeFrom` / `oneToOneWith` / `TAKE_UNKNOWN` |

@@ -39,15 +39,15 @@ export default definePlugin({
 - **经 `caps.processService.use` spawn**：把命令包成 `bwrap …` / `sandbox-exec …` 后交给现有 `process` 服务执行——
   沙箱相关的逻辑不进 api-process / process-local；也不直接 import `node:child_process`/`node:fs`（后端探测用经 process 服务的功能性试跑）。
   调用方的中止信号（`SandboxRunRequest.signal`）与本插件这次激活的合起来交给 `execFile`，由 process 服务按进程组停掉：调用方没中止、本插件停用或重启时同样停下，与调用方中止一样按非零退出拒绝、错误对象挂 `.result`，已有的输出不丢。
-- **功能性探测**：启动时真跑一次最小沙箱命令（超时 5000ms），退出码为 0 才 `available=true`——一次覆盖「存在性」+「Linux userns 是否真能用」。
+- **功能性探测**：启动时真执行一次最小沙箱命令（超时 5000ms），退出码为 0 才 `available=true`——一次覆盖「存在性」+「Linux userns 是否真能用」。
   Linux 的探测命令是 `bwrap --ro-bind / / --dev /dev --proc /proc --unshare-all true`，与正式运行一样挂 `/dev` 与 `/proc`：只放开 seccomp、挂不了 `/proc` 的容器里探测即失败、按无后端，不会探测报可用、之后每次运行都失败。
-  探测带本次激活的 `lifecycle.use.signal`：启动器挂住时停用或停机会中止探测，激活随之落定，不必等满探测超时，也不会超过宽限仍没停下、拖住重新激活。
+  探测带本次激活的 `lifecycle.use.signal`：启动器阻塞时停用或停机会中止探测，激活随之落定，不必等满探测超时，也不会超过宽限仍没停下、阻塞重新激活。
   因此本插件依赖 `lifecycle`。
 - **可换可叠**：未来 `-docker` / `-wasm` / `-e2b` 等不同机制各自提供 `code-sandbox`，经优先级/偏好替换。
 
 ## 没有后端时
 
-探测不通或平台没有后端时，本插件照样提供 `code-sandbox`（`available=false`），记一条 warn：「没有可用的 OS 沙箱，code_runner 的 auto 模式会拒绝执行代码」，后接修法与原因。修法按平台写：Linux 装上 bubblewrap、开启非特权用户命名空间，在容器里运行时还要能挂 `/proc`；macOS 确认 `/usr/bin/sandbox-exec` 能执行；其它平台在 macOS、Linux 或 WSL 上运行。原因是探测命令的退出码、终止信号或启动失败的报错。
+探测不通或平台没有后端时，本插件照样提供 `code-sandbox`（`available=false`），记一条 warn：「没有可用的 OS 沙箱，「代码执行器」的「隔离模式」选「自动」时会拒绝执行代码」，后接修法与原因。修法按平台写：Linux 装上 bubblewrap、开启非特权用户命名空间，在容器里运行时还要能挂 `/proc`；macOS 确认 `/usr/bin/sandbox-exec` 能执行；其它平台在 macOS、Linux 或 WSL 上运行。原因是探测命令的退出码、终止信号或启动失败的报错。
 
 装了诊断插件时登记检查项 `env/code-sandbox.backend`（「代码沙箱」）：没有后端时报 warn，`detail` 是上面的修法与原因；有后端时报 ok，写出后端（`seatbelt` 或 `bwrap`）。没装 doctor 时不登记。
 

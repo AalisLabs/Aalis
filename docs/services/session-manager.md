@@ -223,7 +223,7 @@ interface SessionInfo {
 - `generationOf` 在开始删除的同一步换值，删过的 ID 一直不换回去（§2.5）：不换的话，删除之前已收录、还在半路上的消息在删完之后照常回复，记进已删的会话（IM 房间重新建档后带进新房间）。同一步起到删完，`recordInbound` 让同一会话的入站等删除做完（带子会话的从删子会话之前起）：不等的话，删除期间到的消息按新的一代开轮，随后被这次删除停下、清掉。
 - `canTake` 判不出时拒绝（§2.8）：会话表里没有的、空记录与判不出窗口的根会话之间不跨会话取用。
 
-下面的骨架只有会话表，没有来源字段的收录、项目工作区（只有默认工作区）、owner 的 IM 私聊判定、清空时连带删除子会话与持久化，删除也不交给 agent 的 `clearing`（删子会话期间这个会话的回合照常跑，到它自己的 `session:deleted` 才停）；取别的会话只放行同一棵会话树：
+下面的骨架只有会话表，没有来源字段的收录、项目工作区（只有默认工作区）、owner 的 IM 私聊判定、清空时连带删除子会话与持久化，删除也不交给 agent 的 `clearing`（删子会话期间这个会话的回合照常运行，到它自己的 `session:deleted` 才停）；取别的会话只放行同一棵会话树：
 
 ```ts
 import { windowKey } from '@aalis/api-gateway';
@@ -320,7 +320,7 @@ class MySessionManager implements SessionManagerService {
   }
   /**
    * 先摘掉、换代号、让新来的入站等着，再删子会话、发事件（监听方停掉在跑的回合），最后清数据。删子会话、清数据的抛错不拦住其余
-   * 几步，做完再交出：这个会话已摘掉，停在半路的话它的数据不清，余下子会话的 parentId 悬空，也没法再删一次
+   * 几步，做完再交出：这个会话已摘掉，停在半路的话它的数据不清，余下子会话的 parentId 悬空，也无法再删一次
    */
   async deleteSession(id: string) {
     const s = this.sessions.get(id);
@@ -478,7 +478,7 @@ const fields = caps.sessionFields.use.fields(configSchema, caps);
 const { persona } = fields.get(message.sessionId, { platform: message.platform });
 ```
 
-会话设置缺席（没装、没启用或会话管理没起来）时读取器只取全局层，插件配置里的值照常生效。读别的插件的设置项不行：读取器只读本实例的字段，跨插件要的值改为调拥有它的插件的服务。见 [api-session-settings](../api/api-session-settings.md)。
+会话设置缺席（没装、没启用或会话管理未启动）时读取器只取全局层，插件配置里的值照常生效。读别的插件的设置项不行：读取器只读本实例的字段，跨插件要的值改为调拥有它的插件的服务。见 [api-session-settings](../api/api-session-settings.md)。
 
 ### 5.3 监听生命周期事件
 
@@ -538,7 +538,7 @@ onebot 等平台派生的房间会话在首条真人入站到达时由 §6.6 的
 
 参考实现只在回合真正开始时把会话翻成 `active`（「进行中」）：翻转挂在 `agent:turn:before` 中间件上，入站消息本身不改状态，群里只有消息、agent 没有开始回合（被触发判定挡下）的房间不会显示「进行中」。同一个中间件把 `next()` 包在 `try/finally` 里，`finally` 记下这一轮（`lastTurn`），并按这一轮的结局收口仍为 `active` 的会话（根会话与子会话一样）：结局为 `error` 的收口为 `error`，其余（`replied`、`silent`、`aborted`，以及被拦下、没有结局的一轮）为 `completed`（`plugin-session-manager/src/index.ts`）。结局由另一个挂在 `agent:turn:after` 上的中间件按回合 id 记下：
 
-- `next()` 正常返回时整轮已经跑完，`agent:turn:after` 也已执行（agent 只在这个钩子的默认动作里发它）；
+- `next()` 正常返回时整轮已经执行完毕，`agent:turn:after` 也已执行（agent 只在这个钩子的默认动作里发它）；
 - 排在它后面的输入中间件不调用 `next()` 拦下消息，或者抛错时，agent 不发 `agent:turn:after`，由这里的 `finally` 收口，会话不会停在「进行中」；
 - 排在它前面的中间件拦下消息时，它根本不运行，会话也不会被翻成 `active`。
 

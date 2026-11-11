@@ -1,4 +1,4 @@
-# Pre-push 守门：构建、Biome、Knip，加上推送前的快测试。快测试不跑重测试（起真浏览器、起构建、起真实子进程或
+# Pre-push 守门：构建、Biome、Knip，加上推送前的快测试。快测试不跑重测试（启动浏览器、执行构建、启动真实子进程或
 # 联网的，名单见 test/heavy-tests.ts），只跑架构守卫与相对远端改动相关的测试；改到 packages/core 时另跑 core 覆盖率。
 # 全量测试不在这里跑：合进 dev 之前与发布之前手动跑 `pnpm run preflight`，见 CONTRIBUTING.md 第 2 节。
 #

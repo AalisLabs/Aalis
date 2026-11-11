@@ -4,7 +4,7 @@
 
 `code-sandbox` 把「在 OS 隔离下执行不可信代码」收口成一个独立服务。注册名是字符串 `'code-sandbox'`，消费方经 `codeSandbox.use` 调用；契约包是 `@aalis/api-code-sandbox`。
 
-它为什么单独成服务，而不塞进通用的 `process`？「在 OS 隔离里跑不可信代码」是 `code_runner` 独有的诉求。package-manager、scheduler 等同样会跑子进程的插件都不需要它，把它塞进共享的 `process` 契约会污染公共面。
+它为什么单独成服务，而不放入通用的 `process`？「在 OS 隔离里跑不可信代码」是 `code_runner` 独有的诉求。package-manager、scheduler 等同样会跑子进程的插件都不需要它，把它放入共享的 `process` 契约会污染公共面。
 
 未来可以有 `-docker`、`-wasm`、`-e2b` 等不同机制的实现，它们经同一个 `code-sandbox` 服务名，按优先级或偏好相互替换。
 
@@ -44,7 +44,7 @@ export interface SandboxRunRequest {
 }
 ```
 
-`signal` 的语义与 [process 服务](./process.md) §2.2 的 `SpawnOptions.signal` 相同：调用时已中止则不起进程，`run()` 以 `signal.reason` reject、不带 `.result`；运行中中止时 POSIX 下对进程组先 `SIGTERM`、宽限后 `SIGKILL`，Windows 下立即结束整棵进程树，`run()` 按非零退出 reject，错误对象上挂 `.result`。经 `process` 服务起进程的 provider 把它原样交给 `execFile` 即可。
+`signal` 的语义与 [process 服务](./process.md) §2.2 的 `SpawnOptions.signal` 相同：调用时已中止则不启动进程，`run()` 以 `signal.reason` reject、不带 `.result`；运行中中止时 POSIX 下对进程组先 `SIGTERM`、宽限后 `SIGKILL`，Windows 下立即结束整棵进程树，`run()` 按非零退出 reject，错误对象上挂 `.result`。经 `process` 服务启动进程的 provider 把它原样交给 `execFile` 即可。
 
 隔离策略 `SandboxPolicy`：
 
@@ -76,7 +76,7 @@ export interface SandboxPolicy {
 参考实现有几个关键设计，写 provider 时值得参照：
 
 - 不直接 import `node:child_process` / `node:fs`。它把不可信代码包成沙箱启动器命令后，经现有的 `process` 服务来 spawn（`uses required = ['process']`）。OS 探测同样经 process 服务做功能性试跑。
-- 功能性探测（`probeBackend`）：经 `process` 服务真跑一次最小沙箱命令（macOS `sandbox-exec -p '(version 1) (allow default)' true`、Linux `bwrap --ro-bind / / --dev /dev --proc /proc --unshare-all true`，与正式运行一样挂 `/dev` 与 `/proc`，超时 5000ms），退出码为 0 才算可用。这比「命令是否存在」更强——一次同时覆盖存在性，以及 Linux unprivileged userns 是否真能用。探测失败（未装 bwrap、userns 被禁、容器里挂不了 `/proc` 或超时）时，`backend = 'none'`、`available = false`。探测带本次激活的 `lifecycle.use.signal`：启动器挂住时停用或停机会中止探测进程，`apply` 随之抛出 abort 原因、不记成「没有沙箱后端」，停用不必等满 5000ms 的探测超时，也不会超过宽限仍没停下、拖住重新激活。
+- 功能性探测（`probeBackend`）：经 `process` 服务真正执行一次最小沙箱命令（macOS `sandbox-exec -p '(version 1) (allow default)' true`、Linux `bwrap --ro-bind / / --dev /dev --proc /proc --unshare-all true`，与正式运行一样挂 `/dev` 与 `/proc`，超时 5000ms），退出码为 0 才算可用。这比「命令是否存在」更强——一次同时覆盖存在性，以及 Linux unprivileged userns 是否真能用。探测失败（未装 bwrap、userns 被禁、容器里挂不了 `/proc` 或超时）时，`backend = 'none'`、`available = false`。探测带本次激活的 `lifecycle.use.signal`：启动器阻塞时停用或停机会中止探测进程，`apply` 随之抛出 abort 原因、不记成「没有沙箱后端」，停用不必等满 5000ms 的探测超时，也不会超过宽限仍没停下、阻塞重新激活。
 - 命令改写（`wrapForSandbox()`，纯逻辑、便于单测）：把 `(cmd, args)` 改写为「经沙箱启动器运行」，全程 shell-free，不拼 shell 字符串。
 
 ---
@@ -91,7 +91,7 @@ export interface SandboxPolicy {
 1. `available === false` 时 `run()` 不应被调用，但仍要防御性地抛错，而不是裸跑——参考实现在 `backend === 'none'` 时，`run()` 直接 throw。
 2. 强制 `policy`：`fsWrite` 之外只读或拒写、`network === 'deny'` 必须真正断网、`env` 之外的宿主环境变量必须清零。这是契约的安全语义，consumer 依赖它来防「写出工作区 / 联网外泄 / secrets 泄漏」。
 3. `run()` 的错误约定要对齐 `ExecResult`：非零退出 reject，错误对象挂 `.result`（见 §5）。
-4. 转交 `req.signal`：不转交时停止键与执行器的中止都停不掉沙箱里的脚本（第一方调用方不设超时）。
+4. 转交 `req.signal`：不转交时停止键与执行器的中止都无法停止沙箱里的脚本（第一方调用方不设超时）。
 
 ### 注册（`provide`）
 参考实现在 `apply` 里先探测后端，再注册单例：
@@ -237,7 +237,7 @@ const result = policy
     }
     return output;
   }
-  // 没有退出结果：进程根本没起来，或已中止时 spawn 同步抛出
+  // 没有退出结果：进程启动失败，或已中止时 spawn 同步抛出
   if (signal?.aborted) return { exitCode: -1, stdout: '', stderr: '', aborted: true, message: '代码已中止' };
   return { exitCode: -1, stdout: '', stderr: '', error: e.message };
 }
@@ -268,7 +268,7 @@ provider 实现必须落实这三条强制语义；consumer 也必须传一个�
 - storage 不是沙箱：`resolveLocalPath(uri)` 把 storage URI 解析成 OS 绝对路径交给子进程后，storage 那层的 root 校验对子进程毫无约束力——真正的隔离全靠这里的 OS 沙箱（见 [安全模型 §5](../concepts/security-model.md)、[存储 URI 文法](../concepts/storage-uri-grammar.md)）。
 - 平台覆盖：参考实现只覆盖 macOS（seatbelt）/ Linux（bwrap）。Windows 等其它平台 `backend='none'`，`code_runner` auto 模式会 fail-closed。
 - `env` 不在 `run()` 外层重复传：参考实现把 env 白名单注入交给 wrapper（`env -i` / `--clearenv --setenv`），外层经 `process` 服务 spawn 时不再传 `env`——外层启动器进程继承宿主 env 无妨，因为 wrapper 已为内层不可信子进程清空。写 provider 时不要把宿主 env 透传到内层。
-- 中止与超时打的是外层启动器所在的进程组。Seatbelt 下 `sandbox-exec → env → 解释器` 逐级 exec，是同一个进程，组信号直接打到脚本；主动脱离进程组的后代（Python 的 `os.setsid`、Node 以 `detached: true` 起的子进程等守护化写法）不在组里，停不掉。bwrap 带 `--new-session`，内层进程不在我们的进程组里，组信号打到外层 bwrap；它同时带 `--die-with-parent` 与 `--unshare-all`（含 pid 命名空间），外层退出后内层随之结束，脱离进程组的后代也在同一个命名空间里。
+- 中止与超时打的是外层启动器所在的进程组。Seatbelt 下 `sandbox-exec → env → 解释器` 逐级 exec，是同一个进程，组信号直接打到脚本；主动脱离进程组的后代（Python 的 `os.setsid`、Node 以 `detached: true` 启动的子进程等守护化写法）不在组里，无法停止。bwrap 带 `--new-session`，内层进程不在我们的进程组里，组信号打到外层 bwrap；它同时带 `--die-with-parent` 与 `--unshare-all`（含 pid 命名空间），外层退出后内层随之结束，脱离进程组的后代也在同一个命名空间里。
 
 ---
 

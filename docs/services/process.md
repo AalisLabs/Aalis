@@ -48,9 +48,9 @@ interface SpawnOptions {
 
 - 调用 `spawn` 时已中止：不创建子进程，同步抛出 `signal.reason`；`execFile` 随之 reject。
 - POSIX：中止时对整个进程组先发 `SIGTERM`，宽限后组里还有成员就整组 `SIGKILL`。宽限由实现定，须明显短于 core 的停机宽限（`disposeTimeoutMs`，默认 5000ms），本地实现为 2000ms（导出常量 `ABORT_KILL_GRACE_MS`）。升级定时器不因直接子进程退出而取消，孙进程可能还在。`wait()` 照常以 `ExecResult` 落定，`signal` 为终止信号；`execFile` 按非零退出 reject，错误对象上挂 `result`。
-- Windows：没有进程组，也没有优雅终止。中止时趁根进程还活着立即结束整棵进程树（本地实现为 `taskkill /PID <pid> /T /F`），不起升级定时器：根进程一死，孙进程就不在它的树上，之后再按树结束找不到它们，pid 被复用时还会误杀无关的进程树。`wait()` 照常落定，但 `signal` 不保证有值（强制结束通常是退出码 1、`signal` 为 `null`）。
+- Windows：没有进程组，也没有优雅终止。中止时趁根进程还活着立即结束整棵进程树（本地实现为 `taskkill /PID <pid> /T /F`），不设升级定时器：根进程一死，孙进程就不在它的树上，之后再按树结束找不到它们，pid 被复用时还会误杀无关的进程树。`wait()` 照常落定，但 `signal` 不保证有值（强制结束通常是退出码 1、`signal` 为 `null`）。
 - 子进程创建失败（没有 pid）时不登记监听；子进程退出或出错后必须摘掉监听，之后再中止不对任何进程发信号，以免打到被复用的进程组。
-- POSIX 下中止与超时一样只打原进程组：主动脱离进程组的后代（`setsid`、以 `detached: true` 另起的进程等守护化写法）不受影响。
+- POSIX 下中止与超时一样只打原进程组：主动脱离进程组的后代（`setsid`、以 `detached: true` 另行启动的进程等守护化写法）不受影响。
 
 ### 2.3 句柄
 
@@ -104,7 +104,7 @@ interface TempDirHandle {
 
 ## 4. 写一个 provider
 
-接口四个方法**都必须实现**，`SpawnOptions.signal` 的中止语义（§2.2）同样要实现，否则停止键停不掉 exec 与代码执行。`makeTempDir` 可转发 `makeTempDirViaStorage`。替换默认实现时用 `priority` 抬高。
+接口四个方法**都必须实现**，`SpawnOptions.signal` 的中止语义（§2.2）同样要实现，否则停止键无法停止 exec 与代码执行。`makeTempDir` 可转发 `makeTempDirViaStorage`。替换默认实现时用 `priority` 抬高。
 
 ```ts
 import { makeTempDirViaStorage, processService, type ExecResult, type ProcessService, type SpawnHandle, type SpawnOptions, type TempDirHandle } from '@aalis/api-process';

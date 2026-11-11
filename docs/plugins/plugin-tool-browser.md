@@ -38,12 +38,12 @@ export default definePlugin({
 | `viewportWidth` | number | `1280` | 视口宽度 |
 | `viewportHeight` | number | `720` | 视口高度 |
 | `maxPages` | number | `5` | 最大页面数：同时打开的最大页面数量。超出后关闭最早打开的页面。 |
-| `executablePath` | string | `''` | Chrome 路径：自定义 Chrome/Chromium 可执行文件的绝对路径。留空时用 puppeteer 配置里的可执行文件（`PUPPETEER_EXECUTABLE_PATH`、`.puppeteerrc`），没配时用 puppeteer 自带的 Chrome。 |
+| `executablePath` | string | `''` | Chrome 路径：Chrome 的绝对路径。留空时用 puppeteer 配置里的可执行文件，没配置时用 puppeteer 自带的 Chrome。 |
 | `sandbox` | boolean | `false` | Chromium 沙箱：打开后 Chromium 带沙箱启动，网页即使攻破渲染进程也出不了沙箱。Linux 上以 root 运行或容器里没有可用的沙箱时，打开后浏览器无法启动。 |
 | `maxContentLength` | number | `50000` | 最大内容长度：返回给 Agent 的页面文本最大字符数。 |
-| `blockPrivate` | boolean | `true` | 封锁内网与本地：拒绝 localhost / 127.x / ::1 / 10.x / 172.16-31.x / 192.168.x / 169.254.x / 0.0.0.0，防止 SSRF。 |
+| `blockPrivate` | boolean | `true` | 封锁内网与本地：拒绝访问本机与内网地址（如 localhost、10.x、192.168.x），防止 SSRF。 |
 | `allowedProtocols` | multiselect | `["http","https"]` | 允许的协议：浏览器只允许访问这些协议的 URL。 |
-| `allowedHosts` | multiselect | `[]` | 主机白名单：允许访问的主机（含内网时需在此显式列出）。留空 = 仅按 blockPrivate 判定。 |
+| `allowedHosts` | multiselect | `[]` | 主机白名单：允许访问的主机（含内网时需在此显式列出）。留空 = 仅按「封锁内网与本地」判定。 |
 
 ## 注册工具
 
@@ -71,7 +71,7 @@ export default definePlugin({
 
 `browser_navigate` 打开 URL 前先做校验：协议须在 `allowedProtocols` 内；`blockPrivate=true` 时再用 `isPrivateHost` 做字符串级私网判定，这一步不解析域名。
 
-`blockPrivate=true` 时，插件在本进程的 `127.0.0.1` 随机端口起一道网络闸（只支持无认证 CONNECT 的 SOCKS5 服务），浏览器以 `--proxy-server` 把全部 TCP 连接交给它，并以 `--proxy-bypass-list=<-loopback>` 撤掉 Chrome 让 localhost、回环与链路本地地址默认绕过代理的规则。页面、页面用 `window.open` 打开的窗口，以及 dedicated / shared / service worker 发出的连接都经过它，包括导航、点击与表单提交、重定向的每一跳、子资源、`fetch` 与 WebSocket。每个连接先按进程级网络策略的 `allowedPorts` 判定目标端口（`allowedHosts` 里的主机也不例外），再按目标主机判定：
+`blockPrivate=true` 时，插件在本进程的 `127.0.0.1` 随机端口启动一道网络闸（只支持无认证 CONNECT 的 SOCKS5 服务），浏览器以 `--proxy-server` 把全部 TCP 连接交给它，并以 `--proxy-bypass-list=<-loopback>` 撤掉 Chrome 让 localhost、回环与链路本地地址默认绕过代理的规则。页面、页面用 `window.open` 打开的窗口，以及 dedicated / shared / service worker 发出的连接都经过它，包括导航、点击与表单提交、重定向的每一跳、子资源、`fetch` 与 WebSocket。每个连接先按进程级网络策略的 `allowedPorts` 判定目标端口（`allowedHosts` 里的主机也不例外），再按目标主机判定：
 
 - `allowedHosts` 里的主机按名字直连，不做私网判定；
 - IP 字面量经 `assertAddressesSafe` 判定（按数值认，写法不限），按 `canonicalAddress` 给出的规范写法连接，连的就是判的那个地址；
@@ -99,11 +99,11 @@ base64 任何情况下都不进文本结果：整张 PNG 的 base64 有几十万
 
 Chromium 按需启动，进程级共享一个实例与一张页面表；并发的首次调用共用同一次启动。是否带 Chromium 沙箱由 `sandbox` 决定：默认不带（以 `--no-sandbox --disable-setuid-sandbox` 启动）；打开后带沙箱启动失败时，调用报启动失败并写明可以在配置里关掉 `sandbox`，不回落到不带沙箱，下次调用照样带沙箱启动。取实例时检查连接是否存活：崩溃或被杀之后再调工具会重新启动浏览器，并清空页面表（此前的 `pageId` 随之失效，需重新 `browser_navigate`）。插件停用时若浏览器正在启动，启动完成后随即关闭，发起启动的调用返回错误。
 
-没配 `executablePath`、puppeteer 的配置（`PUPPETEER_EXECUTABLE_PATH`、`.puppeteerrc`）也没指定别的可执行文件、自带的 Chrome 又没装时，首次启动前经 process 服务跑 puppeteer 包里的命令行下载它，时限 5 分钟。起的一律是 Chrome，不随 puppeteer 配置里的默认浏览器（网络闸的参数 Firefox 不认）；默认浏览器配成别的时不自动下载，没装时由启动报错，puppeteer 配置里又指定了那个浏览器的可执行文件、而本插件没配 `executablePath` 时不去起它，报错写明原因。下载的输出不写进宿主的终端，全文记在调试日志里；失败时报错带上命令行 stderr 的结尾（命令行失败时先打一整屏用法，报错在最后）。插件停用时在途的下载随之中止，在途的调用报「浏览器工具已停用」。下载先装进 puppeteer 缓存目录下本次新建的临时目录，装完整体改名到位（见 [util-chromium](../utils/util-chromium.md#启动器)）：下载或解压途中被打断（停用、停机或超时）不在缓存里留下不完整的安装，下次调用照常重新下载。
+`executablePath` 留空时读的 puppeteer 配置来自环境变量 `PUPPETEER_EXECUTABLE_PATH` 或 `.puppeteerrc`。没配 `executablePath`、puppeteer 的配置也没指定别的可执行文件、自带的 Chrome 又没装时，首次启动前经 process 服务跑 puppeteer 包里的命令行下载它，时限 5 分钟。启动的一律是 Chrome，不随 puppeteer 配置里的默认浏览器（网络闸的参数 Firefox 不认）；默认浏览器配成别的时不自动下载，没装时由启动报错，puppeteer 配置里又指定了那个浏览器的可执行文件、而本插件没配 `executablePath` 时不启动它，报错写明原因。下载的输出不写进宿主的终端，全文记在调试日志里；失败时报错带上命令行 stderr 的结尾（命令行失败时先打一整屏用法，报错在最后）。插件停用时在途的下载随之中止，在途的调用报「浏览器工具已停用」。下载先装进 puppeteer 缓存目录下本次新建的临时目录，装完整体改名到位（见 [util-chromium](../utils/util-chromium.md#启动器)）：下载或解压途中被打断（停用、停机或超时）不在缓存里留下不完整的安装，下次调用照常重新下载。
 
 每个页面（`pageId`）独占一个浏览器窗口，`headless=false` 时即各自一个系统窗口。`browser_click`、`browser_type` 与 `browser_screenshot` 操作前先把目标页切到前台：页面自己用 `window.open` 或 `target=_blank` 开出的窗口会把原页压到后台，而无头 Chrome 的后台页不做渲染，点击、默认先清空的输入与按选择器截图会一直等不到结果。
 
-`browser_screenshot`（含切到前台与按选择器找元素）限时 `defaultTimeout`。截图卡住（如页面的渲染进程卡死）时，底层的截图命令一直挂着，并持有浏览器级的锁，同一浏览器里开新页、关页面与其它页面的截图都排在它后面；到时限后工具返回超时错误，并关掉这一代浏览器（不等关闭落定），页面表随之清空，此前的 `pageId` 全部失效，下次调用重新启动浏览器。其余操作里的单条 CDP 命令以 `defaultTimeout` 的两倍为上限（启动时设为 `protocolTimeout`，puppeteer 默认 180 秒），挂住时返回 puppeteer 的超时错误。`defaultTimeout` 为 0 时两者都不设时限。
+`browser_screenshot`（含切到前台与按选择器找元素）限时 `defaultTimeout`。截图卡住（如页面的渲染进程卡死）时，底层的截图命令一直未返回，并持有浏览器级的锁，同一浏览器里开新页、关页面与其它页面的截图都排在它后面；到时限后工具返回超时错误，并关掉这一代浏览器（不等关闭落定），页面表随之清空，此前的 `pageId` 全部失效，下次调用重新启动浏览器。其余操作里的单条 CDP 命令以 `defaultTimeout` 的两倍为上限（启动时设为 `protocolTimeout`，puppeteer 默认 180 秒），阻塞时返回 puppeteer 的超时错误。`defaultTimeout` 为 0 时两者都不设时限。
 
 ## 浏览器页
 

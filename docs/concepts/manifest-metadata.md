@@ -63,7 +63,7 @@ export default definePlugin({
 
 ### `provides`：激活后校验
 
-`provides` 是描述符数组。`apply` 跑完后，core 按本次激活实际登记的条目检查每个名字是否确已提供。缺一个就把插件打成 `error`。
+`provides` 是描述符数组。`apply` 执行完毕后，core 按本次激活实际登记的条目检查每个名字是否确已提供。缺一个就把插件打成 `error`。
 
 以任何逻辑身份登记的条目（含以 `entryId` 替别的包登记的）都计入登记的激活；别的激活登记的同 id 条目不算。
 

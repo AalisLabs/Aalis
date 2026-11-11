@@ -110,7 +110,7 @@ const reply = typeof parsed.response === 'string' ? parsed.response : '';
 
 这不是疏漏，是设计取舍：本库面向「让模型回一个结构化对象」的主流场景，且 §2.2 的提取逻辑全程围绕 `{` 配平展开（`index.ts`），对 `[...]` 无能为力。
 
-**反例 / 为什么有插件不复用本库**：`@aalis/plugin-user-relation` 的实体层级推断把模型 prompt 成「只输出 JSON **数组**」（`consolidate-llm.ts`），因此它**自己维护了一个独立解析器** `tryParseJson`（`consolidate-llm.ts`，返回 `unknown`），并在 `consolidate-llm.ts` 用 `Array.isArray(parsed)` 校验。如果硬塞给 `parseLLMJsonObject`，会直接拿到 `null`。
+**反例 / 为什么有插件不复用本库**：`@aalis/plugin-user-relation` 的实体层级推断把模型 prompt 成「只输出 JSON **数组**」（`consolidate-llm.ts`），因此它**自己维护了一个独立解析器** `tryParseJson`（`consolidate-llm.ts`，返回 `unknown`），并在 `consolidate-llm.ts` 用 `Array.isArray(parsed)` 校验。如果强行传入 `parseLLMJsonObject`，会直接拿到 `null`。
 
 > 经验法则：**需要顶层数组 → 不要用本库**，自己 `JSON.parse` 或包一层对象（`{ "items": [...] }`）。其余顶层对象场景一律走 `parseLLMJsonObject`。
 

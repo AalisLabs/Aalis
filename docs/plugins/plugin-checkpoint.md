@@ -40,13 +40,13 @@ definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `rootDir` | string | `'data:/checkpoints'` | 存储目录：存储 URI（默认 data:/checkpoints）。所有 checkpoint blob 和 manifest 写入此位置。 |
-| `maxFileSize` | number | `10485760` | 单文件大小上限（字节）：超过此大小的文件不做内容快照，只在 manifest 里记录为 skipped。 |
-| `keepSessions` | number | `20` | 保留的会话数：GC 阈值。每次提交回合后，若 session 目录数超过此值，删除最早的几个。设为 0 关闭 GC。 |
-| `keepTurns` | number | `200` | 每个会话保留的回合数：每次提交回合后，这个会话的回合数超过此值就删除最早的几轮（连同备份），只能回滚最近这么多轮；没改文件、只有对话的回合也算一轮。设为 0 不限。 |
+| `rootDir` | string | `'data:/checkpoints'` | 存储目录：检查点的存放位置，填存储地址（storage URI），默认 data:/checkpoints。 |
+| `maxFileSize` | number | `10485760` | 单文件大小上限（字节）：超过此大小的文件不做内容快照，只记为跳过。 |
+| `keepSessions` | number | `20` | 保留的会话数：最多保留多少个会话的检查点，每次提交回合后超出的删去最早的。设为 0 不限。 |
+| `keepTurns` | number | `200` | 每个会话保留的回合数：每个会话最多保留这么多轮的检查点，超出时删去最早的几轮（连同备份），只能回滚最近这么多轮；只有对话的回合也算一轮。设为 0 不限。 |
 | `coverage` | select | `'ownerOnly'` | 记检查点的会话：`off` 不记，`ownerOnly` 按受众（只有你时记），`all` 记；可按会话设，见下文 |
 
-`rootDir` 的显式错误类型或非 storage URI 会在插件注册服务前拒绝；留空仍取默认目录。
+`rootDir` 的显式错误类型或非 storage URI 会在插件注册服务前拒绝；留空仍取默认目录。检查点的内容块（blob）与清单（manifest）都写在这里，跳过快照的文件在清单里记为 `skipped`。`keepSessions` 按 `rootDir` 下的会话目录数算，超出时删最早的几个目录。
 
 `coverage` 是可按会话覆盖的字段（[api-session-settings](../api/api-session-settings.md)，只有 owner 能改），各种会话都适用：全局层是这里的插件配置，另可按平台档、平台类型档、场所与单个会话设，每一轮按会话现读，改了不重载插件。选项在哪一层读都是字面意思：在某个群的场所层选「记」，就是这个群记。会话设置不在场时只取插件配置里的值。
 

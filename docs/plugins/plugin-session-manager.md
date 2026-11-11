@@ -39,12 +39,12 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `takeScope` | select | `'platform'` | 取别的会话的范围：`session`（本会话，只取本会话与它派出的子任务）、`platform`（同平台，按两边根会话的平台比，WebUI、终端各算一个平台）、`all`（全部） |
+| `takeScope` | select | `'platform'` | 取别的会话的范围：从别的会话取原文时能取哪些会话。`session`（本会话）只取本会话与它派出的子任务；`platform`（同平台）只取同一平台的会话（WebUI、终端各算一个平台）；`all`（全部）不限 |
 | `takeOtherGroups` | boolean | `true` | 读别的群：范围之内能不能取别的群里的内容 |
-| `takeOthersPrivate` | boolean | `false` | 读别人的私聊：范围之内能不能取别人与她的私聊，owner 在 WebUI、终端里的会话也算；调用工具的人取他自己与她的私聊不用打开 |
+| `takeOthersPrivate` | boolean | `false` | 读别人的私聊：范围之内能不能取别人与她的私聊（owner 在 WebUI、终端里的会话也算）；取调用者自己与她的私聊不受此限 |
 | `takeCrossBot` | boolean | `false` | 跨机器人账号：范围之内，同一平台上能不能取她另一个机器人账号下的会话 |
 
-四项都写坏了不回落到更宽的层：范围按本会话，开关按否。开关按场所生效：在哪个场所打开，那里的每个人都拿得到。要把「群里读私聊」与「私聊读私聊」分开，在平台类型档各设一次。会话设置的层与存放见 [plugin-session-settings](./plugin-session-settings.md)。
+取原文指读会话历史的工具、按消息 id 取消息与跨会话历史；同平台按两边根会话的平台比。四项填错时都不回落到更宽的层：范围按本会话，开关按否。开关按场所生效：在哪个场所打开，那里的每个人都拿得到。要把「群里读私聊」与「私聊读私聊」分开，在平台类型档各设一次。会话设置的层与存放见 [plugin-session-settings](./plugin-session-settings.md)。
 
 ## 功能
 

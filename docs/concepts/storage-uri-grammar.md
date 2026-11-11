@@ -231,7 +231,7 @@ const cwd = await caps.storage.use.resolveLocalPath('workspace:/proj', 'read');
 5. **未知根抛错**。存储提供者找不到根名时抛「未知存储根」（`plugin-storage-local/src/index.ts`）。
    `toStorageUri` 的单段裸名归到 `data` 根，正是为了避免把裸名当根名后必然命中这个错误。
 
-6. **同名根与多个提供者**：参考实现在一个提供者里管全部根，`roots` 里与内置根同名或重复的项被跳过并告警
+6. **同名根与多个提供者**：参考实现在一个提供者里管全部根，`roots` 里与内部根同名或重复的项被跳过并告警
    （`plugin-storage-local/src/index.ts`），不存在同名根遮蔽。装了多个 storage 提供者时，`caps.storage.use` 只打到
    选中的那一家，另一家的根要经 `caps.storage.of(id)` 访问。
 

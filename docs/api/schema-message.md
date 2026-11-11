@@ -38,7 +38,7 @@ interface IncomingMessage {
   text?: TextRef;                      // 平台事件合成或转成的入站给人看的那句（如好友申请、戳一戳），不进模型，存档记成 Text
   triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
   actor?: { platform: string; userId: string }; // 代理身份：系统侧触发器投递时记「AI 应代谁执行」，授权按它算
-  fromTurn?: FromTurn;                 // 起它的那一轮：续做与子任务带着，见下文
+  fromTurn?: FromTurn;                 // 发起它的那一轮：续做与子任务带着，见下文
   hostNotice?: {                       // 宿主撰写的事件通知，见下文
     kind: string;
     id?: string;
@@ -56,8 +56,8 @@ interface IncomingMessage {
 ```ts
 interface ForwardedChat {
   id: string;            // 平台给的转发 id：正文里它的占位按它对位
-  content: string;       // 给模型看的展开，归档文本把它换进占位的位置（OneBot 的信封；拉不到时写原因；适配器关掉展开时就是占位本身）
-  facts?: ForwardFacts;  // 给界面的事实；拉不到内容、展开出错与关掉展开时没有
+  content: string;       // 给模型看的展开，归档文本把它换进占位的位置（OneBot 的信封；获取失败时写原因；适配器关掉展开时就是占位本身）
+  facts?: ForwardFacts;  // 给界面的事实；获取内容失败、展开出错与关掉展开时没有
 }
 
 interface ForwardFacts {
@@ -85,9 +85,9 @@ type ArchivedForward = Omit<ForwardedChat, 'content'>; // 存档记下的一段�
 
 真人消息的 `triggerType` 由 `inbound:trigger` 相位生效的触发插件写入（`immediate` / `interval`），平台适配器不设置；`idle`、`proactive` 由注入方自带。flow 相位对 `immediate` 不查回复后冷却与限速，入站消息上预设的 `immediate` 在触发插件的生效范围外（或没装触发插件时）会原样生效。点名只决定她回不回与触发类型，不动授权身份：送进这一轮的话都按说它的人算，只有没有人的话引起的一轮（空闲开话题、没有创建者的定时任务等）才是她自己开口。
 
-### 起它的那一轮（fromTurn）
+### 发起它的那一轮（fromTurn）
 
-续做（如后台任务的结束通知开的一轮）与子任务（子任务插件在入站回合里派出的任务消息与追问）带着起它的那次调用所在那一轮的事实：
+续做（如后台任务的结束通知开的一轮）与子任务（子任务插件在入站回合里派出的任务消息与追问）带着发起它的那次调用所在那一轮的事实：
 
 ```ts
 interface FromTurn {
@@ -95,11 +95,11 @@ interface FromTurn {
   userId?: string;                                         // 那一轮的物理发言者
   participants: readonly { platform: string; userId: string }[]; // 那次调用的参与者（授权身份，originTurnOf 算；批过的是批的人）
   source?: string;                                         // 那一轮的来源，人亲手发来的没有
-  fromTurn?: FromTurn;                                     // 那一轮自己的起它的那一轮
+  fromTurn?: FromTurn;                                     // 那一轮自己的发起它的那一轮
 }
 ```
 
-权限服务按那一轮判这一轮的类别与主体（续做与子任务都与起它的那一轮同一类别）；带它的消息不设 `actor`，这一轮的授权身份取它的参与者，agent 经 api-authority 的 `originTurnOf` 把发言者与参与者填进工具调用上下文。只由登记的注入方填（`test/architecture/host-notice-identity.test.ts`，现在是后台任务结束通知与子任务的任务消息），只在那次调用在入站回合里时填，不由模型给；不是发言者，归档、用户档案、关系与提示词钩子都不看它。
+权限服务按那一轮判这一轮的类别与主体（续做与子任务都与发起它的那一轮同一类别）；带它的消息不设 `actor`，这一轮的授权身份取它的参与者，agent 经 api-authority 的 `originTurnOf` 把发言者与参与者填进工具调用上下文。只由登记的注入方填（`test/architecture/host-notice-identity.test.ts`，现在是后台任务结束通知与子任务的任务消息），只在那次调用在入站回合里时填，不由模型给；不是发言者，归档、用户档案、关系与提示词钩子都不看它。
 
 ### 经 owner 过目的注入（ownerApproved）
 
@@ -111,7 +111,7 @@ interface FromTurn {
 
 - 必须同时设 `source`；不设 `userId`、`nickname`、`sessionType`、`triggerType`。
 - 身份：不延续某次调用的通知（如插件自己发起的通知），`actor` 用 `selfInitiatedActor(platform)`。延续某次工具调用的通知（如 plugin-tools 执行器的后台任务结束通知）不设 `actor`，改带 `fromTurn`（那次调用所在那一轮，见上文），`platform` 同那一轮。
-- `replyTo` 是回复这条通知时要引用的平台消息 id，取自起那次调用的入站消息（`ToolCallContext.inbound.messageId`）；入站消息没有平台消息 id 的不设。plugin-agent 回复时把它带进出站消息的 `replyTo`。
+- `replyTo` 是回复这条通知时要引用的平台消息 id，取自发起那次调用的入站消息（`ToolCallContext.inbound.messageId`）；入站消息没有平台消息 id 的不设。plugin-agent 回复时把它带进出站消息的 `replyTo`。
 - `kind` 是通知的子类（如后台任务的结束通知 `'background-task'`，即 api-tools 的 `BACKGROUND_TASK_NOTICE`），`id` 是注入方生成的通知标识，供日志与注入方自己的记录对位；`id` 的含义随 `kind`，如后台任务结束通知的是任务 id。
 - `facts` 是给界面的事实：扁平的键值，键由定义这个 `kind` 的契约约定（如 [api-tools 的结束通知](./api-tools.md#结束通知)）。界面认得的 `kind` 据此画成状态，写给模型的 `content` 不给人看；`facts` 不进模型的上下文。
 - 宿主撰写的行一律放在 `content` 里。`untrusted` 放注入方已用 `wrapUntrustedContent`（`@aalis/api-tools`）包好的不可信段，如外部服务回来的文字，放在最后。

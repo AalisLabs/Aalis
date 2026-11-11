@@ -319,7 +319,7 @@ webui.use.definePage({
 
   除脚本外按类型放开、不按来源限，只留两道：脚本只认这一页自己的目录与宿主的公用目录，不许内联与 `eval`（worker 的回退链经过 `script-src`，同样只认它们）；框架里不能再嵌别的网页。脚本的来源写成带路径、不带协议的来源：只放行这一页自己的目录，http 访问与经 TLS 代理的 https 访问都成立。Host 只收主机名或 IPv4 地址加可选端口；IPv6 字面地址写不进 CSP 的来源，与带非法字符的一样回 400。经反向代理访问时，代理要把原始的 Host 转过来。
 - 宿主的 iframe 带 `sandbox`，值是 `FRAME_SANDBOX`（`'allow-scripts'`），与 CSP 的 `sandbox` 指令同一个常量：不给同源、表单、弹窗、原生对话框、顶层跳转与下载。框架读不到 cookie 与浏览器存储，碰不到宿主页面。外站的样式、字体、图片、音视频与 fetch、XHR、WebSocket 一类请求都放行；外站脚本、内联脚本、`eval` 与 WebAssembly 不行，`<iframe>`、`<object>` 嵌不进别的网页。宿主接口不认框架的请求：框架是不透明来源，请求不带登录状态（取数回 401），改状态的请求与 WebSocket 握手按来源回 403。别人把框架地址当顶层页面打开，它照样是不透明来源。
-- **残余：** 框架能联网，读得到的数据都可能被带出去。存心外传的只有插件前端自己的代码，而插件的服务端代码本来就能联网。作者写法出错、把别人给的文字当 HTML 插入时，注入的标记跑不了脚本，但能借样式把页面上的东西带到外站（属性选择器配外站的背景图，能把链接地址、输入框的值逐字送出去），也能插外站的图片得知 owner 打开页面的时间与 IP。框架能让自己跳到别的地址：沙箱挡不住框架自我导航，注入的 `<meta http-equiv="refresh">` 不需要脚本；宿主在它离开时立即卸载（助手在 `pagehide` 时发 `leaving`，第二次 `load` 兜底），但跳到不返回页面的地址（例如回 204）时察觉不到，新页面开始显示到卸载之间也有一小段。
+- **残余：** 框架能联网，读得到的数据都可能被带出去。存心外传的只有插件前端自己的代码，而插件的服务端代码本来就能联网。作者写法出错、把别人给的文字当 HTML 插入时，注入的标记无法运行脚本，但能借样式把页面上的东西带到外站（属性选择器配外站的背景图，能把链接地址、输入框的值逐字送出去），也能插外站的图片得知 owner 打开页面的时间与 IP。框架能让自己跳到别的地址：沙箱挡不住框架自我导航，注入的 `<meta http-equiv="refresh">` 不需要脚本；宿主在它离开时立即卸载（助手在 `pagehide` 时发 `leaving`，第二次 `load` 兜底），但跳到不返回页面的地址（例如回 204）时察觉不到，新页面开始显示到卸载之间也有一小段。
 
 ### 消息通道
 
@@ -435,7 +435,7 @@ frame.onInvalidate(source => { /* 重取 source 这个数据源；没带 source 
 - 宽度：插件页面跟着主区，会话面板约 340 像素，手机 390 像素。按容器宽度排版，尺寸用 rem，触屏可点区 44 像素，输入框字号不小于 16 像素（iOS 聚焦时不放大整页）。框架占满它的区域，内容在框架里自己滚动。
 - 只有一个文档：页面内的切换只用内存里的状态，不改地址（History API 与片段都会往会话历史里加条目，手机上按返回会先退框架里的条目）。离开这个文档就会被卸载。
 - 链接一律经 `open` 请宿主打开；要确认的操作交给动作的 `effect: 'destructive'`，由宿主弹确认框。
-- 别人给的文字（群成员的昵称与消息、网页标题）只用显示纯文字的写法插入（`textContent`、文本节点或框架的转义输出），不用 `innerHTML`。注入的标记跑不了脚本，但能借样式把页面上的链接地址、输入框的值带到外站，也能让框架跳走。
+- 别人给的文字（群成员的昵称与消息、网页标题）只用显示纯文字的写法插入（`textContent`、文本节点或框架的转义输出），不用 `innerHTML`。注入的标记无法运行脚本，但能借样式把页面上的链接地址、输入框的值带到外站，也能让框架跳走。
 - 可以联网：外站的样式、字体、图片、音视频与数据请求都放行；框架是不透明来源（`Origin` 为 `null`），读外站的回应要对方的 CORS 放行。
 - 框架里做不到的：外站脚本、内联脚本与 `eval`，worker 与 WebAssembly；嵌别的网页（`<iframe>`、`<object>`）；直接调宿主接口（不带登录状态，数据与动作经宿主代办）；浏览器存储（状态存在插件自己的数据里，经数据源与动作读写）；存储里的图片（只能用 `data:` 或打包进 `webui/`）；剪贴板写入多半也不可用。
 - 宿主切走就卸载、切回来重新挂载，不保活；需要保留的状态由插件存在自己的数据里。
@@ -456,7 +456,7 @@ interface Notice {
 - `title` 写出了什么事，`detail` 写用户该做什么，具体到配置项、命令或页面；能一键去处理的给 `open`。激活之后才出的、让插件整体用不了的故障（凭据过期、后台任务一直失败、外部服务掉线）用提示告诉用户，只写日志不算（见[作者指南「报错与故障说明」](../plugin-author-guide.md#_9-5-报错与故障说明)）。
 - 归属这次激活，插件停用就撤回；只能由插件自己 `clear`，问题没解决就一直在，没有用户忽略。
 - 插件不能弹 Toast：Toast 只回报用户自己操作的结果，后台的事走提示。
-- 第一次使用时模型插件缺密钥起不来这类故障，由宿主推导的插件故障覆盖，不靠提示。
+- 第一次使用时模型插件缺密钥无法启动这类故障，由宿主推导的插件故障覆盖，不靠提示。
 
 ## 需要处理
 
@@ -469,7 +469,7 @@ type AttentionItem =
   | ({ kind: 'notice'; instance: string } & Notice);
 interface AttentionResponse { items: AttentionItem[] }
 
-/** 插件没起来的原因：插件列表（PluginListItem）与这里共用一份，由服务端算好 */
+/** 插件未启动的原因：插件列表（PluginListItem）与这里共用一份，由服务端算好 */
 interface PluginBlockers {
   lacking: UnmetService[]; // pending 时缺的 required 服务，每条从直接提供者沿依赖链追到根
   waiting: UnmetService[]; // pending 时在等的服务：根插件在启动，它启动完就有
@@ -654,7 +654,7 @@ interface PluginListItem {
   state: PluginState; // pending | activating | active | disabled | disposed | error
   error?: string;
   slow?: boolean; // 激活超过慢激活阈值、已转入后台
-  lingering?: boolean; // 旧实例超过宽限仍未停下：停下之前同一 id 不起新实例
+  lingering?: boolean; // 旧实例超过宽限仍未停下：停下之前同一 id 不启动新实例
   self?: true; // 提供这个界面：不能从界面停用或卸载
   provides: string[];
   requiredServices: string[];
@@ -731,7 +731,7 @@ interface LogQuery extends LogFilter { limit?: number } // 默认 200，上限 5
 
 - 先找贡献点 `webui:options` 里同名的来源：插件经它交自己的可选项来源（`{ id, list(dependency?) }`，`id` 就是字段的 `dynamicOptions`），同名的有几家时取全局键最前的那家，`dependency` 原样交给它，回 `{ models, details }`。可选项（`OptionDetail`）带名字与说明，可以带成员 `members`（选上这一项会带上的成员的名字，界面在这一项下面写「包含 N 项」、点开列出）；插件的选项来源交得了 `members`、交不了 `others`。第一方的来源：plugin-i18n 的 `i18n-languages`、plugin-skills 的 `skills`、plugin-authority 的 `authority-operations` 与 `authority-groups`、两个向量化提供者的 `embedding-openai` 与 `embedding-ollama`。来源名按插件定，同一个插件开了几个实例时各实例的字段都取最前那家。
 - 没有贡献的来源由宿主回答：`llm`（模型列表，模型字段的可选项走它）；`toolGroups`（工具分组：已登记的分组与工具上出现过的分组的并集，`'*'` 是全部分组、总在最前、标 `all`，说明写「包括以后新装插件的分组」，登记过的分组下面一行写它的说明；有工具的分组带组内工具的名字（`members`），不属于任何分组的工具另交 `others`，界面写在可选项末尾一行、点开列出）；`llm-thinking`（深度思考的档位：`dependency` 是条目 id `<提供者实例 id>/<模型 id>`，按那个模型声明的档位给，写法不对回 400；没带时回空的可选项，不替调用方挑模型；模型不能调时 `models` 与 `details` 为空）。
-- 其余服务名合起那个服务各提供者的 `listModels()`，回 `{ models }`（如人设）。
+- 其余服务名合并那个服务各提供者的 `listModels()`，回 `{ models }`（如人设）。
 - 刷新：`:contextId` 是提供者的插件实例，与模型的 `contextId` 相同；名下的模型都不能运行时刷新、或名下没有模型时回 404。
 
 ```ts

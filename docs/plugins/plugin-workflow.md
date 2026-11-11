@@ -43,10 +43,10 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `defsDir` | string | `'workspace:/workflows'` | 工作流定义目录：加载存储下的 *.yaml 定义（storage URI）；AI 通过 workflow_define 创建的定义也写入此处。 |
+| `defsDir` | string | `'workspace:/workflows'` | 工作流定义目录：从这个目录（storage URI）加载 *.yaml 定义；模型经 workflow_define 新建的定义也写到这里。 |
 | `runsFile` | string | `'data:/workflow-runs.json'` | 运行历史文件：保存最近 N 条运行实例（storage URI）。 |
 | `maxRuns` | number | `200` | 保留最近运行条数：超过则裁剪最旧的已结束的运行，在跑的不裁；最小 10。 |
-| `enableTools` | boolean | `true` | 注册 AI 工具：开启后向 LLM 暴露 workflow_define / workflow_run 等工具。 |
+| `enableTools` | boolean | `true` | 注册 AI 工具：开启后向模型提供 workflow_define、workflow_run 等工具。 |
 
 ## 触发器
 
@@ -69,7 +69,7 @@ export default definePlugin({
 - `trigger:fired`：plugin-scheduler 每次执行任务时广播，但不带 `workflowId`，本插件只运行带 `workflowId` 的（见下文「事件」）；`event` 触发器订阅 `trigger:fired` 又在上面的拒绝之列。
 - `scheduler:job:start`、`scheduler:job:done`、`scheduler:job:error`：`event` 触发器可以订阅，事件参数是任务名（`scheduler:job:error` 另带失败原因），`{{vars.args[0]}}` 取任务名。第一个参数是字符串，`filter` 按对象的顶层字段比对，写了非空的 `filter` 就永远不触发；不写则每个定时任务执行都触发一次，选不出某一个任务。
 
-所以没法让某一个定时任务触发编排。要按时间运行编排，用编排自己的 `cron`、`interval` 或 `once` 触发器；要在某个会话里做事，用 `send-message` 或 `agent` 节点指向那个会话。
+所以无法让某一个定时任务触发编排。要按时间运行编排，用编排自己的 `cron`、`interval` 或 `once` 触发器；要在某个会话里做事，用 `send-message` 或 `agent` 节点指向那个会话。
 
 ## 节点类型
 
@@ -94,7 +94,7 @@ export default definePlugin({
   节点的 `platform` 不影响选档。
 - `timeoutSeconds`（默认 120，不超过 2147483 即约 24.8 天，与 `wait` 的 `seconds` 同一条）内未收到回复 → 节点失败；`outcome=error/aborted` → 节点失败；
   `outcome=silent`（agent 选择不回复）是合法结果，节点成功、输出空串。
-- 立即失败、不等满超时：网关不在；指向调起这次运行的会话（经 `workflow_run` 调起时，那一轮在等这次运行，节点开不了轮）；
+- 立即失败、不等满超时：网关不在；指向发起这次运行的会话（经 `workflow_run` 调用时，那一轮在等这次运行，节点无法开始一轮）；
   指令在网关相位被吞（禁言、限速等）或排着时被放掉，没开轮。
 
 示例：两路 agent 并行调研 → 第三个 agent 聚合（管道传值）：
@@ -131,12 +131,12 @@ nodes:
 
 要让这类编排按 owner 执行，在工作流页用「新建或覆盖」存一次。只在内存里注册的定义（不写入磁盘），定义者也只在内存，重启后随定义一起没有。
 
-工作流内部的 `tool` 节点与 `send-message`、`agent` 节点投递的消息按运行身份过权限闸。运行身份取定义者与调用者里不是 owner 的一方：调用者是 owner 时取定义者（没有即匿名），否则取调用者。两者都是 owner 才按 owner 执行，确认的豁免（见 [plugin-authority](./plugin-authority.md) 的「确认（轴 B）」）也只在这时生效；owner 调起别人定义或覆盖过的编排时，按那个人的等级执行。调用者按入口定：
+工作流内部的 `tool` 节点与 `send-message`、`agent` 节点投递的消息按运行身份过权限闸。运行身份取定义者与调用者里不是 owner 的一方：调用者是 owner 时取定义者（没有即匿名），否则取调用者。两者都是 owner 才按 owner 执行，确认的豁免（见 [plugin-authority](./plugin-authority.md) 的「确认（轴 B）」）也只在这时生效；owner 调用别人定义或覆盖过的编排时，按那个人的等级执行。调用者按入口定：
 
 | 入口 | 调用者 |
 |---|---|
 | `workflow_run` | 调用者的授权身份（`actingIdentity`）：它要 owner 确认，批过的是批的 owner，免了确认的是那位 owner，所以总是 owner |
-| 编排服务的 `runWorkflow` | 调用方传的 `caller`（不传即匿名）：别的插件经它调起时，调用者不是 owner 的按调用者执行 |
+| 编排服务的 `runWorkflow` | 调用方传的 `caller`（不传即匿名）：别的插件经它调用时，调用者不是 owner 的按调用者执行 |
 | 工作流页「立即运行」 | 登录的 owner |
 | `cron`、`interval`、`once`、`event` 触发与 `trigger:fired` | 定义者 |
 
@@ -156,7 +156,7 @@ nodes:
 
 以上工具均属 `workflow` 工具组。`workflow_define`、`workflow_run`、`workflow_remove` 声明 `risk: 'dangerous'`（2 级加确认）：编排存下来以后按定义者的身份自己运行，节点能往任意会话发消息、开一轮，与子任务、定时任务、停后台任务同一规则。`workflow_list` 与 `workflow_get_runs` 只看不改，2 级、不确认（`visibility: 'restricted'`；运行的出错原因带会话 id，私聊会话的 id 带对方账号，与 plugin-scheduler 的 `scheduler_list_jobs` 同一档）。
 
-确认怎么判：别人单独发起的一轮没人能批，拒绝；有 owner 在的一轮出审批卡给她批，批过的调用按她执行（定义者、调用者随之是她），`workflow_define` 的审批卡上是 YAML 原文；参与者都是 owner 的回合里，这一项在免确认白名单（`restrictedPolicy`）里或 `confirmOverrides` 把它设为 `off` 时不问，定义因此不经审批，原文没经 owner 过目。不能产生审批的回合（定时任务、编排节点、mcp-server、空闲触发与主动发言等）里，要确认的一律被拒。批了 `workflow_run` 只是让这次运行起来，运行里的步骤照上文按运行身份过权限闸，要确认的照样看免确认白名单，不因为批了启动就放行。工作流页的「新建或覆盖」「立即运行」「删除」是 owner 亲手操作，不走审批。
+确认怎么判：别人单独发起的一轮没人能批，拒绝；有 owner 在的一轮出审批卡给她批，批过的调用按她执行（定义者、调用者随之是她），`workflow_define` 的审批卡上是 YAML 原文；参与者都是 owner 的回合里，这一项在免确认白名单（`restrictedPolicy`）里或 `confirmOverrides` 把它设为 `off` 时不问，定义因此不经审批，原文没经 owner 过目。不能产生审批的回合（定时任务、编排节点、mcp-server、空闲触发与主动发言等）里，要确认的一律被拒。批了 `workflow_run` 只是让这次运行启动，运行里的步骤照上文按运行身份过权限闸，要确认的照样看免确认白名单，不因为批了启动就放行。工作流页的「新建或覆盖」「立即运行」「删除」是 owner 亲手操作，不走审批。
 
 ## 工作流页
 

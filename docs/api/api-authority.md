@@ -55,7 +55,7 @@ interface ExecutionGuardContext {
 
 interface InboundTurn {
   source?: string;                   // 同 IncomingMessage.source：真人消息为 undefined
-  fromTurn?: FromTurn;               // 同 IncomingMessage.fromTurn：续做与子任务都带着起它的那一轮，与它同一类别（类型见 schema-message）
+  fromTurn?: FromTurn;               // 同 IncomingMessage.fromTurn：续做与子任务都带着发起它的那一轮，与它同一类别（类型见 schema-message）
   messageId?: string;                // 这一轮最近一条输入的平台消息 id，后台任务的结束通知据它引用这条消息
 }
 
@@ -71,7 +71,7 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<Verdict>;
 | risk | visibility | confirm | 例 |
 | --- | --- | --- | --- |
 | `safe` | public | （无） | 查天气 / 算术 |
-| `sensitive` | restricted | （无） | owner 顺手的中危 |
+| `sensitive` | restricted | （无） | owner 免确认的中危操作 |
 | `dangerous` | restricted | `session` | shell / 写删 / 改系统 |
 
 三者皆不声明 → 兜底 `public`。纯函数 `resolveCapabilityPolicy(decl, defaultVisibility)` / `riskDefaults(risk)` 导出供注册方使用。
@@ -87,11 +87,11 @@ interface AuthorityService {
   // 恒为 owner，但不是登记的账号，不算。入站正文的发送者前缀据它写 owner 从别的平台往房间里插话的那条（api-message-archive 的 speakerOf）
   ownerOn(platform: string): UserIdentity | undefined;
 
-  // 这一轮从哪里来（api-approval 的 OriginKind）：只看消息事实（来源、起它的那一轮、授权身份有没有账号），
+  // 这一轮从哪里来（api-approval 的 OriginKind）：只看消息事实（来源、发起它的那一轮、授权身份有没有账号），
   // 不看会话类型与受众，不判是不是 owner，不按授权身份判。能不能产生审批由审批服务按类别与参与者判
   originOf(turn: OriginTurn): OriginKind;
 
-  // 这一轮的主体，定本地效果：类别为 hand 且参与者（授权身份）都是 owner 的为 owner；续做与子任务的类别沿 fromTurn 随起它的
+  // 这一轮的主体，定本地效果：类别为 hand 且参与者（授权身份）都是 owner 的为 owner；续做与子任务的类别沿 fromTurn 随发起它的
   // 那一轮，参与者是那一轮交来的（批过的调用是批的人）；其余为 other（owner 与别人同在的一轮也是）
   principalOf(turn: OriginTurn): 'owner' | 'other';
 
@@ -125,8 +125,8 @@ interface AuthorityService {
 type OriginTurn = Pick<ExecutionGuardContext, 'sessionId' | 'platform' | 'userId' | 'participants' | 'inbound'>;
 
 // 由一轮的输入拼这一轮。参与者：各条输入的授权身份（actor，没有时是发言者，没有发言者的是无主体；插话不带 actor，
-// 就是发言者），带起它的那一轮的取那一轮的参与者，按进入先后排、按身份去重，owner 的各个身份算一个（isOwner 不给时
-// 按字面身份）；发言者：各条输入的发言者相同时是他，缺省时取起它的那一轮的；inbound 取 { source, fromTurn }
+// 就是发言者），带发起它的那一轮的取那一轮的参与者，按进入先后排、按身份去重，owner 的各个身份算一个（isOwner 不给时
+// 按字面身份）；发言者：各条输入的发言者相同时是他，缺省时取发起它的那一轮的；inbound 取 { source, fromTurn }
 // 与最近一条输入的 messageId
 function originTurnOf(
   inputs: readonly [IncomingMessage, ...IncomingMessage[]],

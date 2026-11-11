@@ -67,7 +67,7 @@ export interface MediaProcessor {
 ### 输入/输出类型
 
 - **`DescribeInput`**：`attachments`，加上 `basePrompt`（完整替换默认 base）/ `hint`（在 base+context 之后追加一条约束）/ `context`（对话上下文，processor 可拼进 prompt）/ `maxTokens` / `mode:'single'|'combined'` / `sessionId`（附件所在的会话，LLM processor 把它带进模型请求供记账；不在会话里识别时不填）/ `signal`（中止信号，LLM processor 把它带进模型请求，中止时识别随之停下）。
-  - `basePrompt` 与 `hint` 的语义严格分离：要换整段 prompt 用 `basePrompt`，只加一条要求用 `hint`。把整段 prompt 塞进 `hint` 会与默认 base 冲突。
+  - `basePrompt` 与 `hint` 的语义严格分离：要换整段 prompt 用 `basePrompt`，只加一条要求用 `hint`。把整段 prompt 放入 `hint` 会与默认 base 冲突。
 - **`DescribeResult`**：`descriptions`（`mode=single` 时与 `attachments` 等长；`mode=combined` 时是单元素），加上 `meta?:{processor,model?,tokens?}`。
 - **`TranscribeInput`**：单条 `attachment`，加上 `language?`（ISO 639-1）/ `withTimestamps?`（后端可忽略：第一方只有经 asr 桥接的 plugin-asr-openai 返回 `segments`，音频 LLM 与 plugin-asr-whisper-cpp 只给整段 `text`）/ `context?`（仅对 LLM-as-audio 有意义，传统 Whisper 忽略）/ `sessionId?`（音频所在的会话，音频 LLM 把它带进模型请求供记账；不在会话里转写时不填）/ `signal?`（中止信号，交给转写前的转码与转写，中止时转写随之停下；没给时内置处理器接 media 这次激活的）。
 - **`TranscribeResult`**：`text` / `segments?` / `language?` / `meta?:{processor,model?}`。
@@ -317,7 +317,7 @@ export default definePlugin({
 
 ### 描述缓存
 
-缓存基于 `@aalis/util-bounded-map`（有界，加滑动 TTL，加 LRU），配置为 `max=5000` 条、`ttlMs=30 天`（图片内容不变、描述也就不过期，长留才吃得到跨天的表情包复用）。值只存裸描述，ref 标记等包装由各消费点重建。键按来源取：
+缓存基于 `@aalis/util-bounded-map`（有界，加滑动 TTL，加 LRU），配置为 `max=5000` 条、`ttlMs=30 天`（图片内容不变、描述也就不过期，长留才用得上跨天的表情包复用）。值只存裸描述，ref 标记等包装由各消费点重建。键按来源取：
 
 - **存储地址**：不带会话语境、文件名按[命名约定](#会话媒体的目录约定)是内容哈希的，以哈希为键，跨会话复用；带会话语境的（开启 `contextHistory` 后识别出的）与文件名不是内容哈希的（如绘图产物），以存储地址为键，只在本会话命中。只认存储地址，不要求落在会话媒体目录；网址不按文件名认（图床直链也有这种文件名）。
 - **网址**：原样做键；落盘方登记的别名把它落到落盘地址的键上（见下文「来源 → 落盘 ref 别名」）。
@@ -371,7 +371,7 @@ media 经 `storage` 写临时/缓存文件，但 storage 只是命名根加权�
 - **audio.prefer 下拉是 live mutate 的**：`media` 监听 `service:changed`（asr/llm），动态刷新 `configSchema.audio.fields.prefer.options`。新装 asr 或 audio-LLM 后，选项会自动出现。这意味着 `configSchema` 对象在运行时被改写，前端配置页读的是这个 live 对象。
 - **空音频描述不等于「非语音」**：模型的空响应统一标为 `[音频] 识别失败（…详见日志）`，为什么空看日志里的结束原因（`finish=`）与输出用量。不要据此判断「这段音频没人声」。
 - **输出上限只防失控**：LLM processor 的识图（`vision.maxTokens`）与转写（`audio.maxTokens`，思考与正文共用）默认都是 2048，明显高于提示词要的长度，提示词里的字数要求是软的。模型在上限处停下（模型插件报的结束原因 `finishReason` 是 `length`）时，描述与转写末尾带「（已在长度上限处截断）」，不重试、不按字数再截，写进正文与描述缓存的都是带标记的这一句。标记目前按原文语言，与识图提示词一致。
-- **图片是「识别模型 + 两个正交开关」**：`vision.prefer` 是识别模型；`vision.recognizeOnArrival`（默认开）决定图片到达是否立即识别落描述——描述进档案与向量库、可被召回，被吞掉的消息也留记忆；关掉则档案只留指针 `[图片 | ref:…]`，主模型需要时经 `analyze_image` 按需看，代价是图片内容不可被检索召回。`vision.delivery` 决定主模型需要看图（当轮附件、`analyze_image`）时怎么给：`auto`（默认）按 agent 交来的 `acceptsImages`（`agent:llm:before` 与工具上下文的，agent 按这一轮的模型在模型服务登记的能力填）——能看图则直通原图，不能看则由识别模型转文字，media 自己不查模型能力。端点没报告视觉能力的模型（如经中转站接入的）要直接看图，在模型服务的「单模型能力覆盖」（`modelCapabilities`）里给它写上 `vision`。也可显式钉死 `passthrough`/`describe`：钉死 `passthrough` 时当轮附件照样交给不能看图的模型，`analyze_image` 在不能看图的会话里仍走识别模型（结果里的图交不到模型）。`audio.mode='passthrough'` 仍是音频直通：不转写，保留原始 attachment 让主模型直接吃（需主模型 audio 能力）。
+- **图片是「识别模型 + 两个正交开关」**：`vision.prefer` 是识别模型；`vision.recognizeOnArrival`（默认开）决定图片到达是否立即识别落描述——描述进档案与向量库、可被召回，被吞掉的消息也留记忆；关掉则档案只留指针 `[图片 | ref:…]`，主模型需要时经 `analyze_image` 按需看，代价是图片内容不可被检索召回。`vision.delivery` 决定主模型需要看图（当轮附件、`analyze_image`）时怎么给：`auto`（默认）按 agent 交来的 `acceptsImages`（`agent:llm:before` 与工具上下文的，agent 按这一轮的模型在模型服务登记的能力填）——能看图则直通原图，不能看则由识别模型转文字，media 自己不查模型能力。端点没报告视觉能力的模型（如经中转站接入的）要直接看图，在模型服务的「单模型能力覆盖」（`modelCapabilities`）里给它写上 `vision`。也可显式钉死 `passthrough`/`describe`：钉死 `passthrough` 时当轮附件照样交给不能看图的模型，`analyze_image` 在不能看图的会话里仍走识别模型（结果里的图交不到模型）。`audio.mode='passthrough'` 仍是音频直通：不转写，保留原始 attachment 让主模型直接接收（需主模型 audio 能力）。
 - **没有能看图的模型时图照样存下**：到达识别找不到能描述图片的识图处理器时，每张图只落盘写成不带描述的引用，这条消息另加一行 `[附了 N 张图，当前无法查看]`，不留空气泡、原图不丢；识别失败或返回空串的，引用照留、描述写「获取或识别失败，内容未知」。plugin-media 同时向 doctor 报 `service/media.vision` 警告。
 - **describe 交付不向主模型交图**：识别是识别模型的职责，结果已作为文字拼进消息正文，出口会把这一轮各条 user 消息的 `images` 清空。再把原图递一份给主模型等于同一张图识别两遍——实测一张 57KB 的图额外多花约 1,090 token、4.7 秒预填充。`analyze_image` 在这条交付下返回文字描述。
 - **passthrough 交付的动图一律抽帧**：出口（`agent:llm:before` 中间件）把动图抽帧为多张静图（帧数上限 `animatedImage.maxFrames`）再交给主模型——主流视觉 API 对原始 GIF 只读首帧或拒收，抽帧是让"动"被看见的唯一通用形态。是不是动图按来源的字节判：视频容器，或多帧的 GIF、APNG、动态 WebP；单帧 GIF 按静图。网址来源的先下载下来判；静图按读到的字节转成 data URL 交出，类型取判定结果，读不到字节的照原样规范化。变换作用于这一轮各条带图的 user 消息（agent 只给这一轮的输入挂图，历史消息不带图），每条消息只处理一次（成败皆不重来），dryRun 估算轮跳过。`analyze_image` 在这条交付下把图随工具结果交出（`ToolExecutionResult.images`，同一出口规范化与抽帧），不经识别模型。

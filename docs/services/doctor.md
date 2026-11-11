@@ -102,7 +102,7 @@ type UnmetRoot =
 
 interface UnmetService {
   service: string;
-  chain: string[]; // 从直接提供者往下、一路没起来的插件实例；根是插件时最后一个就是它
+  chain: string[]; // 从直接提供者往下、一路未启动的插件实例；根是插件时最后一个就是它
   root: UnmetRoot;
 }
 

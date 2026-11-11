@@ -121,7 +121,7 @@ export default definePlugin({
 });
 ```
 
-单实例、只要选中的那一家：用 `use`。多实例且要按模型或条目调度：用 `of(id)`，或对应 `*-api` 的 `resolveXxx` helper（如 `resolveLLMModel(caps.llm, ref, requiredCaps)`，吃选择层的 `list`），不要自己重抄聚合逻辑。storage 的 URI 文法见 [storage URI 文法](./storage-uri-grammar.md)。
+单实例、只要选中的那一家：用 `use`。多实例且要按模型或条目调度：用 `of(id)`，或对应 `*-api` 的 `resolveXxx` helper（如 `resolveLLMModel(caps.llm, ref, requiredCaps)`，基于选择层的 `list`），不要自己重抄聚合逻辑。storage 的 URI 文法见 [storage URI 文法](./storage-uri-grammar.md)。
 
 ## 动态查询没有依赖边
 

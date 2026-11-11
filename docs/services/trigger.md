@@ -126,7 +126,7 @@ export default definePlugin({
 - **owner 自己的会话不经本相位**。房间类别为 `owner-only` 的会话由 plugin-gateway 跳过 `inbound:trigger`（[结构性放行](../plugins/plugin-gateway.md#结构性放行)），触发插件收不到这些消息，不必按平台或生效范围另做判断。
 - **一个都不在时不做判定**。触发插件都停用或都没装时，`inbound:trigger` 相位不做判定，消息直接进入 flow 相位，不写 `triggerType`，与没装触发插件一致：agent 对每条消息都处理，只受 flow-control 的禁言、冷却与限速约束（冷却与限速只挡非 `immediate` 的消息，此时所有消息都不是 `immediate`）。
 - **状态与配置不共享**。禁言关键词与时长、点名的别名与开关、生效范围由各触发插件在自己的配置里分别设置（都可按会话覆盖），只有生效者的起作用：切换后按新生效者的配置执行，只在一边配了禁言关键词的，切到另一边后这些关键词不再生效；要在切换后保持一致，两边须同样配置。各触发插件的状态只属于自己：trigger-policy 的计数、活跃指数与闲置活动时间只统计它生效时经过的消息，不生效期间不计数；闲置主动开口到点时它不生效就跳过（不注入，也不记为 bot 开口），agent 回复也不记。
-- **附件只识别一次**。要看附件描述的触发插件自己调 media 的 `processMessage` 启动识别（Laya 判定前至多等 `mediaWaitMs`）；放行与吞掉都不等识别跑完。media 的 `processMessage` 按消息对象只处理一次，agent 预处理器与归档对同一个消息对象调用时命中这次识别（在途则等它），不再识别第二遍。trigger-policy 不看附件，不启动识别。
+- **附件只识别一次**。要看附件描述的触发插件自己调 media 的 `processMessage` 启动识别（Laya 判定前至多等 `mediaWaitMs`）；放行与吞掉都不等识别执行完毕。media 的 `processMessage` 按消息对象只处理一次，agent 预处理器与归档对同一个消息对象调用时命中这次识别（在途则等它），不再识别第二遍。trigger-policy 不看附件，不启动识别。
 
 ## 6. 注意事项与边界情形
 

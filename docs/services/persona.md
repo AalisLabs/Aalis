@@ -30,7 +30,7 @@ export interface PersonaService {
 - `getSystemPrompt(options?)` — 渲染这个会话生效角色卡的静态人设：名字、描述、性格、prompt，这个会话的「额外提示」，以及 outputFormat 的 JSON 指令块。同一张卡下逐轮不变，以便命中 LLM provider 的前缀缓存。
 - `getVolatilePrompt(options?)` — 返回易变上下文：时间注入（`timeInjection`）、会话环境（平台、群号、自身与发送者身份、群聊身份判定规则）、上一轮状态（`statePersistence`）。无内容时返回空串。调用方应把它放在历史消息之后、当前用户消息之前；逐轮变化的内容不能放进 `getSystemPrompt`，否则前缀缓存整条失效。
 - `getPersonaName(options?)` — 返回角色卡的 `name`：按 `options` 这个会话的「人设」取卡（找不到该卡时回落主卡），不给会话时按人设插件的配置。触发插件、终端的标题与署名都按会话传入（终端取它自己会话的生效人设）；没有会话的用途不传。
-- `listModels()` — 列出已扫描到的全部角色卡名，供会话设置里「人设」的可选项（webui-server 按服务名合起各提供者的 `listModels()`）。
+- `listModels()` — 列出已扫描到的全部角色卡名，供会话设置里「人设」的可选项（webui-server 按服务名合并各提供者的 `listModels()`）。
 - `getNickNames(options?)` — 返回角色卡的 `nick_name` 列表，供触发检测匹配；按 `options` 取卡，同 `getPersonaName`。
 
 ### 2.2 重要类型
@@ -60,7 +60,7 @@ export const persona = defineService<PersonaService>('persona');
 
 - `@aalis/plugin-agent`（核心消费者）— `buildSystemPrompt()` 取 persona 拼进 system 块：先 `const persona = this.caps.persona.present ? this.caps.persona.use : undefined`，再 `persona.getSystemPrompt(personaOpts)`；易变上下文由 `getVolatilePrompt?.(personaOpts)` 取出，作为 system 消息放在历史之后、当前用户消息之前；`'persona'` 在其 `uses optional` 中。注意 JSON 解析与状态持久化并不在 agent 里做，而是由 persona 自己挂 `agent:reply:before` 钩子统一处理（见 §4）。
 - 触发插件（`@aalis/plugin-trigger-policy` 等，经 `@aalis/api-trigger` 的 `createBotNames`）— 按会话取在用的人设（触发插件按自己的服务偏好选出的提供者）的 `getPersonaName(options)` 与 `getNickNames(options)`，收集 bot 名字与昵称，做点名识别。
-- `@aalis/plugin-webui-server` — 不声明 persona 依赖；会话设置里人设的可选项（`dynamicOptions: 'persona'`）按服务名合起各提供者的 `listModels()`。
+- `@aalis/plugin-webui-server` — 不声明 persona 依赖；会话设置里人设的可选项（`dynamicOptions: 'persona'`）按服务名合并各提供者的 `listModels()`。
 - `@aalis/plugin-cli` — 先看 `persona.present` 再取 `persona.use.getPersonaName({ sessionId, platform: 'cli' })`（终端会话的生效人设），用作对话里的署名与状态栏；缺席时署名回退 `'Aalis'`。
 - `@aalis/plugin-user-relation`、`@aalis/plugin-user-profile` — 关系图与档案的提取提示里对她的称呼：每次提取按触发它的会话取一次 `getPersonaName({ sessionId, platform })`，系统提示与历史里她那几行用同一个名字；缺席或回空串时用「机器人」。
 

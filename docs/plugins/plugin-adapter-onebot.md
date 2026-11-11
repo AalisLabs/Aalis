@@ -45,23 +45,28 @@ export default definePlugin({
 | `splitMessage.enabled` | boolean | `false` | 启用：是否启用消息分条发送 |
 | `splitMessage.delayPerChar` | number | `50` | 每字延迟 (ms)：按下一条消息的字数计算延迟，单位毫秒/字 |
 | `splitMessage.maxDelay` | number | `3000` | 最大延迟 (ms)：分条消息之间的最大延迟上限（毫秒） |
-| `splitMessage.patterns` | multiselect | `["。","！","？",".","!","?","\\n"]` | 切割模式：在匹配到这些字符串的位置之后进行切割。每一项是一个完整的字符串：单字符（如 。）就在该字符后切；多字符（如 ". "、".\n"）则要整段匹配到才切。支持转义：\n=换行，\t=制表符，\r=回车，\\=反斜杠。 |
-| `forward` | object | — | 合并转发处理：收到 &lt;forward&gt; 消息时如何展开、是否调用图像识别、是否调用 LLM 生成摘要 |
-| `forward.enabled` | boolean | `true` | 启用自动展开：关闭后保留原始占位符，由 LLM 自行决定是否调工具读取。 |
+| `splitMessage.patterns` | multiselect | `["。","！","？",".","!","?","\\n"]` | 切割模式：在匹配到这些字符串的位置之后切分。多字符的项（如 ". "）要整段匹配到才切。支持转义：\n 换行，\t 制表符，\r 回车，\\ 反斜杠。 |
+| `forward` | object | — | 合并转发处理：收到 &lt;forward&gt; 消息时如何展开、是否调用图像识别、是否调用模型生成摘要 |
+| `forward.enabled` | boolean | `true` | 启用自动展开：关闭后保留原始占位符，由模型自行决定是否调工具读取。 |
 | `forward.maxDepth` | number | `3` | 嵌套深度上限：递归展开嵌套合并转发的最大层数（顶层=1）。 |
 | `forward.maxNodesPerLevel` | number | `30` | 单层节点上限：每层最多展开多少条节点。超过部分会被截断。 |
 | `forward.imageRecognition` | boolean | `true` | 识别内部图片：把转发内的图片送入 media 服务转写为文字描述。需要该服务可用。 |
-| `forward.imageRecognitionConcurrency` | number | `8` | 媒体识别并发上限：单条消息的转发展开内允许同时进行的媒体识别（图片/语音/视频）任务数。本地模型部署建议设 1-2：转发批量识别是后台工作，低并发能减少对实时入站识别的挤占（注意这是统计性缓解，不是优先级调度——多条消息各有各的并发额度，模型侧也无插队机制）。 |
-| `forward.recognitionMaxItems` | number | `32` | 单条转发媒体识别上限：单条合并转发内最多识别多少个媒体（图片/语音/视频合计）；超出的以 [图片] 等占位符保留，不再消耗模型算力。设为 0 表示不限。 |
-| `forward.summarize` | boolean | `true` | 生成摘要：展开后调用 LLM 生成一段摘要，代替原文写进给模型的转发展开，随存档正文进入对话、记忆与向量库；原文保留在缓存。 |
-| `forward.summaryLLM` | llm-ref | — | 摘要模型：留空使用默认 LLM 服务；指定后按 (provider, model) 精确定位。建议挑便宜/快的模型。 |
-| `forward.summaryMaxChars` | number | `600` | 摘要最大字符数：提示给摘要模型的目标长度上限。模型被允许超出 10% 以保留多人互动结构。输出上限只防失控，取本值的 3 倍、不少于 2048 token；模型在上限处停下时摘要末尾标出截断（「（已在长度上限处截断）」，按全局层的语言），带标记的摘要照常进转发缓存。 |
-| `forward.summaryInputLimit` | number | `8000` | 摘要原文输入上限（字符）：喂给摘要模型的原文输入上限；原文超过则前段截断。设为 0 表示不截断（注意超长文本会增加摘要成本）。 |
-| `forward.summaryPrompt` | textarea | `''` | 摘要 system prompt（高级，留空使用内置）：留空使用内置默认 prompt（专为保留多人互动结构调优过）。填入非空内容则完全覆盖默认 prompt。 内置默认 prompt 如下（&lt;输出语言&gt; 取全局层（plugin-i18n 的配置）的语言列表的第一项），可作为撰写参考： 你是聊天记录摘要助手。给定一段合并转发的原始内容，用 &lt;输出语言&gt;输出一段含多人互动细节的摘要： - 按时间顺序串联主线，使用“某人：……”或“某人对某人说……”这种紧凑句式保留发言人轮次与互动关系，但不要逐条复述每句寒暄； - 明确点出每位主要参与人的关键发言 / 立场 / 情绪变化，以及他们互相同意、反驳、调侃、追问的点； - 原文里出现的请求 / 指令 / 待执行事项 / 希望机器人代发或转告的内容，必须原文输出并保留具体目标对象 / 群聊 / 要表达的观点； - 图片识别结果、链接、文件名等视觉 / 附件信息也要写进来； - 不要寒暄、不要解释自己、不要使用 markdown 列表或标题；输出单段落纯文本； - 控制在目标字数以内，优先保留互动细节与可引用发言，寒暄/重复信息略去。 |
+| `forward.imageRecognitionConcurrency` | number | `8` | 媒体识别并发上限：展开一条消息里的合并转发时，同时进行的媒体识别（图片、语音、视频）任务数。本地部署的模型建议设 1-2。 |
+| `forward.recognitionMaxItems` | number | `32` | 单条转发媒体识别上限：一条合并转发最多识别几个媒体（图片、语音、视频合计），超出的保留为 [图片] 等占位符。设为 0 表示不限。 |
+| `forward.summarize` | boolean | `true` | 生成摘要：展开后调用摘要模型生成一段摘要，代替原文写进给模型的转发展开，随存档正文进入对话、记忆与向量库；原文保留在缓存。 |
+| `forward.summaryMaxChars` | number | `600` | 摘要最大字符数：摘要的目标长度上限，写进给摘要模型的提示里，允许超出 10%。 |
+| `forward.summaryInputLimit` | number | `8000` | 摘要原文输入上限（字符）：交给摘要模型的原文输入上限；原文超过时保留开头、截掉后面。设为 0 表示不截断（注意超长文本会增加摘要成本）。 |
+| `forward.summaryPrompt` | textarea | `''` | 摘要 system prompt：留空使用内置 prompt，填写后完全替换它。内置 prompt 如下（&lt;输出语言&gt; 取全局层（plugin-i18n 的配置）语言列表的第一项），可作参考： 你是聊天记录摘要助手。给定一段合并转发的原始内容，用 &lt;输出语言&gt;输出一段含多人互动细节的摘要： - 按时间顺序串联主线，使用“某人：……”或“某人对某人说……”这种紧凑句式保留发言人轮次与互动关系，但不要逐条复述每句寒暄； - 明确点出每位主要参与人的关键发言 / 立场 / 情绪变化，以及他们互相同意、反驳、调侃、追问的点； - 原文里出现的请求 / 指令 / 待执行事项 / 希望机器人代发或转告的内容，必须原文输出并保留具体目标对象 / 群聊 / 要表达的观点； - 图片识别结果、链接、文件名等视觉 / 附件信息也要写进来； - 不要寒暄、不要解释自己、不要使用 markdown 列表或标题；输出单段落纯文本； - 控制在目标字数以内，优先保留互动细节与可引用发言，寒暄/重复信息略去。 |
 | `reply` | object | — | 引用消息处理：收到引用回复时如何展开被引用消息链 |
 | `reply.maxDepth` | number | `5` | 引用链深度上限：递归获取被引用消息的最大层数。1 = 只读取直接引用；2 = 继续读取直接引用所引用的消息，依此类推。 |
-| `attachmentCache` | object | — | 附件本地缓存：入站 / 出站的 image / audio / video / file 统一缓存到 data:/{kind}s/{会话目录}/onebot/，便于人工归档与多轮工具复用；/clear 与删除会话时由本适配器清理 |
+| `attachmentCache` | object | — | 附件本地缓存：收发的图片、语音、视频与文件缓存到 data:/{kind}s/{会话目录}/onebot/，便于归档与工具复用；/clear 与删除会话时清理 |
 | `attachmentCache.maxBytes` | number | `10485760` | 单文件大小上限 (Byte)：超过此尺寸的附件不落盘，保留原 URL（典型场景：长视频）。默认 10 MiB。 |
+
+附件缓存路径里的 `{kind}` 是 image、audio、video、file。
+
+`forward.imageRecognitionConcurrency` 建议本地模型设 1-2，是因为转发批量识别是后台工作，低并发能减少对实时入站识别的挤占；这是统计性缓解，不是优先级调度：多条消息各有各的并发额度，模型侧也无插队机制。超出 `forward.recognitionMaxItems` 的媒体不送识别，不再消耗模型算力。
+
+`forward.summaryMaxChars` 允许超出 10%，是为了保留多人互动结构。摘要的输出上限只防失控，取本值的 3 倍、不少于 2048 token；模型在上限处停下时摘要末尾标出截断（「（已在长度上限处截断）」，按全局层的语言），带标记的摘要照常进转发缓存。`forward.summaryPrompt` 的内置 prompt 专为保留多人互动结构调优过。摘要用的模型取 llm 服务给本插件挑的能对话的那一个（本插件偏好、全局偏好、优先级依次），没有单独的配置项。
 
 ## 文件结构
 
@@ -83,7 +88,7 @@ export default definePlugin({
 - **v12**: `type`/`detail_type`，ID 为 string 类型，统一 `send_message`，支持 channel/guild
 - **auto**: 连接建立后主动探测，先调用 v11 的 `get_version_info`，成功即采用 v11；失败再调用 v12 的 `get_version`，成功则采用 v12；连接还在而两者都失败时回退为 v11。探测途中连接断开（如实现端回完拒绝回执就断开）时不定下协议，下次连上重新探测。协议确定前收到的事件会被丢弃
 
-出站消息带 `replyTo`（被引用消息的平台消息 id，见 [schema-message](../api/schema-message.md#outgoingmessage)）时，只给第一条分条加引用段：v11 写作 `{ type: 'reply', data: { id } }`（id 能转成数字的按数字给），v12 写作 `{ type: 'reply', data: { message_id } }`；正文里模型自己写了 `<reply id>` 标记的，以它为准，不加第二个。现在只有 plugin-agent 回复后台任务的结束通知时带它，引用起那次工具调用的消息。
+出站消息带 `replyTo`（被引用消息的平台消息 id，见 [schema-message](../api/schema-message.md#outgoingmessage)）时，只给第一条分条加引用段：v11 写作 `{ type: 'reply', data: { id } }`（id 能转成数字的按数字给），v12 写作 `{ type: 'reply', data: { message_id } }`；正文里模型自己写了 `<reply id>` 标记的，以它为准，不加第二个。现在只有 plugin-agent 回复后台任务的结束通知时带它，引用发起那次工具调用的消息。
 
 正文送达时，投递结果带上实现端给的各分条的 `message_id`（`messageIds`，按发送顺序，转成字符串，与入站引用段里的 id 同一写法）；附件的消息段与上传的文件不算在内。
 
@@ -149,7 +154,7 @@ onebot:{selfId}:{detailType}:{targetId}
 
 出站附件的内容读出后以 `base64://` 交给实现端，走 WebSocket 隧道：实现端在容器里（如 Docker 里的 NapCat）时读不到宿主路径，这是最稳的形态。storage URI 先量大小再读，超过 10 MiB 的不整份读进内存；一条消息的附件同时最多读或下载 4 个，按先后排队。
 
-- **图片、语音、视频**：先按文件头认格式（格式签名在 [`@aalis/util-file-signature`](../utils/README.md)，与 `send_attachment` 的白名单是同一份），再分三路。实现端能内联的格式（图片 PNG、JPEG、GIF、WebP；语音 WAV、MP3、OGG、FLAC、AMR、SILK、M4A；视频 MP4、MOV、WebM）内联为消息段；认得出、但不能内联的媒体（BMP、AVIF、HEIC 图片，MKV、AVI 视频，以及与附件 `kind` 不符的媒体）改经文件上传，规则同下面的文件附件，没有名字时群文件名为类型加格式（如 `image.bmp`）；都认不出的拒发并记 warn。主体是 owner 的一轮里 `send_attachment` 能取不属于任何会话的任意可读 storage URI（见[媒体判据](../services/media.md#媒体判据)），不核对的话任意可读文件（如含密钥的配置）能冒充媒体发出。能内联、但超过 10 MiB 的网址附件拒发，原网址不交给实现端去拉（实现端再拉一次不经 SSRF 判定），所有会话一样；超过 10 MiB 的 storage 文件退回宿主的 `file://` 路径，实现端读不到时发不出，日志里会说明：实现端在容器里（如 Docker 里的 NapCat）读不到宿主路径，超过 10 MiB 的本机文件因此发不出去，这是送达方式的限制，要发更大的文件得让实现端与 Aalis 共享文件系统。storage 文件退回宿主路径之前同样按文件头核对（按字节区间读出开头 4 KiB，不整份读进内存），超过 10 MiB 又不能内联的不发。`send_attachment` 交来的是 storage URI，大文件照样经这道核对；附件本来就是 `file://` 或本机绝对路径（只有插件代码直接发出的附件是这种形态）、又没能落盘的，原样交给实现端，不经核对。
+- **图片、语音、视频**：先按文件头认格式（格式签名在 [`@aalis/util-file-signature`](../utils/README.md)，与 `send_attachment` 的白名单是同一份），再分三路。实现端能内联的格式（图片 PNG、JPEG、GIF、WebP；语音 WAV、MP3、OGG、FLAC、AMR、SILK、M4A；视频 MP4、MOV、WebM）内联为消息段；认得出、但不能内联的媒体（BMP、AVIF、HEIC 图片，MKV、AVI 视频，以及与附件 `kind` 不符的媒体）改经文件上传，规则同下面的文件附件，没有名字时群文件名为类型加格式（如 `image.bmp`）；都认不出的拒发并记 warn。主体是 owner 的一轮里 `send_attachment` 能取不属于任何会话的任意可读 storage URI（见[媒体判据](../services/media.md#媒体判据)），不核对的话任意可读文件（如含密钥的配置）能冒充媒体发出。能内联、但超过 10 MiB 的网址附件拒发，原网址不交给实现端去下载（实现端再下载一次不经 SSRF 判定），所有会话一样；超过 10 MiB 的 storage 文件退回宿主的 `file://` 路径，实现端读不到时发不出，日志里会说明：实现端在容器里（如 Docker 里的 NapCat）读不到宿主路径，超过 10 MiB 的本机文件因此发不出去，这是送达方式的限制，要发更大的文件得让实现端与 Aalis 共享文件系统。storage 文件退回宿主路径之前同样按文件头核对（按字节区间读出开头 4 KiB，不整份读进内存），超过 10 MiB 又不能内联的不发。`send_attachment` 交来的是 storage URI，大文件照样经这道核对；附件本来就是 `file://` 或本机绝对路径（只有插件代码直接发出的附件是这种形态）、又没能落盘的，原样交给实现端，不经核对。
 - **文件**（`kind: 'file'`）与改走上传的媒体：不走消息段。在文字与消息段发出之后逐个上传：群会话调 `upload_group_file`，私聊调 `upload_private_file`。`file` 只用 `base64://`；超过 10 MiB 的网址与 storage 文件、原样透传的 `file://` 一律拒发并记 warn。群文件里显示的文件名去掉 `/` 与 `\`，文件附件没有名字时用 `file`。v12 连接不支持文件上传，按失败处理。
 - **投递失败回报**：由 agent 发出（`source: 'agent'`）的消息，文字发送、正文媒体标记（下载失败或地址不是网址而去掉）、附件物化（含文件头不符的拒发）或文件上传任何一处失败，都往会话记忆写一条 `outbound-delivery-failed`（`WellKnownKinds.OutboundDeliveryFailed`）系统记录，每条出站消息至多一条，agent 下一轮能看到并重发。投递结果的原因是文字对象：各条取报错的原话、不带错误名前缀，确定没发出的多条连成一句（原文以「；」，英文以「; 」）。记录的 `metadata` 带 `error`（与投递结果同一句原因）与这条消息的 `turnId`（一轮的回复）或 `callId`（经工具发出的），会话服务据此在历史里给那一轮的回复标「未发出」。发消息与上传文件没等到回执的（超时或回执前断线）单独说明：实现端可能已经收下，记录写明结果未知、不要重发，`metadata` 的 `unconfirmed` 列出这几项（如「消息（第 2 条）」「文件 a.html」），投递结果同样返回失败但附带这句提示。有这种项时投递结果就另带 `unconfirmed: true`（见 [schema-message](../api/schema-message.md)），发起方据此不重发、也不劝模型重发。正文各条与附件的消息段当一串逐条发出，一条没发成就停、后面的不发：正文没发出时，后面的图片等附件消息段也不发，上传的文件照常各自上传。前面已经发出的，投递结果另带 `sentPieces`（已发出的条数），原因只写停下那一条的原话（那一条没等到回执时它记进结果未知的名单，后面还有没发的写从第几条起没发出），记录带同一个条数（`metadata` 的 `sentPieces`），写明前几条已经发出、不要整条重发（后面还有没发的时写明从第几条起补），停在最后一条、这一条结果未知时同样，同一条消息里另有确定没发出的附件或文件时另说一句，会话服务据此标「只发出了前 K 条：<原因>」；送达快照（`outbound:delivered`）只带已发出的附件。
 

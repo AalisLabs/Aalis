@@ -41,10 +41,10 @@ export default definePlugin({
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `enabled` | boolean | `true` | 启用会话历史读取工具 |
-| `maxLimit` | number | `100` | 单次最多读取条数：session_get_history 一次能返回的硬上限；LLM 传入 limit 超过此值会被 cap。建议 50~200。 |
-| `defaultLimit` | number | `20` | 默认读取条数（LLM 不传 limit 时）：不能超过 maxLimit。调高可让 agent 被动获取更多上下文，代价是 token 预算。 |
+| `maxLimit` | number | `100` | 单次最多读取条数：读取会话历史一次最多返回的条数，模型要的更多时按这个值算。建议 50~200。 |
+| `defaultLimit` | number | `20` | 默认读取条数：模型没指定条数时读取的条数，不能超过「单次最多读取条数」。调高能给模型更多上下文，也更耗 token。 |
 | `includeArchivedDefault` | boolean | `false` | 默认包含已归档消息 |
-| `perMessageMaxChars` | number | `0` | 每条消息截断字数：返给 LLM 的每条历史消息的字符上限；0 = 不截断（推荐）。超出会以「剩余 N 字符未展示」明示。 |
+| `perMessageMaxChars` | number | `0` | 每条消息截断字数：返给模型的每条历史消息的字符上限；0 = 不截断（推荐）。超出的部分截掉，末尾标「…[已截断，还剩 N 个字符未展示]」。 |
 
 ## 提供的服务
 

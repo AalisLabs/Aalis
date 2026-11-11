@@ -1,7 +1,7 @@
 # 安装与启动排障
 
-> 装不上、起不来、登录不了时按这一页查。脚手架与插件市场的报错里写的「安装排障」就是这一页。
-> 实例起来了、某些插件没起来（「需要处理」里的失败、缺服务、待配置）怎么看，见[第一次运行](./first-run.md#开始使用与需要处理)。
+> 无法安装、无法启动、无法登录时按这一页查。脚手架与插件市场的报错里写的「安装排障」就是这一页。
+> 实例已启动、某些插件未启动（「需要处理」里的失败、缺服务、待配置）怎么看，见[第一次运行](./first-run.md#开始使用与需要处理)。
 
 ## 先看哪里
 
@@ -10,7 +10,7 @@
 | 脚手架或插件市场的报错 | `npm install` 失败时认出的原因与修法，各类见下文「`npm install` 失败」 |
 | npm 的完整日志 | 脚手架报错里「npm 的完整日志：」那一行给出路径（在 npm 缓存目录的 `_logs/` 下，npm 打印了日志位置时才有这一行）；经插件市场安装时，npm 的整段输出记在 Aalis 的日志里（`npm install … 失败:` 那一行） |
 | `data/logs/latest.log` | Aalis 的完整日志，CLI 接管终端时照常写。终端里按 `Ctrl+L` 看，WebUI 在「运行状况」的日志标签 |
-| `/doctor` | 失败与没起来的插件逐个写原因与修法，以及各插件登记的检查项（如识图 `service/media.vision`、Ollama Embedding 的 `service/embedding.ollama`）。在 CLI 或 WebUI 的聊天里输入；也可以在项目目录执行 `npm start -- doctor`，在一次性的进程里诊断完就退出，不占 WebUI 的端口、不连聊天平台 |
+| `/doctor` | 失败与缺服务（无法启动）的插件逐个写原因与修法，以及各插件登记的检查项（如识图 `service/media.vision`、Ollama Embedding 的 `service/embedding.ollama`）。在 CLI 或 WebUI 的聊天里输入；也可以在项目目录执行 `npm start -- doctor`，在一次性的进程里诊断完就退出，不占 WebUI 的端口、不连聊天平台 |
 
 ## Node 版本
 
@@ -52,7 +52,7 @@ sudo chown -R "$(whoami)" <目录>      # 项目目录或上面查到的缓存�
 
 ### 平台不支持
 
-报错含 `EBADPLATFORM`：某个依赖不支持这台机器的系统或 CPU 架构，报错里写着是哪个包。`npm ls <包名>` 查是哪个插件带进来的；建项目时加 `--advanced` 重新生成，换掉那个插件。经插件市场安装时，这个插件在这台机器上装不了。
+报错含 `EBADPLATFORM`：某个依赖不支持这台机器的系统或 CPU 架构，报错里写着是哪个包。`npm ls <包名>` 查是哪个插件带进来的；建项目时加 `--advanced` 重新生成，换掉那个插件。经插件市场安装时，这个插件在这台机器上无法安装。
 
 ### 依赖版本冲突
 
@@ -86,7 +86,7 @@ npm install
 
 ## Intel Mac 与 LanceDB
 
-LanceDB 向量库只有 macOS（Apple 芯片）、Linux（x64、arm64）与 Windows（x64、arm64）的预编译件，Intel Mac 上装不上。`npm create aalis` 在这样的机器上不列 LanceDB，full 档也不装它；语义记忆用 Flat 向量库（零依赖，脚手架的默认）。已经装了 LanceDB 的项目在 Intel Mac 上换成 Flat：
+LanceDB 向量库只有 macOS（Apple 芯片）、Linux（x64、arm64）与 Windows（x64、arm64）的预编译件，Intel Mac 上无法安装。`npm create aalis` 在这样的机器上不列 LanceDB，full 档也不装它；语义记忆用 Flat 向量库（零依赖，脚手架的默认）。已经装了 LanceDB 的项目在 Intel Mac 上换成 Flat：
 
 ```bash
 npm uninstall @aalis/plugin-vectorstore-lancedb
@@ -97,7 +97,7 @@ npm install @aalis/plugin-vectorstore-flat
 
 ## WebUI 打不开：端口被占
 
-WebUI 默认监听 `127.0.0.1:3000`。端口被别的程序占着时，WebUI 起不来、其余功能照常，日志里有一行：
+WebUI 默认监听 `127.0.0.1:3000`。端口被别的程序占着时，WebUI 无法启动、其余功能照常，日志里有一行：
 
 ```text
 WebUI 监听 127.0.0.1:3000 失败: listen EADDRINUSE: address already in use 127.0.0.1:3000；WebUI 不可用，其余功能照常运行

@@ -38,7 +38,7 @@ export default definePlugin({
 权限裁决拆成两条互不相干的轴：
 
 - **轴 A · 授权（authorize）**：「谁可以跑它」——按等级与权限组裁决。
-- **轴 B · 确认（confirm / HITL）**：「这次确实是你的意图吗」——意图确认，**owner 也吃**（防提示词注入借权）。
+- **轴 B · 确认（confirm / HITL）**：「这次确实是你的意图吗」——意图确认，**owner 也受它约束**（防提示词注入借权）。
 
 操作声明的 `risk` 同时设定两轴默认：`dangerous` ⇒ `restricted` + `confirm:'session'`。两轴各自独立判定，互不替代。
 
@@ -49,7 +49,7 @@ export default definePlugin({
 - 每个操作一个**最低等级**（`minLevel`），由 `resolveMinLevel` 派生（首个命中赢）：
   1. `authorityOverrides[capability]`（owner 逐条覆盖成任意整数）
   2. `risk` 派生：`safe→0` · `sensitive→1` · `dangerous→2`
-  3. `visibility` 兜底（拿不到 risk 时）：`public→0` · `restricted→2`（`RESTRICTED_LEVEL`）
+  3. `visibility` 作后备（拿不到 risk 时）：`public→0` · `restricted→2`（`RESTRICTED_LEVEL`）
 - 裁决 `resolveAccess`（首个命中即定，硬禁先于放行）：
   1. 全局硬禁 `deniedCapabilities` glob 命中 → **拒**（压过一切，连 owner 都压过）
   2. owner → 放行
@@ -106,7 +106,7 @@ export default definePlugin({
 按下面的顺序判，先命中的算：
 
 1. 调用不在由入站消息驱动的回合里（编排的节点、mcp-server 等）：`autonomous`；
-2. 续做与入站回合里派出的子任务（带起它的那一轮 `inbound.fromTurn`，如后台任务结束通知开的一轮、子任务插件的任务消息与追问）：与起它的那一轮同一类别，按那一轮的事实再判一次，不按通知或任务消息上的身份推。子任务里转后台的调用的续做经起它的子任务那一轮递归到派它的那一轮；
+2. 续做与入站回合里派出的子任务（带发起它的那一轮 `inbound.fromTurn`，如后台任务结束通知开的一轮、子任务插件的任务消息与追问）：与发起它的那一轮同一类别，按那一轮的事实再判一次，不按通知或任务消息上的身份推。子任务里转后台的调用的续做经发起它的子任务那一轮递归到派它的那一轮；
 3. 其余带 `source` 的注入（定时任务、编排、空闲与主动发言、不延续调用的宿主通知、平台请求事件，以及不在入站回合里派出、没带 `fromTurn` 的子任务，如编排的工具节点、mcp-server 派的）：`autonomous`；
 4. 人亲手发来的消息（没有 `source`，含群里没点名、被频率触发挑中的插话，几条一起进来的也是）：`hand`，不论在哪个会话、是谁；参与者都没有账号的（没有人的消息）是她自己开口，失败关闭为 `autonomous`。
 
@@ -114,7 +114,7 @@ export default definePlugin({
 
 权限服务的 `principalOf(turn)` 定这一轮的主体（`owner` 或 `other`），触及服务（[plugin-reach](./plugin-reach.md)）据它定本地效果。判据在类别之上按身份判（`principalKind`，与 `originKind` 同在 `authority-model.ts`）：
 
-- 类别为 `hand` 且参与者（授权身份）都是 owner 为 `owner`，否则 `other`（owner 与别人同在的一轮也是）。续做与子任务的类别随起它的那一轮，参与者是那一轮交来的（批过的调用是批的人），不另判：派它的若是 owner 建的定时任务，参与者是 owner，类别却是 `autonomous`，主体为 `other`；
+- 类别为 `hand` 且参与者（授权身份）都是 owner 为 `owner`，否则 `other`（owner 与别人同在的一轮也是）。续做与子任务的类别随发起它的那一轮，参与者是那一轮交来的（批过的调用是批的人），不另判：派它的若是 owner 建的定时任务，参与者是 owner，类别却是 `autonomous`，主体为 `other`；
 - 其余（`autonomous`）为 `other`。
 
 ## 配置项
@@ -152,7 +152,7 @@ WebUI 鉴权为**单 token**（向后兼容的服务器持有式）：访问 tok
 | 权限组 | `authorityGroups` 里的组：组名、放行条目、成员数；说明写明组只加放行、不开工具分组闸、需要确认的工具对不是 owner 的成员照旧用不了、本地效果，以及通配与 `tool-group:` 会纳入以后新登记的工具 | 行上「改条目」（按这一行预填，整组替换）、「删除」（destructive，不级联）；「建组」（输入组名与放行条目）。放行条目是多选，可选项来源 `authority-operations` 列全部指令与工具的能力键与每个已登记工具分组的 `tool-group:<名>`，也能手写通配；写法不对的当场报错 |
 | Owner | 配置里的 `owners`（本机控制台恒为 owner，不列） | 行上「移除」（destructive）；「加 owner」（输入平台与用户 ID，已经是 owner 的拒收） |
 | 操作门槛 | 指令、工具与会话设置项按所属插件（设置项按插件实例）分组：操作数、已改门槛的数量。选中一组，详情列出这一组的每个操作：默认门槛（指令与工具按风险派生，设置项按字段声明的 `minLevel`，没写的写「只有 owner」；不含覆盖）、生效门槛、确认要求（`session` 显示「每次（白名单可免）」，`always` 显示「每次（只有确认覆盖设为 off 能免）」） | 组那一行上「整组设门槛」，操作那一行上「设门槛」；输入最低等级，留空恢复默认。写进 `authorityOverrides` |
-| 禁用与免确认 | `deniedCapabilities` 与 `restrictedPolicy.allow` 里的规则；说明写明免确认只对以 owner 身份做的事生效 | 行上「移除」；「禁用」「免确认」（输入能力键或通配，重复的拒收） |
+| 禁用与免确认 | `deniedCapabilities` 与 `restrictedPolicy.allow` 里的规则；说明写明免确认只对以 owner 身份做的事生效（哪些算，见上文「确认（轴 B）」） | 行上「移除」；「禁用」「免确认」（输入能力键或通配，重复的拒收） |
 
 - 设权限组的可选项来源是 `authority-groups`：已定义的组名，加上成员记录里指向的、已被删掉的组名（标「（未定义）」）。两个来源都经贡献点 `webui:options` 交付，WebUI 客户端不认本插件。
 - 等级与组成员的改动（设等级、设权限组、加用户、删除记录）与 `/level`、`/perm` 走同一个流程：先等等级表的首次读取落定，改完等落盘，没落盘时回执注明原因（见下文「用户数据」）。改宿主配置的动作先改运行态（即刻生效）再等 `save()`，保存失败时动作回错误，写明改动已在本次运行中生效、没写进配置文件及原因。每次改动后页面重取，保存失败时也一样。

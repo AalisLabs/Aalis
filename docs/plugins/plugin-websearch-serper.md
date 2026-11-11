@@ -33,7 +33,7 @@ export default definePlugin({
 | `maxPerDay` | number | `100` | 每天最大次数：频率限制：每天最多搜索次数 |
 | `maxConcurrent` | number | `3` | 最大并发：同时进行的搜索请求数上限 |
 | `defaultNumResults` | number | `5` | 默认结果数：每次搜索返回的结果条数 |
-| `enableCompression` | boolean | `false` | 启用搜索结果压缩：启用后，搜索结果将先经过 LLM 压缩整合后再返回给 Agent，减少 Token 消耗并提升信息质量。 |
+| `enableCompression` | boolean | `false` | 启用搜索结果压缩：启用后，搜索结果将先经过模型压缩整合后再返回给 Agent，减少 Token 消耗并提升信息质量。 |
 | `compressionPrompt` | textarea | `''` | 压缩提示词：自定义压缩搜索结果的提示词。留空使用默认提示。提示词中用 {query} 代表搜索关键词、{results} 代表搜索结果（不写 {results} 模型就收不到结果）。 |
 
 压缩模型没有配置项：取 llm 服务给本插件挑的能对话的那一个，在插件详情的「服务偏好」里给本插件设。

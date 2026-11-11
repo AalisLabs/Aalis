@@ -78,7 +78,7 @@ export interface BoundStorage extends StorageMethods {
 
 ## 2. 契约包导出的 helper
 
-路径文法与判据（纯函数，不吃服务）：
+路径文法与判据（纯函数，不依赖服务）：
 
 | 函数 | 用途 |
 | --- | --- |
@@ -261,7 +261,7 @@ root 的 `readable/writable/deletable` 就是该根的访问策略。这与 auth
 
 1. **`browsable` 只是给文件浏览器类界面的 hint**：WebUI 没有文件浏览页，不读它。
 2. **rename 仅同目录改名**。同根跨目录移动改用 `move`。
-3. **同名 root**：参考实现在一个提供者里管全部根，`roots` 里与内置根同名或重复的项被跳过并告警，不存在遮蔽。
+3. **同名 root**：参考实现在一个提供者里管全部根，`roots` 里与内部根同名或重复的项被跳过并告警，不存在遮蔽。
 4. **watch 去抖 + 平台降级**：事件统一为 `change`。消费者不应假定「一次写 = 一次事件」。参考实现的监听器归提供者的这次激活所有，提供者关闭（重启、改配置、卸载）时一并关闭；需要持续监听的消费者用 `caps.storage.follow` 在新提供者上重挂。
 5. **checkpoint 写前快照耦合**：自定义后端若希望兼容 checkpoint 回滚，需复刻 `beforeMutate` 钩子：每次改动前经 `services.use.get(checkpoint)`（描述符来自 `@aalis/api-checkpoint`）取服务，在场就调 `beforeMutate`（写入不在回合里时它直接返回，不读原文件），见 [api-checkpoint](../api/api-checkpoint.md)。checkpoint 按根的 `kind` 决定是否记录：`data` / `pluginData` / `tmp` / `cache` / `logs` / `self` 不记录，其余（如 `workspace`、`custom`）记录。
 

@@ -46,9 +46,9 @@ export default definePlugin({
 
 候选召回：交给模型的候选事件是 `candidateEventDays` 天内活跃的前 `candidateEventLimit` 个。实体候选另按名字召回：窗口里真人消息的文字（规整后）含某个实体的名字或别名（两个字以上）时，这个实体也进候选，免得超过活跃天数的老实体被重建一份。活跃的取 `candidateEventLimit`×2，两路合计不超过 ×4。
 
-`/relation` 的长任务（consolidate、rewrite-weights、event-duplicates、compress、maintain）开跑时先往当前会话推一句「正在跑」，只推给有平台适配器认领的会话，定时任务发进群里的也照推；没有认领者的会话（如编排的内部会话）不推。
+`/relation` 的长任务（consolidate、rewrite-weights、event-duplicates、compress、maintain）开始执行时先往当前会话推一句「正在……，请稍候」的回执，只推给有平台适配器认领的会话，定时任务发进群里的也照推；没有认领者的会话（如编排的内部会话）不推。
 
-「关系图范围」`recallScope`（`session` 仅本会话 / `all` 全部，默认 `all`）可按会话设（[api-session-settings](../api/api-session-settings.md)，只有 owner 能改），开着注入（`agentInjection`）、工具（`toolsEnabled`）或 `/relation` 指令（`commandsEnabled`）时才登记，三者都关着时会话设置里不列它。不是 `all` 的（含写坏了的）一律按仅本会话：注入只留本会话的内容：近期事件只列 `sessionScope` 等于当前会话的事件（全局事件与别的会话的事件都不列，共现伙伴随之收窄），不出「所属跨会话话题」行，也不出「最近热点（全局）」整节；人际关系与关注的事物照常注入。带会话作用域参数 `session_scope` 的六个工具（`user_relation_expand_node`、`user_relation_search_events`、`user_relation_timeline`、`user_relation_recommend_persons`、`user_relation_gossip`、`user_relation_community_overview`）的会话作用域只能是本会话，`user_relation_expand_node` 与 `user_relation_recommend_persons` 随之在去掉别的会话事件的图上展开（只经别的会话的事件才连上的人不在子图与候选里），推荐的分数、共同邻居与解释路径也在这张图上算；没有这个参数的工具同样只取本会话的事件：`user_relation_resolve_node` 不列别的会话的事件，`user_relation_find_path`、`user_relation_score`、`user_relation_shared`、`user_relation_list_edges` 在去掉别的会话的事件（连同连着它们的边）的图上算，路径、分数、共同邻居与边都不经过它们。按节点 id 取单个节点的工具（如 `user_relation_node_score`）给了别的会话的事件 id 时照样取到它。公开指令 `/relation show` 与 `/relation orphans` 与读工具同一判据，只列本会话的事件：`show person` 不列别的会话的事件与连着它们的边，`show event` 给了别的会话的事件 id 回未找到；`orphans` 仍按全图判孤立，事件一节只列本会话的；人、人际关系与实体照常。需 owner 授予的 `/relation event-duplicates` 取自全图，不按范围收窄。范围每轮现读，会话设置不在场时只取插件配置里的值。
+「关系图范围」`recallScope`（`session` 仅本会话 / `all` 全部，默认 `all`）可按会话设（[api-session-settings](../api/api-session-settings.md)，只有 owner 能改），开着注入（`agentInjection`）、工具（`toolsEnabled`）或 `/relation` 指令（`commandsEnabled`）时才登记，三者都关着时会话设置里不列它。不是 `all` 的（含填错的）一律按仅本会话：注入只留本会话的内容：近期事件只列 `sessionScope` 等于当前会话的事件（全局事件与别的会话的事件都不列，共现伙伴随之收窄），不出「所属跨会话话题」行，也不出「最近热点（全局）」整节；人际关系与关注的事物照常注入。带会话作用域参数 `session_scope` 的六个工具（`user_relation_expand_node`、`user_relation_search_events`、`user_relation_timeline`、`user_relation_recommend_persons`、`user_relation_gossip`、`user_relation_community_overview`）的会话作用域只能是本会话，`user_relation_expand_node` 与 `user_relation_recommend_persons` 随之在去掉别的会话事件的图上展开（只经别的会话的事件才连上的人不在子图与候选里），推荐的分数、共同邻居与解释路径也在这张图上算；没有这个参数的工具同样只取本会话的事件：`user_relation_resolve_node` 不列别的会话的事件，`user_relation_find_path`、`user_relation_score`、`user_relation_shared`、`user_relation_list_edges` 在去掉别的会话的事件（连同连着它们的边）的图上算，路径、分数、共同邻居与边都不经过它们。按节点 id 取单个节点的工具（如 `user_relation_node_score`）给了别的会话的事件 id 时照样取到它。公开指令 `/relation show` 与 `/relation orphans` 与读工具同一判据，只列本会话的事件：`show person` 不列别的会话的事件与连着它们的边，`show event` 给了别的会话的事件 id 回未找到；`orphans` 仍按全图判孤立，事件一节只列本会话的；人、人际关系与实体照常。需 owner 授予的 `/relation event-duplicates` 取自全图，不按范围收窄。范围每轮现读，会话设置不在场时只取插件配置里的值。
 
 ## 存储结构
 
@@ -250,66 +250,85 @@ $$
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `extractionEnabled` | boolean | `true` | 允许从对话中提取新关系（写入总开关）：**写入总开关**：关闭后插件停止生成任何新关系节点/边；但 middleware 仍读取并注入旧关系、WebUI 页面仍可查/删。彻底卸载请整体停用该插件。 |
-| `triggerEveryNMessages` | number | `20` | 自动触发阈值（每 N 条消息）：每会话累计 N 条入站消息后自动跑一次 LLM 提取。0=关闭自动提取。 |
-| `readWindowSize` | number | `30` | 提取读取窗口大小：每次提取时回读的最近消息数。建议略大于触发阈值（如阈值 20、窗口 30），让相邻批次窗口重叠 10 条左右、便于 LLM 跨批次稳定识别同一事件与关系 |
-| `mode` | select | `'incremental'` | 提取模式：incremental: 固定窗口；all-new: 一次性读所有累积（注意 context 上限） |
-| `allNewMaxMessages` | number | `200` | all-new 模式下的最大消息数：仅 mode=all-new 时生效；硬上限以防 context 溢出 |
-| `readScope` | select | `'same-session'` | 提取读取范围：决定每次提取从哪些会话拉取消息送给 LLM： - same-session（默认）：只读当前 sessionId（同群/同私聊），证据 100% 在原 session 内； - same-platform：把同 platform 下所有会话最近消息合并送 LLM，每行带 [sid:xxx] 前缀，evidence 按真实来源记录；适合识别跨群共享话题； - cross-platform：跨所有平台聚合（同上），适合识别跨平台同一用户/同一事件。 跨会话模式仅在 memory 后端实现 getRecentMessagesAcrossSessions 时生效，否则自动降级到 same-session。 |
-| `crossSessionMaxAgeMinutes` | number | `60` | 跨会话拉取最大时间窗口（分钟）：仅 readScope!=same-session 时生效；只取最近 N 分钟内的消息。0=不限 |
-| `candidateEventDays` | number | `7` | 候选事件回溯天数：提取时把最近 N 天的活跃事件作为候选清单交给 LLM，避免重复创建同名事件 |
+| `extractionEnabled` | boolean | `true` | 从对话中提取新关系：关闭后不再从对话中提取新的人物、事件与关系；已有的关系照常注入，也照常能查、能删。 |
+| `triggerEveryNMessages` | number | `20` | 自动触发阈值：每会话累计 N 条入站消息后自动执行一次模型提取。0=关闭自动提取。 |
+| `readWindowSize` | number | `30` | 提取读取窗口大小：每次提取读取的最近消息数。建议略大于自动触发阈值（如阈值 20、窗口 30），让相邻两次提取读到的消息有一段重叠 |
+| `mode` | select | `'incremental'` | 提取模式：「增量窗口」每次读固定窗口；「全量累积」一次性读所有累积的消息（注意上下文上限） |
+| `allNewMaxMessages` | number | `200` | 全量累积模式的最大消息数：仅「提取模式」选「全量累积」时生效；硬上限，防止超出上下文 |
+| `readScope` | select | `'same-session'` | 提取读取范围：每次提取从哪些会话取消息。跨会话读取需要记忆后端支持，不支持时只取当前会话。 |
+| `crossSessionMaxAgeMinutes` | number | `60` | 跨会话拉取最大时间窗口（分钟）：跨会话读取时只取最近 N 分钟内的消息。0=不限 |
+| `candidateEventDays` | number | `7` | 候选事件回溯天数：提取时把最近 N 天的活跃事件作为候选清单交给模型，避免重复创建同名事件 |
 | `candidateEventLimit` | number | `20` | 候选事件最大数量：控制 prompt 体积 |
 | `senderNeighborhoodEdgeLimit` | number | `8` | 候选人 1 跳邻居展示上限：提取时，对窗口内每位已知发言人附带其 1 跳邻居子图（已关联的事件/实体/人际关系，按权重降序），上限条数。0 = 关闭 |
-| `extractionModel` | llm-ref | — | 提取使用的 LLM：建议挑一个具备 chat 能力的便宜模型；留空则使用默认 llm 服务 |
-| `extractionDisableThinking` | boolean | `true` | 提取：禁用思考模式：提取是结构化输出任务，思考型模型（如 deepseek-v4-flash）开启思考后可能把 token budget 全花在 reasoning 上、返回空内容。开启时用模型最浅的思考档（能关闭思考的模型即关闭），模型不能调思考时不起作用。默认开启 |
-| `consolidationModel` | llm-ref | — | Consolidate 使用的 LLM：可选。配置后 /relation.consolidate 与淘汰后自动整理会调用该模型做 (A) 别名候选语义核验、(B) 合并后摘要重写、(C) 实体层级推断。推荐选大上下文模型（如 GPT-4o、Claude Opus）。留空时整理只做遗留边整理，别名与层级只统计候选、不改图。 |
-| `consolidationDisableThinking` | boolean | `true` | Consolidate LLM：禁用思考模式：同 extractionDisableThinking。默认开启 |
-| `consolidationAutoLink` | boolean | `false` | Consolidate autoLink：为 true 且配置了 consolidationModel 时，经模型核验后自动合并别名实体、建层级边；未配置整理模型时与 false 一样只统计候选、不动数据。 |
-| `consolidationSkipLowScorePairs` | boolean | `true` | Consolidate：跳过低权候选 pair：启用后，宽召回阶段双方 compositeScore 均低于阈值的候选不送 LLM 核验（两端都是 edge tier，合并价值低）。默认启用以节省 LLM 调用。 |
-| `consolidationLowScoreThreshold` | number | `0.2` | Consolidate：低权阈值：compositeScore 阈值（0~1，与 scoreToTier 的 edge 边界一致，默认 0.2）。设 0 等同关闭跳过；仅在 consolidationSkipLowScorePairs=true 时生效。 |
-| `consolidateAfterEviction` | boolean | `true` | 淘汰时自动 consolidate：每次触发容量淘汰时，先自动运行一次 consolidate（去重 / 整理 / 层级推断），再执行淘汰。与 /relation maintain 顺序一致，使 PageRank 入出度更完整。 |
-| `evictionEnabled` | boolean | `true` | 启用自动老化：每次提取完成后扫一遍当前图：先删孤儿节点（无任何边），再按"超出配额"逐项删除"老旧 + 低权重 + PageRank 边缘"的人物/事件/实体/边。不再有硬豁免，重要性完全由 PageRank 、weight 衰减与 mentionCount 表达。配额设为 0 则允许该类节点无限增长。 |
-| `maxPersons` | number | `1500` | 人物总数上限：超过则按 (now - lastMentionedAt) / (mentionCount · PR) 排序，先删老旧低活跃人物。0=不限（允许人物无限增长）。 |
-| `maxEvents` | number | `2500` | 事件总数上限：超过则按 (now - lastReinforcedAt) / weight 排序，先删老旧低权重事件。0=不限。 |
+| `extractionModel` | llm-ref | — | 提取使用的模型：建议挑一个具备 chat 能力的便宜模型；留空则使用默认的对话模型 |
+| `extractionDisableThinking` | boolean | `true` | 提取：禁用思考模式：开启时提取用模型最浅的思考档（能关闭思考的模型即关闭），免得思考占满输出、返回空内容；模型不能调思考时不起作用。默认开启 |
+| `consolidationModel` | llm-ref | — | 整理使用的模型：整理关系图用的模型，用来核验别名、推断实体层级与重写合并后的摘要。留空时整理只规整旧边，别名与层级只统计候选、不改图。 |
+| `consolidationDisableThinking` | boolean | `true` | 整理：禁用思考模式：同「提取：禁用思考模式」，作用于整理用的模型。默认开启 |
+| `consolidationAutoLink` | boolean | `false` | Consolidate autoLink：开启且配置了整理模型时，经模型核验后自动合并别名、建层级边；没配整理模型时只统计候选、不改图。 |
+| `consolidationSkipLowScorePairs` | boolean | `true` | 整理：跳过低分候选：开启时，两端综合分都低于阈值的别名候选不交给模型核验，以节省模型调用。默认开启。 |
+| `consolidationLowScoreThreshold` | number | `0.2` | 整理：低分阈值：综合分低于这个值算低分，取 0 到 1，默认 0.2。设 0 即不跳过；只在开启「整理：跳过低分候选」时生效。 |
+| `consolidateAfterEviction` | boolean | `true` | 淘汰前自动整理：自动淘汰前先整理一次关系图（去重、规整边、推断层级），再执行淘汰。 |
+| `evictionEnabled` | boolean | `true` | 启用自动老化：每次提取后检查关系图。四类上限都为 0 时只删孤立节点；配了上限时，某类达到上限 ×(1+「淘汰滞回」) 才删孤立节点，并把达到的各类删到上限 ×「淘汰回落目标」，先删最旧、最不重要的。 |
+| `maxPersons` | number | `1500` | 人物总数上限：超出时先删久未被提及、提及次数少、不重要的人物。0=不限。 |
+| `maxEvents` | number | `2500` | 事件总数上限：超出时先删久未强化、权重低、不重要的事件。0=不限。 |
 | `maxEntities` | number | `1500` | 实体总数上限：同上策略。0=不限。 |
-| `maxEdges` | number | `10000` | 边总数上限：超过则保留 weight · 端点PR平均 最高的边。0=不限。 |
+| `maxEdges` | number | `10000` | 边总数上限：超出时保留权重与两端节点重要性最高的边。0=不限。 |
 | `pagerankDamping` | number | `0.85` | PageRank 阻尼系数：淘汰打分用。常用 0.85。 |
 | `pagerankIterations` | number | `20` | PageRank 最大迭代次数：20 通常够用；图较大、邻接稠密可调到 30~50。 |
 | `pagerankEpsilon` | number | `0.0001` | PageRank 收敛阈值：L1 误差小于该值即提前停止迭代。 |
-| `communityAlgorithm` | select | `'louvain'` | 社群发现默认算法：evictByQuota 之后顺手跑的社群发现算法（写入节点社群缓存，community_peers / community_bridge 读它），也是 community_overview 不传 algorithm 时的默认算法。louvain=经典快、硬划分；leiden=Louvain + 内部连通性 refinement；slpa=Speaker-Listener Label Propagation，原生重叠社区（跨群人物能获得多个社群隶属度）。agent 调 community_overview 时可临时指定 algorithm 参数覆盖此默认。 |
-| `evictHysteresisPct` | number | `0.2` | 淘汰滞回 (0~1)：count &gt; quota·(1+该值) 才触发淘汰；设为 0.2 时，quota=500 在 600 触发。用以避免"写一条删一条"。 |
-| `evictTargetPct` | number | `0.8` | 淘汰回落目标 (0~1)：触发后裁到 floor(quota·该值)；配合 hysteresisPct=0.2 与该值=0.8，单次裁 ~40% quota（quota=500 → 一次裁 ~200 条）。 |
-| `weightDecayHalfLifeDays` | number | `180` | Weight 时间衰减半衰期（天）：淘汰/排序时把 weight 按半衰期折算：effW = raw × max(0.5^(天数/halfLife), floor)。让长期不被强化的"老高 weight"自动让出保护名额。0 = 关闭衰减。 |
-| `weightDecayFloor` | number | `0.3` | Weight 衰减下限因子 (0~1)：effW 不会低于 raw × 该值。保留"老朋友"底色，避免完全失忆。默认 0.3。 |
-| `agentInjection` | boolean | `true` | 向 agent 注入关系上下文：把当前用户的子图速览作为 agent:prompt 贡献注入（turn-context 槽，历史之后、当前消息之前） |
+| `communityAlgorithm` | select | `'louvain'` | 社群发现默认算法：按配额清理关系图之后用来划分社群的算法，也是查看社群概况时的默认算法。louvain 最快；leiden 保证社群内部连通；slpa 允许一个人属于多个社群。 |
+| `evictHysteresisPct` | number | `0.2` | 淘汰滞回 (0~1)：数量达到上限的 (1+该值) 倍才开始淘汰，如上限 500、该值 0.2 时到 600 才淘汰，避免每写一条就删一条。 |
+| `evictTargetPct` | number | `0.8` | 淘汰回落目标 (0~1)：开始淘汰后删到上限的这个比例为止。如上限 500、滞回 0.2、该值 0.8 时，到 600 开始淘汰，一次删到 400。 |
+| `weightDecayHalfLifeDays` | number | `180` | 权重时间衰减半衰期（天）：淘汰与排序时，权重随多久没被强化而衰减，每过这么多天减半。0 = 不衰减。 |
+| `weightDecayFloor` | number | `0.3` | 权重衰减下限因子 (0~1)：衰减后的权重不低于原权重的这个比例。默认 0.3。 |
+| `agentInjection` | boolean | `true` | 向 agent 注入关系上下文：把当前发言者的关系图速览注入提示词，放在历史之后、当前消息之前 |
 | `injectionMaxDepth` | number | `2` | 注入：BFS 最大深度：0=仅起点；1=直接邻居；2=同事件其他参与者 / 朋友的朋友。token 敏感，默认 2 |
 | `injectionMaxBreadth` | number | `10` | 注入：单节点展开邻居上限：按 weight 降序展开。默认 10 |
 | `maxInjectedEvents` | number | `5` | 注入：事件条数上限 |
 | `maxInjectedRelations` | number | `8` | 注入：人际关系条数上限 |
 | `maxParticipantsPerEvent` | number | `5` | 注入：每事件展示参与者数：超出会显示 +N 人。默认 5 |
 | `maxCooccurrencePartners` | number | `5` | 注入：共现伙伴展示数：基于事件桥统计的隐式二跳；0 关闭该小节 |
-| `maxGlobalHotEvents` | number | `5` | 注入：全局热点事件数：与当前用户子图无关，按全局 lastMentionedAt 排序的最近事件；0 关闭 |
-| `maxGlobalHotEntities` | number | `5` | 注入：全局热点实体数：与当前用户子图无关，按全局 lastMentionedAt 排序的最近实体；0 关闭 |
+| `maxGlobalHotEvents` | number | `5` | 注入：全局热点事件数：与当前用户无关，全图最近被提及的事件；0 关闭 |
+| `maxGlobalHotEntities` | number | `5` | 注入：全局热点实体数：与当前用户无关，全图最近被提及的实体；0 关闭 |
 | `groupOnly` | boolean | `false` | 仅在群聊中注入：私聊一般无需关系图上下文。按会话管理记下的聊天窗口判，根会话（子会话取根会话的）的窗口是多方才注入：OneBot 的群与频道、第三方平台声明的多方类型都算，owner 从 WebUI 往群里插话的一轮也算；WebUI、终端会话不算，不看消息带不带群号。会话管理不在时判不出，不注入 |
-| `toolsEnabled` | boolean | `true` | 向 Agent 暴露 dig 工具：允许 LLM 主动调用 user_relation_* 工具：检索 / 分析 / 社群，以及带保护门的写工具（改名、修边、删除、合并等）。写工具 1 级起能用，不逐次确认：改的是她自己的记忆，不碰本机文件也不对外；一轮里混进做不了的人时，执行守卫照逐动作判定单独审批这一个调用 |
-| `commandsEnabled` | boolean | `true` | 注册 /relation 指令：注册 show / orphans / cleanup / consolidate / maintain 等 /relation 指令（cleanup 等写操作为 restricted，需 owner 授予） |
-| `strictSelfAssertion` | boolean | `true` | 严格自证模式：开启后，提取只允许把人际关系归到「说过那条原话的人」名下：仅 person-person 边要求 evidence 中至少一条由 from 方本人发出（evidence.messageId 对应消息的发言者 == fromPersonId）。无论开关，person-person 边的 to 都须已存在 PersonNode（防孤儿边）。 |
+| `toolsEnabled` | boolean | `true` | 向 Agent 暴露 dig 工具：允许模型调用关系图工具：检索、分析、社群，以及改名、修边、删除、合并等写工具 |
+| `commandsEnabled` | boolean | `true` | 注册 /relation 指令：注册 /relation 指令，用于查看、清理与整理关系图；cleanup、consolidate 等维护指令需 owner 授予 |
+| `strictSelfAssertion` | boolean | `true` | 严格自证模式：开启时，人际关系只记在说过那句原话的人名下：至少要有一条证据是关系发起方本人说的。 |
 | `digToolDefaultMaxDepth` | number | `2` | dig 工具：默认深度 |
 | `digToolDefaultMaxBreadth` | number | `8` | dig 工具：默认宽度 |
 | `digToolHardMaxDepth` | number | `4` | dig 工具：硬上限深度：Agent 传入更大值会被截断 |
 | `digToolHardMaxBreadth` | number | `20` | dig 工具：硬上限宽度 |
 | `findPathDefaultMaxDepth` | number | `4` | find_path 默认深度 |
 | `findPathHardMaxDepth` | number | `6` | find_path 硬上限 |
-| `searchEventsDefaultLimit` | number | `10` | search_events 默认 limit |
-| `searchEventsHardMaxLimit` | number | `50` | search_events 硬上限 limit |
+| `searchEventsDefaultLimit` | number | `10` | search_events 默认条数 |
+| `searchEventsHardMaxLimit` | number | `50` | search_events 条数硬上限 |
 | `graphSpacing` | number | `120` | 关系图疏密：关系图布局的理想边长（像素），越大越稀疏，建议 60 到 250；超出 20 到 1000 时按默认 |
-| `debug` | boolean | `false` | Debug 日志：开启后会输出提取/工具调用的详细日志 |
+| `debug` | boolean | `false` | 调试日志：开启后会输出提取/工具调用的详细日志 |
+
+表中略去的细节：
+
+- `extractionEnabled` 是写入的总开关，只停提取；要彻底不用，停用整个插件。
+- `mode`：取值 `incremental`（增量窗口）与 `all-new`（全量累积）。
+- `readWindowSize`：相邻两次提取重叠 10 条左右，模型能跨批次稳定认出同一事件与关系。
+- `readScope`：取值 `same-session`（仅当前会话）、`same-platform`（同平台跨会话）、`cross-platform`（全平台跨会话）。跨会话读取时每行消息带 `[sid:<会话>]` 前缀，证据按每条消息真实的来源会话记录。same-platform 适合识别跨群共享的话题，cross-platform 适合识别跨平台的同一用户或同一事件。跨会话读取要求记忆后端实现 `getRecentMessagesAcrossSessions`。
+- `extractionDisableThinking`：提取是结构化输出任务，思考型模型（如 deepseek-v4-flash）开着思考时可能把 token 预算全花在推理上、返回空内容。
+- `consolidationModel` 用于 `/relation consolidate`、`/relation maintain` 与淘汰前的自动整理，做三件事：别名候选的语义核验、合并后摘要重写、实体层级推断（见第 2 节）。推荐选上下文大的模型（如 GPT-4o、Claude Opus）。
+- `consolidationSkipLowScorePairs` 与 `consolidationLowScoreThreshold` 只作用于宽召回阶段的别名候选。综合分即节点的 `compositeScore`，两端都低于阈值说明两端都在 edge 档，合并价值低；默认阈值 0.2 与分档（`scoreToTier`）里 edge 档的边界一致。
+- `consolidateAfterEviction` 的顺序与 `/relation maintain` 一致：先整理再淘汰，PageRank 在去重后的图上算，入出度更完整。
+- `evictionEnabled`：孤立节点指没有任何边的节点；配了上限时，没到触发线既不整理也不淘汰。没有硬豁免，重要性完全由 PageRank、权重衰减与被提及次数（`mentionCount`）决定；人物、事件、实体与边的排序公式见第 1 节。
+- `communityAlgorithm`：算出的社群写进节点的社群缓存，`user_relation_community_peers` 与 `user_relation_community_bridge` 读它；`user_relation_community_overview` 不传 `algorithm` 时用这里的算法，模型调用时可以临时传 `algorithm` 换一个。louvain 是经典的硬划分；leiden 是 Louvain 加上内部连通性修正（refinement）；slpa 即 Speaker-Listener Label Propagation，原生重叠社区，跨群人物能有多个社群隶属度。
+- `evictTargetPct`：触发后裁到 `floor(上限 × 该值)`，取值限在 0.1 到 1。
+- `weightDecayHalfLifeDays` 与 `weightDecayFloor`：衰减后的权重 `effW = raw × max(0.5^(天数/halfLife), floor)`。长期不被强化的高权重节点因此逐渐让出保护名额；下限保留"老朋友"的底色，不至于完全忘掉。
+- `maxGlobalHotEvents` 与 `maxGlobalHotEntities` 按全图的 `lastMentionedAt` 排序。
+- `toolsEnabled`：工具名为 `user_relation_*`。写工具带保护门，1 级起能用，不逐次确认：改的是她自己的记忆，不碰本机文件也不对外；一轮里混进做不了的人时，执行守卫照逐动作判定单独审批这一个调用。
+- `commandsEnabled`：`show`、`orphans`、`forget-me` 与 `consolidation-status` 公开；`cleanup`、`consolidate`、`rewrite-weights`、`event-duplicates`、`compress` 与 `maintain` 为 restricted，需 owner 授予。
+- `strictSelfAssertion` 只约束人物之间的边：证据里至少一条消息（`evidence.messageId`）的发言者是 from 方本人。无论开关，人物之间的边的 to 方都须已有人物节点，免得留下孤儿边。
 
 ## 7. WebUI 页面
 
 插件详情里有两页，数据源与删除动作直接用本次激活的 `RelationService`：
 
 - **人物关系图**（`key: 'user-relation'`）：一张全图。节点分人物、事件、实体三类，边按六种 kind 分类，取色用分类色（不写死颜色，随主题变）；疏密取 `graphSpacing`。选中一个节点，详情里是它的属性与连着它的关系（对端、关系、权重、最近强化、最新证据）。引用了缺失节点的边不画，记一条告警。
-- **关系图原始数据**（`key: 'user-relation-raw'`）：人物、事件、实体三个标签各一张表，行动作「删除」（确认框，连同相关的边）。删除前先核节点在且种类对，扑空时回错误；删除后两页都重取。
+- **关系图原始数据**（`key: 'user-relation-raw'`）：人物、事件、实体三个标签各一张表，行动作「删除」（确认框，连同相关的边）。删除前先核节点在且种类对，找不到时回错误；删除后两页都重取。
 
 抽取写入的变化不推送，靠打开时取一次与手动刷新。

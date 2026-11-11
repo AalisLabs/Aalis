@@ -31,7 +31,7 @@ export default definePlugin({
 | `apiKey` | string | 必填 | API Key：OpenAI API 密钥（secret） |
 | `baseUrl` | string | `'https://api.openai.com/v1'` | API 地址：API 端点完整前缀（含版本段）；插件只在其后拼 /embeddings 与 /models |
 | `model` | select | `'text-embedding-3-small'` | Embedding 模型：用于生成文本向量的模型 |
-| `timeoutMs` | number | `30000` | 请求超时 (ms)：单次 embedding 请求超时时间。不设上限时启动探测会把插件激活链整条钉住 |
+| `timeoutMs` | number | `30000` | 请求超时 (ms)：单次 embedding 请求的超时时间。 |
 
 ## 特性
 

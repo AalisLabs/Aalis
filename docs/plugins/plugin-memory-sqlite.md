@@ -38,13 +38,13 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `path` | string | `''` | 数据库路径：SQLite 数据库文件的 storage URI（如 `data:/aalis.db`；不含 `:/` 时首段视为存储根名，单段裸名归 `data` 根）。留空按实例派生，见下 |
+| `path` | string | `''` | 数据库路径：SQLite 数据库文件的存储地址（storage URI），如 `data:/aalis.db`。留空时按实例自动命名；两个实例不能共用一个库。写法与命名规则见下 |
 | `rangeQueryLimit` | number | `500` | 范围查询返回上限：区间消息查询（向量召回的上下文窗口扩展等）单次返回的最大条数。命中上限会静默截断 |
 | `crossSessionMaxLimit` | number | `1000` | 跨会话查询返回上限：跨会话最近消息查询允许的最大条数；调用方请求超过此值会被收窄到此上限 |
 
 ## 特性
 
-- `path` 按 storage URI 解析：首段路径视为存储根名（如 `data/aalis.db` 即 `data:/aalis.db`），也可以直接写 `data:/xxx.db`；对应存储根须支持写入和本地路径解析（`resolveLocalPath`），否则启动时报错。写成本机路径（如 `/private/tmp/aalis.db`、`~/aalis.db`）时拒绝激活，报一行 `ConfigError`，写明要填 storage URI 并举例；要放到存储根以外的目录，先在本地存储插件的 `roots` 里加一个指向它的根，并打开它的「允许写」（这个根文件工具也能访问）
+- `path` 按 storage URI 解析：首段路径视为存储根名（如 `data/aalis.db` 即 `data:/aalis.db`），单段裸名归 `data` 根，也可以直接写 `data:/xxx.db`；对应存储根须支持写入和本地路径解析（`resolveLocalPath`），否则启动时报错。写成本机路径（如 `/private/tmp/aalis.db`、`~/aalis.db`）时拒绝激活，报一行 `ConfigError`，写明要填 storage URI 并举例；要放到存储根以外的目录，先在本地存储插件的 `roots` 里加一个指向它的根，并打开它的「允许写」（这个根文件工具也能访问）
 - `path` 缺省或为 `null` 时仍按实例派生；显式给出布尔值、数组或对象等无效类型时拒绝激活，不会回落到默认数据库文件。
 - 可多实例（`@aalis/plugin-memory-sqlite:<后缀>`）。`path` 留空时按实例派生：主实例用 `data:/aalis.db`，带后缀的实例在文件名上加后缀（如 `:b` 实例用 `data:/aalis-b.db`）；配置里写明的 `path` 照用。两个实例打开的是同一个文件时，后激活的那个激活失败，报一行 `ConfigError`，点名占用该文件的实例；两边路径写法不同时一并给出占用者打开的路径。是否同一个文件按文件身份（设备号与 inode）判断，大小写不敏感的卷上只差大小写的路径、硬链接都算同一个文件；文件系统不提供 inode 时退回按本地路径比较
 - 开库失败时报错先写怎么修（检查数据库文件所在目录存在且可写，或在 `path` 换个位置；路径解析失败的检查 `path`），再带出 SQLite 给出的原因，原错误作 `cause`；取不到 `node:sqlite` 的情况见「运行要求」

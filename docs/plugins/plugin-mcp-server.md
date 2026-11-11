@@ -48,9 +48,11 @@ plugins:
 |---|---|---|---|
 | `port` | number | `7861` | 监听端口：必须 1-65535；非法值会报错不启动。要暂停服务请在「插件列表」里禁用本插件。 |
 | `bind` | string | `'127.0.0.1'` | 监听地址 |
-| `token` | string（密钥，必填） | 无 | 外部 MCP 客户端连 `/sse` 与 `/messages` 时要带请求头 `Authorization: Bearer <令牌>`。至少 32 个可见 ASCII 字符、不含空白，可用 `openssl rand -hex 32` 生成；存进密钥存储，WebUI 不回显。没填时插件标待配置、不监听。 |
-| `toolGroups` | multiselect | `[]` | 允许的工具分组（空=全部，受受限开关约束）：分组名的字符串数组；空列表或 `['*']` = 暴露所有分组的工具（仍受 allowRestricted 约束）。非数组或含对象、布尔成员时拒绝激活；数字成员转换为字符串分组名，仍按白名单匹配。`null` 按缺省空数组处理。 |
+| `token` | string（密钥，必填） | 无 | 访问令牌：外部 MCP 客户端要在请求头带上 `Authorization: Bearer <令牌>`。至少 32 个可见 ASCII 字符、不含空白，可用 `openssl rand -hex 32` 生成 |
+| `toolGroups` | multiselect | `[]` | 允许的工具分组：分组名的字符串数组；空列表或 `['*']` = 暴露所有分组的工具（仍受「允许暴露 restricted（受限）工具」约束）。非数组或含对象、布尔成员时拒绝激活；数字成员转换为字符串分组名，仍按白名单匹配。`null` 按缺省空数组处理。 |
 | `allowRestricted` | boolean | `false` | 允许暴露 restricted（受限）工具 |
+
+`token` 是密钥，存进密钥存储，WebUI 不回显；连 `/sse` 与 `/messages` 都要带它（见下文「安全边界」）。没填时插件标待配置、不监听。
 
 ## 安全边界
 

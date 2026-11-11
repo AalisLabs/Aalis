@@ -42,7 +42,7 @@ flowchart LR
 
 ## 缺一环时界面怎么显示
 
-某个插件没起来，依赖它的插件跟着停在「缺服务」。WebUI 不只写缺了哪个服务，还沿着提供者往下追到真正出问题的那个插件（根），写出这条链，按钮直接去处理根。几种常见情形：
+某个插件未启动，依赖它的插件跟着停在「缺服务」。WebUI 不只写缺了哪个服务，还沿着提供者往下追到真正出问题的那个插件（根），写出这条链，按钮直接去处理根。几种常见情形：
 
 | 情形 | 「需要处理」里怎么写 |
 |---|---|
@@ -58,5 +58,5 @@ flowchart LR
 
 - **换消息存储**：装上另一个记忆插件，停用或卸掉原来的。消息不会在两个后端之间迁移，换了之后从空开始。
 - **换 embedding 或向量库**：向量记忆只认一个 embedding 提供者的向量，换了模型之后旧向量召回不出来；向量库的数据也不通用。换完可以用 `/clear all -t vector` 清空向量库，由新消息重新积累。
-- **Ollama Embedding**：默认模型 `nomic-embed-text` 要先 `ollama pull nomic-embed-text`；没拉时向量索引每次都失败，`/doctor` 的 `service/embedding.ollama` 报不可用。
-- **LanceDB**：Intel Mac 上装不了，用 Flat，见[安装与启动排障](./troubleshooting.md#intel-mac-与-lancedb)。
+- **Ollama Embedding**：默认模型 `nomic-embed-text` 要先 `ollama pull nomic-embed-text`；没下载时向量索引每次都失败，`/doctor` 的 `service/embedding.ollama` 报不可用。
+- **LanceDB**：Intel Mac 上无法安装，用 Flat，见[安装与启动排障](./troubleshooting.md#intel-mac-与-lancedb)。

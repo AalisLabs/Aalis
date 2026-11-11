@@ -64,35 +64,37 @@ export default definePlugin({
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `vision` | object | — | 图像识别 |
-| `vision.prefer` | llm-ref | — | 识别模型：把图片转成文字描述的模型。留空则自动选择优先级最高的 vision LLM。 |
-| `vision.recognizeOnArrival` | boolean | `true` | 接触到图片立即识别：开启：图片到达即识别，描述进档案与向量库（可被召回），未触发回复的消息也留下记忆。关闭：档案只留图片指针，主模型需要时再经 analyze_image 按需查看；此时图片内容不可被检索召回。 |
+| `vision.prefer` | llm-ref | — | 识别模型：把图片转成文字描述的模型。留空则自动选择优先级最高的能看图的模型。 |
+| `vision.recognizeOnArrival` | boolean | `true` | 接触到图片立即识别：开启时图片一到就识别，描述写进历史，可被记忆检索到；关闭时只存图片引用，主模型需要时再查看，图片内容检索不到。 |
 | `vision.delivery` | select | `'auto'` | 主模型看图方式：决定当轮附件与 analyze_image 的交付形态。`auto` 按 agent 交来的 `acceptsImages`（这一轮的主模型在模型服务登记了视觉能力）判，能看直通原图，不能看交描述，本插件不另查模型能力；端点没报告视觉能力的模型怎么补见 [media 服务](../services/media.md)。 |
 | `vision.maxTokens` | number | `2048` | 描述最大 token：只防失控，模型因上限停下时在描述末尾标出「（已在长度上限处截断）」。须为正整数，否则实例转为出错 |
-| `vision.think` | boolean | `false` | 启用思考链 (thinking)：开启时按模型服务配置的默认思考档，识别质量可能提升但 token 成本上升；关闭时用模型最浅的一档（Ollama 即关闭思考）。模型不能调思考时不起作用。 |
-| `vision.prompt` | textarea | `''` | 单图描述 prompt：填写后完全覆盖 auto 档（自路由）与 casual 档的描述 prompt；detailed/professional 档仍用各自内置模板。留空时 auto 档用内置自路由 prompt（模型看图自判类型给相应详略），casual 档用内置简洁模板。 内置简洁模板供参考：请像有经验的朋友一样看这张图，用自然中文客观描述实际可见的内容。先抓 1–2 个最值得注意的视觉重点——优先选「视觉意外/反常之处」：信息密度异常集中的区域、数量反常多或反常少的物体、与画面其他部分明显冲突的颜色或元素、不该出现却出现的东西、醒目的文字或表情包文案、明显的游戏/二次元/网络梗标志，再补充主体、场景、人物动作与表情、整体氛围。对确有把握、特征足够明确的游戏/动画/角色/网络梗，可以直接点名；但只要没把握，就老实描述外观、UI、配色、文字与画风，不要硬猜具体名字、更不要往热门作品上套——宁可说"看不出具体是什么"，也别硬认成 Minecraft/原神/明日方舟之类（认错比模糊更糟）。 画面中若有数字（连胜天数、分数、价格、等级、日期、计数等），务必逐位看准、按画面实际像素如实读出，不要受对话上下文里出现过的旧数字影响（以图为准）。 **严格约束**：只描述图片本身可见的内容；不要主动推测发送者的情绪、动机、意图或心理状态，也不要把上下文/对话历史里提到但图片中不可见的人物、事件、动机写进描述。只有当图中文字、表情包文案、画面元素自身明确表达了某种情绪或动作意图（例如表情包模板自带语义、画面里有醒目的「求助」/「炫耀」文字等）时，才可以简短指出该信号。 控制在 200 字以内，不要 markdown，不要按 1)2)3) 列点，写成 1–2 段连贯文字。 |
-| `vision.batchPrompt` | textarea | `''` | 多图批量描述 prompt：多张图片一起描述时使用（动图抽帧 / 图组）。留空则回落到“单图 prompt”或内置默认。 默认：以下是一组按顺序排列的图片，请综合所有图片做一段连贯的中文描述。先抓住整组图最值得注意的点：是同一场景的连拍/抽帧、还是各自独立的素材？是否构成时序变化、对比、剧情或梗？其次描述主体对象、人物动作、文字/表情包文案；画面中的游戏/动画/角色/网络梗仅在有把握时点名，没把握就客观描述外观与文字、不硬套热门作品。最后简短推测整组图想表达的事件、情绪或意图。画面中若有数字（分数、价格、计数、天数等）务必按实际像素逐位读准，不受上下文旧数字影响。控制在 250 字以内，不要 markdown，不要按 1)2)3) 列点，写成连贯文字。 |
-| `audio` | object | — | 音频识别（转写 + 描述） |
+| `vision.think` | boolean | `false` | 启用思考链：开启时用模型的默认思考档，识别可能更准但更耗 token；关闭时用最浅的一档。模型不能调思考时无效。 |
+| `vision.prompt` | textarea | `''` | 单图描述 prompt：填写后替换 auto 与 casual 档的描述 prompt，detailed 与 professional 档仍用内置模板。留空时用内置 prompt。 内置简洁模板供参考：请像有经验的朋友一样看这张图，用自然中文客观描述实际可见的内容。先抓 1–2 个最值得注意的视觉重点——优先选「视觉意外/反常之处」：信息密度异常集中的区域、数量反常多或反常少的物体、与画面其他部分明显冲突的颜色或元素、不该出现却出现的东西、醒目的文字或表情包文案、明显的游戏/二次元/网络梗标志，再补充主体、场景、人物动作与表情、整体氛围。对确有把握、特征足够明确的游戏/动画/角色/网络梗，可以直接点名；但只要没把握，就老实描述外观、UI、配色、文字与画风，不要硬猜具体名字、更不要往热门作品上套——宁可说"看不出具体是什么"，也别硬认成 Minecraft/原神/明日方舟之类（认错比模糊更糟）。 画面中若有数字（连胜天数、分数、价格、等级、日期、计数等），务必逐位看准、按画面实际像素如实读出，不要受对话上下文里出现过的旧数字影响（以图为准）。 **严格约束**：只描述图片本身可见的内容；不要主动推测发送者的情绪、动机、意图或心理状态，也不要把上下文/对话历史里提到但图片中不可见的人物、事件、动机写进描述。只有当图中文字、表情包文案、画面元素自身明确表达了某种情绪或动作意图（例如表情包模板自带语义、画面里有醒目的「求助」/「炫耀」文字等）时，才可以简短指出该信号。 控制在 200 字以内，不要 markdown，不要按 1)2)3) 列点，写成 1–2 段连贯文字。 |
+| `vision.batchPrompt` | textarea | `''` | 多图批量描述 prompt：多张图片一起描述时使用（动图抽帧 / 图组）。留空则回落到「单图描述 prompt」或内置默认。 默认：以下是一组按顺序排列的图片，请综合所有图片做一段连贯的中文描述。先抓住整组图最值得注意的点：是同一场景的连拍/抽帧、还是各自独立的素材？是否构成时序变化、对比、剧情或梗？其次描述主体对象、人物动作、文字/表情包文案；画面中的游戏/动画/角色/网络梗仅在有把握时点名，没把握就客观描述外观与文字、不硬套热门作品。最后简短推测整组图想表达的事件、情绪或意图。画面中若有数字（分数、价格、计数、天数等）务必按实际像素逐位读准，不受上下文旧数字影响。控制在 250 字以内，不要 markdown，不要按 1)2)3) 列点，写成连贯文字。 |
+| `audio` | object | — | 音频识别 |
 | `audio.mode` | select | `'enabled'` | 模式 |
-| `audio.prefer` | select | `''` | 处理后端：Whisper/ASR 与「能识别音频的 LLM」合在一个下拉里选；留空=按优先级自动。可选项随已装后端变化。 |
-| `audio.language` | string | `''` | 默认语种 (ISO 639-1)：仅对 Whisper 类 ASR 生效；LLM-as-audio 会在 prompt 里作为提示。 |
-| `audio.maxTokens` | number | `2048` | 最大输出 token：LLM-as-audio 专用，只防失控，思考与正文共用这份预算，模型因上限停下时在转写末尾标出「（已在长度上限处截断）」。须为正整数，否则实例转为出错。 |
-| `audio.think` | boolean | `true` | 启用思考链 (thinking)：LLM-as-audio 专用。开启时按模型服务配置的默认思考档，识别质量更高但 token 成本 ×5-8；关闭时用模型最浅的一档（Ollama 即传 reasoning_effort=none）。模型不能调思考时不起作用。 |
-| `audio.prompt` | textarea | `''` | 自定义 prompt：LLM-as-audio 专用。留空使用内置全能描述 prompt。 默认：请用中文描述这段音频的内容：若含语音/对话则转写为原文（中文用中文写，英文保留英文）；若含音乐则描述风格、乐器、情绪及可识别歌词；若是环境音/音效则描述场景；仅输出内容本身，不要 markdown 标记。 |
+| `audio.prefer` | select | `''` | 处理后端：Whisper/ASR 与「能识别音频的模型」合在一个下拉里选；留空=按优先级自动。可选项随已装后端变化。 |
+| `audio.language` | string | `''` | 默认语种 (ISO 639-1)：仅对 Whisper 类 ASR 生效；能识别音频的模型会在 prompt 里作为提示。 |
+| `audio.maxTokens` | number | `2048` | 最大输出 token：只对能识别音频的模型生效，用来防止输出失控，思考与正文共用。因上限停下时在转写末尾标出「（已在长度上限处截断）」；须为正整数，否则实例转为出错。 |
+| `audio.think` | boolean | `true` | 启用思考链：只对能识别音频的模型生效。开启时用模型的默认思考档，识别更准，但 token 消耗约为 5 到 8 倍；关闭时用最浅的一档。模型不能调思考时无效。 |
+| `audio.prompt` | textarea | `''` | 自定义 prompt：只对能识别音频的模型生效。留空使用内置全能描述 prompt。 默认：请用中文描述这段音频的内容：若含语音/对话则转写为原文（中文用中文写，英文保留英文）；若含音乐则描述风格、乐器、情绪及可识别歌词；若是环境音/音效则描述场景；仅输出内容本身，不要 markdown 标记。 |
 | `video` | object | — | 视频识别 |
 | `video.mode` | select | `'frames+asr'` | 模式 |
 | `video.maxFrames` | number | `5` | 最大关键帧数 |
-| `video.framesHint` | textarea | `''` | 抽帧描述 hint：抽帧后拼帧下发 vision 模型时的 hint。留空使用默认：“以下为同一视频的关键帧，按时间顺序排列。” |
-| `video.animatedPrompt` | textarea | `''` | 动图/短视频描述 prompt：`describeImage` 遇到动图时的整段描述 prompt（替换内置多图批量模板）；留空使用内置多图批量模板。 |
+| `video.framesHint` | textarea | `''` | 抽帧描述提示语：抽帧后拼帧交给能看图的模型时的提示语。留空使用默认：“以下为同一视频的关键帧，按时间顺序排列。” |
+| `video.animatedPrompt` | textarea | `''` | 动图/短视频描述 prompt：描述动图时用的整段 prompt，替换内置的多图批量模板；留空用内置模板。 |
 | `video.framePrefix` | string | `'[画面] '` | 画面描述前缀：拼到抽帧综合描述前的标记，例如 “[画面] …”。 |
 | `video.audioTrackPrefix` | string | `'[音轨] '` | 音轨转写前缀：拼到视频音轨转写前的标记，例如 “[音轨] …”。 |
 | `animatedImage` | object | — | 动图 / GIF |
-| `animatedImage.maxFrames` | number | `5` | 最大关键帧数：动图（gif/webp 动画等）抽帧上限，与视频 video.maxFrames 独立。动图信息量较低，默认 5 已足够；调高会增加 vision 调用成本。 |
+| `animatedImage.maxFrames` | number | `5` | 最大关键帧数：动图（GIF、动态 WebP 等）最多抽几帧，与视频的帧数上限分开设。调高会增加识图开销。 |
 | `contextHistory` | object | — | 多模态上下文注入 |
-| `contextHistory.enabled` | boolean | `true` | 允许多模态 processor 读取聊天上下文：启用后，图片描述 / 音频识别 / 视频抽帧调用多模态模型时，会将近期聊天记录拼到 prompt 里，让模型能联系上下文进行识别。对传统 Whisper-style ASR 后端无效。 |
+| `contextHistory.enabled` | boolean | `true` | 允许媒体识别读取聊天上下文：开启后，识别图片、音频与视频时把近期聊天记录一并交给模型，让它联系上下文识别。对 Whisper 类语音识别后端无效。 |
 | `contextHistory.maxMessages` | number | `4` | 上下文最大消息条数 |
-| `senderContext` | object | — | 发送者画像注入 (vision) |
-| `senderContext.enabled` | boolean | `true` | 允许在 vision 上下文中注入发送者 user-profile 摘要：启用后，vision 描述图片时会带上发送者的长期 fact 摘要（来自 plugin-user-profile），帮助模型理解 “草羊机截图 = Minecraft 玩家在炫耀” 类场景。读取失败或 user-profile 未启用时静默跳过，不会阻断识别。 |
-| `senderContext.profileMaxChars` | number | `200` | profile 摘要最大字符数：超过截断。填 0 等于禁用 profile 注入。 |
+| `senderContext` | object | — | 发送者画像注入 |
+| `senderContext.enabled` | boolean | `true` | 允许在识图时注入发送者的用户画像摘要：开启后，识别图片时带上发送者的用户画像摘要，帮助模型理解图片的用意。读不到画像时跳过，不影响识别。 |
+| `senderContext.profileMaxChars` | number | `200` | 画像摘要最大字符数：超过截断。填 0 等于禁用画像注入。 |
+
+`vision.recognizeOnArrival` 开启时，描述进档案与向量库（可被召回），没有触发回复的消息里的图也留下记忆；关闭时主模型经 `analyze_image` 按需查看。`vision.think` 与 `audio.think` 关闭时用模型最浅的思考档：Ollama 的识图即关闭思考，音频走兼容接口时传 `reasoning_effort: "none"`。`vision.prompt` 留空时，auto 档用内置的自路由 prompt（模型看图自判类型、给相应详略），casual 档用内置简洁模板。`video.animatedPrompt` 是 `describeImage` 遇到动图时用的 prompt。动图信息量较低，`animatedImage.maxFrames` 默认 5 已足够。`senderContext` 的画像摘要是发送者的长期事实摘要，来自 plugin-user-profile，帮助模型理解玩家发来自己游戏作品的截图是在炫耀这类场景；读取失败或没启用 plugin-user-profile 时静默跳过。
 
 ## 相关
 

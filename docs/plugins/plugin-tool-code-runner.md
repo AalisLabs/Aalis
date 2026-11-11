@@ -39,10 +39,12 @@ export default definePlugin({
 | `javascript.enabled` | boolean | `true` | 启用 run_javascript |
 | `javascript.interpreter` | string | `'node'` | 解释器路径：Node.js 解释器路径或命令名 |
 | `maxOutputSize` | number | `131072` | 最大输出字节：stdout/stderr 各自的最大输出字节数 |
-| `workingDirectory` | string | `'workspace:/'` | 逻辑工作目录：脚本执行时的 storage URI 工作目录，如 workspace:/ 或 tmp:/run；相对路径会解释为 workspace:/ 下路径。 |
+| `workingDirectory` | string | `'workspace:/'` | 逻辑工作目录：脚本运行的工作目录，填 storage URI，如 workspace:/ 或 tmp:/run；相对路径按 workspace:/ 下解析。 |
 | `sandbox` | object | — | 代码沙箱 |
-| `sandbox.mode` | select | `'auto'` | 隔离模式：auto：经 code-sandbox 服务（Linux bubblewrap / macOS sandbox-exec）把代码限制在「工作区 + 本次临时目录」、默认断网、只放行白名单环境变量；无可用沙箱后端时拒绝执行（fail-closed）。none：退回无隔离裸进程，每次告警。说明：v1 读放开（解释器需系统库），防的是写出工作区/联网外泄/篡改系统，不防读取本机其它文件。 |
-| `sandbox.network` | select | `'deny'` | 子进程网络：仅 auto 模式生效。deny：脚本内联网（含 fetch）会失败。allow：放开子进程网络（无法按域名白名单过滤）。 |
+| `sandbox.mode` | select | `'auto'` | 隔离模式：「自动」在系统沙箱里运行，只能写工作目录与本次临时目录，默认断网；「无隔离」直接运行，插件启动时告警。沙箱不限制读取本机文件。 |
+| `sandbox.network` | select | `'deny'` | 子进程网络：仅「隔离模式」选「自动」时生效。 |
+
+`sandbox.mode` 取 `auto`（自动）或 `none`（无隔离）；`sandbox.network` 取 `deny`（断网）或 `allow`（放开，不能按域名过滤）。
 
 解释器、工作目录、启用开关以及沙箱模式/网络选项若显式给出无效值，插件会拒绝激活，不会以默认解释器或更宽的执行方式启动。
 
@@ -65,16 +67,16 @@ export default definePlugin({
 
 | 情形 | `error` |
 |---|---|
-| 脚本跑完、以非零退出，且调用没被中止 | `'退出码 N'`（N 为 `exitCode`） |
+| 脚本运行结束、以非零退出，且调用没被中止 | `'退出码 N'`（N 为 `exitCode`） |
 | 脚本没被中止却被信号结束（如内存不够被系统杀掉，`exitCode` 为 -1） | `'被信号 <信号名> 结束'`；Linux 的 bubblewrap 沙箱把这种结束转成退出码 128+N，按上一行报 |
 | 要求沙箱但没有可用后端（fail-closed） | 可操作的安装提示 |
-| 起脚本进程失败 | 失败原因 |
+| 启动脚本进程失败 | 失败原因 |
 
 退出码为 0 的不带 `error`；调用被中止时（下一节）也不带：标为 `aborted` 的与注明「调用已中止」的都不带。
 
 ## 转后台、停止与中止结果
 
-两个工具都声明可转后台（`background`，让出时限用执行器的默认 30 秒）：在前台等满让出时限还没结束，[plugin-tools](./plugin-tools.md#转后台与后台任务) 的执行器把这次调用登记成后台任务、先回给模型，脚本照常跑，正常结束时通知起它的会话。参数里没有超时，配置里也没有，等多久由执行器的让出时限管（模型可用 `waitSeconds` 改，`runInBackground` 立即转后台）。
+两个工具都声明可转后台（`background`，让出时限用执行器的默认 30 秒）：在前台等满让出时限还没结束，[plugin-tools](./plugin-tools.md#转后台与后台任务) 的执行器把这次调用登记成后台任务、先回给模型，脚本照常运行，正常结束时通知发起它的会话。参数里没有超时，配置里也没有，等多久由执行器的让出时限管（模型可用 `waitSeconds` 改，`runInBackground` 立即转后台）。
 
 停只认执行器给这次调用的中止信号（工具调用上下文的 `signal`）：在前台时随回合中止（WebUI 的停止键、禁言、停机等停下这一轮），转到后台之后随停止、工具撤回登记与执行器停用中止。它交给执行路径：沙箱路径经 `code-sandbox` 服务的 `SandboxRunRequest.signal`，无沙箱路径经 process 服务的 `SpawnOptions.signal`，两条路径都不带超时。中止时脚本按进程组停掉：POSIX 先 SIGTERM、宽限 2000ms 后 SIGKILL。
 
@@ -84,9 +86,9 @@ export default definePlugin({
 |---|---|
 | 中止时脚本被信号结束（含宽限到点的 SIGKILL） | `aborted: true`、`message: '代码已中止'`，带已收集的输出 |
 | 中止前脚本已自行退出，或结束时没有终止信号（Windows 下强制结束可能如此） | 按实际退出码与输出回报，另加 `note: '调用已中止'` |
-| 起脚本进程前已中止 | 不运行脚本，返回 `aborted: true` 与同一条 `message` |
+| 启动脚本进程前已中止 | 不运行脚本，返回 `aborted: true` 与同一条 `message` |
 
-边界：中止只打原进程组。无沙箱路径（`sandbox.mode: none`）与 macOS Seatbelt 路径上，主动脱离进程组的后代（Python 的 `os.setsid`、Node 以 `detached: true` 起的子进程等守护化写法）会活下来；Linux bwrap 路径有 pid 命名空间，外层 bwrap 退出后它们随之结束。详见 [plugin-code-sandbox-os](./plugin-code-sandbox-os.md) 的「停止键与超时的边界」。
+边界：中止只打原进程组。无沙箱路径（`sandbox.mode: none`）与 macOS Seatbelt 路径上，主动脱离进程组的后代（Python 的 `os.setsid`、Node 以 `detached: true` 启动的子进程等守护化写法）会活下来；Linux bwrap 路径有 pid 命名空间，外层 bwrap 退出后它们随之结束。详见 [plugin-code-sandbox-os](./plugin-code-sandbox-os.md) 的「停止键与超时的边界」。
 
 ## 工作目录解析
 

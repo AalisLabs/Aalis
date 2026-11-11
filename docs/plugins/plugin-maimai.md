@@ -31,9 +31,10 @@ export default definePlugin({
 |---|---|---|---|
 | `developerToken` | string | 必填 | 开发者 API Token：在 https://maimai.lxns.net 申请的开发者 token（secret） |
 | `baseUrl` | string | `'https://maimai.lxns.net'` | API Base URL：查分器域名，一般无需修改。带查询串或片段（`?` 或 `#` 之后的部分：请求路径按它解析，会被丢掉）时激活报配置错误 |
-| `enableTools` | boolean | `true` | 注册 Agent 工具：为 LLM Agent 注册结构化工具（推荐保持开启） |
+| `enableTools` | boolean | `true` | 注册 Agent 工具：为模型注册结构化工具（推荐保持开启） |
 | `enableCommands` | boolean | `true` | 注册斜杠指令：为用户注册 /maimai 等斜杠指令 |
 | `defaultBindOnPrivateChat` | boolean | `true` | 私聊缺省绑定：在 OneBot 私聊中，若调用者未绑定但其 QQ 已注册查分器账号，自动以其 QQ 查分 |
+| `timeoutMs` | number | `30000` | 请求超时 (ms)：查分器 API 单次请求的超时时间 |
 
 ## 指令
 
@@ -58,4 +59,4 @@ export default definePlugin({
 
 ## 配置校验
 
-没填 `developerToken` 时插件激活失败，报「缺少配置项 developerToken」，WebUI 把它标成待配置。显式无效的 token、地址或功能开关会报配置错误，地址格式在注册前校验。数字字符串 `timeoutMs` 按数值解析。
+没填 `developerToken` 时插件激活失败，报「缺少配置项 developerToken」，WebUI 把它标成待配置。显式无效的 token、地址或功能开关会报配置错误，地址格式在注册前校验。数字字符串 `timeoutMs` 按数值解析。`timeoutMs` 是查分器单次请求的上限：工具执行面没有外层超时，对端不应答会让整轮对话一直阻塞。

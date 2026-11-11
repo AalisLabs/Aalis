@@ -35,7 +35,7 @@ export interface WorkflowService {
     triggerSource?: string,
     /**
      * 调用者身份（缺省=匿名）。内部工具与投递的消息按定义者与调用者里不是 owner 的一方裁决：调用者是 owner 时取定义者
-     * （没有即匿名），否则取调用者。定时与事件触发以定义者作调用者。sessionId 是调起这次运行的会话（经 workflow_run 调起时
+     * （没有即匿名），否则取调用者。定时与事件触发以定义者作调用者。sessionId 是发起这次运行的会话（经 workflow_run 调用时
      * 有）：它所在的一轮在等这次运行，指向它的 agent 节点立即失败
      */
     caller?: { platform?: string; userId?: string; sessionId?: string },
@@ -309,14 +309,14 @@ await events.use.emit('trigger:fired', {
 - **触发**：定时与事件触发以定义者作调用者。事件参数与 `trigger:fired` 的 `payload` 作为 `vars` 进入这次运行，插值进 `tool` 节点的参数、`agent` 节点的指令或 `send-message` 的正文时就以定义者的身份下达，订阅的事件与 `trigger:fired` 的发出方要可信：`event` 触发器不订阅负载带会话内容的事件（参考实现的列表见 [plugin-workflow](../plugins/plugin-workflow.md#触发器)）。
 - **传递**：运行身份是 `toolCallContext` 的唯一参与者（`participants`，匿名时是无主体；`platform` 保持 `'workflow'`），`tool` 节点按它过 authority 闸，`send-message` 与 `agent` 节点投递的消息以它为 `actor`（匿名的不带）；匿名只能跑 `public`（risk safe、minLevel 0）工具。
 
-漏掉其中一条，匿名触发的工作流就能跑 owner 才允许的危险工具，或 owner 调起成员改写的编排时按 owner 执行，等于绕过 [authority](../plugins/plugin-authority.md)。risk{safe/sensitive/dangerous}→minLevel、确认（confirm 轴）等都在 `tools.use.execute` 那层裁决，workflow 只负责传对身份。
+漏掉其中一条，匿名触发的工作流就能跑 owner 才允许的危险工具，或 owner 运行成员改写的编排时按 owner 执行，等于绕过 [authority](../plugins/plugin-authority.md)。risk{safe/sensitive/dangerous}→minLevel、确认（confirm 轴）等都在 `tools.use.execute` 那层裁决，workflow 只负责传对身份。
 
 ### agent 节点：经网关送达，只认自己那一轮
 
 `agent` 节点经 `gateway`（optional）的 `ingressMessage` 把指令（`triggerType: 'proactive'`，来源 `workflow:<wf>:<nodeId>`）送进目标会话，送达之前注册 `agent:turn:after` middleware（`engine.ts`）。约束：
 - 指令在目标会话里单独成一轮，排在那里在跑的一轮之后。送达在节点自己的异步上下文（`AsyncLocalStorage`）里调用，agent 让一轮跑在开它的那条输入的调用的上下文里，节点只认这个上下文里、目标会话的那一轮：同一会话里别的回合的回复不会被当成本节点的结果，同一编排两次运行的同名节点各认各的。省略 `sessionId` 时引擎自动生成一次性子会话 `workflow::<runId>::<nodeId>`（`engine.ts`；契约 `AgentNodeSpec.sessionId` 的注释同此）。这类会话没有出生平台，选层按入口平台，场所在默认工作区（见 [会话管理](session-manager.md)）。
 - 默认 `timeoutSeconds = 120`；超时或 `outcome=error/aborted` → 节点失败（`engine.ts`）。
-- 立即失败、不等满超时：网关不在；指向调起这次运行的会话（`runWorkflow` 的 `caller.sessionId`，经 `workflow_run` 调起时有：那一轮在等这次运行，节点开不了轮，必然互等到超时）；`ingressMessage` 返回（这条输入落定）时还没认到结局，即指令在网关相位被吞或排着时被放掉。目标会话处于禁言期，或在 flow-control 的生效范围内且限速窗口已满时，指令被 flow 相位吞掉。禁言期不看生效范围一律吞；除此之外，带 `source` 的编排消息不经触发策略、不受回复后冷却；限速只在目标会话在 flow-control 的生效范围内时生效（`engine.ts`）。
+- 立即失败、不等满超时：网关不在；指向发起这次运行的会话（`runWorkflow` 的 `caller.sessionId`，经 `workflow_run` 调用时有：那一轮在等这次运行，节点无法开始一轮，必然互等到超时）；`ingressMessage` 返回（这条输入落定）时还没认到结局，即指令在网关相位被吞或排着时被放掉。目标会话处于禁言期，或在 flow-control 的生效范围内且限速窗口已满时，指令被 flow 相位吞掉。禁言期不看生效范围一律吞；除此之外，带 `source` 的编排消息不经触发策略、不受回复后冷却；限速只在目标会话在 flow-control 的生效范围内时生效（`engine.ts`）。
 
 ### 触发器全部委托 cron-engine
 
@@ -331,7 +331,7 @@ await events.use.emit('trigger:fired', {
 - **event 触发的 payload 形态**：`event` 触发时 `TriggerManager` 把监听到的事件参数**包成 `{ args }`** 传给 fire（`triggers.ts`：`this.fire(def.id, ..., { args })`），fire 再把它整体作为 `extraVars` 注入运行实例 `vars`（`index.ts`）。因此事件触发的工作流里要用 **`{{vars.args}}`**（或 `{{vars.args[0].xxx}}` 走路径访问）读取事件负载，而**不是** `{{vars.xxx}}` 直接读事件字段。对比之下 `trigger:fired`（含 webhook/scheduler 桥）的 `info.payload` 是**直接展开**进 vars 的（`index.ts`），其字段名直接用 `{{vars.字段}}`。两条入口的 vars 形态不同，写定义时需区分。
 - **event filter 只做顶层等值匹配**：`filter` 的每个 key 必须在事件第一个参数（顶层）等值命中；payload 不是对象时只有空 filter 通过（`triggers.ts`）。无嵌套/范围匹配。
 - **DAG 失败即停**：任一节点失败，引擎不再调度新批次，未跑的节点标 `skipped`，整 run = `failed`（`engine.ts`）。没有节点级重试 / 部分继续。
-- **取消打断阻塞中的节点**：`cancelRun` 与插件拆卸（停机、卸载、bounce）都中止这次运行的信号：不再调度新节点；阻塞中的 `wait` / `agent` 节点立即失败（「运行已取消」），已派发的 agent 回合不随之中止，照常跑完；`tool` 节点经 `ToolCallContext.signal` 收到中止，是否提前返回由工具决定（`engine.ts`）。拆卸等在飞 run 收尾、终态写进 `runsFile` 才结束，不响应中止的工具至多让它等到 `disposeTimeoutMs`（`index.ts`）。
+- **取消打断阻塞中的节点**：`cancelRun` 与插件拆卸（停机、卸载、bounce）都中止这次运行的信号：不再调度新节点；阻塞中的 `wait` / `agent` 节点立即失败（「运行已取消」），已派发的 agent 回合不随之中止，照常执行完毕；`tool` 节点经 `ToolCallContext.signal` 收到中止，是否提前返回由工具决定（`engine.ts`）。拆卸等在飞 run 收尾、终态写进 `runsFile` 才结束，不响应中止的工具至多让它等到 `disposeTimeoutMs`（`index.ts`）。
 - **运行历史是滚动 + 整体重写**：`RunStore` 超过 `maxRuns`（默认 200、最小 10）裁剪最旧的已结束的运行，在跑的不裁（收尾时照常更新它），每次变更整体重写文件、写入串行化（`persistence.ts`）。载入时还在 `running` 的是进程没有正常退出时留下的，收口成 `cancelled`（与拆卸时被打断的同一状态），`error` 写进程退出时中断，不写 `finishedAt`；节点与引擎取消时同样收：`running` 的记 `failed`（`error` 同一句），`pending` 的记 `skipped`。历史不是无限审计日志。同文件还存 once 的 `firedAt` 与定义者记录（`{ runs, onceFired, definers }`）。
 - **节点 `output` 截断**：存入 `outputs` 的是完整结果，但 `NodeRunInfo.output` 展示字段截断到 1000 字符（`engine.ts`）。下游插值用的是完整值，UI 看到的是预览。
 - **同名服务无能力选择**：0.5.0 起 DI 不做能力匹配；多个 workflow provider 并存时靠 preference/priority 选，能力信息在实例上自管（见 [service-model](../concepts/service-model.md)）。

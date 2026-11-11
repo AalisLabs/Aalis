@@ -10,7 +10,7 @@
 
 Aalis 的消息层分两层。
 
-第一层是 **LLM 协议层**：`Message` / `ContentSegment` / `ToolCall`，直接对应 OpenAI/DeepSeek chat completions 协议。这是喂给模型、做历史压缩、做信息抽取时流转的载体。
+第一层是 **LLM 协议层**：`Message` / `ContentSegment` / `ToolCall`，直接对应 OpenAI/DeepSeek chat completions 协议。这是交给模型、做历史压缩、做信息抽取时流转的载体。
 
 第二层是 **平台适配层**：`IncomingMessage`（适配器流入）、`OutgoingMessage`（发往平台）、`StreamChunkMessage`（流式片段），是 Aalis 的边界形态。
 
@@ -71,7 +71,7 @@ messages.push(...history.filter(m => !CONTROL_KINDS.includes(m.kind ?? '')));
 if (CONTROL_KINDS.includes(m.kind ?? '')) continue;
 ```
 
-对插件作者而言，这意味着：如果你自己拼一份 `Message[]` 喂给 `resolveLLMModel(...).chat()`，你有责任先过滤掉 `CONTROL_KINDS`。`prepareLLMMessages` 只做 role 转译与前缀拼接，不剔除 event-marker。
+对插件作者而言，这意味着：如果你自己拼一份 `Message[]` 交给 `resolveLLMModel(...).chat()`，你有责任先过滤掉 `CONTROL_KINDS`。`prepareLLMMessages` 只做 role 转译与前缀拼接，不剔除 event-marker。
 
 `CrossSessionDelegation` 与 `HostNotice` 不在 `CONTROL_KINDS` 内，它们会进入上下文（分别带 `[跨会话委派]`、`[宿主通知]` 前缀，见 §3）。两者与 `IdlePrompt` 合称指令类 kind，由常量 `DIRECTIVE_KINDS` 列出：它们是宿主或系统撰写的，不是任何人的发言，用户关系、用户档案的抽取窗口与向量记忆的扩窗都按这个常量排除它们。自己拼历史做抽取的插件也应如此。`OutboundDeliveryFailed` 与 `TurnStopped` 同样进上下文，没有前缀，是写给下一轮模型的记录，界面不显示，也不进向量召回。
 
@@ -129,7 +129,7 @@ private toAPIMessage(msg: Message): APIMessage {
 ```
 
 ::: warning 即使不支持自定义 role 也要调用
-`prepareLLMMessages` 是幂等的：纯标准 role 时原样返回同一引用，开销很小。但如果漏调，某天上游塞进 `notice` 或跨会话委派消息时，未归一的非标准 role 会让你的 provider 直接抛错。请在 `chat` / `chatStream` 第一步就调用它。
+`prepareLLMMessages` 是幂等的：纯标准 role 时原样返回同一引用，开销很小。但如果漏调，某天上游传入 `notice` 或跨会话委派消息时，未归一的非标准 role 会让你的 provider 直接抛错。请在 `chat` / `chatStream` 第一步就调用它。
 :::
 
 ---
@@ -187,7 +187,7 @@ parseAttachmentRefs(text): AttachmentRef[]
 
 ### 5.1 产出方（adapter，以 OneBot 为例）
 
-OneBot 适配器把平台消息段渲染为含 XML 标记的富文本喂给 LLM：
+OneBot 适配器把平台消息段渲染为含 XML 标记的富文本交给 LLM：
 
 ```ts
 // at 段 → <at id="QQ">昵称</at>；自身被 @ 加 self 属性；@全体 → <at>all</at>
@@ -322,12 +322,12 @@ await handle?.chat({ messages });   // 条目已固定是哪个 model
 
 ## 10. 边界与注意事项
 
-1. **漏调 `prepareLLMMessages` 会导致 provider 崩溃。** 某天上游塞进 `notice` 或跨会话委派消息，未归一的非标准 role 会让你的 API 直接返回 400。务必在 `chat` / `chatStream` 第一步调用（§3.1）。
+1. **漏调 `prepareLLMMessages` 会导致 provider 崩溃。** 某天上游传入 `notice` 或跨会话委派消息，未归一的非标准 role 会让你的 API 直接返回 400。务必在 `chat` / `chatStream` 第一步调用（§3.1）。
 2. **`prepareLLMMessages` 不剔除 event-marker。** 它只做 role 转译加前缀。`CONTROL_KINDS` 过滤是消费方的职责。你自己拼历史喂模型时要先 `filter(m => !CONTROL_KINDS.includes(m.kind ?? ''))`。
 3. **自定义 kind 不要撞已占用语义。** 可以定义新 kind，但要避开 `WellKnownKinds`。
 4. **附件占位符必须走 `formatAttachmentRef` / `parseAttachmentRefs`**（§4.3）——`desc` 的分隔符净化在 format 里，手写字符串既绕过净化又会让四处解析悄悄断链。
 5. **`<at>` 是约定不是 API**，没有编译期兜底。新平台适配器产出的入站文本必须严格遵循 `<at id="X">名</at>` / `<at self …>` / `<at>all</at>`，否则归档、向量、触发判定会全部静默失效（§5.2）。`<at self>` 是判定「机器人被 @」的唯一信号：触发判定、聊天审批的应答与指令都只认它。
-6. **`Message.metadata` 不发给 LLM。** 要让模型看到的信息必须进 `content` / `segments` / `images` / `audios`，不要塞进 metadata。
+6. **`Message.metadata` 不发给 LLM。** 要让模型看到的信息必须进 `content` / `segments` / `images` / `audios`，不要放入 metadata。
 7. **`actor` 是授权身份，不可被 LLM 自由指定。** 系统侧触发器（scheduler / proactive）创建任务时会 snapshot 调用者身份并回填，agent 算这一轮的参与者（`ToolCallContext.participants`，api-authority 的 `originTurnOf`）时优先用 `actor`，权限按参与者查，以防提权。人发来的话（含群聊里没点名、被频率触发挑中的 `interval` 回合）授权身份是发言者，触发插件不改它；没有人的注入（不延续调用的宿主通知等）回填 `selfInitiatedActor(platform)`（空 userId = 无主体，按默认等级裁决、不视为 owner），`idle` 合成消息本就不带 userId。详见 `docs/services/authority.md`。
 8. **`images` / `audios` 的解析格式由 provider 负责。** 可能是 base64 data URL、`file://`、本地路径或 `http(s)`。OpenAI 把 `images[]` 仅在 `user` role 上展开为 `image_url` content parts；其它 role 携带图片不会被它消费——唯一例外是工具结果携图（tool 消息带 `images`），`prepareLLMMessages` 会把它拆成 tool 文本 + 一条注明来源的 user 图片消息，provider 无需感知。
 

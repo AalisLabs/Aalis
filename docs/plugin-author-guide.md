@@ -170,7 +170,7 @@ lifecycle.use.onDispose(() => {
 
 ### 事件处理器里的异步工作
 
-撤回只摘掉监听，不等已经在执行的处理器：处理器里发起的异步工作，在你的 `onDrain` / `onDispose` 执行期间可能仍在跑。要在关闭前完成的，自己记下这些 Promise，在 `onDrain` 里等；要停下的，传 `lifecycle.use.signal`。处理器里另起、没有 `return` 或 `await` 的 Promise，`emit` 不等它，它的拒绝也不经监听器的错误隔离，要自己接住。
+撤回只摘掉监听，不等已经在执行的处理器：处理器里发起的异步工作，在你的 `onDrain` / `onDispose` 执行期间可能仍在跑。要在关闭前完成的，自己记下这些 Promise，在 `onDrain` 里等；要停下的，传 `lifecycle.use.signal`。处理器里另行发起、没有 `return` 或 `await` 的 Promise，`emit` 不等它，它的拒绝也不经监听器的错误隔离，要自己接住。
 
 ### 边界：在清理回调里访问其它服务
 
@@ -226,7 +226,7 @@ it('required 依赖到场后激活', async () => {
 
 `createApp` 是同步的。配置经 `app.plugin(definition, config)` 传入，core 不合并 schema 默认值；插件的 parseConfig 负责解析与默认值。测试里登记的 `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 放进 devDependencies。`plugin()` 的 true 只说明请求已受理；需要「激活已落定」必须 `await app.plugins.idle()`。`idle()` 不等超过 `slowThresholdMs`（默认 60 秒）转入后台的激活，测试里要等这类激活，按 `getStatus()` 的状态轮询，或把 `slowThresholdMs` 设为 0。不得在插件 `apply` / `onDispose` 内调用 `idle()`（互等死锁）。不要用 `setTimeout` 代替 `idle()`。
 
-用假定时器（`vi.useFakeTimers()`）时注意：激活在落定或转入后台之前挂着一个阈值定时器，`vi.getTimerCount()` 会把它算进去，`vi.runAllTimers()` 会让仍未落定的激活到点转入后台。先 `await app.plugins.idle()` 让激活落定再装假定时器。
+用假定时器（`vi.useFakeTimers()`）时注意：激活在落定或转入后台之前留有一个未清除的阈值定时器，`vi.getTimerCount()` 会把它算进去，`vi.runAllTimers()` 会让仍未落定的激活到点转入后台。先 `await app.plugins.idle()` 让激活落定再装假定时器。
 
 ---
 
@@ -413,7 +413,7 @@ cell.textContent = member.nickname;
 cell.innerHTML = member.nickname;
 ```
 
-写错时注入的标记虽然跑不了脚本，仍能借样式把页面上的链接地址、输入框的值带到外站（属性选择器配外站的背景图），也能让框架跳走。
+写错时注入的标记虽然无法运行脚本，仍能借样式把页面上的链接地址、输入框的值带到外站（属性选择器配外站的背景图），也能让框架跳走。
 
 **能放在哪：**
 

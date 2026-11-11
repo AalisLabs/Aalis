@@ -35,13 +35,19 @@ export default definePlugin({
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `maxFileSizeMB` | number | `20` | 最大文件大小 (MB)：允许上传的最大文件大小（MB）。超过此限制的文件将被拒绝。 |
-| `autoInlineLimit` | number | `100000` | 自动 inline 阈值（字符）：提取出的文本长度若 ≤ 此值，则直接 inline 到附件描述里（模型无需调工具即可看到全文）；否则只挂 ID，由模型按需用 read_uploaded_file 拉取。受众里有别人的会话（群、多人房间、对端不是 owner 的私聊）里一律不内联，只给文件名、ID 与大小。 |
-| `toolDefaultMaxLength` | number | `50000` | read_uploaded_file 默认截断：read_uploaded_file 工具未显式传 maxLength 时使用的默认截断字符数，避免把超大文档一次喂进 LLM 上下文导致爆 token。0 表示不截断；要是非负整数，负数与小数报配置错误。 |
+| `autoInlineLimit` | number | `100000` | 自动内联阈值（字符）：提取出的文本不超过这个长度时直接附进消息，模型不用调工具就能看到全文；更长的只给文件 ID，由模型按需读取。有别人在场的会话一律不附全文。 |
+| `toolDefaultMaxLength` | number | `50000` | read_uploaded_file 默认截断：读取上传文件的工具没指定长度时最多返回多少字符，0 为不截断；须为非负整数，否则报配置错误。 |
 | `retentionDays` | number | `30` | 保留天数：上传文件保留的最长天数，超过即清理（按上传时间 uploadedAt）。0 表示不按时间清理。 |
 | `lruMaxTotalMB` | number | `500` | 磁盘总量上限 (MB)：上传文件总目录占用超过该上限时，按上传时间 uploadedAt 由旧到新淘汰直到回落到上限以下。0 表示不限。 |
-| `historyHintEnabled` | boolean | `true` | 注入会话文件清单提示：开启后：会话中存在上传文件时，在 LLM 调用前注入一条 system 提示列出可用文件（含 ID），避免模型遗忘过往上传。本轮有新上传时注入本轮清单与历史清单（本轮文件单独标出），否则只注入历史清单。只列最近 20 个，更早的在列表末尾写一句个数、用 list_uploaded_files 查。本轮新上传按这一轮各条输入的附件认：预处理器把处理过的文件附件改写成本插件的文件引用，引用的是本会话已知文件的就是；正文里写的文件描述不算。 |
-| `recognizeDocImages` | boolean | `true` | 识别文档内嵌图片：读取 DOCX 时调用 media 服务识别内嵌图片，把描述附在正文末尾（需启用 media/vision；无 media 服务时自动跳过）。识别会增加首次解析耗时与 vision token 开销，结果随提取文本一并缓存。 |
-| `maxDocImages` | number | `8` | 单文档最多识别图片数：超出的内嵌图片跳过识别，避免大量图片拖慢解析、消耗 vision token。0 等同关闭识别。 |
+| `historyHintEnabled` | boolean | `true` | 注入会话文件清单提示：开启后，会话里有上传过的文件时，在调用模型前提示可用的文件及 ID，本轮新上传的单独标出。只列最近 20 个。 |
+| `recognizeDocImages` | boolean | `true` | 识别文档内嵌图片：读取 DOCX 时识别内嵌图片，把描述附在正文末尾；需要识图功能，没有时跳过。会增加首次解析的耗时与识图开销。 |
+| `maxDocImages` | number | `8` | 单文档最多识别图片数：超出的内嵌图片跳过识别，避免大量图片拖慢解析、增加识图开销。0 等同关闭识别。 |
+
+`toolDefaultMaxLength` 是 `read_uploaded_file` 没传 `maxLength` 时的截断字符数，避免把超大文档一次读进模型上下文、超出 token 上限；负数与小数报配置错误。
+
+`historyHintEnabled` 开启时，会话里有上传文件就在模型调用前注入一条 system 提示列出可用文件（含 ID），避免模型遗忘过往上传：本轮有新上传时注入本轮清单与历史清单（本轮文件单独标出），否则只注入历史清单；只列最近 20 个，更早的在列表末尾写一句个数、用 `list_uploaded_files` 查。本轮新上传按这一轮各条输入的附件认：预处理器把处理过的文件附件改写成本插件的文件引用，引用的是本会话已知文件的就是；正文里写的文件描述不算。
+
+`recognizeDocImages` 需启用 `media` 的识图，细节见下文「文档内嵌图片识别」。
 
 ## 附件描述
 
@@ -67,7 +73,7 @@ export default definePlugin({
 读取 DOCX 时，若启用 `recognizeDocImages`（默认开）且 `media` 服务可用，会提取内嵌图片、调用 `media.use.describeImage` 识别，并把描述以「`--- 文档内图片 (N) ---`」小节附在正文末尾。
 
 - 图片的类型按文件头认（mammoth 报的是按扩展名登记的类型）；不是认得出的图片的（EMF、WMF、SVG 等）识别模型读不了，跳过。
-- `maxDocImages`（默认 8）限制单文档识别张数，避免大量图片拖慢解析、消耗 vision token；超出跳过。
+- `maxDocImages`（默认 8）限制单文档识别张数，避免大量图片拖慢解析、增加识图开销；超出跳过。
 - 单张识别失败不影响其余；无 `media` 服务时整体静默跳过。
 - 一份文档的识别并发 3 张、整体限时 30 秒：到时在飞的识别随之中止、不再开始新的，已识别出的描述照常附上。
 - 识别接中止信号：`read_uploaded_file` 读时接这次调用的，上传时内联解析接本插件这次激活的。中止时这次读或这个附件按中止收尾，不按解析失败报，已识别的部分不缓存，下次重新识别。

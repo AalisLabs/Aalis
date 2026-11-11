@@ -16,7 +16,7 @@
 - 评估后认为某个 `node:*` 用法在你的场景里是合理的；
 - 接受随之而来的「与 Aalis 抽象层耦合度变低」的代价；
 
-完全可以在你自己插件的 `biome.json` 或 lint 配置里 `noRestrictedImports: off`。**没有人会强制阻止**——这是一份建议清单，不是审批流程。作为发布到 npm 的第三方插件，发布即可被 `aalis-plugin` 关键词检索到、装上即用，能不能跑起来与任何评审无关；只有当你**主动把插件合入主仓库（成为一方插件）时**，code review 才会评估这些 `node:*` 用法是否合理。
+完全可以在你自己插件的 `biome.json` 或 lint 配置里 `noRestrictedImports: off`。**没有人会强制阻止**——这是一份建议清单，不是审批流程。作为发布到 npm 的第三方插件，发布即可被 `aalis-plugin` 关键词检索到、装上即用，能不能运行与任何评审无关；只有当你**主动把插件合入主仓库（成为一方插件）时**，code review 才会评估这些 `node:*` 用法是否合理。
 
 下面所有「建议 / 推荐 / 优先」字样都按这个语境理解。
 
@@ -70,7 +70,7 @@
 | `node:child_process` | 走 `@aalis/api-process`（`spawn`/`execFile`） | `plugin-process-local` | ProcessService 的当前实现 |
 | `node:http` / `node:https` | 出站建议用 fetch | `plugin-webui-server` | HTTP **入站**服务 + WebSocket 升级 |
 |  |  | `plugin-mcp-server` | HTTP/SSE **入站**端点 |
-| `node:net` | 出站建议用 fetch（受用户或 LLM 影响的 URL 走 `safeFetch`） | `plugin-tool-browser` | 浏览器网络闸：在 `127.0.0.1` 起 SOCKS5 服务接收浏览器的全部 TCP 连接，判定通过后由插件进程连接目标 |
+| `node:net` | 出站建议用 fetch（受用户或 LLM 影响的 URL 走 `safeFetch`） | `plugin-tool-browser` | 浏览器网络闸：在 `127.0.0.1` 启动 SOCKS5 服务接收浏览器的全部 TCP 连接，判定通过后由插件进程连接目标 |
 | `node:os` | 走 `system_info` 工具聚合返回 | `plugin-tool-system/src/tools/system.ts` | 该工具的本意就是暴露系统信息 |
 |  |  | `plugin-reach` | `homedir` / `userInfo`：拒读清单与落点按用户主目录生成，子进程环境取 owner 的 login shell |
 | `node:sqlite` | 消息与元数据走 `@aalis/api-memory`（`memory` 服务） | `plugin-memory-sqlite/src/index.ts` | `MemoryService` 的 SQLite 实现 |
@@ -139,7 +139,7 @@
 ### 触及
 
 - **`plugin-reach`** — `node:fs/promises`（`realpath` / `lstat` / `stat` / `readdir` / `readFile` / `writeFile` / `rename` / `mkdir` / `rm` / `access`）+ `node:os`（`homedir` / `userInfo`）
-  它读写的路径不在存储根内（安装集与链接装进来的包、用户主目录、仓库的 `.git`），本会话临时区要按 0700 建、按 lstat 不跟随链接清扫，存储服务没有这些能力；存储单元之后，存储服务读写宿主路径时要经触及凭据判，而凭据正是本插件签发的。各处 import 用行内的 `biome-ignore` 写明理由。三张受保护清单按真实路径比较：安装集、用户主目录与经链接装进来的包先取真实路径；仓库的 git 目录从绑定目录往上读 `.git`；本会话临时区按 0700 建、随会话删、按修改时间清扫；沙箱里 npm 的用户配置是用户主目录 `.npmrc` 去掉 npm 认证键的副本，以随机名独占创建再改名到位，不跟随沙箱换上的符号链接。owner 的 login shell 取自 `SHELL`，没有时取操作系统账户登记的（`userInfo`）；拉起它走 `ProcessService.execFile`。
+  它读写的路径不在存储根内（安装集与链接装进来的包、用户主目录、仓库的 `.git`），本会话临时区要按 0700 建、按 lstat 不跟随链接清扫，存储服务没有这些能力；存储单元之后，存储服务读写宿主路径时要经触及凭据判，而凭据正是本插件签发的。各处 import 用行内的 `biome-ignore` 写明理由。三张受保护清单按真实路径比较：安装集、用户主目录与经链接装进来的包先取真实路径；仓库的 git 目录从绑定目录往上读 `.git`；本会话临时区按 0700 建、随会话删、按修改时间清扫；沙箱里 npm 的用户配置是用户主目录 `.npmrc` 去掉 npm 认证键的副本，以随机名独占创建再改名到位，不跟随沙箱换上的符号链接。owner 的 login shell 取自 `SHELL`，没有时取操作系统账户登记的（`userInfo`）；本插件经 `ProcessService.execFile` 启动它。
 
 ### 宿主运行时
 

@@ -39,7 +39,7 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 | `withPluginConfigSync(app, store, opts?)` | 加载政策：返回交给 `createPluginDiscovery` 的 `options`（`{ prepare }`）。发现驱动每批定下要登记的定义后、登记前，把 `configSchema` 派生的默认值深合并进文档，默认裁剪 schema 外字段，并把密钥字段上的明文移进密钥存储；这一批有改动就落盘一次（冷启动整批一次）。某个定义同步时抛错只记该条、不登记它。 |
 | `syncPluginDefaults` / `handleConfigChanged` / `installConfigHotReload` | 同一政策的其余入口，参数为 `(app, store, opts?)`，后两者在 `store` 之后另收发现驱动 `discovery`；`syncPluginDefaults` 与 `handleConfigChanged` 另收可选的尾参数 `previous`（变更前的文档，热重载时作拆密钥的基线，`installConfigHotReload` 自动传）。三者依次：为已登记实例补默认值并裁剪；处理外部变更（文件里已没有配置段的后缀实例卸载，其余实例解析后的配置与运行态有差异的经 `updateConfig` 重建（禁用插件只换配置、保持禁用），新出现的后缀实例经 `discovery.registerConfiguredInstances()` 登记）；接管变更监听，在 `app:stopping` 时停止。 |
 | `createProcessRespawnStrategy({ appDir })` | 进程级重启策略（`app.restart()` → 子进程重生；开发模式在安装集里找本地 tsx）。 |
-| `createServiceRestartStrategy()` / `SERVICE_RESTART_EXIT_CODE` | 服务形态的重启策略：停掉 App 后以 75 退出，由服务管理器拉起（见「实例锁」的服务形态重启）。 |
+| `createServiceRestartStrategy()` / `SERVICE_RESTART_EXIT_CODE` | 服务形态的重启策略：停掉 App 后以 75 退出，由服务管理器重新启动进程（见「实例锁」的服务形态重启）。 |
 
 两种重启都沿用原来的环境变量：前台重启的新进程继承当前进程的环境，服务形态由服务管理器按服务配置里的环境重新启动进程，都不重读 shell 的配置。改了环境变量要从改过的环境重新启动 Aalis：前台运行的先停掉，再从新开的终端启动；服务形态改了服务配置要让服务管理器重新载入（launchd 先 `bootout` 再 `bootstrap`，systemd 先 `daemon-reload` 再 `restart`）。这样重启不会丢掉启动时在命令前临时给的变量，也不与服务管理器给的环境冲突。
 
@@ -78,7 +78,7 @@ WebUI 的历史分页与 CLI 的启动恢复都依赖这一点。
 
 profile 只由 `--profile` 与 `AALIS_PROFILE` 给出：经 `--data` 或 `AALIS_DATA` 选中的数据目录没有 profile，不论它叫什么，插件按 profile 派生的名字（如 MongoDB 记忆库的库名）也按没有 profile 算，要固定就在插件配置里写明（如 memory-mongodb 的 `database`）。数据目录初始化之后，交给插件的路径取真实路径：符号链接、大小写与末尾分隔符不同的写法指向同一个目录时，插件拿到的是同一个字符串。
 
-数据目录没有初始化（里面没有 `aalis.config.yaml`）就拒绝启动，只提示怎样初始化，不会静默起一个空的家。在启动命令里加上 `--init` 运行一次即可初始化：建目录（0700）、建布局里的子目录（含默认工作区 `workspace`）、写空的 `secrets.yaml` 与默认的 `aalis.config.yaml`（0600），然后退出；主配置最后写，它是初始化的判据。默认配置只有名字、日志级别与空的插件段，不写平台档，与 `npm create aalis` 生成的一致：工具分组哪一层都没设时，在本机（WebUI、终端）建的会话开全部分组，别的会话不开（plugin-tools 按根会话的创建来源判，见 [plugin-tools](../plugins/plugin-tools.md)）。插件段为空，不写语言列表：`--init` 不看系统语言，装了 `@aalis/plugin-i18n` 时按它的默认英文显示，要改在设置里改。目标目录已存在时，里面只能有 `--init` 自己会建的条目（上次初始化中途失败留下的：`state`、`logs`、`cache`、`run`、`tmp`、`self`、`workspace`、`secrets.yaml`）与 macOS 的 `.DS_Store`，有其它内容（包括已初始化的数据目录里的 `aalis.config.yaml`）就拒绝，不覆盖任何文件；已有的 `secrets.yaml` 保留，权限收紧为 0600。
+数据目录没有初始化（里面没有 `aalis.config.yaml`）就拒绝启动，只提示怎样初始化，不会静默创建一个空的家。在启动命令里加上 `--init` 运行一次即可初始化：建目录（0700）、建布局里的子目录（含默认工作区 `workspace`）、写空的 `secrets.yaml` 与默认的 `aalis.config.yaml`（0600），然后退出；主配置最后写，它是初始化的判据。默认配置只有名字、日志级别与空的插件段，不写平台档，与 `npm create aalis` 生成的一致：工具分组哪一层都没设时，在本机（WebUI、终端）建的会话开全部分组，别的会话不开（plugin-tools 按根会话的创建来源判，见 [plugin-tools](../plugins/plugin-tools.md)）。插件段为空，不写语言列表：`--init` 不看系统语言，装了 `@aalis/plugin-i18n` 时按它的默认英文显示，要改在设置里改。目标目录已存在时，里面只能有 `--init` 自己会建的条目（上次初始化中途失败留下的：`state`、`logs`、`cache`、`run`、`tmp`、`self`、`workspace`、`secrets.yaml`）与 macOS 的 `.DS_Store`，有其它内容（包括已初始化的数据目录里的 `aalis.config.yaml`）就拒绝，不覆盖任何文件；已有的 `secrets.yaml` 保留，权限收紧为 0600。
 
 宿主参数（`--data`、`--profile`、`--init`、`--service`）只认命令行开头的那一段，要写在子命令之前，如 `node index.mjs --data <目录> status`；写在子命令之后的归子命令，宿主不处理。开头那一段里的 `--` 跳过（`pnpm dev -- --init` 会把它原样传进来）；开头那一段里不认识的 `--` 参数报错退出（退出码 2），不当成子命令：当成子命令会在缺省的数据目录上读写，打错参数时就进了不该进的实例。经 `npm start` 启动时，额外参数要放在 `--` 之后才会传给入口：`npm start -- --data <目录>`、`npm start -- --init`。
 
@@ -108,23 +108,23 @@ profile 只由 `--profile` 与 `AALIS_PROFILE` 给出：经 `--data` 或 `AALIS_
 
 ## 实例锁
 
-同一数据目录只许一个守护进程：没有锁时，手动在终端再起一份会与服务并存，每条消息回两遍。锁放在数据目录的 `run/` 里，文件名 `instance.<n>.lock`，代号 n 最大的那份是现行锁。
+同一数据目录只许一个守护进程：没有锁时，手动在终端另行启动一个实例会与服务并存，每条消息回两遍。锁放在数据目录的 `run/` 里，文件名 `instance.<n>.lock`，代号 n 最大的那份是现行锁。
 
 - **取锁**：先把完整内容写进临时文件，再 link 成下一个代号。link 在目标已存在时原子失败，同一代号只有一个进程拿得到，读到的锁内容也总是完整的；所以数据目录所在的文件系统要支持硬链接（exFAT、部分 SMB 挂载不行，启动时一行报错退出）。link 成功后再看一遍更低的代号：还有活着的持有者就让出刚建的这一代并报占用，代号最低的活持有者胜出。确认之后删掉更低代号的旧文件。
 - **释放**：进程退出时删掉自己这一代，只在锁文件的内容仍是自己那份时才删，同名的锁可能已是别的实例的。
 - **判活**：锁里记 pid、本次开机的标识（Linux 的 boot_id、macOS 的 kern.bootsessionuuid）、pid 命名空间（Linux）、进程启动标识（Linux 是 `/proc/<pid>/stat` 的启动滴答数，其它 POSIX 是 UTC 下的 `ps -o lstart=`）与交接令牌的哈希。这些都与墙上时钟无关，NTP 步进时钟、夏令时回拨都不影响判断。开机标识不同判残留；同一次开机里 pid 命名空间不同（另一个容器共用这个数据目录）判不了，按占用处理；pid 不在、或启动标识不同（pid 被复用）判残留。SIGKILL 或服务管理器超时强杀留下的锁，下次启动时按残留接手。容器部署有一处例外：同一次开机里容器被强杀（SIGKILL、OOM）后重启，新进程在另一个 pid 命名空间里，仍按占用处理，要手动删掉报错里点名的锁文件。实例锁只在同一台主机内有效：两台主机经网络盘共用一个数据目录时开机标识不同，互相按残留接手，挡不住，不要这样部署。
 - **查不了启动标识的平台**：Windows 与没有 `ps` 的精简 Linux 镜像只看 pid。强杀留下的锁、pid 又恰好被别的进程占用时，启动会一直报占用；确认没有实例在运行时删掉报错里点名的锁文件即可。
-- **被占用**：打印占用者的 pid 与锁文件后以 1 退出，不碰正在用的日志。以 `--service` 启动（服务单元带上）时以 0 退出：配合 launchd 的 `KeepAlive={SuccessfulExit=false}`，不会每隔几秒被拉起、抢锁失败地循环。锁文件读不了（权限）时不猜它是残留，报错退出。
-- **前台重启的交接**：取锁时生成一个随机令牌，锁里只记它的哈希。`/restart` 与市场更新引起的前台重启，把令牌经环境变量 `AALIS_LOCK_HANDOFF` 交给新进程；新进程看到锁里的哈希对得上就接手，并立即把它从环境里删掉，不让插件起的子进程与侧车继承。
+- **被占用**：打印占用者的 pid 与锁文件后以 1 退出，不碰正在用的日志。以 `--service` 启动（服务单元带上）时以 0 退出：配合 launchd 的 `KeepAlive={SuccessfulExit=false}`，不会每隔几秒被 launchd 重新启动、抢锁失败地循环。锁文件读不了（权限）时不猜它是残留，报错退出。
+- **前台重启的交接**：取锁时生成一个随机令牌，锁里只记它的哈希。`/restart` 与市场更新引起的前台重启，把令牌经环境变量 `AALIS_LOCK_HANDOFF` 交给新进程；新进程看到锁里的哈希对得上就接手，并立即把它从环境里删掉，不让插件启动的子进程与侧车继承。
 - **服务形态的重启**：以 `--service` 运行时，`/restart` 与市场更新停掉 App 后以 75 退出，由服务管理器（launchd 的 KeepAlive、systemd 的 `Restart=on-failure`）启动新进程；输出断了（stdout、stderr 写出 EPIPE 或 EIO，如日志转发进程异常退出）同样停完以 75 退出；不自己启动新进程，否则它会脱离服务管理器的监管。服务形态下没有「新版启动失败就回滚」，市场更新照常退出并记一条说明。
 - **子命令不取锁**：子命令是一次性实例，与守护进程并存是预期的。
-- **只有 `startAalis` 取锁**：自己组装 App 的宿主不经过这一步，需要时自行保证同一数据目录只起一份。
+- **只有 `startAalis` 取锁**：自己组装 App 的宿主不经过这一步，需要时自行保证同一数据目录只启动一个实例。
 
 ## 子命令
 
 子命令分发是默认行为：argv 非空即子命令模式——`node index.mjs <name> [args]` 等价于聊天里的
 `/<name> args`，在 `app.start()` 之前短路执行并退出；首项不是已注册命令时报错退出（exit 2）。两种情况
-都不会启动守护进程（打错的命令名若照常起守护，就是与运行中实例并存的第二个实例）。argv 为空才进守护进程。
+都不会启动守护进程（打错的命令名若照常启动守护进程，就是与运行中实例并存的第二个实例）。argv 为空才进守护进程。
 `argv` 只用于宿主自己解析命令行的场合，传显式数组（`[]` 即守护进程），默认 `process.argv.slice(2)`；开头的宿主参数照样先取走。
 
 子命令进程是完整加载全部插件、但与正在运行的守护进程零通信的一次性实例，由此有三条边界：

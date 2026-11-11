@@ -178,8 +178,8 @@ await assertSafeHost(parsedUrl.hostname);
 | media 安全下载 | vision 输入下载，叠加体积上限/超时 |
 | WebUI 图片代理 | 浏览器侧代理第三方图片（带凭证规避范例，见 §5） |
 | http 工具 | LLM 可调的 `http_request` / `http_download` 工具 |
-| ASR（openai / whisper-cpp） | 拉远程音频转写 |
-| office | 拉远程文档解析 |
+| ASR（openai / whisper-cpp） | 下载远程音频转写 |
+| office | 下载远程文档解析 |
 | ollama | 下载消息里的图片网址（带 30s 超时） |
 | file-reader | 下载网址形式的附件 |
 | 策略注入方 | `plugin-authority` 读宿主配置文档：`setNetworkPolicy(config.get('network') ?? {})`，激活时注入，宿主文档变了再注入 |
@@ -200,7 +200,7 @@ await assertSafeHost(parsedUrl.hostname);
 
 ## 5. 边界情形与注意事项
 
-**只校验，不限体积、不超时、不缓存。** util 故意不做下载侧防护。`safeFetch` 返回的是普通 `Response`，在没有 Content-Length 时全量缓冲会撑爆内存，调用方必须自己加上：
+**只校验，不限体积、不超时、不缓存。** util 故意不做下载侧防护。`safeFetch` 返回的是普通 `Response`，在没有 Content-Length 时全量缓冲会耗尽内存，调用方必须自己加上：
 
 - 超时：`signal: AbortSignal.timeout(ms)`（参考 onebot、ollama 消费点）。
 - 体积上限：读 `content-length` 并做流式累计中断（可参考图片代理、http 工具的 `readBodyCapped`、media 安全下载的做法）。

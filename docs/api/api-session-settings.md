@@ -8,7 +8,7 @@
 
 插件配置字段可以声明「可按会话覆盖」：在 configSchema 的顶层字段上写 `session`。这类字段的全局层就是插件配置里的值，另外能按平台档、平台类型档、场所与本会话覆盖。宿主不把它们交给插件的运行态配置（`caps.config` 里没有），插件在 apply 里调 `fields()` 拿读取器，调用路径上按会话读生效值；改这类字段不重载插件。
 
-本包定义声明、层表、解析与两个门面（读取门面 `sessionFields`、管理面 `sessionSettings`）。解析只在本包的纯函数 `resolveFields` 一处做：读取器在插件进程内调它，提供者 [@aalis/plugin-session-settings](../plugins/plugin-session-settings.md) 只交出各层的原样值。提供者缺席（没装、没启用，或会话管理没起来）时读取器只取全局层，插件配置里的值照常生效。
+本包定义声明、层表、解析与两个门面（读取门面 `sessionFields`、管理面 `sessionSettings`）。解析只在本包的纯函数 `resolveFields` 一处做：读取器在插件进程内调它，提供者 [@aalis/plugin-session-settings](../plugins/plugin-session-settings.md) 只交出各层的原样值。提供者缺席（没装、没启用，或会话管理未启动）时读取器只取全局层，插件配置里的值照常生效。
 
 ## 声明
 

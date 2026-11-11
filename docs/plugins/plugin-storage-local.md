@@ -33,9 +33,9 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `roots` | array | `[{"name":"workspace","label":"Workspace","kind":"workspace","browsable":true,"readable":true,"writable":true,"deletable":true}]` | 存储根目录：文件工具与 agent 寻址用的根（缺省只有 workspace）；插件自己的数据在内置根里（data、pluginData、tmp、cache、logs、personas、skills、workflows），这里同名的项会被跳过。直接编辑这个数组：删除不要的、修改 path、加自定义根、加 host:/ 直通根。browsable 是给文件浏览器类界面的 hint（WebUI 没有文件浏览页，不读它）。 |
+| `roots` | array | `[{"name":"workspace","label":"Workspace","kind":"workspace","browsable":true,"readable":true,"writable":true,"deletable":true}]` | 存储根目录：文件工具与模型访问文件用的根，默认只有 workspace。可删改、加自定义根或 host:/ 直通根；与内部根同名的项会被跳过。 |
 
-`path` 可写绝对路径，也可写相对路径；相对路径按数据目录（`host-paths` 的 `data`）解析，与进程的 cwd 无关；留空时指向默认工作区目录（`host-paths` 的 `workspace`）。插件以 required 声明 `host-paths`，宿主不提供时停在 pending。
+`path` 可写绝对路径，也可写相对路径；相对路径按数据目录（`host-paths` 的 `data`）解析，与进程的 cwd 无关；留空时指向默认工作区目录（`host-paths` 的 `workspace`）。插件以 required 声明 `host-paths`，宿主不提供时停在 pending。条目的 `name` 是存储 URI 冒号前的根名（URI scheme）。
 
 ## 内部根
 
@@ -61,7 +61,7 @@ export default definePlugin({
 
 ## 宿主控制文件
 
-数据目录的 `secrets.yaml` 与 `aalis.config.yaml`（`host-paths` 的 `secrets` 与 `config`）由宿主（runtime）负责读写。插件在执行点兜底，不管目标经哪个根进来：
+数据目录的 `secrets.yaml` 与 `aalis.config.yaml`（`host-paths` 的 `secrets` 与 `config`）由宿主（runtime）负责读写。插件在执行点再做一道检查，不管目标经哪个根进来：
 
 - `secrets.yaml` 读写都拒绝；`aalis.config.yaml` 拒绝写入，允许读取。写入、删除、改名、移动与建目录都按写处理。
 - 按 (dev, ino) 比对目标与控制文件，硬链接与符号链接都挡得住；目标还不存在时按真实路径比对。

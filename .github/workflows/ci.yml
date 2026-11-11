@@ -59,7 +59,7 @@ jobs:
         run: pnpm exec puppeteer browsers install chrome
 
       # 绘图测试要 ffmpeg；页面布局测试要页面字体表里的 Noto Sans CJK；
-      # Ubuntu 23.10 起 AppArmor 不许非特权用户命名空间，Chrome 带沙箱起不来
+      # Ubuntu 23.10 起 AppArmor 不许非特权用户命名空间，Chrome 带沙箱无法启动
       - name: System dependencies
         run: |
           sudo apt-get update

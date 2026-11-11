@@ -118,7 +118,7 @@ export default definePlugin({
 
 ## Helper
 
-纯函数，不吃服务：
+纯函数，不依赖服务：
 
 - `isStorageUri` / `isWebUrl` / `parseUriRoot` / `toStorageUri` / `parseStorageUri` / `resolveAgainstCwd` — 契约级路径文法
 - `isHostAbsolutePath(input)` — 宿主机绝对路径（`/abs`、`C:\path`、`C:/path`）判据：不是存储地址，`toStorageUri` 抛配置错误、`resolveAgainstCwd` 拒绝

@@ -9,7 +9,7 @@
 
 加载、等字体、量内容高与截图各限时 15 秒，超时会关闭这一代 Chromium，同一代其他在飞任务也会失败，下次渲染重新启动；其余单条浏览器协议调用上限 30 秒。这是卡住检测，与等多久无关。浏览器随插件生命周期关闭，不接管宿主的 SIGINT 退出。注册工具组 `draw`，含 `draw_image`（PNG）与 `draw_animation`（GIF）两个工具。
 
-两个工具都声明可转后台（让出时限用执行器的默认 30 秒）：排队与渲染久时，在前台等满让出时限还没结束就由 [plugin-tools](plugin-tools.md#转后台与后台任务) 的执行器转到后台，正常结束时通知起它的会话。渲染请求与动图的两遍 ffmpeg 编码都带上执行器给这次调用的中止信号，编码不另设超时；中止时渲染与编码停住，结果带 `error`。
+两个工具都声明可转后台（让出时限用执行器的默认 30 秒）：排队与渲染久时，在前台等满让出时限还没结束就由 [plugin-tools](plugin-tools.md#转后台与后台任务) 的执行器转到后台，正常结束时通知发起它的会话。渲染请求与动图的两遍 ffmpeg 编码都带上执行器给这次调用的中止信号，编码不另设超时；中止时渲染与编码停住，结果带 `error`。
 
 ## 插件声明
 
@@ -36,18 +36,24 @@ export default definePlugin({
 |---|---|---|---|
 | `defaultWidth` | number | `800` | 默认画布宽 (px)：HTML 模式与未声明宽度的 SVG 使用的画布宽度 |
 | `maxWidth` | number | `1600` | 画布宽上限 (px)：请求宽与标记声明宽都会被收口到该值 |
-| `maxPixels` | number | `4000000` | 画布 CSS 像素上限：width×height（CSS 像素）上限，默认 4MP。注意实际光栅内存 = 本值 × scale²（scale 默认 2 即 4 倍）；静态图按 scale 截图，故设备像素天花板是本值的 scale² 倍——调高前算好内存 |
+| `maxPixels` | number | `4000000` | 画布像素上限：输出图片（动图按每帧）宽×高的像素上限，默认 4MP。静态图按截图缩放倍率缩小画布，放大后仍不超过它。 |
 | `maxSourceKB` | number | `256` | 输入标记上限 (KB)：source 参数的大小上限 |
-| `scale` | number | `2` | 截图缩放倍率：deviceScaleFactor：2 = 视网膜清晰度（像素翻倍，文件更大） |
+| `scale` | number | `2` | 截图缩放倍率：静态图的截图倍率，2 为高清（宽高各翻倍，文件更大） |
 | `headless` | boolean | `true` | 无头模式：调试时可关闭以观察渲染页面 |
-| `executablePath` | string | `''` | Chrome 路径（留空自动探测）：留空时用 puppeteer 配置里的可执行文件（`PUPPETEER_EXECUTABLE_PATH`、`.puppeteerrc`），没配时用 puppeteer 自带的 Chrome（与浏览器工具共用同一份二进制，进程独立）；填写时须为绝对路径 |
+| `executablePath` | string | `''` | Chrome 路径：Chrome 的绝对路径。留空时用 puppeteer 配置里的可执行文件，没配置时用 puppeteer 自带的 Chrome。 |
 | `sandbox` | boolean | `false` | Chromium 沙箱：打开后 Chromium 带沙箱启动，所画标记即使攻破渲染进程也出不了沙箱。Linux 上以 root 运行或容器里没有可用的沙箱时，打开后 Chromium 无法启动。 |
 | `idleShutdownSec` | number | `300` | 空闲关停（秒）：渲染引擎空闲该时长后关停 Chromium 释放内存；0 = 常驻 |
-| `maxConcurrency` | number | `2` | 渲染并发上限：同时进行的渲染任务数上限；群内多人并发画图时超出的排队，防无界 page + ffmpeg 拖垮机器 |
+| `maxConcurrency` | number | `2` | 渲染并发上限：同时进行的渲染任务数上限，超出的排队 |
 | `animMaxDurationSec` | number | `8` | 动图时长上限（秒）：draw_animation 的动画时长硬上限 |
 | `animDefaultFps` | number | `15` | 动图默认帧率：未显式指定 fps 时使用；上限 25 |
 | `animMaxFrames` | number | `160` | 动图帧数上限：时长×帧率超出时按帧数反推有效时长 |
-| `animMaxOutputMB` | number | `9` | GIF 体积上限 (MB)：超出即报错（OneBot 内联投递上限 10MB，留余量） |
+| `animMaxOutputMB` | number | `9` | GIF 体积上限 (MB)：生成的 GIF 超过这个大小即报错，最大 9 |
+
+`maxPixels` 限的是输出图片的像素数：`draw_image` 按 `scale`（即截图的 `deviceScaleFactor`）截图，画布的 CSS 像素预算为 `maxPixels ÷ scale²`，截出的 PNG 不超过 `maxPixels`；`draw_animation` 按 1 倍截帧，每帧不超过 `maxPixels`。渲染时的内存随它增长，调高前先估算内存。
+
+`executablePath` 留空时读的 puppeteer 配置来自环境变量 `PUPPETEER_EXECUTABLE_PATH` 或 `.puppeteerrc`。
+
+`maxConcurrency` 超出的排队、不拒绝，避免群里多人同时画图时页面无限增多拖垮机器。`animMaxOutputMB` 最大 9：OneBot 内联投递的上限是 10MB，留出余量。
 
 显式给出无效的 `executablePath`、`headless` 或 `sandbox` 时，插件拒绝激活，不会启动浏览器。画布与动画数值仍按既有规则取整、夹到上限；低于有效下限时取字段默认值。
 

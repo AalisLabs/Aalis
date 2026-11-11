@@ -31,13 +31,15 @@ export default definePlugin({
 | `passphrase` | string | 必填 | Passphrase：创建 API 时设定的口令（secret） |
 | `baseUrl` | string | `'https://www.okx.com'` | API 地址：默认实盘地址，可改为自定义域名。带查询串或片段（`?` 或 `#` 之后的部分：插件在它后面拼路径）时激活报配置错误 |
 | `demo` | boolean | `true` | 模拟盘：启用后将使用模拟交易环境，强烈建议先在模拟盘测试 |
-| `confirmRealMoney` | boolean | `false` | 确认实盘风险：仅当关闭模拟盘（demo:false）、用真实资金时，须显式设为 true 以确认风险；否则不暴露下单/撤单/策略/划转/提币等交易工具，仅保留查询。 |
+| `confirmRealMoney` | boolean | `false` | 确认实盘风险：关闭模拟盘、用真实资金交易时须打开以确认风险；不打开时只保留查询，不提供下单、策略与划转等交易工具。 |
 | `timeoutMs` | number | `15000` | 请求超时 (ms) |
 | `enableTrading` | boolean | `true` | 启用交易工具：关闭后仅保留查询类工具，不暴露下单/撤单操作 |
 | `enableAlgo` | boolean | `false` | 启用策略委托：启用止盈止损 / 计划委托工具 |
 | `enableTransfer` | boolean | `false` | 启用资金划转：启用资金账户划转工具 |
-| `defaultPageLimit` | number | `20` | 分页查询默认条数：查询订单/账单/成交明细等接口，LLM 未传 limit 时使用。 |
-| `maxPageLimit` | number | `100` | 分页查询最大条数：LLM 传入的 limit 会被 cap 到该值；查到的条目整份交给模型，调大会增加单次工具结果的体积。OKX API 本身单页一般最多 100（个别接口 300）。 |
+| `defaultPageLimit` | number | `20` | 分页查询默认条数：查询订单/账单/成交明细等接口，模型未传 limit 时使用。 |
+| `maxPageLimit` | number | `100` | 分页查询最大条数：分页查询一次最多返回的条数，模型要的更多时按这个值算。调大会让单次工具结果变大。 |
+
+分页查询查到的条目整份交给模型；OKX API 本身单页一般最多 100 条（个别接口 300）。
 
 `apiKey`、`secretKey`、`passphrase` 缺一个插件就激活失败，报缺的那一项，WebUI 把它标成待配置。
 
@@ -47,7 +49,7 @@ export default definePlugin({
 
 1. **等级门禁（restricted）**：涉及资金或仓位变更的工具被标记 `visibility: 'restricted'`（最低等级 2），防止任意访客经 LLM 以 owner 的资金下单或划转。其余查询类工具分两档：读取账户、订单、资金流水、充值地址等私有数据的查询工具（源码 `ACCOUNT_READ_OKX_TOOLS`）标记 `risk: 'sensitive'`（最低等级 1），挡住等级 0 用户经 LLM 读取 owner 的账户数据；行情与 Rubik 指标等公开数据工具维持默认 public。
 2. **实盘显式确认**：当 `demo:false`（真实资金）时，必须同时设 `confirmRealMoney:true`，否则插件不注册下单、策略委托、资金划转三组工具（含这三组里的查询工具），只保留行情、指标、账户、订单查询四组。即这三组工具是否注册取决于 `demo || confirmRealMoney`。
-3. **启动告警**：实盘启动时打告警日志：开启 `confirmRealMoney` 提示「LLM 可用真实资金下单……无逐单人工确认」；未开启则提示已禁用交易工具仅保留查询。
+3. **启动告警**：实盘启动时打告警日志：开启 `confirmRealMoney` 提示「模型可用真实资金下单……无逐单人工确认」；未开启则提示已禁用交易工具仅保留查询。
 
 被标 `restricted` 的变更类工具：
 

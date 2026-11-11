@@ -31,7 +31,7 @@ export interface MessageArchiveService {
 方法语义：
 
 - **`saveMessage`**（必需）：直写一条已成形的 `Message` 到指定会话。最薄的一层——直接转发给 `memory.saveMessage`，`options.debugLabel` 仅用于按配置打调试日志（`packages/plugin-message-archive/src/index.ts`）。role 为 `assistant`、有正文且不带工具调用的落库后发 `assistant:message:archived`。用于写已成形的条目（如 agent 的回复、subtask 的系统提示、投递失败提示）。
-- **`archiveIncoming`**（必需，核心）：吃一条 `IncomingMessage`，做完整烘焙——调用 `media` 识别附件（消息尚无附件描述时；对传入的消息对象调用，识别结果写回入参，触发判定已启动的识别在这里命中，不再识别第二遍）、拼接发送者前缀 / 引用回复 / 附件描述（拼法是 `@aalis/schema-message` 的 `buildIncomingContent`，说话人按本包的 `speakerOf` 给，见下）、从发言人自己写的话里抽取 @提及（schema-message 的 `extractMentions`，记成 `Mentions`）、写会话身份 `metadata`；给了 `turn`（agent 开轮或插入时给）时另记它进的这一轮：回合 id 与进入方式（`opened` 开轮、`joined` 插进在跑的一轮）记成登记的键 `TurnId`、`TurnEntry`，没进一轮的（被触发判定或流控吞掉的影子归档）不给；平台事件合成的入站带 `IncomingMessage.text` 时记进元数据 `Text`（参数截到 200 字），带 `noticeType` 时 `kind` 记成它，role 仍是 `user`，读历史的一方据此画成通知；落库后**发出 `inbound:message:archived` 事件**，返回最终 `Message` + content（`packages/plugin-message-archive/src/index.ts`）。空闲开话题的提示（`triggerType: 'idle'`）不落档：它是写给模型的话，不是谁的发言，也不是要留档的事件；回 `undefined`、不发事件，agent、流控与触发插件不必各自挡。
+- **`archiveIncoming`**（必需，核心）：接收一条 `IncomingMessage`，做完整烘焙——调用 `media` 识别附件（消息尚无附件描述时；对传入的消息对象调用，识别结果写回入参，触发判定已启动的识别在这里命中，不再识别第二遍）、拼接发送者前缀 / 引用回复 / 附件描述（拼法是 `@aalis/schema-message` 的 `buildIncomingContent`，说话人按本包的 `speakerOf` 给，见下）、从发言人自己写的话里抽取 @提及（schema-message 的 `extractMentions`，记成 `Mentions`）、写会话身份 `metadata`；给了 `turn`（agent 开轮或插入时给）时另记它进的这一轮：回合 id 与进入方式（`opened` 开轮、`joined` 插进在跑的一轮）记成登记的键 `TurnId`、`TurnEntry`，没进一轮的（被触发判定或流控吞掉的影子归档）不给；平台事件合成的入站带 `IncomingMessage.text` 时记进元数据 `Text`（参数截到 200 字），带 `noticeType` 时 `kind` 记成它，role 仍是 `user`，读历史的一方据此画成通知；落库后**发出 `inbound:message:archived` 事件**，返回最终 `Message` + content（`packages/plugin-message-archive/src/index.ts`）。空闲开话题的提示（`triggerType: 'idle'`）不落档：它是写给模型的话，不是谁的发言，也不是要留档的事件；回 `undefined`、不发事件，agent、流控与触发插件不必各自挡。
 - **`recordOutbound`**（必需）：出站消息记进会话历史的唯一实现，所有平台一条规则。不是她回复的文字记成事件标记（`outboundMarkerMessage`）；附件逐个记、不分来源与种类，按有没有地址分（`outboundAddress`：`ref`，没有时 `data` 是存储地址或网址的取 `data`），有地址的按 `outboundMediaMessage` 记（她发的 role `assistant`，插件发的 role `notice`），元数据带 `SentRef`（文件另带 `SentName`），没有地址的（data URL、`file://` 与本机路径）记成事件标记「[种类] 名字」（`unaddressedText`）并带同一句的文字对象。每条记录带出站的 `Source`、`TurnId`、`CallId`（有才记），同一会话里出站记录的时间戳各不相同。图、音、视频的描述取附件带的，发出即记、不等识图；参考实现给她发的、没带描述的网址图片与视频在后台补描述，补到后经 `memory.updateMessageContent` 改写那一条并发 `memory:messages-rewritten`，记忆后端不支持改写时不补。全部记录写完才兑现（不等后台的识图），写失败时以原因拒绝，已写成的几条不撤回。要记的内容在调用时同步取走：调用之后对消息的改写不算，调用方不必另做快照。
 - **`archiveNotice?`**（可选）：把平台 notice/事件（禁言、撤回、入群等）作为 `role:'notice'` 系统条目入档，`kind` 取 `noticeType`。返回 `null` 表示内容为空被跳过。
 - **`findByMessageId?`**（可选）：按平台侧 `messageId` 在最近 `scanLimit`（夹取 1..500，缺省 100）条历史里从新往旧反查归档原文，命中我方已烘焙的富文本（含图片描述）。未命中返回 `null`。
@@ -77,7 +77,7 @@ export interface MessageArchiveService {
 
 出站：参考实现另监听两个事件，替换实现要同样做（见下面的骨架），否则房间、终端与子会话里发出的消息不落库，只在实时推送里：
 
-- `outbound:delivered`：适配器送达之后发的快照，调 `recordOutbound` 记进会话历史，写失败记 warn，不拖住同一事件的其它监听。
+- `outbound:delivered`：适配器送达之后发的快照，调 `recordOutbound` 记进会话历史，写失败记 warn，不阻塞同一事件的其它监听。
 - `outbound:message`：子会话没有窗口，任何适配器都不认领它的出站。还没人认领（`delivery` 未设）、会话记录有 `parentId` 的同步认领，回执取 `recordOutbound(msg)`：兑现回 `ok`，拒绝回 `ok: false` 带原因。会话管理不在时判不出，不认领。
 
 manifest 双源必须同步写（`package.json` `aalis.service` 与源码 `export const`）：
@@ -211,7 +211,7 @@ await messageArchive.use.archiveIncoming(message);
 
 - **跨会话隔离**：`sessionId` 是唯一隔离维度，provider 必须严格按 `sessionId` 分桶落库，绝不能把 A 会话的消息写进 B。`triggerType: 'proactive'` 的代发任务（如 workflow 的 agent 节点）被特殊标成 `role:'notice'` + `kind:'cross-session-delegation'`，避免目标会话回看历史时把派发任务误读为「曾有用户说过」。宿主通知（带 `hostNotice`）同理标成 `role:'notice'` + `kind:'host-notice'`，且只归档 `content`：注入方包好的不可信段 `hostNotice.untrusted` 不写进消息与 metadata，provider 也不得把它落库。
 - **审计溯源**：`archiveIncoming` 把 `triggerType` / `source` 写进 `metadata`（schema-message 登记的键 `TriggerType`、`Source`），用于区分真实用户消息 vs 系统注入，会话服务据前者标出被点名与插话，也是事后审计「agent 在某群做过什么」的依据。provider 应保留这些字段。
-- **本服务无 authority/SSRF/沙盒语义**：它不发起网络请求、不做权限判定。但若你的归档实现要落到外部存储，写文件请走 `storage` 的 `'<root>:/path'` 文法（注意 storage 不是沙箱，见 `docs/concepts/storage-uri-grammar.md`），拉远端资源请走 `safeFetch`（SSRF 防护，见 `docs/concepts/security-model.md`）。
+- **本服务无 authority/SSRF/沙盒语义**：它不发起网络请求、不做权限判定。但若你的归档实现要落到外部存储，写文件请走 `storage` 的 `'<root>:/path'` 文法（注意 storage 不是沙箱，见 `docs/concepts/storage-uri-grammar.md`），下载远端资源请走 `safeFetch`（SSRF 防护，见 `docs/concepts/security-model.md`）。
 - **附件富信息**：`archiveIncoming` 是图片/语音/视频描述合入对话文本的唯一入口，归档文本给模型看。发言人自己写的话、附件清单与随附的转发另记在 `metadata` 里（schema-message 登记的键 `SpokenContent`、`Attachments`、`Forwards`，见 [schema-message 的「存档元数据的键」](../api/schema-message.md#存档元数据的键)）：发言人写的话只在与归档文本不同时记；附件清单记种类、名字与地址，地址怎么取、转发记什么见 [plugin-message-archive](../plugins/plugin-message-archive.md)。会话服务回看历史与实时推送的提问取这三样，附件描述（含文件读取插件内联的全文）不进气泡。
 
 ## 8. 交叉链接

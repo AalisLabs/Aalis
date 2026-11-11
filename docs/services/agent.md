@@ -37,7 +37,7 @@ export interface BoundAgent extends AgentService {
 - `registerPreprocessor` 走 `registrar`：同名替换、提供者换人自动重挂、随激活撤回。当前提供者不支持预处理器时本次不生效，换到支持的提供者时补上。
 - 对话调用走业务句柄 `agent.use`（如 `agent.use.handleMessage(message)`）：转发给本插件选中的那一家，每次访问成员重新解析。`handleMessage` 返回时这条输入已落定（所在的一轮结束，或它被放掉、没进一轮就被丢掉）；入口记下这个会话的代号（api-session-manager 的 `generationOf`），交给通道之前（按住期间等着的放开之后）再取一次，变了的是会话删除之前的一代，放掉、不归档。
 - `abort(sessionId, { turnId?, queued?, reason?, by? })`：停下这个会话在跑的一轮。给了 `turnId` 而对不上（那一轮已结束或换成了新一轮）时什么也不停；`queued` 为真时连同排队与待插入、还没进一轮的输入一起放掉（不开轮，在那一轮落定之后归档，不带回合 id），否则它们照常开下一轮；`reason` 只写进回合结束那一行日志；`by` 是停下这一轮的人（与入站的 `actor` 同一形状），不给即没有具体的人，参考实现据此在历史里给下一轮的模型写停下标记（schema-message 的 `TurnStopped`）。返回有没有停下在跑的一轮。
-- `clearing(sessionIds, clear, reason?)`：清消息历史的一方（`/clear` 与会话管理删会话）把整条清理（`memory:clear` 链连同默认动作；会话管理删会话时交来的先删各级子会话、发 `session:deleted`）交给它：先停下这些会话（不给即全部会话）在跑的一轮、放掉排着与待插入的输入（不归档），等它们落定再跑 `clear`，按住这些会话到 `clear` 结束，这期间到的输入之后再处理。停下与按住在各家清理之外，不看中间件的登记先后。实现者自己的 `session:deleted` 监听在这次按住之内被调起，不能等按住放开。`reason` 同 `abort` 的，只写进回合结束那一行日志。
+- `clearing(sessionIds, clear, reason?)`：清消息历史的一方（`/clear` 与会话管理删会话）把整条清理（`memory:clear` 链连同默认动作；会话管理删会话时交来的先删各级子会话、发 `session:deleted`）交给它：先停下这些会话（不给即全部会话）在跑的一轮、放掉排着与待插入的输入（不归档），等它们落定再跑 `clear`，按住这些会话到 `clear` 结束，这期间到的输入之后再处理。停下与按住在各家清理之外，不看中间件的登记先后。实现者自己的 `session:deleted` 监听在这次按住之内被调用，不能等按住放开。`reason` 同 `abort` 的，只写进回合结束那一行日志。
 - 事件 `agent:queue`：`{ sessionId, waiting }`，这个会话排着与待插入、还没进一轮的输入（已过逐条处理，按入队先后），入队、进了一轮、被放掉时发。
 - `assignModel(sessionId, model)`：把这个会话本会话层的对话模型设成 `model`（写进会话设置）。子任务插件给子会话指定模型时，在建好之后、发首条消息之前调；会话设置不在或写入被拒时抛错。
 - `TokenUsageEvent` / `TokenUsageBreakdown` / `TokenUsagePart`：每次 LLM 调用之后通过 `token:usage` 事件 emit 的输入用量：`used` 取模型服务返回的输入 token（没有时取估算），12 桶拆分与按显示次序排好、带显示名的拆分表 `parts`（界面照画）是估算的拆分，另带本回合到这次调用为止是否经过了硬裁剪（`trimmed`）、按没经过硬裁剪的列表估算的历史与工具结果（`untrimmedHistory`）、会话历史的条数（`historyMessages`，只数对话消息，含条数线之外、没发给模型的部分）与所在回合的 `turnId`（回应 `token:request` 的快照不带）。
@@ -152,7 +152,7 @@ export default definePlugin({
 
 ## 6. 能力 / 风险 → 影响
 
-**ToolCallContext 的参与者**：agent 构造工具上下文时用 api-authority 的 `originTurnOf(这一轮的输入, isOwner)` 拼会话、`platform`、`userId`、`participants` 与 `inbound`：各条输入的 `actor`（没有时是发言者）作授权身份，按身份去重、owner 的各个身份合成一个，`platform`/`userId` 保持会话语义。默认实现还传入 `enabledGroups`、`acceptsImages`（这一轮的模型在模型服务登记了视觉能力时为 `true`；为 `false` 时工具结果里的图不挂到 tool 消息上，模型只读文字结果；media 不在时当轮附件里的图也不交，正文里的图片占位照旧）、回合 `signal`（守卫等审批期间被 abort 的工具不再执行），以及 `turnId` 与每次调用各自的 `callId`；`inbound` 是本回合的 `source`、起它的那一轮 `fromTurn` 与入站消息的平台消息 id `messageId`。自定义 provider 必须保留参与者语义（同样用 `originTurnOf` 拼），否则系统触发的工具会以错误身份执权。续做（如后台任务结束通知开的一轮）的消息不带发言者与 `actor`，`userId` 取起它的那一轮的发言者、参与者取那一轮的，执行守卫按那一轮判这一轮的类别；归档与提示词钩子仍按消息本身的 `userId`（没有）。子任务插件在入站回合里派出的任务消息同样不带 `actor`，参与者取派它的那次调用的，执行守卫同样按派它的那一轮判类别，`userId` 是消息本身的 `parent:<父会话 id>`。
+**ToolCallContext 的参与者**：agent 构造工具上下文时用 api-authority 的 `originTurnOf(这一轮的输入, isOwner)` 拼会话、`platform`、`userId`、`participants` 与 `inbound`：各条输入的 `actor`（没有时是发言者）作授权身份，按身份去重、owner 的各个身份合成一个，`platform`/`userId` 保持会话语义。默认实现还传入 `enabledGroups`、`acceptsImages`（这一轮的模型在模型服务登记了视觉能力时为 `true`；为 `false` 时工具结果里的图不挂到 tool 消息上，模型只读文字结果；media 不在时当轮附件里的图也不交，正文里的图片占位照旧）、回合 `signal`（守卫等审批期间被 abort 的工具不再执行），以及 `turnId` 与每次调用各自的 `callId`；`inbound` 是本回合的 `source`、发起它的那一轮 `fromTurn` 与入站消息的平台消息 id `messageId`。自定义 provider 必须保留参与者语义（同样用 `originTurnOf` 拼），否则系统触发的工具会以错误身份执权。续做（如后台任务结束通知开的一轮）的消息不带发言者与 `actor`，`userId` 取发起它的那一轮的发言者、参与者取那一轮的，执行守卫按那一轮判这一轮的类别；归档与提示词钩子仍按消息本身的 `userId`（没有）。子任务插件在入站回合里派出的任务消息同样不带 `actor`，参与者取派它的那次调用的，执行守卫同样按派它的那一轮判类别，`userId` 是消息本身的 `parent:<父会话 id>`。
 
 **新消息怎么处理（通道层）**：新消息从不打断在跑的一轮：真人消息叠进由真人消息开的那一轮或排在它之后，带来源的注入各自成一轮。规则见 [plugin-agent](../plugins/plugin-agent.md) 的「新消息怎么处理」。
 
@@ -166,7 +166,7 @@ export default definePlugin({
 
 ## 7. 边界情形与注意事项
 
-**`abort` 中止不了已经进入 `execute` 的工具**：`AbortSignal` 在 LLM 流式消费、工具循环每次迭代头部，以及流结束标记 / 落库 / 外发之前的提交点被检查；提交点之前被中止的回合不落库、不外发，按 `outcome=aborted` 收尾。一旦进入并行 `tools.use.execute()`，当前在飞的 handler 会跑完，副作用照常发生，只是下一轮 LLM 不再发起。默认实现把 `signal` 放进 `ToolCallContext`，工具 handler 可自行尊重它；契约不强制每个工具都中断。
+**`abort` 中止不了已经进入 `execute` 的工具**：`AbortSignal` 在 LLM 流式消费、工具循环每次迭代头部，以及流结束标记 / 落库 / 外发之前的提交点被检查；提交点之前被中止的回合不落库、不外发，按 `outcome=aborted` 收尾。一旦进入并行 `tools.use.execute()`，当前在飞的 handler 会执行完毕，副作用照常发生，只是下一轮 LLM 不再发起。默认实现把 `signal` 放进 `ToolCallContext`，工具 handler 可自行尊重它；契约不强制每个工具都中断。
 
 **abort 路径不回滚已完成的工具记录**（有意为之）：删除会让 agent「忘记自己刚做过的有副作用的事」导致下一轮重复调用。真正的 orphan 由 `sanitizeToolCallHistory` 在装载历史时兜底过滤。
 

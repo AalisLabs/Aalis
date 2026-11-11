@@ -96,7 +96,7 @@ plural 与 select 必须有 other；未知类型、`list` 后面不是 `or` 的�
 3. 再逐项找语言相同、文字不同的：zh-TW 读者遇到只有简体时用简体。
 4. 再找 en；都没有用原文。
 
-ns 不在目录、键不存在、原文解析失败、选中的那条渲染失败时用 `text.source`。参数里的文字对象用同一条链递归：一次渲染（一次 `resolveText` 或 `resolveSource`）里至多渲染 1024 个、嵌套 32 层，超出的用那一个的 source，伪造的重复参数不放大、环不挂死。`escape: 'markdown'` 把字符串参数按 Markdown 转义（字典里写的 Markdown 原样），Markdown 正文一类出口用；这时回落的 `text.source` 整句转义（模板自带的格式随之失效，换来参数不被当成 Markdown）。
+ns 不在目录、键不存在、原文解析失败、选中的那条渲染失败时用 `text.source`。参数里的文字对象用同一条链递归：一次渲染（一次 `resolveText` 或 `resolveSource`）里至多渲染 1024 个、嵌套 32 层，超出的用那一个的 source，伪造的重复参数不放大、环不会无限递归。`escape: 'markdown'` 把字符串参数按 Markdown 转义（字典里写的 Markdown 原样），Markdown 正文一类出口用；这时回落的 `text.source` 整句转义（模板自带的格式随之失效，换来参数不被当成 Markdown）。
 
 `resolveSource(text, { timeZone?, escape? })` 只按原文语言渲染，出口在 i18n 服务缺席时用：时区与转义同 `resolveText`，参数里的文字对象同样取各自的原文，回落规则同上。
 

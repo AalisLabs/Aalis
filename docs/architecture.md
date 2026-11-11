@@ -25,7 +25,7 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 
 > 业务插件同样受约束：直接 import `node:fs` / `node:child_process` / `node:os` / `node:http(s)` 被 biome 拦截，必须改走 `@aalis/api-storage` / `@aalis/api-process`。完整白名单与豁免理由见 [node-usage-policy](architecture/node-usage-policy.md)。
 
-环境耦合全部收敛在宿主层 `@aalis/runtime`（monorepo 由仓库根 `src/index.ts` 一行 `startAalis` 拉起）。重启策略与 dev 开关经 `new App({ ... })` 注入；插件发现与配置文档由宿主持有，插件定义连同各实例的配置、禁用标记经 `app.pluginAll` 交给 core，宿主路径、日志、配置文档与热扫描以服务的形式登记在根激活上：
+环境耦合全部收敛在宿主层 `@aalis/runtime`（monorepo 由仓库根 `src/index.ts` 一行 `startAalis` 启动）。重启策略与 dev 开关经 `new App({ ... })` 注入；插件发现与配置文档由宿主持有，插件定义连同各实例的配置、禁用标记经 `app.pluginAll` 交给 core，宿主路径、日志、配置文档与热扫描以服务的形式登记在根激活上：
 
 | 宿主件 | 接到 core 的方式 | 默认实现（在 `@aalis/runtime`） | 职责 |
 |---|---|---|---|
@@ -421,7 +421,7 @@ WebUI authority 页（仅 owner）+ 指令 `/level`（设某用户等级）与 `
        ├─ 指令：在同一会话里问发出者本人，只认他的下一条消息（y 确认，其余取消，超时取消）
        └─ 工具：owner 审批（approvals）
             ├─ 这一轮里有 owner 的话（她亲手发起，或它的续做、她那一轮派的子任务，不论在哪个会话）→ 推给在场的审批面，owner 批准才执行
-            └─ 其余（起它的那一轮不是人亲手的，如定时任务、编排与它们派的子任务；别人亲手发起的）→ 立即拒绝，不推给任何面
+            └─ 其余（发起它的那一轮不是人亲手的，如定时任务、编排与它们派的子任务；别人亲手发起的）→ 立即拒绝，不推给任何面
 ```
 
 `confirm:'always'` 是最高危档：**每次都必须有人确认**（cron 等无人可问的场景直接拒），只有确认覆盖设为 off 时对参与者都是 owner 的回合免。

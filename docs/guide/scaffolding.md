@@ -21,7 +21,7 @@ Aalis 提供两个互不相干的脚手架，先确认你需要哪个：
 - **项目** = 一个数据目录 `data/`（主配置 `aalis.config.yaml`，密钥字段只放引用；密钥文件 `secrets.yaml`；另有数据与日志）+ 一行 `startAalis()` + 若干装进 `node_modules` 的 `@aalis/plugin-*`。运行时从项目 `package.json` 的依赖里发现并加载这些插件。
 - **插件** = 一个默认导出 `definePlugin({ name, uses, apply })` 产物的 npm 包（`create-aalis-plugin` 生成 `src/index.ts`），被某个项目装进去后由 runtime 发现、交给 core 注册。
 
-两个脚手架都不写 `workspace:`（产物不在 Aalis 仓库里，外部装不上），依赖版本按生成时源上的最新版写，但写法不同：项目的根依赖写 `^<最新版>`，它是终端用户项目的锁定点，跨次版本升级走插件市场的「更新」（带预检与回滚）；插件的依赖写 `>=<最新版> <1.0.0`，它会发布出去被别人装，规则见 [第三方插件开发者指南](./third-party-plugin.md#_5-1-类型从哪里-import-依赖怎么归类)。
+两个脚手架都不写 `workspace:`（产物不在 Aalis 仓库里，外部无法安装），依赖版本按生成时源上的最新版写，但写法不同：项目的根依赖写 `^<最新版>`，它是终端用户项目的锁定点，跨次版本升级走插件市场的「更新」（带预检与回滚）；插件的依赖写 `>=<最新版> <1.0.0`，它会发布出去被别人装，规则见 [第三方插件开发者指南](./third-party-plugin.md#_5-1-类型从哪里-import-依赖怎么归类)。
 
 ---
 
@@ -101,7 +101,7 @@ npm start -- status
 `minimal` 与 `standard` 档在问对话模型之前探一次本机的 Ollama：设了 `OLLAMA_HOST`（Ollama 自己的地址变量）时探它，否则探 `http://127.0.0.1:11434`；请求 `/api/tags`，1 秒内没有像样的回应就当没有；在同一个 1 秒里再逐个查 `/api/show` 报的模型能力。`OLLAMA_HOST` 的写法与 Ollama 一致：不写协议按 `http`、端口默认 11434，写了 `http://` 或 `https://` 的用协议的默认端口；解析不了时脚手架退出，写明怎么改。
 
 - 探到了：打印「探到 Ollama（地址），零 key 可用」，对话模型默认 Ollama，语义记忆默认「要」并用 Ollama Embedding。
-- 用到 Ollama 时，结尾的「下一步」列出启动前要拉的模型：Ollama 里还没有对话模型时提示 `ollama pull <对话模型名>`（判据与 Ollama 对话模型插件相同：`/api/show` 报的能力里没有 `completion` 的嵌入模型不算，查不到能力的算）；语义记忆用 Ollama Embedding 而里面没有 `nomic-embed-text` 时提示 `ollama pull nomic-embed-text`。
+- 用到 Ollama 时，结尾的「下一步」列出启动前要下载的模型：Ollama 里还没有对话模型时提示 `ollama pull <对话模型名>`（判据与 Ollama 对话模型插件相同：`/api/show` 报的能力里没有 `completion` 的嵌入模型不算，查不到能力的算）；语义记忆用 Ollama Embedding 而里面没有 `nomic-embed-text` 时提示 `ollama pull nomic-embed-text`。
 - 设了 `OLLAMA_HOST` 的，它的地址写进两个 Ollama 插件配置段的 `baseUrl`。
 
 ### `--yes` 与命令行 flag 的默认值
@@ -155,7 +155,7 @@ startAalis({ appDir: here }).catch(err => {
 
 `package.json` 的依赖版本由脚手架逐包向源查：能查到最新版就写 `^<最新版>`，查不到的写 `"latest"`（`npm install` 时再取最新）。
 
-结尾打印「下一步」：进目录（跳过了安装的另加 `npm install`）、用到 Ollama 时要拉的模型、`npm start`；还有没填的密钥时逐个点名哪个插件的哪个键，写明启动后在 WebUI 插件区填或填进配置文件（`full` 档另装了不少要手配的插件，点名的不是全部，另写一句其余的启动后在「需要处理」里列出）；最后是[第一次运行](./first-run.md)的地址与装更多插件的办法（`full` 档不写后者）。
+结尾打印「下一步」：进目录（跳过了安装的另加 `npm install`）、用到 Ollama 时要下载的模型、`npm start`；还有没填的密钥时逐个点名哪个插件的哪个键，写明启动后在 WebUI 插件区填或填进配置文件（`full` 档另装了不少要手配的插件，点名的不是全部，另写一句其余的启动后在「需要处理」里列出）；最后是[第一次运行](./first-run.md)的地址与装更多插件的办法（`full` 档不写后者）。
 
 ### 自动补齐的「伴生」依赖
 
@@ -468,8 +468,8 @@ export default definePlugin({
 
 ## 下一步
 
-- 启动之后怎么用（要准备什么 / 零 key 走 Ollama / CLI 与 WebUI 两个入口 / 没起来的插件怎么看）：[guide/first-run.md](./first-run.md)
-- 装不上、起不来：[guide/troubleshooting.md](./troubleshooting.md)
+- 启动之后怎么用（要准备什么 / 零 key 走 Ollama / CLI 与 WebUI 两个入口 / 未启动的插件怎么看）：[guide/first-run.md](./first-run.md)
+- 无法安装、无法启动：[guide/troubleshooting.md](./troubleshooting.md)
 - 插件包的完整契约与发布流程：[guide/third-party-plugin.md](./third-party-plugin.md)
 - 两套元数据源（`definePlugin` 的 provides/uses vs `package.json` aalis.service）与核对纪律：[concepts/manifest-metadata.md](../concepts/manifest-metadata.md)
 - 服务模型（描述符 / 选择层与业务层 / `services.prefer` / per-entry）：[concepts/service-model.md](../concepts/service-model.md)
