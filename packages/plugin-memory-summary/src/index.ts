@@ -698,14 +698,31 @@ async function run(caps: Caps): Promise<void> {
     });
   }
 
+  // 在途的压缩（后台与手动）：收尾时等它们落定再撤回。信号在收尾开始时已断，摘要模型调用停在当前这一步，已经开始的落定写完
+  const compressing = new Set<Promise<unknown>>();
+  lifecycle.use.onDrain(async () => {
+    while (compressing.size > 0) await Promise.all(compressing);
+  }, '等在途的压缩');
+
   /**
    * 全量压缩一次（后台与手动共用）：快照全部活跃历史，切分点之前的全部（归档段）连同已有摘要压成一份新摘要，写摘要、核对快照
    * 前缀没被改过、归档这一段、写分隔标记；摘要模型挑出的单位（过了条数规则的，见 withinHalfLine）与切分点之后的消息（快照之后
    * 到达的、没写全的工具调用组）原样留在活跃历史里。进度经 session:compressing 报 start、done、error，报 done 才算压成（界面
    * 据此插「对话已压缩」）。没压成（没有能对话的模型、模型失败、期间被清空或历史被改动）时以原因拒绝，不留下写入（已写的摘要
-   * 回滚）；待摘要部分没有对话时什么都不做、不报进度；开始之前就失败的（正在压缩、记忆不在、读不出历史）只拒绝，也不报
+   * 回滚）；待摘要部分没有对话时什么都不做、不报进度；开始之前就失败的（正在压缩、记忆不在、读不出历史）只拒绝，也不报。
+   * 在途时记着，本插件收尾时等它落定
    */
-  async function compressHistory(sessionId: string): Promise<void> {
+  function compressHistory(sessionId: string): Promise<void> {
+    const work = runCompression(sessionId);
+    const done: Promise<unknown> = work.then(
+      () => compressing.delete(done),
+      () => compressing.delete(done),
+    );
+    compressing.add(done);
+    return work;
+  }
+
+  async function runCompression(sessionId: string): Promise<void> {
     if (summarizing.has(sessionId)) throw new TextError(t('busy'));
     summarizing.add(sessionId);
     const cleared = clearedSince(sessionId);
