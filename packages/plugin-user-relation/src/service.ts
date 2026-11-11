@@ -2428,6 +2428,11 @@ export class RelationService {
             continue;
           }
           const v = await verifyAliasPair(llmModel, a, b, llmDisableThinking, this.signal);
+          // 模型调用失败（出错、限流、模型插件重载）不是否决：这一对这次不判，不记缓存，下次整理再判
+          if (v.failed) {
+            this.logger?.info(`[user-relation] consolidate LLM 核验没有判成，这次跳过 ${a.id} ↔ ${b.id}: ${v.reason}`);
+            continue;
+          }
           if (!v.isSame) {
             llmRejected++;
             if (v.hierarchy) {
@@ -2830,6 +2835,12 @@ export class RelationService {
             jaccardScore: cand.jaccardScore,
           },
         });
+        if (v.failed) {
+          this.logger?.info(
+            `[user-relation] consolidate LLM 核验没有判成（宽召回），这次跳过 ${a.id} ↔ ${b.id}: ${v.reason}`,
+          );
+          continue;
+        }
         if (!v.isSame) {
           llmRejected++;
           // hierarchy 三态：LLM 判定为 part-of 关系 → **不合并**，改建 entity-entity[part-of] 边
@@ -3467,6 +3478,12 @@ export class RelationService {
         bNeighbors: this._computeNeighborProfile(b.id, graph, 5),
         scores,
       });
+      if (verdict.failed) {
+        logger?.info(
+          `[user-relation] consolidate event LLM 核验没有判成，这次跳过 ${a.id}(${a.title.slice(0, 20)}) ↔ ${b.id}(${b.title.slice(0, 20)}): ${verdict.reason}`,
+        );
+        return { verdict, cacheHit: false };
+      }
       if (!verdict.isSame) {
         llmRejected++;
         await this.store.saveMergeReject({

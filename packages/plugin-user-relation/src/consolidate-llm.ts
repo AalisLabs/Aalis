@@ -91,11 +91,13 @@ function fmtEvidence(qs?: string[]): string {
  * - isSame=false, hierarchy=undefined：两实体不相关或冲突，调用方应记 mergeReject
  * - isSame=false, hierarchy={parentId,childId}：两实体存在 part-of 关系（父子/包含），
  *   调用方应**拒绝合并**，改建 entity-entity[part-of] 边，避免父概念被并入子概念（或反之）。
+ * 模型调用失败时另带 failed（isSame=false）：没有判过，调用方不合并、也不记 mergeReject，下次整理再判。
  */
 interface AliasPairResult {
   isSame: boolean;
   reason: string;
   hierarchy?: { parentId: string; childId: string };
+  failed?: true;
 }
 
 /**
@@ -195,19 +197,10 @@ export async function verifyAliasPair(
     return { isSame: false, reason: `LLM verdict 字段非法："${String(parsed.verdict)}"` };
   } catch (err) {
     signal?.throwIfAborted();
-    return { isSame: false, reason: `LLM 调用失败: ${err instanceof Error ? err.message : String(err)}` };
+    return { isSame: false, failed: true, reason: `LLM 调用失败: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 
-/**
- * (A2) 判断两个事件是否为同一事件。LLM 输出 JSON：{"isSame": boolean, "reason": string}
- * 类比 verifyAliasPair，针对 EventNode 字段（title/summary/category/aliases）。
- *
- * 调用方应已经过结构相似 + 文本相似双向过滤（避免对全图 N² 个 pair 调 LLM）。
- * 解析失败 / 异常 → 视为 false（保守不合并）。
- *
- * 统一改造：与 verifyAliasPair 对称，同时接收邻居剖面（计数 + top-K 名字+权重）+ 多维相似度分数。
- */
 interface EventPairContext {
   aEvidenceQuotes?: string[];
   bEvidenceQuotes?: string[];
@@ -219,6 +212,15 @@ interface EventPairContext {
   scores?: PairScores;
 }
 
+/**
+ * (A2) 判断两个事件是否为同一事件。LLM 输出 JSON：{"isSame": boolean, "reason": string}
+ * 类比 verifyAliasPair，针对 EventNode 字段（title/summary/category/aliases）。
+ *
+ * 调用方应已经过结构相似 + 文本相似双向过滤（避免对全图 N² 个 pair 调 LLM）。
+ * 解析失败 → 视为 false（保守不合并）；模型调用失败另带 failed，同 verifyAliasPair。
+ *
+ * 统一改造：与 verifyAliasPair 对称，同时接收邻居剖面（计数 + top-K 名字+权重）+ 多维相似度分数。
+ */
 export async function verifyEventPair(
   model: LLMModel,
   a: EventNode,
@@ -226,7 +228,7 @@ export async function verifyEventPair(
   disableThinking = true,
   signal?: AbortSignal,
   context?: EventPairContext,
-): Promise<{ isSame: boolean; reason: string }> {
+): Promise<{ isSame: boolean; reason: string; failed?: true }> {
   const prompt = [
     {
       role: 'system' as const,
@@ -282,7 +284,7 @@ export async function verifyEventPair(
     return { isSame: parsed.isSame, reason: typeof parsed.reason === 'string' ? parsed.reason : '' };
   } catch (err) {
     signal?.throwIfAborted();
-    return { isSame: false, reason: `LLM 调用失败: ${err instanceof Error ? err.message : String(err)}` };
+    return { isSame: false, failed: true, reason: `LLM 调用失败: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 

@@ -68,11 +68,16 @@ const ev = (overrides: Partial<EvidenceRef> = {}): EvidenceRef => ({
   ...overrides,
 });
 
-/** 整理用的模型替身：每次都回同一段文字 */
-const stubLLM = (content: string) =>
+type StubChat = (request: { messages: Array<{ content: unknown }> }) => Promise<{ content: string }>;
+/** 整理用的模型替身：给文字时每次都回它，给函数时由它回 */
+const stubLLM = (answer: string | StubChat) =>
   ref<LLMModel>([
     {
-      instance: { id: 'stub', capabilities: ['chat'], chat: async () => ({ content }) } as unknown as LLMModel,
+      instance: {
+        id: 'stub',
+        capabilities: ['chat'],
+        chat: typeof answer === 'string' ? async () => ({ content: answer }) : answer,
+      } as unknown as LLMModel,
       contextId: 'stub/consolidate',
     },
   ]);
@@ -1152,6 +1157,38 @@ describe('plugin-user-relation: consolidate event-entity 去重', () => {
     expect(r.llmVerified).toBe(0);
     expect(r.llmRejected).toBe(1);
     expect((await service.loadAll()).entities.map(e => e.id).sort()).toEqual([work.id, topic.id].sort());
+  });
+
+  it.each([
+    ['同名实体的别名核验', ['绝航', '绝航'], []],
+    ['宽召回的别名核验', ['三角洲', '三角洲行动'], []],
+    ['事件核验', [], ['讨论夏天炎热', '讨论夏天很热']],
+  ])('%s的模型调用失败：这一对不合并、不记否决，下次整理照常再判', async (_label, names, titles) => {
+    const { service } = await makeService();
+    for (const [i, name] of names.entries()) {
+      await service.createEntity({ name, entityKind: i === 0 ? 'work' : 'topic', evidence: [ev()] });
+    }
+    for (const title of titles) await service.createEvent({ title, sessionScope: 'global', evidence: [ev()] });
+    const failing = stubLLM(async () => {
+      throw new Error('zz 模型服务暂时不可用');
+    });
+    const same = stubLLM(async request => {
+      const system = String(request.messages[0]?.content ?? '');
+      if (system.includes('实体消歧')) return { content: SAME_VERDICT };
+      if (system.includes('事件消歧')) return { content: '{"isSame": true, "reason": "同一件事"}' };
+      return { content: '' };
+    });
+    const size = async () => {
+      const snap = await service.loadAll();
+      return snap.entities.length + snap.events.length;
+    };
+    const opts = { autoLink: true, skipLowScorePairs: false };
+
+    const failed = await service.consolidate({ ...opts, llm: { models: failing, modelRef: {} } });
+    expect(failed.llmRejected).toBe(0);
+    expect(await size()).toBe(2);
+    await service.consolidate({ ...opts, llm: { models: same, modelRef: {} } });
+    expect(await size()).toBe(1);
   });
 
   it('(3d-guard) 已存在 part-of 边的两实体 → 即便 name/alias 严格等价、模型判同一也不会被 alias-merge', async () => {
