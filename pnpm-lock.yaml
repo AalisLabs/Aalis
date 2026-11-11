@@ -908,7 +908,7 @@ importers:
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../api-llm
       '@aalis/api-media':
-        specifier: workspace:>=0.13.0 <1.0.0
+        specifier: workspace:>=0.13.1 <1.0.0
         version: link:../api-media
       '@aalis/api-memory':
         specifier: workspace:>=0.9.0 <1.0.0
@@ -966,7 +966,7 @@ importers:
   packages/plugin-agent:
     dependencies:
       '@aalis/api-agent':
-        specifier: workspace:>=0.11.0 <1.0.0
+        specifier: workspace:>=0.11.1 <1.0.0
         version: link:../api-agent
       '@aalis/api-authority':
         specifier: workspace:>=0.12.0 <1.0.0
@@ -1042,7 +1042,7 @@ importers:
   packages/plugin-asr-openai:
     dependencies:
       '@aalis/api-asr':
-        specifier: workspace:>=0.12.0 <1.0.0
+        specifier: workspace:>=0.12.1 <1.0.0
         version: link:../api-asr
       '@aalis/api-process':
         specifier: workspace:>=0.10.0 <1.0.0
@@ -1076,7 +1076,7 @@ importers:
   packages/plugin-asr-whisper-cpp:
     dependencies:
       '@aalis/api-asr':
-        specifier: workspace:>=0.12.0 <1.0.0
+        specifier: workspace:>=0.12.1 <1.0.0
         version: link:../api-asr
       '@aalis/api-process':
         specifier: workspace:>=0.10.0 <1.0.0
@@ -2016,10 +2016,10 @@ importers:
   packages/plugin-media:
     dependencies:
       '@aalis/api-agent':
-        specifier: workspace:>=0.11.0 <1.0.0
+        specifier: workspace:>=0.11.1 <1.0.0
         version: link:../api-agent
       '@aalis/api-asr':
-        specifier: workspace:>=0.12.0 <1.0.0
+        specifier: workspace:>=0.12.1 <1.0.0
         version: link:../api-asr
       '@aalis/api-authority':
         specifier: workspace:>=0.12.0 <1.0.0
@@ -2037,7 +2037,7 @@ importers:
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../api-llm
       '@aalis/api-media':
-        specifier: workspace:>=0.13.0 <1.0.0
+        specifier: workspace:>=0.13.1 <1.0.0
         version: link:../api-media
       '@aalis/api-memory':
         specifier: workspace:>=0.9.0 <1.0.0
@@ -2326,7 +2326,7 @@ importers:
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-authority
       '@aalis/api-media':
-        specifier: workspace:>=0.13.0 <1.0.0
+        specifier: workspace:>=0.13.1 <1.0.0
         version: link:../api-media
       '@aalis/api-memory':
         specifier: workspace:>=0.9.0 <1.0.0
@@ -2446,7 +2446,7 @@ importers:
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-package-manager
       '@aalis/api-plugin-source':
-        specifier: workspace:>=0.2.0 <1.0.0
+        specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-plugin-source
       '@aalis/api-process':
         specifier: workspace:>=0.10.0 <1.0.0
@@ -3895,10 +3895,10 @@ importers:
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-host-paths
       '@aalis/api-plugin-source':
-        specifier: workspace:>=0.2.0 <1.0.0
+        specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-plugin-source
       '@aalis/schema-config':
-        specifier: workspace:>=0.16.0 <1.0.0
+        specifier: workspace:>=0.16.2 <1.0.0
         version: link:../schema-config
       '@aalis/schema-i18n':
         specifier: workspace:>=0.1.0 <1.0.0

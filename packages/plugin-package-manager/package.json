@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-package-manager",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -31,7 +31,7 @@
     "@aalis/api-doctor": "workspace:>=0.9.0 <1.0.0",
     "@aalis/api-process": "workspace:>=0.10.0 <1.0.0",
     "@aalis/util-dep-spec": "workspace:>=0.1.1 <1.0.0",
-    "@aalis/api-plugin-source": "workspace:>=0.2.0 <1.0.0",
+    "@aalis/api-plugin-source": "workspace:>=0.3.0 <1.0.0",
     "@aalis/api-host-config": "workspace:>=0.3.0 <1.0.0",
     "@aalis/api-host-paths": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-package-manager": "workspace:>=0.3.0 <1.0.0",
@@ -44,7 +44,8 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.21.0 <1.0.0"
+    "@aalis/core": ">=0.21.0 <1.0.0",
+    "@aalis/runtime": ">=0.20.0 <1.0.0"
   },
   "aalis": {
     "service": {

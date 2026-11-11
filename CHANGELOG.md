@@ -8,25 +8,34 @@
 
 ---
 
-## 未发布
+## 2026-11-11（core 0.21.1；89 个包：9 minor / 79 patch / 1 新包）
+
+按次版本：runtime 0.20.0、api-plugin-source 0.3.0、plugin-package-manager 0.11.0、plugin-scheduler 0.17.0、plugin-workflow 0.17.0、plugin-draw 0.6.0、plugin-code-sandbox-os 0.9.0、plugin-process-local 0.10.0、plugin-flow-control 0.16.0；按补丁版本：core 0.21.1、schema-config 0.16.2、api-host-config 0.3.1、api-agent 0.11.1、api-approval 0.2.1、api-asr 0.12.1、api-authority 0.12.1、api-media 0.13.1、api-package-manager 0.3.1、api-tools 0.12.2、plugin-adapter-onebot 0.17.2、plugin-agent 0.17.1、plugin-asr-openai 0.13.1、plugin-asr-whisper-cpp 0.13.1、plugin-authority 0.15.2、plugin-checkpoint 0.17.1、plugin-commands 0.15.1、plugin-contributions 0.3.1、plugin-embedding-ollama 0.13.1、plugin-embedding-openai 0.14.1、plugin-file-reader 0.15.1、plugin-hooks 0.3.1、plugin-image-sender 0.10.1、plugin-llm-deepseek 0.16.1、plugin-llm-ollama 0.14.1、plugin-llm-openai 0.16.1、plugin-maimai 0.12.1、plugin-media 0.17.1、plugin-memory-summary 0.14.1、plugin-memory-vector 0.15.1、plugin-message-archive 0.14.1、plugin-office 0.13.1、plugin-okx-trading 0.13.1、plugin-reach 0.3.2、plugin-session-manager 0.16.2、plugin-subtask 0.15.2、plugin-tool-browser 0.15.1、plugin-tool-onebot 0.13.1、plugin-tool-system 0.14.2、plugin-tools 0.12.1、plugin-user-profile 0.15.1、plugin-user-relation 0.17.1、plugin-websearch-serper 0.13.1、plugin-webui-server 0.18.1、api-doctor 0.9.1、api-llm 0.15.1、api-memory 0.9.1、api-process 0.10.1、api-reach 0.4.1、api-session-protocol 0.2.2、api-session-settings 0.1.1、api-webui 0.14.1、api-workflow 0.13.1、create-aalis 0.10.1、plugin-cli 0.14.3、plugin-cron-engine 0.10.1、plugin-doctor 0.10.1、plugin-i18n 0.1.1、plugin-mcp-client 0.15.2、plugin-mcp-server 0.15.1、plugin-memory-history 0.14.1、plugin-memory-inmemory 0.13.1、plugin-memory-mongodb 0.14.1、plugin-memory-sqlite 0.14.1、plugin-prompt-budget 0.9.1、plugin-session-server 0.3.2、plugin-skills 0.15.2、plugin-storage-local 0.16.1、plugin-tool-code-runner 0.12.1、plugin-tool-search 0.13.1、plugin-tool-session 0.16.1、plugin-trigger-policy 0.17.1、plugin-usage-stats 0.2.2、plugin-vectorstore-lancedb 0.14.1、plugin-webui-client 0.17.2、schema-i18n 0.1.1、schema-message 0.11.2、util-cron 0.2.1、util-json-repair 0.6.1；util-chromium 0.1.0（新包）。
 
 ### core 与配置
 
 - @aalis/core、@aalis/schema-config、@aalis/runtime：配置拷贝改为逐层拷贝，数组里的数组也拷开，插件就地改它不再改到调用方传入的对象（如 runtime 的配置文档）；原型不是 `Array.prototype` 的数组（子类、vm 等别的 realm 造的、改过原型的）与别的类实例一样按引用透传。数组成环的配置与对象成环一样拒收：core 的登记与改配置返回 false，拒因写明是环状引用；runtime 装载 `aalis.config.yaml` 时，递归别名（如 `&a [1, *a]`）解出的成环数组让整份文档被拒，启动时拒绝启动，运行中的改动不生效、沿用旧配置，之后的进程保存与配置写坏时一样拒写，不盖掉这份手改（对象成环同样如此，原来环在插件配置段以外时运行态会先换成被拒的文档，下一次保存还会把手改整份盖掉）。
 - @aalis/core：多实例的 id 须为「name:后缀」（前缀是本定义的 name、后缀非空），其余形状记 error 并拒绝登记。
-- @aalis/core：`register` 与 `updateConfig` 的配置同一规则：不传即 `{}`，传了须是纯对象；null、数组、原始值与类实例拒收、返回 false（register 记 error，updateConfig 记 warn）。日志里的「配置无法拷贝」改为「配置无效」。
+- @aalis/core：`register` 与 `updateConfig` 收到的配置同一规则：须是纯对象，null、数组、原始值与类实例拒收、返回 false（register 记 error，updateConfig 记 warn）。`register` 不传配置即 `{}`；`updateConfig` 的配置必须传，不传同样拒收、保留旧配置。日志里的「配置无法拷贝」改为「配置无效」。
 - @aalis/core：插件定义在登记时取定，之后再改定义对象不生效，要换定义先卸载再重新登记；`getStatus()` 每次交出新的数组与对象。`config.use` 每次激活一份拷贝，`getPlugin().config` 也交拷贝，插件就地改配置只影响本次激活。
 - @aalis/core：事件总线与日志中枢按派发开始时的登记送达，途中新登记的不收这一次，途中退订的跳过；sticky 屏障（`app:ready`、`app:started`）派发途中才登记的监听器经补发收到，`start()` 不再等它。日志中枢同一函数订阅两次各收一份、各自退订。
 - @aalis/core：插件管理器（`plugins` 作用域）的日志晚一个微任务交给宿主，宿主日志回调里看到的是改完之后的状态。注入日志器的 `child` 派生出的不是日志器时沿用上一层。
 - @aalis/core：偏好与登记没变时不发 `service:changed`（同值的 `prefer`、没有可清的 `unprefer`、重复调用的退订）；停机打断的那一轮重算不发 `plugins:changed`。
-- @aalis/core：去掉重算的轮数上限与「疑似插件间状态振荡」告警；初始化期 required 依赖缺失的重试预算不变，用尽时 `failure` 的 `cause` 是最后一次的不可用错误。
+- @aalis/core：去掉重算的轮数上限与「疑似插件间状态振荡」告警；初始化期 required 依赖缺失的重试预算不变。预算在激活途中用尽（apply 里访问 required 服务抛不可用）时，`failure` 的 `cause` 是这次抛出的不可用错误；在转入后台、还在激活中的插件因 required 依赖下线被拆时用尽的，`failure` 不带 `cause`。
 - @aalis/core：关闭之后迟到登记的清理（`onDrain`、`onDispose`、`track`）各记一条 warn 并就地执行，陆续登记的清理整段收口共用一个 `disposeTimeoutMs`；拒收的告警统一写「激活 "x" 已关闭」。停机时无依赖的插件按登记序倒着关，重启过的不再提到最前。
+- @aalis/core：宿主日志回调里（记「正在启动...」时）再调 `start()`，拿到的是同一次启动，不再启动第二次、让 `app:ready` 与 `app:started` 各发两次；`start()` 与 `stop()` 一样先交出完成对象再开始。
+- @aalis/core：`pluginAll` 的一批里有一项为 null 或字段的 getter 抛错时只拒这一条，其余照常登记并激活；原来整批以 TypeError 拒绝，同一批已登记的条目停在 pending 没人重算。配置的 getter 在拷贝时重入登记同一 id 的，外层这一次按重名被拒，只登记、只启动一份。
+- @aalis/core：`apply` 抛出读原型就抛错的值（如 getPrototypeOf 陷阱抛错的 Proxy）时照常转 error；原来停在 activating，没有失败原因。
+- @aalis/core：停用、卸载、重启的中止信号在关闭计划排定之后才发（停机仍在冻结激活时发，早于 `app:stopping`），中止监听器里调 `stop()` 不再与停机互等。两张关闭计划交叠时，后一张里的提供者不再抢在前一张里还在用它的消费者收尾之前清理。
+- @aalis/core：`follow` 的回调返回读 `then` 就抛错的值时，钉住的句柄照常在清理落定后失效，换了提供者之后不再打到旧实例；回调返回的 Promise 被拒时记一条带拒因的 warn。经 registrar 登记的条目同键替换后排到末尾，换提供者补登记时按这个次序（发给模型的工具次序不再随提供者重启变化）。
+- @aalis/core：登记与改配置被拒时，错误作为日志的附加参数（带调用栈），不再内插进消息；初始化期重试用尽的那条 error 同样带上最后一次的不可用错误。
 - @aalis/runtime、@aalis/api-host-config：插件配置段须为映射。留空读入即 `{}`；数组与标量在启动时一行报错退出（点名 `plugins.<id>`），热重载时搁置这次变更。host-config 的 `setPluginConfig`、`applyPluginConfig` 收到不是映射的配置时抛错，什么都不改。
+- @aalis/schema-config：`validateConfig` 只认配置的自有属性，与 `parseConfig` 同一口径：schema 里有 `valueOf`、`toString` 这类与原型属性同名的字段而配置里没写时，按未配置处理（必填的报缺失），原来读到原型上的函数，报「期望 string，得到 function」。分组与数组元素同样如此。
 
 ### runtime 与插件来源
 
-- @aalis/runtime（破坏性）：`withPluginConfigSync(app, store, opts?)` 不再收加载器，返回 `{ prepare }`，交给 `createPluginDiscovery` 新加的第四个参数 `options`（类型 `PluginDiscoveryOptions`）；发现驱动每批调用一次 `prepare`，这一批有改动就落盘一次，冷启动不再另外收尾。`PluginLoader` 仍是 `discover`、`load` 与可选的 `reload`。
-- @aalis/api-plugin-source（破坏性）：插件来源服务加必填方法 `loaded(name)`，回以 name 登记的主实例是不是经插件来源加载的，没登记或宿主直接登记的回 false。runtime 实现它。
+- @aalis/runtime（破坏性）：`withPluginConfigSync(app, store, opts?)` 不再收加载器，返回 `{ prepare }`，交给 `createPluginDiscovery` 新加的第四个参数 `options`（类型 `PluginDiscoveryOptions`）；发现驱动每批调用一次 `prepare`，这一批有改动就落盘一次，冷启动不再另外收尾。
+- @aalis/api-plugin-source（破坏性）：插件来源服务（`PluginSourceService`）加必填方法 `loaded(name: string): boolean`：以 name 登记的主实例是经插件来源加载的（插件名即包名，即名为 name 的包加载上了）时为 true；name 没有登记、或是宿主绕过插件来源直接登记的，为 false。名字已登记时插件来源不再加载同名的包，所以名字已登记不等于这个包加载上了，判某个包装没装上看它。runtime 实现它。
 - @aalis/api-plugin-source：新增 `declaresPlugin(manifest)`，`package.json` 的 `keywords` 含 `aalis-plugin` 即是插件；两个加载器与包管理共用这一份判定。
 - @aalis/runtime：扫 packages 目录的 `createFsPluginLoader` 与 node_modules 加载器按同一份规则解析入口（`exports` 取 `"."` 的 import 条件目标，没有 `exports` 按 `main`），原来只看 `main`、没写时取 `dist/index.js`；入口解不出时告警并跳过。
 - @aalis/runtime（破坏性）：插件定义的 `name` 必须与包名相同，不一致的包在发现时报错拒载，原来只告警、照常加载。同一轮发现到同名的两份只加载前一份，告警点名两处来源；插件名已登记的不再导入，宿主直接登记的另告警。跳过与拒载都在同步配置之前，不碰配置段。
@@ -35,34 +44,83 @@
 - @aalis/runtime（破坏性）：删掉退出时的终端复原（`installTerminalStateRestorer`、`restoreTerminalState` 与 `startAalis` 的 `terminalRestore`），改终端模式的插件（终端界面）在停用与进程退出时自己复原。
 - @aalis/runtime：关掉所在的终端（SIGHUP）时走完停机、以 0 退出；以 `--service` 运行时 `kill -HUP` 同样走完停机、以 0 退出。按 Ctrl+C 开始停机时在 stderr 提示改按 Ctrl+\（Windows 为 Ctrl+Break）当场退出；停机途中再按 Ctrl+C 不打断停机。
 - @aalis/runtime：stdout、stderr 写出错 EIO 或 EPIPE（终端已挂断、管道的读端已走）时与 SIGHUP 一样走完停机，此后的写不再报错；以 `--service` 运行时以 75 退出、由服务管理器重新启动进程，否则以 0 退出。respawn 出来的后代自成会话，关掉终端时收不到 SIGHUP，原来之后写日志得到 EIO 就以 1 退出、不经停机。
-- @aalis/plugin-package-manager（破坏性）：插件 id 就是包名，不再为取定义名另外 import 插件入口，`declaresPlugin` 移到 `@aalis/api-plugin-source`、本包不再导出；`PackageManagerDeps` 去掉 `resolveDefinitionName`，新增必填的 `signal`（本插件这次激活的中止信号），其余成员一律必填（原来可选的 `pluginStatus`、`availableServices`、`idle`、`recoveryChannelProviders`、`cleanupConfig`、`listPluginInstanceIds`、`restartApp` 各带一段缺省兜底）。插件名被宿主直接登记的插件占着时，安装回执写明、未加载（`ok` 为 false），不再报已安装并加载；卸载这样的包只卸包，不卸那个插件、不动它的配置。新增 peerDependencies `@aalis/runtime >=0.20.0`：runtime 低于 0.20.0 时装不上、也更新不到本版。
+- @aalis/plugin-package-manager（破坏性）：插件 id 就是包名，不再为取定义名另外 import 插件入口，`declaresPlugin` 移到 `@aalis/api-plugin-source`、本包不再导出；`PackageManagerDeps` 去掉 `resolveDefinitionName` 与 `listPluginInstanceIds`（实例改按 `pluginStatus` 的 `name` 筛），新增必填的 `signal`（本插件这次激活的中止信号）与 `loaded(name)`（这个插件名的插件是不是经插件来源从同名的包加载的），`log.warn` 改为必填，其余成员一律必填（原来可选的 `pluginStatus`、`availableServices`、`idle`、`recoveryChannelProviders`、`cleanupConfig`、`restartApp` 各带一段缺省时的后备做法）。插件名被宿主直接登记的插件占着时，安装回执写明、未加载（`ok` 为 false），不再报已安装并加载；卸载这样的包只卸包，不卸那个插件、不动它的配置。新增 peerDependencies `@aalis/runtime >=0.20.0 <1.0.0`：runtime 低于 0.20.0 时无法安装、也无法更新到本版。
 - @aalis/plugin-package-manager：安装、卸载与更新认同一套包名与版本写法，带构建元数据的版本（如 `foo@1.0.0+build`）能装了，原来只能更新、安装时报非法包名。
-- @aalis/plugin-package-manager：本插件停用、重启或停机时打断在途的 npm（装、卸、更新与更新的预检）。已经动过文件的，等 npm 退出后把 package.json 与锁文件还原到操作前（原本没有锁文件的删掉），回执 `ok` 为 false，写明没有生效、node_modules 可能不一致时在安装目录执行 `npm install` 即可对齐；收尾等还原做完，新实例在此之前不起，不再与旧实例的 npm 同时改这两份文件。原来停用、重启时 npm 照常跑到完，新实例可以另起一个；停机时 npm 被结束，两份文件不还原。
+- @aalis/plugin-package-manager：本插件停用、重启或停机时打断在途的 npm（装、卸、更新与更新的预检）。已经动过文件的，等 npm 退出后把 package.json 与锁文件还原到操作前（原本没有锁文件的删掉），回执 `ok` 为 false，写明没有生效、node_modules 可能不一致时在安装目录执行 `npm install` 即可对齐；还没动文件就被打断的回「已中止，没有改动」，收尾期间新来的装卸回「包管理正在停用」。收尾等还原做完，新实例在此之前不启动，不再与旧实例的 npm 同时改这两份文件。原来停用、重启时 npm 照常执行完毕，新实例可以另行启动一个；停机时 npm 被结束，两份文件不还原。
 - @aalis/plugin-package-manager：更新装完而宿主不能重启（没有重启策略、或应用已开始停机）时，回执写明已更新、不能自动重启的原因，手动重启后生效（`restarting` 为 false），之后的装卸照常受理；原来更新以错误结束，包管理一直报「正在进行中」，直到重启。
 
 ### 计划任务与工作流
 
 - @aalis/plugin-scheduler、@aalis/plugin-workflow（破坏性）：storage 由 optional 改为 required，storage 上线之前不激活，下线时随之停下，重新上线后按文件读回。scheduler 拆卸时等排队中的动态任务写盘落定；workflow 的触发器关闭之后不再挂新的。
+- @aalis/plugin-scheduler（破坏性）：持久化文件（`persistPath`）由任务数组改为对象 `{ jobs, onceFired }`：`jobs` 是动态任务，`onceFired` 是配置里一次性任务的执行记录（任务名到执行过的那次 `runAt` 原文）。旧的数组形状按结构不对处理：发一条 error 提示，本次运行不载入其中的动态任务、不写这个文件，也不安排配置里的一次性任务。配置里的一次性任务到点先记下再执行，之后每次激活（宿主重启、重载本插件、改配置、storage 重启）见到记录都不再执行；过了 `runAt` 而没有记录的（如停机时错过）激活时补执行一次，配置里改了 `runAt` 算新的一次。原来执行完只在内存里停用，之后每次激活都以 owner 身份再注入一次指令。
+- @aalis/plugin-scheduler：一次性任务不再因重载执行两遍。已过期的改排 0ms 定时器，句柄随清理撤掉，激活后紧接着重载本插件时旧实例不再先执行一次；动态一次性任务到点先从任务表删掉并落盘再执行，执行途中重载时新实例不再执行第二遍，旧实例执行完也不再按自己的内存整表写盘、盖掉新实例这期间建的任务。执行期间同名重建的任务（计划任务页编辑、`setJob`）留着，原来随执行完的那条一起被删。
 
 ### 浏览器工具与绘图
 
 - @aalis/util-chromium 0.1.0（新包）：浏览器工具与绘图共用的 Chromium 启动器，含绘图用的离线渲染。@aalis/util-offline-render 并入它，不再更新。
 - @aalis/plugin-draw（破坏性）：是否带 Chromium 沙箱由新配置 `sandbox` 决定，默认不带；原来先试带沙箱，启动失败就回落到不带并记住。打开后带沙箱启动失败时报错，写明可在配置里关掉，不回落。
 - @aalis/plugin-tool-browser：新增配置 `sandbox`（默认 false，与原来的行为相同），打开后的规则同绘图。浏览器经管道连接，宿主不经停机退出（kill -9、内存耗尽）时浏览器随之退出；不再让 puppeteer 接管 SIGINT、SIGTERM、SIGHUP，原来按 Ctrl+C 时以 130 退出、停机无法执行完毕。没装自带的 Chrome 又没配 `executablePath` 时的自动下载能用了，原来跑的命令行路径不存在，下载必定失败。
+- @aalis/util-chromium：离线渲染的空闲关停不关正在渲染的浏览器，等最后一次渲染结束再满一个空闲时限才关；原来（util-offline-render）一次渲染跨过空闲时限时浏览器被关掉、这次出图失败，并发时先结束的那次重设计时也一样。
+- @aalis/util-chromium、@aalis/plugin-tool-browser：首次自动装 Chrome 先装进缓存根下本次新建的临时目录，装完整个目录改名到最终位置，临时目录随后删掉；下载或解压途中被打断（超时、停用、停机）后，缓存里不留半截的压缩包或缺文件的安装，下次照常装好。原来直接解到最终目录：下载阶段被打断的，之后每次都报目录在而可执行文件不在，解压阶段被打断的判为已装却无法启动，都要手动删缓存。最终目录在而可执行文件不在的，换成这次装好的；可执行文件已解出、别的文件缺的旧目录判不出，照常当已装。Windows 上改名与装成之后删临时目录遇到刚解出的文件被短暂占住时隔一会儿重试，合计约 15 秒；没装成的临时目录只删一次，删不掉留给之后的过期清理。
+- @aalis/plugin-tool-browser：首次下载 Chrome 的输出不再写进宿主终端（原来把终端界面写花），全文记进调试日志，失败的报错带上 stderr 结尾的 1500 个字符。下载随停用中止，在途的调用报「浏览器工具已停用」，不记「启动浏览器失败」；原来要等满 5 分钟的下载时限，插件超过清理宽限仍无法停止，同一 id 在它停下之前无法启动新实例。停用时不再逐页关闭页面，直接关浏览器，浏览器无响应时不再每页等约 60 秒、拖过 5 秒的清理宽限。
+- @aalis/util-chromium：启动浏览器一律启动 Chrome（浏览器工具、绘图的离线渲染都经它）。puppeteer 的默认浏览器配成别的（`PUPPETEER_BROWSER`、`.puppeteerrc`）时，原来启动的是那个浏览器：配成 Firefox 时，浏览器工具的网络闸（`blockPrivate`）与离线渲染的封网靠的是 Chromium 的参数，Firefox 不认，静默失效；那个浏览器没装时，浏览器工具还每次调用都去下载自带的 Chrome，下载失败、无法启动。这种配置下现在不自动下载，没装 Chrome 时由启动报错；puppeteer 配置里又指定了那个浏览器的可执行文件、而插件没配 `executablePath` 时不启动它，报错写明原因。
 
 ### 代码沙箱
 
 - @aalis/plugin-code-sandbox-os（破坏性）：macOS 沙箱里的代码只能给同一沙箱里的进程发信号；放行同一沙箱建的 POSIX 信号量，Python multiprocessing 的锁、队列与进程池可用；不再放行 POSIX 共享内存，`multiprocessing.shared_memory` 在 macOS 沙箱里报 PermissionError。
+- @aalis/plugin-code-sandbox-os：沙箱里的命令另接本插件这次激活的中止信号，本插件停用或重启时随之停下；原来只接调用方的信号，调用方没中止（如 code_runner 转到后台之后）时命令照常运行，code_runner 不带超时。
 
-### 其余修复
+### 在途的工作随停用、停机与回合中止停下
+
+- @aalis/plugin-llm-openai、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-ollama：对话请求（含流式）另接本插件这次激活的中止信号。模型插件停用或重载时，在飞的请求随之停下，报「LLM 插件已停用或重载，这次请求中途停下」（DeepSeek、Ollama 开头写各自的名字），不记请求失败的告警；原来调用方没中止时，请求由旧实例照常执行，直到写完或到停顿超时。改配置也会重载插件，所以改配置时正在生成的回复会中途停下。
+- @aalis/plugin-llm-ollama：发图前下载网址图片接这次模型调用的中止信号（本插件停用时同样停下），中止时下载随之断开、以中止原因结束，不再告警「下载图片异常」，要求带图的识图调用也不再报「图片全部获取失败」；原来要等到 30 秒的下载超时。
+- @aalis/plugin-tools：普通（不可转后台的）工具调用随这条登记撤回（所属插件停用、重启）中止：处理函数与它里面未决的取用审批收到的信号随之断开，中止原因是「工具 X 已撤回登记」，处理函数按它抛出时回执就是这句话。原来普通调用只收回合的信号，所属插件停用后处理函数照旧执行完毕，未决的取用审批也不撤；撤回信号不带原因，按它停下的调用回执是「This operation was aborted」。处理函数收到的信号因此不只随回合中止：@aalis/plugin-memory-vector 的 `memory_recall`、@aalis/plugin-subtask 的 `wait_subtasks` 与 @aalis/plugin-workflow 的 `workflow_run` 被中止时回「调用已中止」（后两个带「，不再等」），原来回「回合已中止」。
+- @aalis/api-media、@aalis/plugin-media：`describe`、`transcribe`、`describeVideo` 的选项（`DescribeOptions`、`TranscribeOptions`、`DescribeVideoOptions`）与处理器的 `TranscribeInput` 加可选的 `signal`。media 把调用方的信号与本插件这次激活的合并，交给下载、ffprobe、ffmpeg 抽帧与抽音轨、语音转码、转写与识图的模型调用，调用方中止或 media 停用、停机时随之停下，不再等到各自的时限（下载 15 秒、ffprobe 30 秒、转码 60 秒、抽音轨 120 秒）。中止时 `describe`、`describeVideo` 不告警；`transcribe` 抛中止原因，原来告警「音频识别失败」并回 undefined。`describeImage` 与交给主模型前的规范化、抽帧原来只接调用方的信号，现在同样合上本插件这次激活的，media 停用或重启时随之停下；主模型直通时发出前的抽帧这样被中止的，这条消息的图不再交出，这一轮照常往下。来消息即识别是本插件自己发起的，接本插件这次激活的信号：停用后这条消息后面的附件不再处理，中止的附件记为出错但不告警（原来告警「附件处理失败」），描述位不写「未能识别」或「识别失败」。
+- @aalis/api-asr、@aalis/plugin-asr-openai、@aalis/plugin-asr-whisper-cpp：`TranscribeInput` 加可选的 `signal`。两个后端把它与本插件这次激活的信号合并，再与超时一起交给音频下载、转写请求、ffmpeg 转码与 whisper-cli，谁先到按谁停：调用方中止、或提供转写的插件停用、重启时随之停下，以中止原因拒绝，不报「ffmpeg 转码失败」「whisper-cli 失败」；原来只有超时（下载 15 秒，转写请求与 whisper-cli 默认 10 分钟，转码 5 分钟）。plugin-media 经 asr 桥接转写时交调用方的信号，没给时交本插件这次激活的。
+- @aalis/api-agent、@aalis/plugin-agent、@aalis/plugin-media：`agent:llm:before` 的数据加可选的 `signal`，是这一轮的中止信号（回应 `token:request` 的估算不在回合里，不带），plugin-agent 开轮与工具调用之后再请求时都填上。媒体交给主模型前的下载与抽帧接它：这一轮被停下（停止键、禁言、停机等）时随之停下，钩子抛中止原因，这一轮按中止收尾；原来要等到下载、ffprobe、ffmpeg 各自的时限才收尾。
+- @aalis/plugin-okx-trading：请求另接这次工具调用的中止信号，与 `timeoutMs` 超时谁先到按谁停，回合中止时随之停下。发出之前已中止的不发请求、回中止原因；改变状态的请求（POST：下单、撤单、改单、平仓、杠杆与仓位模式、保证金、策略委托、划转）发出之后被中止或超时的，OKX 可能已经执行，回「请求已发出后中止，OKX 是否已执行未知：先查询订单、持仓或资金状态，确认之后再决定是否重试」，不再报成失败；查询类照旧回中止原因或超时。
+- @aalis/plugin-okx-trading：改变状态的请求没拿到确切结果的（连接出错、读到一半断开、2xx 而响应体不是 OKX 的回执（截断的 JSON、中转或代理回的网页等）、网关或服务端报 5xx、OKX 的业务码 50004 即它那边的接口超时）同样回结果未知并带上出错原因，提示先查询；原来报成普通失败，模型可能重下一单。别的照常报失败。
+- @aalis/plugin-commands：指令的处理函数抛中止原因（`name` 为 `AbortError`，如所属插件停用、停机时随它这次激活的信号停下）时回「指令 /x 已中止」，只记 debug；原来按执行失败回「指令执行失败：…」并记 error。
+- @aalis/plugin-adapter-onebot：附件落盘前的下载与语音转码、发送时网址附件与正文里媒体标记的下载，以及合并转发展开时转发内图片、语音、视频的识别与摘要的模型调用，都接本插件这次激活的中止信号，停用、停机时随之停下，不等各自的时限（下载 30 秒、转码 60 秒）。中止的转码不再记「音频转 WAV 失败」；中止的展开不交出、不进转发缓存与记忆元数据，不按识别失败写占位，也不记「摘要生成失败」。
+- @aalis/plugin-tool-system：`http_request` 接这次调用的中止信号，回合被停下（停止键、禁言、停机）时请求与读响应体随之断开，回「请求失败: <中止原因>」；原来要等到超时（默认 30 秒）。
+- @aalis/plugin-office：`doc_add_image` 与 `ppt_add_image` 的插图来源是网址时，下载接这次调用的中止信号，回合中止时随之停下；原来要等到 15 秒超时或读完。
+- @aalis/plugin-websearch-serper：`web_search`、`search_images` 的请求接这次调用的中止信号，web-search 服务的搜索接本插件这次激活的信号，回合中止或停用时随之停下、以中止原因结束，不记「搜索失败」；原来要等到 15 秒超时，期间占着限流槽。
+- @aalis/plugin-maimai：查分器请求接中止信号（工具用这次调用的，指令用本插件这次激活的），回合中止或停用时随之停下，回「查询失败：<中止原因>」，不再回「查分器暂时连不上」；曲库的别名请求被中止时不再把缺了别名的曲库缓存一小时。
+- @aalis/plugin-tool-onebot：`onebot_get_forward_msg` 当场获取转发时给里面的图识图，接这次调用的中止信号：回合中止时后面的图不再识别，调用抛中止原因，不把缺了描述的正文当结果交出。
+- @aalis/plugin-image-sender：`preview_image` 的识图接这次调用的中止信号，调用被中止时后面的图不再识别、以中止原因结束，原来把一串中止错误当正常结果交回；每张 25 秒的时限也交给识图，到时下载与识图随之停下，这张回「vision 超时」后接着下一张，原来到时只停止等待，识图照常执行完毕。
+- @aalis/plugin-file-reader：入站消息里网址来源文件的下载接本插件这次激活的中止信号，停用、停机时随之停下，不写「处理失败」的描述、不告警，这条消息后面的附件不再处理，消息照常往下交。读 DOCX 时内嵌图片的识图接中止信号（`read_uploaded_file` 用这次调用的，上传时内联解析用本插件这次激活的），中止时这次读或这个附件按中止收尾，不报「DOCX 解析失败」，也不把缺了图片描述的正文写进缓存，原来写进去之后的读取一直缺图片描述。内嵌图片识别的 30 秒整体时限交给识图，到时在飞的识图随之中止、不再开始新的，原来到时只停止等待。
+- @aalis/plugin-embedding-ollama、@aalis/plugin-embedding-openai：`embed()` 与取模型列表（配置页模型下拉的来源）的请求另接本插件这次激活的中止信号，停用、重启、停机时在飞的请求随之停下，`embed()` 以中止原因结束、不再重试，取模型列表照旧回空列表；原来调用方没中止或没给信号时要等到 `timeoutMs`，embedding-ollama 还可能按 `retries` 再发。embedding-ollama 的诊断探测也随之停下，检查以中止原因抛出，不报不可用。
+- @aalis/plugin-reach：取 owner 的 login shell 环境接本插件这次激活的中止信号，停用、停机时那个 shell 按进程组停掉，在等的调用以中止原因结束，不再告警没取到环境、改用守护进程的环境；原来要等到 10 秒时限。
+- @aalis/plugin-session-manager：自动标题的模型调用接本插件这次激活的中止信号，停用、停机时随之停下，不告警「自动生成标题失败」，也不再改用用户消息写标题、发 `session:updated`。
+- @aalis/plugin-memory-summary：后台与手动压缩的摘要请求接本插件这次激活的中止信号，停用、停机时随之停下，压缩以中止原因结束，不再包成「摘要模型调用失败」、告警「压缩没有压成」。
+- @aalis/plugin-user-profile：事实提取的模型调用（含解析失败后的重试）接本插件这次激活的中止信号，停用、停机时随之停下。
+- @aalis/plugin-user-relation：关系图抽取与整理的模型调用（别名核验、事件核验、合并后的摘要重写、层级推断、侧向父实体推断）与实体、事件的向量化接本插件这次激活的中止信号，停用、停机时停在当前这一步，已经开始的写入写完：不告警、不把这个会话放进退避，被中止的核验不再按调用失败回保守结果接着整理，淘汰前的整理被中止时不再接着淘汰。
+- @aalis/plugin-message-archive：她发的网址图片与视频补描述时，识别接本插件这次激活的中止信号，停用、停机时随之停下、不告警；图片 25 秒、视频 30 秒的时限也交给识别，到时识图与视频处理随之停下，照旧记「识图超时（N 秒）」，原来到时只停止等待，识别照常执行完毕。
+
+### 停用、停机时先等在途的写入落定
+
+- @aalis/plugin-memory-vector、@aalis/plugin-user-relation、@aalis/plugin-user-profile、@aalis/plugin-message-archive、@aalis/plugin-memory-summary、@aalis/plugin-session-manager、@aalis/plugin-subtask、@aalis/plugin-adapter-onebot：停用、停机时收尾段等本插件在后台发起、还在途的工作落定再撤回，等待期间新开始的也等，关闭之后不再写数据。接了本插件中止信号的模型调用在收尾开始时停在当前这一步，已经开始的写入写完。原来没人等这些工作：写入落在插件关掉之后，门面已撤回的写到一半失败，bounce 时有的还与新实例重复处理或互相盖掉。各插件等的是：memory-vector 排着与在途的向量收录（收录不随停用中止，原来在途的写到一半、排着的记「向量索引失败」，这几条从此不在向量库里）；user-relation 的提取、整理、事件查重、淘汰、孤儿清理与改名同步（收尾开始之后不再发起新的，`/relation maintain` 与提取之后的老化停在已发起的那一步）；user-profile 的旁观关系更新与事实提取；message-archive 的出站记录与补描述；memory-summary 的压缩；session-manager 的自动标题，清理刷盘之后晚到的标题不再排落盘定时器，原来 1 秒后把全表快照写进后端；subtask 已到点的到期销毁（写回报、删子会话）；adapter-onebot 在后台写的合并转发原文与过期回收。
+- @aalis/plugin-media：本次激活关掉、图片描述缓存落盘一次之后，晚到的描述只进内存、不再排落盘，关掉之前发起的灌回读完时也不重新开，快照由下一次激活写；原来 30 秒的防抖到点后，在插件关掉之后照样写快照。`/clear` 途中关掉的，之后才轮到的描述清理不清，回执报失败并带上原因。
+
+### 其余变更
 
 - @aalis/plugin-process-local：停机时先等用 process 服务的插件关完，再整组 SIGTERM，宽限后对还有成员的组 SIGKILL；停机时在跑的 exec、代码执行与后台任务记为已中止，不再是退出码 -1。宿主不经停机退出时由看门进程收掉它启动的进程组；组空即撤登记，停机不再对可能被复用的组号发信号。
+- @aalis/plugin-process-local（破坏性）：`killAll` 由 `LocalProcessService` 的公开方法改为模块导出的函数，进程组登记表也提到模块级，一个进程一份（本插件 bounce 前后的实例共用，同一进程里启动了几个 App 的也共用）：停机时连 bounce 之前的旧实例启动的进程组一起整组 SIGTERM、宽限后对还有成员的组 SIGKILL，停机等到收完。原来旧实例启动的进程组只在旧实例的登记表里，停机既不对它们发信号也不等，宿主退出之后才由看门进程收掉。
 - @aalis/plugin-tools：停用之后才到的可转后台调用，以及等审批期间工具已撤回登记的调用，都回「未执行」，不执行。
+- @aalis/util-chromium、@aalis/plugin-tool-browser：puppeteer 的配置（`PUPPETEER_EXECUTABLE_PATH`、`.puppeteerrc`）指定了别的可执行文件时不再下载自带的 Chrome；原来那个文件不在时每次调用都去下载自带的 Chrome，下载失败、无法启动。
+- @aalis/plugin-user-relation：整理时别名核验、事件核验的模型调用失败（出错、限流、模型插件重载）的，这一对这次跳过，不再记进否决缓存；原来按否决记下，之后双方证据数不变就不再核验，本该合并的一直不合并。
+- @aalis/plugin-tools：可转后台的调用等审批期间会话被删除、本插件停用或重启的，未决的审批随之撤销，回「调用已中止，未执行」；原来审批一直未决，批下来之后才回未执行。
 - @aalis/plugin-tool-system：shell 与文件工具开着就登记，storage、process 晚于本插件上线也用得上；缺服务时调用报服务不可用，`/tools` 照列这两组。@aalis/plugin-office：`pdf_convert` 每次调用现查 process 服务。
 - @aalis/plugin-media：`analyze_image` 中止时，下载与抽帧用的 ffprobe、ffmpeg 随之停下回错，不再退回整图识别。
 - @aalis/plugin-authority、@aalis/plugin-flow-control、@aalis/plugin-checkpoint：停机时等级表、禁言表的写盘与在跑回合的提交放进收尾，storage 或 memory 的提供者与本插件经 optional 依赖成环时不再丢。
-- @aalis/plugin-adapter-onebot：实现端拒绝连接时日志写明原因。握手时直接回 HTTP 状态码的（如 401），记下状态码与响应体（只留开头 4096 个字符）后立即断开，照常 5 秒后重连，不再等 15 秒握手超时，响应体一直不结束或读到一半断了也一样，也不再多记一条自己断开引出的「连接错误」；接受握手后回一条不对应任何请求的失败回执再断开的（如 token 没填或不对），按 warn 记下返回码与原话，原来这条回执被丢掉；没有数字返回码的帧不算回执，照常当事件处理。连接地址的说明写明实现端要开正向 WebSocket（Aalis 主动去连），不支持反向。
+- @aalis/plugin-flow-control（破坏性）：storage 由 optional 改为 required。没装 storage 时不激活；storage 停用或重载期间随之停下，禁言、冷却与限速都不生效，重新上线后重新激活、按文件读回禁言，冷却与限速计数清零。原来 storage 下线时流控照常运行，晚上线时重读禁言表并与内存里的改动合并。
+- @aalis/plugin-adapter-onebot：实现端拒绝连接时日志写明原因。握手时直接回 HTTP 状态码的（如 401），记下状态码与响应体（只留开头 4096 个字符）后断开，照常 5 秒后重连：响应体读完、读到上限还不结束或读到一半断了都立即断开，不再等 15 秒握手超时；没到上限又停住不结束的由 15 秒的连接超时断开，同样记下读到的部分。也不再多记一条自己断开引出的「连接错误」，握手一直没有回应、连接超时断开时也一样。接受握手后回一条不对应任何请求的失败回执再断开的（如 token 没填或不对），按 warn 记下返回码与原话，原来这条回执被丢掉；没有数字返回码的帧不算回执，照常当事件处理。连接地址的说明写明实现端要开正向 WebSocket（Aalis 主动去连），不支持反向。
+- @aalis/plugin-adapter-onebot：协议配成 `auto` 时，探测途中连接断开（如实现端回完拒绝回执就断开）不再定成 v11、不记「版本自动检测失败」，下次连上重新探测；原来回落成 v11 之后不再探测，按 v11 收发，v12 实现端的消息全被忽略，直到重载。连接还在而两种都不认时照旧按 v11。
 - @aalis/plugin-llm-deepseek：带图的 user 消息把图编成文字之后的 `image_url` 段发出去，原来图整段丢掉、只发文字。在单模型能力覆盖里给能看图的模型（如 `deepseek-flash`）写上 `vision` 后，它能做识别模型，做主模型时也能亲眼看图；原来写了 `vision` 时识别模型收不到图，回的话照样被当成图片描述存下。单模型能力覆盖的说明改用 `deepseek-flash` 作例子，并列出可用能力。
+- @aalis/plugin-webui-server：市场的检索、查最新版与依赖图取 packument，以及图片代理连上游与读文件头，随客户端断开中止（前端换页、刷新、取消图片加载），不再等到各自的时限（市场 8 秒、图片代理 15 秒）；客户端断开的图片代理不记「图片代理失败」的告警，时限到了的照旧告警、回 502。
+- @aalis/plugin-user-relation：整理里真合并之后留下的实体标上待重写摘要，摘要重写没写成（中止、模型调用失败或回空）时标记留着，下次整理补写；原来要重写哪些只记在这一轮的内存里，没写成的实体一直留着合并前的摘要。
+- @aalis/plugin-okx-trading：批量操作部分成功（OKX 的业务码 2）时交回逐项的结果，不再报整体失败；原来模型只看到失败，可能整批重下，已经下成的那几单又下一遍。别的业务码报失败时把各项的结果（`sCode`、`sMsg`）带进报错，单笔下单失败的原因（如余额不足）原来看不到。
+- 各包的设置说明改短、改成好懂的话，删下的细节写进各插件文档；界面文字、文档与日志的措辞改为技术用语（如「启动失败」「未启动」「无法停止」，界面文字里的「LLM」写「模型」），plugin-trigger-laya 的日志键 `兜底=<原因>` 改为 `后备判定=<原因>`。几条与代码不符的说明按代码更正：plugin-draw 的「画布像素上限」（原「画布 CSS 像素上限」）是输出图片的像素上限；plugin-tool-code-runner 选无隔离时只在插件启动时告警一次；plugin-okx-trading 的实盘告警不再列出插件没有的提币；plugin-adapter-onebot 的摘要输入超长时保留开头、截掉后面。
 
 ---
 
