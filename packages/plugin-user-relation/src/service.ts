@@ -2362,8 +2362,9 @@ export class RelationService {
     // 解析可选 LLM 模型（A: 别名核验；B: 合并后摘要重写）
     const llmModel = opts.llm ? resolveConsolidateModel(opts.llm.models, opts.llm.modelRef) : undefined;
     const llmDisableThinking = opts.llm?.disableThinking ?? true;
-    /** 经模型确认、真合并后留下的实体 id（合并后摘要重写用） */
-    const mergedCanonicals = new Set<string>();
+    /** 经模型确认真合并后留下的实体：库里标上待重写摘要，这一轮的重写没写成时下一轮补写 */
+    const markSummaryStale = (canonicalId: string) =>
+      this.writeBackEntityIfLive(snapshotEntityById.get(canonicalId)!, { summaryStale: true });
 
     // ─── (1) 别名候选：实体之间 name/aliases 完全相同（不同 id）→ 高置信
     const entitiesByNormName = new Map<string, EntityNode[]>();
@@ -2500,7 +2501,7 @@ export class RelationService {
           // 半合并状态），也要把 alias 节点真正合并掉，确保收敛。mergeAlias 幂等：
           // alias 节点已不存在 → 直接 no-op；还在 → 正常合并。
           const mergeResult = await this.mergeAlias({ aliasId, canonicalId, kind: 'entity' });
-          mergedCanonicals.add(canonicalId);
+          await markSummaryStale(canonicalId);
           if (mergeResult.aliasDeleted) {
             this.logger?.info(`[user-relation] consolidate strict-equiv 真合并：${aliasId} → ${canonicalId}`);
           }
@@ -2938,7 +2939,7 @@ export class RelationService {
               canonicalId,
               kind: 'entity',
             });
-            mergedCanonicals.add(canonicalId);
+            await markSummaryStale(canonicalId);
             if (mergeResult.aliasDeleted) {
               this.logger?.info(`[user-relation] consolidate wide-recall 真合并：${memberId} → ${canonicalId}`);
             }
@@ -3080,15 +3081,15 @@ export class RelationService {
       eventEdgesNormalized++;
     }
 
-    // (B) 合并后摘要重写：基于最新 snapshot 收集 canonical 的别名/相关事件/相关人物
-    if (llmModel && opts.llm && mergedCanonicals.size > 0) {
+    // (B) 合并后摘要重写：标着待重写的实体（这一轮与之前没写成的），基于最新 snapshot 收集它的别名/相关事件/相关人物
+    if (llmModel && opts.llm && normSnapshot.entities.some(e => e.summaryStale)) {
       const after = await this.store.loadAll();
       const entityById = new Map(after.entities.map(e => [e.id, e]));
       const personById = new Map(after.persons.map(p => [p.id, p]));
       const eventById = new Map(after.events.map(e => [e.id, e]));
-      for (const canonicalId of mergedCanonicals) {
-        const ent = entityById.get(canonicalId);
-        if (!ent) continue;
+      for (const ent of after.entities) {
+        if (!ent.summaryStale) continue;
+        const canonicalId = ent.id;
         // 收集别名（含 is-alias-of 关联实体的 name 与 aliases）
         const aliasSet = new Set<string>(ent.aliases ?? []);
         for (const e of after.edges) {
@@ -3134,11 +3135,13 @@ export class RelationService {
           llmDisableThinking,
           this.signal,
         );
-        if (newSummary && newSummary !== ent.summary) {
-          // 落笔核实况：ent 来自阶段快照，可能已被真合并删除（死节点不复活）
-          if (await this.writeBackEntityIfLive(ent, { summary: newSummary, lastReinforcedAt: Date.now() })) {
-            summariesRewritten++;
-          }
+        // 没写成（模型失败或回空）：标记留着，下次整理补写
+        if (!newSummary) continue;
+        const changed = newSummary !== ent.summary;
+        // 落笔核实况：ent 来自阶段快照，可能已被真合并删除（死节点不复活）；写成了就去掉待重写标记
+        const patch = changed ? { summary: newSummary, lastReinforcedAt: Date.now() } : {};
+        if ((await this.writeBackEntityIfLive(ent, { ...patch, summaryStale: undefined })) && changed) {
+          summariesRewritten++;
         }
       }
     }

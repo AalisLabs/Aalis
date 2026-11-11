@@ -199,6 +199,8 @@ export interface EntityNode {
    * modelId 时后缀 `@<modelId>`。任一文本字段变更或换模型后值变 → 触发重 embed。
    */
   embeddingHash?: string;
+  /** 整理里经模型核验真合并后留下、摘要待重写：重写写成时去掉；没写成的（中止、模型失败或回空）留着，下次整理补写 */
+  summaryStale?: true;
 }
 
 /**

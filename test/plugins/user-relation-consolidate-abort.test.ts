@@ -182,7 +182,7 @@ describe('关系图整理随停用中止', () => {
     expect(t.warns).toEqual([]);
   });
 
-  it('合并后的摘要重写途中停用：之前做完的合并留着，摘要重写收到的信号断开，整理抛中止原因，不告警', async () => {
+  it('合并后的摘要重写途中停用：之前做完的合并留着，摘要重写收到的信号断开，整理抛中止原因，不告警；重新启用后的下一次整理（这次没有合并）补写留下的那个实体的摘要，写成之后不再重写', async () => {
     const t = await boot({
       hang: 'summary',
       answers: { alias: SAME },
@@ -194,6 +194,30 @@ describe('关系图整理随停用中止', () => {
     await expect(t.run).rejects.toMatchObject({ name: 'AbortError' });
     expect((await t.store.loadAll()).entities.map(e => e.name)).toEqual(['三角洲行动']);
     expect(t.warns).toEqual([]);
+
+    await t.app.plugins.enable(userRelationPlugin.name);
+    await t.app.plugins.idle();
+    const rewrites: string[] = [];
+    const model = {
+      id: 'zz-consolidate',
+      capabilities: ['chat'],
+      chat: async (request: ChatModelRequest) => {
+        const kind = kindOf(request);
+        if (kind === 'summary') rewrites.push(kind);
+        return { content: kind === 'summary' ? '一款战术射击游戏' : '{}' };
+      },
+    } as unknown as LLMModel;
+    const service = t.app.bind({ userRelation }).userRelation.use as unknown as RelationService;
+    const consolidate = () =>
+      service.consolidate({
+        autoLink: true,
+        llm: { models: ref<LLMModel>([{ instance: model, contextId: 'zz/consolidate' }]), modelRef: {} },
+      });
+    expect((await consolidate()).summariesRewritten).toBe(1);
+    expect(rewrites).toEqual(['summary']);
+    expect((await t.store.loadAll()).entities.map(e => e.summary)).toEqual(['一款战术射击游戏']);
+    await consolidate();
+    expect(rewrites, '写成之后去掉了待重写标记').toEqual(['summary']);
   });
 
   it('事件向量预热途中停用：同批已拿到向量的那条写完 hash 与向量之后，整理才抛中止原因，之后不再有写入', async () => {

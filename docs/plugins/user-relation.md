@@ -142,7 +142,7 @@ $$
 主要工作：
 1. **遗留边整理**（计入 `eventEdgesNormalized`）：同一 (person, event) 按吸收规则折叠；同一 (person, entity) 只保留最强 role；同一 (event, entity) 只保留强度最高的关系（part-of > related > about），其余边的 evidence 并入保留边后删除
 2. **实体层级推断**（`entityHierarchyCandidates` / `entityHierarchyEdgesCreated`）：实体 A 的规范名是 B 的真子串（A 至少 3 个字符，且两者之间尚无 entity-entity 边）时，A 记为 B 的父实体候选。配置了 `consolidationModel` 时经 `inferEntityHierarchy` 核验后建 `part-of` 边（不受 `autoLink` 限制）；未配置时只统计候选
-3. **别名合并**：name/aliases 归一后完全相同的实体记为别名候选；`autoLink` 开启且配置了 `consolidationModel` 时，先经 `verifyAliasPair` 核验，同意才建 `is-alias-of` 边并 `mergeAlias`（留下的一方按合并分挑），否决则不合并并记入否决缓存，判定为上下位则改建 `part-of` 边；未配置整理模型时只统计候选、不改图。`autoLink` 与 LLM 同时启用时，还会做宽召回别名核验、事件重复合并、兄弟实体共同父实体推断和合并后摘要重写
+3. **别名合并**：name/aliases 归一后完全相同的实体记为别名候选；`autoLink` 开启且配置了 `consolidationModel` 时，先经 `verifyAliasPair` 核验，同意才建 `is-alias-of` 边并 `mergeAlias`（留下的一方按合并分挑），否决则不合并并记入否决缓存，判定为上下位则改建 `part-of` 边；未配置整理模型时只统计候选、不改图。`autoLink` 与 LLM 同时启用时，还会做宽召回别名核验、事件重复合并、兄弟实体共同父实体推断和合并后摘要重写。经模型核验真合并后留下的实体在库里标上待重写摘要（`summaryStale`），重写写成时去掉；重写没成的（中止、模型失败或回空）下次整理补写
 
 ---
 
