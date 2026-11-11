@@ -6,6 +6,7 @@ const SOURCE = {
   unknownCommand: '未知指令：{command}。输入 {prefix}help 查看帮助。',
   needsAuthority: '指令 {command} 需要权限校验或确认，但未安装权限插件 @aalis/plugin-authority，已拒绝执行',
   failed: '指令执行失败：{error}',
+  aborted: '指令 {command} 已中止',
   group: '{name} 命令组',
   noCommand: '没有指令 {path}。敲 {prefix}help 看可用指令。',
   unknownOption: '未知选项：{option}',

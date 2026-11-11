@@ -6,6 +6,7 @@ export default defineLocale<Source>()({
   needsAuthority:
     'Command {command} needs a permission check or confirmation, but the permission plugin @aalis/plugin-authority is not installed; refused',
   failed: 'Command failed: {error}',
+  aborted: 'Command {command} was aborted',
   group: '{name} command group',
   noCommand: 'No command {path}. Type {prefix}help to see the available commands.',
   unknownOption: 'Unknown option: {option}',

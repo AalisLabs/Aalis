@@ -56,6 +56,8 @@ export default definePlugin({
 
 单条指令的等级与确认可在 plugin-authority 配置中按能力键 `command:<点路径>`（如 `command:clear.all`）覆盖，见 plugin-authority 文档。
 
+处理函数抛错时回「指令执行失败：…」并记 error；抛的是中止原因（`name` 为 `AbortError`，如所属插件停用、停机时随它这次激活的信号停下）时回「指令 /… 已中止」，不记 error。
+
 ## 帮助
 
 `/help` 概览、`/help <指令>`、`<指令> -h`（或 `--help`）、裸敲分组（如 `/relation`）与选项写错时附的用法，都只列调用者能用的指令。判据与执行同一份：有 plugin-authority 时按它的 `authorize`（等级、权限组、`authorityOverrides` 与 `deniedCapabilities` 一并生效，确认不算），没有或停用时按下文的 fail-closed。用不了的指令在帮助里当作不存在：`/help <它>` 与指令不存在时回同一句「没有指令 …」；`<它> -h` 与裸敲子指令都用不了的分组回的也是这一句（不存在的指令后面写 `-h` 不算指令，消息交给后续处理，指令系统不回话），子指令都用不了的分组不列；概览里不提还有多少条看不到。直接执行用不了的指令时，拒绝提示照旧点名指令（「权限不足："command:shutdown" 需等级 2（当前 0）」）。指令自己在运行时另设的限制不算在内，如 `/level` 另要求调用者是 owner：2 级成员的帮助里列着 `/level`，执行时才被拒。

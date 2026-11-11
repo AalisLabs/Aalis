@@ -476,6 +476,11 @@ export class CommandRegistry implements CommandService {
       const result = await cmd.handler(argv, ...parsed.positionals);
       return result ?? undefined;
     } catch (err) {
+      // 处理函数抛的是中止原因（如所属插件停用、停机时随它这次激活的信号停下）：不是执行失败，回已中止，不记 error
+      if (err instanceof Error && err.name === 'AbortError') {
+        this.logger.debug(`指令 ${this.prefix}${cmd.name} 已中止`);
+        return t('aborted', { command: `${this.prefix}${cmd.name}` });
+      }
       const error = textOf(err);
       this.logger.error(`指令 ${this.prefix}${cmd.name} 执行失败: ${toSource(error)}`);
       return t('failed', { error });
