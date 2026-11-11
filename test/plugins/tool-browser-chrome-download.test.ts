@@ -42,16 +42,25 @@ const fake = vi.hoisted(() => {
       createBrowserContext: async () => ({ newPage: async () => page }),
     };
   });
-  /** 缓存根与自带 Chrome 的可执行文件路径，每条用例前设好 */
-  const cache = { dir: '', exe: '' };
+  /**
+   * 缓存根与自带 Chrome 的可执行文件路径，每条用例前设好；configured 是 puppeteer 配置里指定的可执行文件
+   * （PUPPETEER_EXECUTABLE_PATH、.puppeteerrc），空串为没配，配了的 executablePath() 交回它；browser 是 puppeteer 配置里的
+   * 默认浏览器（PUPPETEER_BROWSER、.puppeteerrc），不是 chrome 时 executablePath() 交回那个浏览器的路径
+   */
+  const cache = { dir: '', exe: '', configured: '', browser: 'chrome' };
   return { launch, cache };
 });
 vi.mock('../../packages/util-chromium/node_modules/puppeteer/lib/esm/puppeteer/puppeteer.js', () => ({
   default: {
     launch: fake.launch,
-    executablePath: () => fake.cache.exe,
+    executablePath: () =>
+      fake.cache.configured ||
+      (fake.cache.browser === 'chrome' ? fake.cache.exe : `${fake.cache.dir}/${fake.cache.browser}/zz-browser`),
+    get defaultBrowser() {
+      return fake.cache.browser;
+    },
     get configuration() {
-      return { cacheDirectory: fake.cache.dir };
+      return { cacheDirectory: fake.cache.dir, executablePath: fake.cache.configured || undefined };
     },
   },
   launch: fake.launch,
@@ -63,6 +72,8 @@ const apps: App[] = [];
 beforeEach(async () => {
   fake.cache.dir = await mkdtemp(join(tmpdir(), 'zz-chrome-cache-'));
   fake.cache.exe = join(fake.cache.dir, 'chrome', 'mac_arm-1.2.3', 'chrome-mac', 'zz-chrome');
+  fake.cache.configured = '';
+  fake.cache.browser = 'chrome';
 });
 afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
@@ -131,6 +142,30 @@ describe('自动下载自带的 Chrome', () => {
     expect(realpathSync(args[0])).toBe(realpathSync(join(PUPPETEER, bin)));
     expect(result.error).toBeUndefined();
     expect(existsSync(fake.cache.exe)).toBe(true);
+    expect(fake.launch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [
+      '指定了别的可执行文件（PUPPETEER_EXECUTABLE_PATH、.puppeteerrc）而它不在',
+      () => {
+        fake.cache.configured = join(fake.cache.dir, 'zz-missing-chrome');
+      },
+    ],
+    [
+      '的默认浏览器不是 Chrome（PUPPETEER_BROWSER、.puppeteerrc）',
+      () => {
+        fake.cache.browser = 'firefox';
+      },
+    ],
+  ])('puppeteer 配置里%s：不下载自带的，照常交给 puppeteer 启动', async (_label, configure) => {
+    configure();
+    const proc = fakeProcess(async () => {
+      throw new Error('不该下载');
+    });
+    const { navigate } = await start(proc.service);
+    await navigate();
+    expect(proc.spawn).not.toHaveBeenCalled();
     expect(fake.launch).toHaveBeenCalledTimes(1);
   });
 

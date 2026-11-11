@@ -43,6 +43,7 @@ vi.mock('../../packages/util-chromium/node_modules/puppeteer/lib/esm/puppeteer/p
   default: {
     launch: fake.launch,
     executablePath: () => '/zz-missing-chrome',
+    defaultBrowser: 'chrome',
     get configuration() {
       return { cacheDirectory: fake.cache.dir };
     },

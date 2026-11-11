@@ -58,9 +58,21 @@ export async function launchChromium(opts: ChromiumLaunchOptions): Promise<Brows
   }
 }
 
-/** puppeteer 自带的 Chrome（不给 executablePath 时启动的就是它）装好后所在的路径，不论装没装 */
-export async function bundledChromePath(): Promise<string> {
+/**
+ * puppeteer 自带的 Chrome（不给 executablePath 时启动的就是它）装好后所在的路径，不论装没装。puppeteer 的配置
+ * （PUPPETEER_EXECUTABLE_PATH、PUPPETEER_BROWSER、.puppeteerrc）指定了别的可执行文件或别的浏览器时不用自带的 Chrome，
+ * 交回 undefined：启动只认配置里的那个，装了自带的也用不上
+ */
+export async function bundledChromePath(): Promise<string | undefined> {
   const { default: puppeteer } = await import('puppeteer');
+  // executablePath() 在配置指定了可执行文件时交回它，默认浏览器不是 chrome 时交回那个浏览器的；configuration 不在
+  // puppeteer 的公开类型里（同 install.ts）
+  if (
+    puppeteer.defaultBrowser !== 'chrome' ||
+    (puppeteer as unknown as { configuration: { executablePath?: string } }).configuration.executablePath
+  ) {
+    return undefined;
+  }
   return puppeteer.executablePath();
 }
 

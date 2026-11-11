@@ -11,7 +11,7 @@
 - SIGINT、SIGTERM、SIGHUP 不交给 puppeteer 处理，浏览器由调用方的生命周期关。
 - 经管道连接：宿主不经停机退出（崩溃、被 SIGKILL、未捕获异常）时管道由系统关掉，浏览器随之退出。
 
-调用方给无头模式、浏览器路径、自己的启动参数（浏览器工具的网络闸、离线渲染的封网）、单条 CDP 命令的时限，以及可选的缺省视口。`bundledChromePath` 给出 puppeteer 自带 Chrome 的路径，浏览器工具据此判断 Chrome 装没装；`puppeteerCliPath` 给出 puppeteer 包里命令行脚本的路径。
+调用方给无头模式、浏览器路径、自己的启动参数（浏览器工具的网络闸、离线渲染的封网）、单条 CDP 命令的时限，以及可选的缺省视口。`bundledChromePath` 给出 puppeteer 自带 Chrome 的路径，浏览器工具据此判断要不要下载；puppeteer 的配置（`PUPPETEER_EXECUTABLE_PATH`、`PUPPETEER_BROWSER`、`.puppeteerrc`）指定了别的可执行文件或别的浏览器时交回 `undefined`，启动只认配置里的那个；`puppeteerCliPath` 给出 puppeteer 包里命令行脚本的路径。
 
 `installBundledChrome` 下载自带的 Chrome。puppeteer 的命令行把压缩包下到缓存、再直接解到最终目录，被打断时留下的半截压缩包与安装目录会让之后的安装一直失败，或判为已装却无法启动；所以命令行经环境变量 `PUPPETEER_CACHE_DIR` 装进缓存根下本次新建的临时目录，装完整目录改名到 `<缓存根>/chrome/` 下的最终位置，临时目录随后删掉：下载或解压途中被打断不在缓存里留下不完整的安装。
 - 缓存根取 puppeteer 配置里的 `cacheDirectory`（命令行与启动时找 Chrome 用的同一个）。

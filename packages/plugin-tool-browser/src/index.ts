@@ -272,7 +272,9 @@ function runBrowserTools(caps: Caps): void {
 
   async function ensureChrome(): Promise<void> {
     const fs = await import('node:fs');
-    if (fs.existsSync(await bundledChromePath())) return;
+    // puppeteer 的配置指定了别的可执行文件或别的浏览器的不下载：启动只认配置里的那个，它不在时由 puppeteer 报错
+    const bundled = await bundledChromePath();
+    if (bundled === undefined || fs.existsSync(bundled)) return;
 
     logger.info('Chrome 未安装，正在自动下载...');
     // 装法（先装进缓存里的临时目录、装完整体改名到位）归 util-chromium，这里只跑它给的命令行：走 ProcessService，避免直接
