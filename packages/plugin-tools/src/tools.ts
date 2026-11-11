@@ -303,16 +303,16 @@ export class ToolRegistry implements ToolService {
     // 占到的位置没交给 run 的（守卫拒绝或抛错、已中止）一律让出
     let handedOver = false;
     try {
-      // 守卫收到的信号连着这条登记：等审批期间工具撤回登记（所属插件停用、重启）时，挂着的审批随之撤掉
+      // 守卫收到的信号连着这条登记与这次调用：等审批期间工具撤回登记（所属插件停用、重启），或可转后台的调用被中止（会话删除、
+      // plugin-tools 停用）时，未决的审批随之撤销
       const withdrawn = entry.withdrawn.signal;
       const signal = callCtx.signal ? AbortSignal.any([callCtx.signal, withdrawn]) : withdrawn;
-      const verdict = await this.guard(tool, toolArgs, { ...callCtx, signal });
-      // 撤回先认，守卫因此撤掉审批的拒绝不算这次调用的结局：撤回的登记的处理函数是旧实例的闭包，可转后台与否都不再交给它；
+      const guarded = call ? AbortSignal.any([signal, call.controller.signal]) : signal;
+      const verdict = await this.guard(tool, toolArgs, { ...callCtx, signal: guarded });
+      // 撤回与中止先认，守卫因此撤掉审批的拒绝不算这次调用的结局：撤回的登记的处理函数是旧实例的闭包，可转后台与否都不再交给它；
       // 同名的新登记也不接手，审批按的是这个登记的声明
-      if (withdrawn.aborted) return failure('调用已中止，未执行');
+      if (withdrawn.aborted || call?.controller.signal.aborted) return failure('调用已中止，未执行');
       if (!verdict.ok) return failure(toSource(verdict.reason));
-      // 等审批期间这次调用可能已被中止（会话删除、执行器停用）
-      if (call?.controller.signal.aborted) return failure('调用已中止，未执行');
 
       if (resolveCapabilityPolicy(tool).visibility === 'restricted') {
         this.logger.info(

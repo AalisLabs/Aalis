@@ -698,6 +698,22 @@ describe('停止、撤回、停用与会话删除', () => {
     expect(parse(await result)).toEqual({ error: '调用已中止，未执行' });
   });
 
+  it('可转后台的调用等审批时会话被删除：交给守卫的信号随之断开，未决的审批撤销，批下来也不执行', async () => {
+    let approve = () => {};
+    const approval = new Promise<null>(resolve => {
+      approve = () => resolve(null);
+    });
+    const w = world({ guard: () => approval });
+    w.slow();
+    const result = w.registry.execute('zz_slow', {}, turn().ctx);
+    await flush();
+    w.tasks.deleteSession(SESSION);
+    expect(w.guarded[0].signal?.aborted).toBe(true);
+    approve();
+    expect(parse(await result)).toEqual({ error: '调用已中止，未执行' });
+    expect(w.runs).toEqual([]);
+  });
+
   it('plugin-tools 停用（收尾）时在跑的落成 aborted 并写盘，之后落定的不改结局、不通知', async () => {
     const w = world();
     const store = memoryStore();

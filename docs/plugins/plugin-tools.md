@@ -64,7 +64,7 @@ export default definePlugin({
 - **执行守卫**：`setExecutionGuard(guard)` 注入统一钩子（典型为 plugin-authority
   的能力统一闸与 owner 审批）；所有 `execute()` 调用前过钩子，调用上下文的回合与调用 id、`inbound` 与工具的分组（`toolGroups`，
   权限组的 `tool-group:` 条目按它覆盖）一并交给守卫。
-  守卫可能等一道审批：期间工具撤回登记（所属插件停用或重启）的，交给守卫的中止信号随之断开、挂着的审批撤掉，回「调用已中止，未执行」；守卫不理会信号、批了下来的也不执行，重启后同名的新登记也不接手。
+  守卫可能等一道审批：期间工具撤回登记（所属插件停用或重启）的，或可转后台的调用被中止（会话删除、本插件停用或重启）的，交给守卫的中止信号随之断开、未决的审批撤销，回「调用已中止，未执行」；守卫不理会信号、批了下来的也不执行，重启后同名的新登记也不接手。
   传 `undefined` 摘掉守卫，plugin-authority 停用时就这样摘掉。未注入守卫（没装或停用了 plugin-authority）时 fail-closed：等同所有人都是默认等级、没人能确认，需要更高等级
   （restricted 或 risk 为 sensitive / dangerous）或声明了 confirm 的工具一律拒绝并提示缺少权限插件，
   默认等级可用且无需确认的工具照常执行。
