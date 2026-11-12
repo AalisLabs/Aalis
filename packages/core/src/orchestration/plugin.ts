@@ -34,7 +34,7 @@ export interface PluginRegistration {
  * - required 服务没了时转回 pending，服务回来再激活
  * - 插件启用/禁用控制
  */
-export class PluginManager implements PluginManagerService {
+export class PluginManager implements Omit<PluginManagerService, 'watch'> {
   #plugins = new Map<string, PluginRecord>();
   #logger: LogWriter;
   readonly #host: ActivationHost;
@@ -111,8 +111,8 @@ export class PluginManager implements PluginManagerService {
     abortInitializing(this.#shutdownSettle);
   }
 
-  /** 见 {@link PluginManagerService.watch}。by 是订阅方的激活，宿主经 app.plugins 登记的归根激活 */
-  watch(fn: () => unknown, by: Activation = this.#host.root): () => void {
+  /** 见 {@link PluginManagerService.watch}。by 是订阅方的激活：契约里的 watch 由 App 按调用方配好再交出，宿主经 app.plugins 登记的归根激活 */
+  watch(fn: () => unknown, by: Activation): () => void {
     const hook = (poke: () => void) => {
       this.#watchers.add(poke);
       return () => this.#watchers.delete(poke);
@@ -185,7 +185,7 @@ export class PluginManager implements PluginManagerService {
 
   /** 不等结果地发起一次重算（反应式触发、后台激活落定）；报错点名触发原因，不外泄成未处理拒绝 */
   #kick(why: string): void {
-    this.recompute().catch(err => this.#logger.error(`recompute(${why}) 报错:`, err));
+    this.#recompute().catch(err => this.#logger.error(`recompute(${why}) 报错:`, err));
   }
 
   /**
@@ -215,7 +215,7 @@ export class PluginManager implements PluginManagerService {
   async registerAll(items: ReadonlyArray<PluginRegistration>): Promise<boolean[]> {
     const admitted = items.map(item => this.#admit(item));
     // 走统一 recompute：依赖满足则被拓扑正序激活，否则保持 pending。只登记了禁用条目时不必重算，名单多了照样通知订阅
-    if (admitted.includes('pending')) await this.recompute();
+    if (admitted.includes('pending')) await this.#recompute();
     else if (admitted.includes('disabled')) for (const poke of this.#watchers) poke();
     return admitted.map(state => state !== false);
   }
@@ -324,7 +324,7 @@ export class PluginManager implements PluginManagerService {
     } finally {
       this.#suspendDepth--;
     }
-    await this.recompute();
+    await this.#recompute();
     return true;
   }
 
@@ -411,7 +411,7 @@ export class PluginManager implements PluginManagerService {
     entry.failure = undefined;
     entry.retriesLeft = undefined;
     this.#logger.info(`插件已启用: ${instanceId}`);
-    await this.recompute();
+    await this.#recompute();
     return true;
   }
 
@@ -525,7 +525,7 @@ export class PluginManager implements PluginManagerService {
    *
    * 判据只有一条：服务此刻在不在容器里（别的计划正关着的提供者不算在）。
    */
-  async recompute(): Promise<void> {
+  async #recompute(): Promise<void> {
     // 停机后重算无意义，拆卸全归停机计划。早退也要结算 idle 等待者：管理段收尾的 recompute 走到这里时
     // 状态机已静置，不结算的话此前压进来的 idle() 永不落定（结算自己会核对三条静置守卫）
     if (this.#shuttingDown) {

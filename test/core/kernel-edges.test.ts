@@ -58,8 +58,8 @@ describe('Resources 段收口等在飞撤回', () => {
   it('超时放弃时只点名仍未落定的撤回，等待期间已落定并移出记录的不点名', async () => {
     const { logger, warnings } = capture();
     const life = new Resources('t', logger);
-    life.holdInflight(sleep(5), 'fast-withdraw');
-    life.holdInflight(never(), 'stuck-withdraw');
+    life.withdraw(() => sleep(5), 'fast-withdraw');
+    life.withdraw(never, 'stuck-withdraw');
 
     await life.disposeAsync(30);
 

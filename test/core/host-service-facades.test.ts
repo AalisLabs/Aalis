@@ -47,6 +47,15 @@ describe('宿主服务只交出契约方法', () => {
     expect((raw as unknown as Record<string, unknown>).beginShutdown).toBeUndefined();
   });
 
+  it('宿主侧 app.plugins 是同一组契约方法：拿不到重算、停机开关与注册表', () => {
+    const app = world();
+    expect(keysOf(app.plugins)).toEqual(keysOf(app.bind({ plugins: pluginsService }).plugins.use));
+    const raw = app.plugins as unknown as Record<string, unknown>;
+    for (const internal of ['recompute', 'beginShutdown', 'stopAll', 'registerAll', 'ready']) {
+      expect(raw[internal], internal).toBeUndefined();
+    }
+  });
+
   it('宿主侧 app.plugins.getPlugin 也是调用时刻的浅快照：写它进不了注册表；config 每次是一份拷贝，definition 是登记时那个对象', async () => {
     const app = world();
     await app.plugin(definePlugin({ name: 'p', apply() {} }), { v: 1 });

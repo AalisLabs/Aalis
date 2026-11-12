@@ -12,7 +12,6 @@ import {
   type Services,
   services,
 } from '../../packages/core/src/index.js';
-import type { PluginManager } from '../../packages/core/src/orchestration/plugin.js';
 import { deferred } from '../helpers/deferred.js';
 
 const svcA = defineService<unknown>('qsc-a');
@@ -144,9 +143,6 @@ describe('排队的服务下线变化', () => {
     const busy = await pause(phase);
 
     remove();
-    await (app.plugins as PluginManager).recompute();
-    expect(state.applies).toBe(1);
-
     busy.release();
     await busy.done;
     await app.plugins.idle();
@@ -197,7 +193,6 @@ describe('排队的服务下线变化', () => {
     removeA();
     removeB();
     host.provide.use(svcNever, {});
-    await (app.plugins as PluginManager).recompute();
     busy.release();
     await busy.done;
     await app.plugins.idle();

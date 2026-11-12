@@ -10,7 +10,6 @@ import {
   provide,
   services,
 } from '../../packages/core/src/index.js';
-import type { PluginManager } from '../../packages/core/src/orchestration/plugin.js';
 import { deferred } from '../helpers/deferred.js';
 import { activationOf, createInspectableApp } from '../helpers/inspectable-app.js';
 
@@ -18,6 +17,8 @@ const dependency = defineService<{ value: number }>('activation-required-loss');
 // apply 解构的绑定会遮住描述符；恢复提供者仍使用契约描述符。
 const dependencyDescriptor = dependency;
 const owned = defineService<{ attempt: number }>('activation-owned-resource');
+/** 与被测插件无关的服务：它上线再下线，各请求一次重算 */
+const unrelated = defineService<object>('activation-unrelated');
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 
 const apps: App[] = [];
@@ -275,7 +276,7 @@ describe('初始化期间 required 依赖消失', () => {
           if (stable) return void dependency.use.value;
           // 错误实现也只能运行到保险丝为止，不能让测试一直阻塞或占满微任务队列。
           if (attempts === 31) throw new Error('测试保险丝：自动重试未被收敛预算拦住');
-          if (mode === 'recompute') await (app.plugins as PluginManager).recompute();
+          if (mode === 'recompute') host.provide.use(unrelated, {})();
           if (mode === 'register') {
             await app.plugin(definePlugin({ name: `helper-${attempts}`, apply: () => void helpers++ }));
           }
@@ -316,7 +317,7 @@ describe('初始化期间 required 依赖消失', () => {
 
     stable = true;
     const previous = attempts;
-    await (app.plugins as PluginManager).recompute();
+    host.provide.use(unrelated, {})();
     await app.plugins.idle();
     expect(consumer(app).state, 'error 态不自动重试').toBe('error');
     expect(attempts).toBe(previous);

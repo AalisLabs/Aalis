@@ -48,7 +48,7 @@ export class Resources {
     this.#logger = logger;
     this.#hooks = hooks;
     const hold = (work: Promise<void>, what: string, abandoned: boolean): void => {
-      const held = this.holdInflight(work, what);
+      const held = this.#holdInflight(work, what);
       if (abandoned) this.#abandoned.add(held);
     };
     this.draining = new DisposableChain(logger, hold);
@@ -95,7 +95,7 @@ export class Resources {
     const run = Promise.resolve()
       .then(() => (this.#readyHooks.delete(hook) && !this.#closing ? hook() : undefined))
       .catch(error => this.#logger.warn(`Resources "${this.#id}": onReady 回调抛错，已忽略:`, error));
-    return this.holdInflight(run, 'onReady 回调');
+    return this.#holdInflight(run, 'onReady 回调');
   }
 
   /**
@@ -221,7 +221,7 @@ export class Resources {
   }
 
   /** 记一项在飞工作、就地接住拒绝。关闭不在调用方的栈上收口：同步段途中发起了关闭，拿到的句柄也来得及补登 */
-  holdInflight(work: PromiseLike<unknown>, what: string): Promise<void> {
+  #holdInflight(work: PromiseLike<unknown>, what: string): Promise<void> {
     const settled: Promise<void> = Promise.resolve(work)
       .then(
         () => undefined,
@@ -273,7 +273,7 @@ export class Resources {
       const result = off();
       if (!isThenable(result)) return undefined;
       const pending = Promise.resolve(result);
-      this.holdInflight(pending, label);
+      this.#holdInflight(pending, label);
       return pending;
     } catch (error) {
       this.#logger.warn(`${label} 撤回抛错（已忽略）:`, error);

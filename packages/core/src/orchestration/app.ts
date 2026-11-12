@@ -2,6 +2,7 @@ import type { PluginManagerService } from '../types/app.js';
 
 import { ServiceContainer } from '../primitives/services.js';
 
+import type { Activation } from './activation.js';
 import { ActivationHost } from './activation-host.js';
 import { appService, narrow, pluginsService } from './host-services.js';
 import { PluginManager, type PluginRegistration } from './plugin.js';
@@ -100,7 +101,7 @@ function singleFlight(publish: (done: Promise<void>) => void, run: () => Promise
 export class App {
   /** 激活装配。根激活（host.root）是宿主绑定（{@link bind}）与核心服务的归属，不对外：宿主经 bind 取能力 */
   readonly #host: ActivationHost;
-  /** 插件管理面（契约类型）；停机编排用的内部方法经 #plugins */
+  /** 插件管理面：只有契约列出的方法，经它登记的 watch 归根激活。编排用的内部方法经 #plugins */
   readonly plugins: PluginManagerService;
   readonly #plugins: PluginManager;
   readonly logger: Logger;
@@ -128,11 +129,10 @@ export class App {
 
     // 2. 插件管理器
     this.#plugins = new PluginManager(this.#host, this.logger, disposeTimeoutMs, slowMs);
-    this.plugins = this.#plugins;
 
     // 3. 宿主服务：与内置五项同一登记规则（根激活、独占），只交出契约列出的方法
     caps.provide.use(appService, narrow(this, ['stop', 'restart']), { exclusive: true });
-    const managing = narrow(this.plugins, [
+    const managing = narrow(this.#plugins, [
       'getStatus',
       'getPlugin',
       'bounce',
@@ -143,14 +143,14 @@ export class App {
       'register',
       'idle',
     ]);
-    caps.provide.use(
-      pluginsService,
-      identity => {
-        const by = this.#host.caller(identity, pluginsService.name);
-        return { ...managing, watch: fn => this.#plugins.watch(fn, by) };
-      },
-      { exclusive: true },
-    );
+    const managingFor = (by: Activation): PluginManagerService => ({
+      ...managing,
+      watch: fn => this.#plugins.watch(fn, by),
+    });
+    this.plugins = managingFor(this.#host.root);
+    caps.provide.use(pluginsService, identity => managingFor(this.#host.caller(identity, pluginsService.name)), {
+      exclusive: true,
+    });
 
     // 版本由宿主注入（core 不自读 package.json）；未注入时省略版本段。
     const versionSeg = options.version ? ` Core ${options.version}` : ' Core';

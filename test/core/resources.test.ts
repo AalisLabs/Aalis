@@ -49,7 +49,7 @@ describe('Resources', () => {
       };
     };
     const off = register();
-    if (resources.disposed) resources.holdInflight(off(), 'late registration');
+    if (resources.disposed) resources.withdraw(off, 'late registration');
     let closed = false;
     const observed = closing.then(() => {
       closed = true;
@@ -66,8 +66,8 @@ describe('Resources', () => {
     const { resources, warnings } = world();
     const first = deferred();
     const second = deferred();
-    resources.holdInflight(
-      first.promise.then(() => resources.holdInflight(second.promise, 'second')),
+    resources.withdraw(
+      () => first.promise.then(() => void resources.withdraw(() => second.promise, 'second')),
       'first',
     );
     let closed = false;
@@ -84,7 +84,7 @@ describe('Resources', () => {
 
   it('preserves the existing explicit cleanup timeout and reports an in-flight task only once', async () => {
     const { resources, warnings } = world();
-    resources.holdInflight(new Promise<void>(() => {}), 'stuck cleanup');
+    resources.withdraw(() => new Promise<void>(() => {}), 'stuck cleanup');
     await resources.disposeAsync(5);
     expect(warnings).toHaveLength(1);
     expect(warnings.flat().map(String).join(' ')).toContain('stuck cleanup');
