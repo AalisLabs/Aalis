@@ -62,7 +62,8 @@
         "session-manager",
         "webui-server",
         "host-config",
-        "session-settings"
+        "session-settings",
+        "plugins"
       ]
     }
   }

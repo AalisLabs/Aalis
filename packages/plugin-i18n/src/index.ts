@@ -23,7 +23,7 @@ import {
   sessionFields,
 } from '@aalis/api-session-settings';
 import { type NoticeHandle, webuiServer } from '@aalis/api-webui';
-import { type BoundOf, config, definePlugin, events, optional, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, events, optional, pluginsService, provide } from '@aalis/core';
 import { defineConfig } from '@aalis/schema-config';
 import {
   catalogEntries,
@@ -69,8 +69,10 @@ type Fields = SessionFieldReader<typeof configSchema>;
 
 const uses = {
   provide,
-  /** 语言诊断随会话设置、宿主配置与插件的变化重算 */
+  /** 语言诊断随会话设置、宿主配置的变化重算 */
   events,
+  /** 语言诊断随插件的变化重算（语言包与字典随插件交付与撤回） */
+  plugins: optional(pluginsService),
   /** 没有宿主配置文档时 language 的全局层取这里 */
   config,
   /** 语言包的来源，交可选项来源；缺席时没有语言包 */
@@ -120,7 +122,7 @@ export default definePlugin({
       );
     caps.doctor.use.registerCheck({ id: CHECK_ID, category: 'config', run: check });
     // 「需要处理」：诊断的 warn 每条一项，按序编号、同号替换，少了的撤回。会话设置或宿主配置变了、插件变了（语言包与字典随插件
-    // 交付与撤回）时重算，本插件激活所在的那一轮收敛时的 plugins:changed 就是激活时的一次。运行中不随插件变动的交付与撤回没有
+    // 交付与撤回）时重算，本插件激活所在的那一轮重算收敛时的通知就是激活时的一次。运行中不随插件变动的交付与撤回没有
     // 通知，下次重算时跟上
     let notices: NoticeHandle[] = [];
     const notify = () => {
@@ -132,7 +134,7 @@ export default definePlugin({
     };
     caps.events.use.on('session-settings:changed', notify);
     caps.events.use.on('host-config:changed', notify);
-    caps.events.use.on('plugins:changed', notify);
+    caps.plugins.follow(plugins => plugins.watch(notify));
   },
 });
 

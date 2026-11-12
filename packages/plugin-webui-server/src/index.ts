@@ -932,15 +932,18 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // 管理面推送（/admin）：日志、插件状态、「需要处理」、重启。页面登记表与提示的变化、invalidate 在页面登记表（pages.ts）里推，
   // 布局记录的变化在它的路由里推，换前端在 remountActiveClient 里推
   caps.logs.use.subscribe(entry => admin.send({ type: 'log', entry }));
-  events.use.on('plugins:changed', () => {
-    admin.send({ type: 'plugins.changed' });
-    attention.pluginsChanged();
-  });
+  caps.plugins.follow(plugins =>
+    plugins.watch(() => {
+      admin.send({ type: 'plugins.changed' });
+      attention.pluginsChanged();
+    }),
+  );
   // 宿主配置文档变了（插件详情保存、手改配置文件、会话设置写全局层与偏好）：插件详情与界面语言据它重取
   events.use.on('host-config:changed', () => admin.send({ type: 'plugins.changed' }));
   events.use.on('approval:created', () => attention.changed());
   events.use.on('approval:settled', () => attention.changed());
-  events.use.on('app:restarting', () => admin.send({ type: 'app.restarting' }));
+  // 收尾时连接都还在：告诉管理页服务端要关了，它据此在重连上以后整页重新加载
+  lifecycle.use.onDrain(() => admin.send({ type: 'server.closing' }), '通知管理页服务端正在关闭');
 
   // 发往 WebUI 自己会话的出站消息：会话历史就是 WebUI 的收件箱，页面只是查看器，打开着的页面由会话服务推送。
   // 回执表示这条消息已经由存档记进会话历史（recordOutbound），不看有没有页面在线；送达就是写进历史，不另发 outbound:delivered。

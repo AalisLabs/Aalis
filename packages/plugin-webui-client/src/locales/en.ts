@@ -268,7 +268,7 @@ export default defineLocale<Source>()({
   withShortcut: '{label} ({shortcut})',
   connectionOutsideProvider: 'The connection is only available inside ConnectionProvider',
   restStatus: '{path} returned {status}',
-  connectionRestarting: 'Restarting; the page reloads once it reconnects',
+  connectionServerClosed: 'The server closed; the page reloads once it reconnects',
   connectionRefused:
     'The server keeps refusing the connection while the page’s other requests work: if you access it through a reverse proxy, check that the proxy forwards the original Host request header',
   connectionReconnecting: 'Disconnected, reconnecting…',

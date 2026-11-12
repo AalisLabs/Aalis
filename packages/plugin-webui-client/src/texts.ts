@@ -258,7 +258,7 @@ const SOURCE = {
   withShortcut: '{label}（{shortcut}）',
   connectionOutsideProvider: '只能在 ConnectionProvider 里取连接',
   restStatus: '{path} 回了 {status}',
-  connectionRestarting: '正在重启，连上后自动刷新页面',
+  connectionServerClosed: '服务端已关闭，连上后自动刷新页面',
   connectionRefused:
     '连接一直被服务端拒绝，页面的其他请求却正常：经反向代理访问时，检查代理是否转发了原始的 Host 请求头',
   connectionReconnecting: '连接断开，正在重连…',

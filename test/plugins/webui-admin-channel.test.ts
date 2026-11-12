@@ -28,7 +28,7 @@ import { freePort, upgrade, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
 // WebUI 的 /admin：会话之外的管理面事件推送。启动真的 webui-server，经真实的 WebSocket 收发：
-// 认证、日志的订阅与退订、插件与页面登记表变化、重启与换前端，以及多个标签页的连接都是 WebSocket 升级。
+// 认证、日志的订阅与退订、插件与页面登记表变化、服务端关闭与换前端，以及多个标签页的连接都是 WebSocket 升级。
 // 事件只有 TypeScript 类型，帧的形状在这里逐字核对。末尾一组是各端点共用的升级来源校验。
 // ════════════════════════════════════════════════════════════
 
@@ -195,12 +195,17 @@ describe('/admin 管理面推送', () => {
     expect(await pages()).not.toContain('probe-page');
   });
 
-  it('应用即将重启：推 app.restarting', async () => {
-    const app = quietApp({ restartStrategy: { restart() {} } });
+  it.each([
+    ['应用停机', (app: App) => app.stop()],
+    ['单独停用本插件', (app: App) => app.plugins.disable(webuiServerPlugin.name)],
+  ])('%s：连接关闭之前推 server.closing', async (_, close) => {
+    const app = quietApp();
     const port = await start(app);
     const a = await openAdmin(port);
-    app.restart();
-    await vi.waitFor(() => expect(a.events).toContainEqual({ type: 'app.restarting' }));
+    const closed = new Promise<void>(resolve => a.ws.addEventListener('close', () => resolve()));
+    await close(app);
+    await closed;
+    expect(a.events.at(-1)).toEqual({ type: 'server.closing' });
   });
 
   it('切换前端：推 client.reload', async () => {

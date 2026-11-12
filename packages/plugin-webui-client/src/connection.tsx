@@ -7,7 +7,7 @@ import type { SessionClient } from './protocol/session-client';
 import type { ConnectionState } from './protocol/socket';
 
 // 页面的两条连接：会话协议与管理面。整页只开一次，由入口创建后交给这里；在场上报跟着会话连接。
-// 应用重启时管理连接先收到 app.restarting、随后断开，重连上以后页面整页重新加载（前端可能换了新版本）；
+// 服务端关闭时管理连接先收到 server.closing、随后断开，重连上以后页面整页重新加载（前端可能换了新版本）；
 // client.reload 表示活跃的前端换了，立即重新加载。
 // 功能位取自握手与 features/changed，应用名取自握手（握手之前是页面自带的标题）。推给这条连接、还没结算的审批按 id
 // 记着：服务端只把结算推给拿到过审批的连接，所以连接断开时清空，重连并重报在场后服务端会再推
@@ -17,8 +17,8 @@ export type Approval = SessionNotificationParams<'approval/requested'>['approval
 interface Connection {
   session: SessionClient;
   admin: AdminClient;
-  /** 收到 app.restarting，等管理连接重连上以后重新加载 */
-  restarting: boolean;
+  /** 收到 server.closing，等管理连接重连上以后重新加载 */
+  serverClosed: boolean;
   /** 握手之前全是 false */
   features: Features;
   /** 握手完成过（之后断线重连也算） */
@@ -67,7 +67,7 @@ export function ConnectionProvider({
   admin: AdminClient;
   children: ReactNode;
 }) {
-  const [restarting, setRestarting] = useState(false);
+  const [serverClosed, setServerClosed] = useState(false);
   const [features, setFeatures] = useState<Features>();
   const [appName, setAppName] = useState(() => document.title);
   const [approvals, setApprovals] = useState<ReadonlyMap<string, Approval>>(new Map());
@@ -101,7 +101,7 @@ export function ConnectionProvider({
   useEffect(() => {
     const offs = [
       admin.on('client.reload', () => location.reload()),
-      admin.on('app.restarting', () => setRestarting(true)),
+      admin.on('server.closing', () => setServerClosed(true)),
     ];
     return () => {
       for (const off of offs) off();
@@ -109,16 +109,16 @@ export function ConnectionProvider({
   }, [admin]);
 
   useEffect(() => {
-    if (!restarting) return;
+    if (!serverClosed) return;
     return admin.onReconnect(() => location.reload());
-  }, [admin, restarting]);
+  }, [admin, serverClosed]);
 
   return (
     <Context.Provider
       value={{
         session,
         admin,
-        restarting,
+        serverClosed,
         features: features ?? NO_FEATURES,
         ready: features !== undefined,
         appName,

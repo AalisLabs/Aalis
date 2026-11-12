@@ -618,7 +618,7 @@ describe('连接状态', () => {
     expect(within(screen.getByRole('navigation', { name: '会话' })).getByText('会话服务未启用')).toBeTruthy();
   });
 
-  it('应用重启：横条写明，管理连接重连上以后整页重新加载；client.reload 立即重新加载', async () => {
+  it('服务端关闭：横条写明，管理连接重连上以后整页重新加载；client.reload 立即重新加载', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     stubViewport(1440);
     // jsdom 不支持整页加载，调用 location.reload() 时报「Not implemented: navigation」
@@ -626,10 +626,10 @@ describe('连接状态', () => {
     const reloads = () => errors.mock.calls.filter(call => String(call[0]).includes('navigation')).length;
     app = await renderApp('/', handlers);
     const admin = FakeWebSocket.at('/admin');
-    act(() => admin.push({ type: 'app.restarting' }));
-    expect(bar().textContent).toBe('正在重启，连上后自动刷新页面');
+    act(() => admin.push({ type: 'server.closing' }));
+    expect(bar().textContent).toBe('服务端已关闭，连上后自动刷新页面');
     act(() => admin.drop());
-    expect(bar().textContent).toBe('正在重启，连上后自动刷新页面');
+    expect(bar().textContent).toBe('服务端已关闭，连上后自动刷新页面');
     await act(() => vi.advanceTimersByTimeAsync(1_000));
     expect(reloads()).toBe(0);
     act(() => FakeWebSocket.at('/admin').open());

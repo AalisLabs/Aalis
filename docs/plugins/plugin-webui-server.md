@@ -171,7 +171,7 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 | `/api/layout` | GET · POST | owner 的布局记录（图标栏上固定的页面、会话面板的标签）/ 按一个操作改它，见下文「布局记录」 |
 | `/api/attention` | GET | 「需要处理」：`{ items: AttentionItem[] }`，推出未结的审批在前（审批服务不在时没有这一类），其后是插件故障（失败与缺服务的实例，只在等别的插件启动的不算）与插件的提示，每项计 1。见下文「需要处理」 |
 | `/api/config` | GET / PUT | 宿主配置：GET 回 `{ config, schema, restartKeys, dataDir? }`：`config` 是配置文档里写了的核心键（`CORE_CONFIG_SCHEMA` 的键，不带插件配置等其余部分），`schema` 是 `CORE_CONFIG_SCHEMA`，`restartKeys` 是要重启才生效的键（取自 `@aalis/schema-config` 的 `CORE_RESTART_KEYS`，现在是 `logLevel`、`slowThresholdMs`；`name` 只是显示用的应用名称，保存即生效），`dataDir` 是宿主路径的数据目录（宿主不提供路径时没有）。PUT 只收核心键，请求体里有别的顶层键（插件配置、禁用名单等各有自己的路由）时回 400 并点名，什么都不写；文档里没写的核心键按 schema 默认值比较（回传的默认值不算改动、不写进文件）；提交 `null` 回到默认值并从文档删掉这个键。PUT 只保存、不重启，回执 `restartNeeded` 写明改了的键里有没有要重启的（界面据此出「重启以生效」）；落盘被拒回 409、写入失败回 500，两种都撤回文档里的改动 |
-| `/api/restart` | POST | 重启应用：发起之后回复，停机是异步的（先广播 `app:restarting`，`/admin` 随之推 `app.restarting`）；宿主没注入重启策略时回 500，写明改动在下次启动时生效，并记一条错误日志 |
+| `/api/restart` | POST | 重启应用：发起之后回复，停机是异步的；宿主没注入重启策略时回 500，写明改动在下次启动时生效，并记一条错误日志 |
 | `/api/services` · `/api/services/:name/prefer` | GET · POST / DELETE | 服务列表 / 设置或清除全局偏好的提供者（持久化到 `servicePreferences`） |
 | `/api/plugins/:instanceId/services/:name/prefer` | POST / DELETE | 设置或清除这个插件实例的本插件偏好（只对它生效，持久化到 `pluginServicePreferences`）；体与校验同全局偏好的那两条，插件实例不在时 POST 回 404。插件列表每项的 `servicePreferences` 是它声明的服务里设了的本插件偏好，`serviceSelections` 是这些服务此刻各落到的那一家与依据（`services.inspect(name, { for })` 选中的那一条） |
 | `/api/themes` | GET | 插件经贡献点 `webui:theme` 提供的主题（[api-webui](../api/api-webui.md) 的「主题」一节）：`{ themes: [{ id, instance, theme }] }`，`id` 是贡献点的全局键，`theme` 是过了 `parseTheme` 的主题（缺的令牌按同种类的偏中性补齐）。不合格式的不列出，每份记一条告警；插件停用时它的贡献随之撤回，界面收到 `plugins.changed` 后重取。贡献点服务不在时为空 |
@@ -249,11 +249,11 @@ socket.onmessage = event => {
 | 事件 | 来源 | 推给谁 |
 |---|---|---|
 | `log` | `host-logs` 送来的每条新日志（本插件激活时订阅，随激活撤回；Node 宿主送的与写进 `logs/latest.log` 的是同一份） | 发过 `log.subscribe`、还没退订的连接，只推符合它订阅时的筛选的 |
-| `plugins.changed` | core 每次重算插件状态之后的 `plugins:changed`；页面登记表的每次登记与撤回 | 全部 `/admin` 连接 |
+| `plugins.changed` | core 每轮重算插件状态收敛之后（`plugins.watch`）；页面登记表的每次登记与撤回 | 全部 `/admin` 连接 |
 | `page.invalidate` | 插件调页面的 `invalidate`，以及页面登记时（插件重载后打开着的页面换成新一次激活的数据）；按实例、页面、组件与会话合并：同一组第一次立即推，一秒内再来的并成窗口结束时的一次 | 全部 `/admin` 连接 |
 | `layout.changed` | `POST /api/layout` 改动了记录（没有变化的操作不推） | 全部 `/admin` 连接 |
 | `attention.changed` | 审批推出或结算（`approval:created`、`approval:settled`）；提示的登记、替换与撤回（撤回已被替换的那次登记不算）；core 重算插件状态之后，插件故障与上一次推送时不同（别的插件启停这类与故障无关的重算不推） | 全部 `/admin` 连接 |
-| `app.restarting` | core 的 `app:restarting` | 全部 `/admin` 连接 |
+| `server.closing` | 本插件收尾时（应用停机、重启，或本插件单独停用、重启） | 全部 `/admin` 连接 |
 | `client.reload` | 改或清除 `webui-client` 的服务偏好之后；装卸包后重新发现前端、摘掉了已不在的前端包之后 | 全部 `/admin` 连接 |
 
 前端发来的只有 `log.subscribe`（可带 `filter`，再订阅一次换掉筛选）与 `log.unsubscribe`；认不出的消息（含写法不对的筛选）记一行告警「WebUI /admin 收到认不出的消息，已忽略」，连接与之前的订阅照常。连接关闭时它的日志订阅随之撤掉。本插件只在卸载时主动关闭连接（1001），客户端稍后重连。

@@ -9,7 +9,7 @@ import './ConnectionBar.css';
 const RECOVERED_MS = 2_000;
 
 export function ConnectionBar() {
-  const { session, admin, restarting } = useConnection();
+  const { session, admin, serverClosed } = useConnection();
   const sessionState = useConnectionState(session);
   const adminState = useConnectionState(admin);
   const lost =
@@ -28,8 +28,8 @@ export function ConnectionBar() {
     return () => clearTimeout(timer);
   }, [notice]);
 
-  const [tone, text] = restarting
-    ? ['warning', tr('connectionRestarting')]
+  const [tone, text] = serverClosed
+    ? ['warning', tr('connectionServerClosed')]
     : notice === 'lost'
       ? ['warning', refused ? tr('connectionRefused') : tr('connectionReconnecting')]
       : notice === 'recovered'

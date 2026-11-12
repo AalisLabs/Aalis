@@ -36,7 +36,7 @@ describe('管理面客户端', () => {
     await vi.waitFor(() => expect(client.state.status).toBe('open'));
     socket.push({ type: 'plugins.changed' });
     socket.push({ type: 'client.reload' });
-    socket.push({ type: 'app.restarting' });
+    socket.push({ type: 'server.closing' });
     expect(changed).toHaveBeenCalledWith({ type: 'plugins.changed' });
     expect(reload).toHaveBeenCalledTimes(1);
   });
