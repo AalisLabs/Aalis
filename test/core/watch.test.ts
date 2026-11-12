@@ -42,7 +42,7 @@ async function world(options: Partial<AppOptions> = {}) {
     error() {},
     child: name => scoped(`${scope}:${name}`),
   });
-  const app = new App({ name: 'T', logger: scoped('aalis'), devMode: false, ...options });
+  const app = new App({ name: 'T', logger: scoped('aalis'), ...options });
   apps.push(app);
   await app.plugins.idle();
   return { app, warns };

@@ -43,7 +43,7 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 
 两种重启都沿用原来的环境变量：前台重启的新进程继承当前进程的环境，服务形态由服务管理器按服务配置里的环境重新启动进程，都不重读 shell 的配置。改了环境变量要从改过的环境重新启动 Aalis：前台运行的先停掉，再从新开的终端启动；服务形态改了服务配置要让服务管理器重新载入（launchd 先 `bootout` 再 `bootstrap`，systemd 先 `daemon-reload` 再 `restart`）。这样重启不会丢掉启动时在命令前临时给的变量，也不与服务管理器给的环境冲突。
 
-`startAalis` 的 `opts`：`appDir`（安装集，即部署目录，绝对路径，必填；不传时在解析数据目录之前报错并以 2 退出；数据目录缺省在它下面）、`pluginLoader`、`consoleSink` / `fileLog`（默认开）、`argv`（默认 `process.argv.slice(2)`）、`devMode`、`configSync`。
+`startAalis` 的 `opts`：`appDir`（安装集，即部署目录，绝对路径，必填；不传时在解析数据目录之前报错并以 2 退出；数据目录缺省在它下面）、`pluginLoader`、`consoleSink` / `fileLog`（默认开）、`argv`（默认 `process.argv.slice(2)`）、`configSync`。
 
 文件日志写数据目录的 `logs/latest.log`，`fileLog: false` 关掉。启动时先轮转旧日志：上一轮的改名为
 `latest.1.log`（编号插在扩展名前），已有的依次后移，保留 5 份，更早的删除。每次守护进程启动都算一轮，
@@ -143,7 +143,7 @@ profile 只由 `--profile` 与 `AALIS_PROFILE` 给出：经 `--data` 或 `AALIS_
 0. **数据目录与安装集**：解析数据目录（见「数据目录」），处理 `--init`，没初始化就退出；没传插件加载器而安装集里没有 `package.json` 时也退出。
 1. **实例锁**：守护模式取实例锁（见「实例锁」），被占用就退出。之后才装日志 sink、写日志：第二个实例不会把正在用的 `latest.log` 轮转走。
 2. **文档与密钥**：`createFsYamlConfigProvider(<数据目录>/aalis.config.yaml)` 读 YAML，`createFsSecretsProvider(<数据目录>/secrets.yaml)` 读密钥，`createConfigStore(config, provider, secrets)` 建配置文档。任一文件写坏或读不了时一行报错退出（exit 1），报错不含文件内容。
-3. **App**：`new App({ name, logLevel, slowThresholdMs, restartStrategy, devMode, version })`，`name`、`logLevel` 与 `slowThresholdMs` 取自文档，后两个按 `CORE_CONFIG_SCHEMA` 判定、不合法的告警后交给 core 默认。子命令模式不注入重启策略。
+3. **App**：`new App({ name, logLevel, slowThresholdMs, restartStrategy, version })`，`name`、`logLevel` 与 `slowThresholdMs` 取自文档，后两个按 `CORE_CONFIG_SCHEMA` 判定、不合法的告警后交给 core 默认。子命令模式不注入重启策略。
 4. **host-paths、host-logs 与 host-config**：在根上独占提供 `host-paths` 与 `host-logs`（`createHostLogs`：历史读本轮的 `logs/latest.log`，实时接默认日志中枢；子命令模式不写文件日志，没有历史），再 `installHostConfig(app, store, opts.configSync)`。文档里的服务偏好在全部提供者上线之前生效。
 5. **加载政策**：`withPluginConfigSync(app, store, opts.configSync)` 建配置同步。
 6. **发现**：`createPluginDiscovery(app, loader, store, <配置同步>)` 建发现驱动（加载器缺省 `createNodeModulesPluginLoader(<安装集>)`，配置同步经 `prepare` 挂上），`startAalis` 以它的 `rescan` 与 `loaded` 在根上独占提供 `plugin-source`；守护模式在 `loadAll()` 之前挂上终止信号与输出断开的处理器，此后收到的都走完停机；`loadAll()` 整批登记全部插件，首批规范化结果在登记前落盘一次。子命令模式在此分发并退出，否则 `app.start()`；加载或启动期间已开始停机的，不再往下走（不向父进程报就绪、不接热重载）。
@@ -162,7 +162,7 @@ profile 只由 `--profile` 与 `AALIS_PROFILE` 给出：经 `--data` 或 `AALIS_
 
 ## 怎么为别的环境写宿主
 
-core 的 `App` 构造只接收环境无关的选项（`name` / `logLevel` / `restartStrategy` / `devMode` /
+core 的 `App` 构造只接收环境无关的选项（`name` / `logLevel` / `restartStrategy` /
 `version` / `logHub` / `logger` / `disposeTimeoutMs` / `slowThresholdMs`，全部可省），插件发现与配置文档都不经它注入。
 `startAalis` 从配置文件顶层读 `slowThresholdMs` 注入（改了要重启），其余时长用 core 默认值。
 `@aalis/runtime` 的包入口会引入 Node 模块，非 Node 宿主不能直接复用，要用该环境的 API 自备以下几样：

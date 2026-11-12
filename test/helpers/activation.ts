@@ -25,7 +25,7 @@ export function bindActivationFixture(host: ActivationHost, activation: Activati
 export function createActivationFixture(options: { id?: string; logger?: Logger } = {}) {
   // 与 App 构造同一包法：注入的 logger 出错不传进 core
   const log = quietLogger(options.logger ?? new DefaultLogger('test', 'error'));
-  const host = new ActivationHost({ services: new ServiceContainer(), devMode: false }, log);
+  const host = new ActivationHost(new ServiceContainer(), log);
   const activation = options.id && options.id !== 'root' ? host.create(options.id) : host.root;
   return bindActivationFixture(host, activation);
 }

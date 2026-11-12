@@ -52,7 +52,7 @@ async function world(onRootDrain: (h: { dropClient: () => void; lines: string[] 
   const lines: string[] = [];
   const record = (...args: unknown[]) => void lines.push(args.map(String).join(' '));
   const logger: Logger = { debug() {}, info: record, warn: record, error: record, child: () => logger };
-  const app = new App({ name: 'T', logger, devMode: false });
+  const app = new App({ name: 'T', logger });
   provideEvents(app);
   cleanups.push(() => app.stop());
   const root = app.bind({ provide, events, lifecycle, platform });

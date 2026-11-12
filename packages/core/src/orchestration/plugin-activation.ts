@@ -147,17 +147,13 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
       throw coreFailure(message, 'provides-not-registered', { services: missing });
     }
 
-    // dev mode：反向一致性检查 —— 实际注册的服务名是否都在 provides 中声明
-    // provides 供启动排序使用；关闭编排仍按激活实际持有的依赖建边
-    // 注：是否 dev 由宿主通过 `App({ devMode })` 显式注入，core 不读 process.env
-    if (host.runtime.devMode) {
-      const undeclared = registered.filter(name => !provides.includes(name));
-      if (undeclared.length > 0) {
-        logger.warn(
-          `插件 "${entry.instanceId}" 注册了服务 [${undeclared.join(', ')}] 但未在 provides 中声明 —— ` +
-            `下游依赖排序将无法找到该 provider（仅靠 reactive 兜底），建议补全 provides 列表`,
-        );
-      }
+    // 反向核对：实际注册的服务名都要在 provides 里声明。provides 供启动排序使用；关闭编排仍按激活实际持有的依赖建边
+    const undeclared = registered.filter(name => !provides.includes(name));
+    if (undeclared.length > 0) {
+      logger.warn(
+        `插件 "${entry.instanceId}" 注册了服务 [${undeclared.join(', ')}] 但未在 provides 中声明 —— ` +
+          `下游依赖排序将无法找到该 provider（仅靠 reactive 兜底），建议补全 provides 列表`,
+      );
     }
 
     entry.state = 'active';

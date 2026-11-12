@@ -116,7 +116,7 @@ describe('内置能力', () => {
 });
 
 describe('同名服务的描述符', () => {
-  it('同一服务名以另一个描述符对象登记：照常登记，warn 点名两边并说明两种成因（不看 devMode）', async () => {
+  it('同一服务名以另一个描述符对象登记：照常登记，warn 点名两边并说明两种成因', async () => {
     const warnings: string[] = [];
     const logger: Logger = {
       debug() {},
@@ -125,7 +125,7 @@ describe('同名服务的描述符', () => {
       error() {},
       child: () => logger,
     };
-    const app = new App({ name: 'T', logLevel: 'error', logger, devMode: false });
+    const app = new App({ name: 'T', logLevel: 'error', logger });
     apps.push(app);
     const shared = defineService<{ from: string }>('__t:same-name');
     const copy = defineService<{ from: string }>('__t:same-name');

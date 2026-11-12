@@ -16,7 +16,7 @@ function world() {
     error() {},
     child: () => logger,
   };
-  const app = new App({ name: 'provides-owner', logLevel: 'error', logger, devMode: true });
+  const app = new App({ name: 'provides-owner', logLevel: 'error', logger });
   apps.push(app);
   return { app, warnings };
 }

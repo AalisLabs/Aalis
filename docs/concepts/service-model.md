@@ -76,7 +76,7 @@ export default definePlugin({
 
 ### 2.2 同一激活默认只 provide 一次同名服务
 
-同一个激活对同一个服务名默认只能 `provide` 一次。以同一 id 重复 provide（都不带 `entryId`，或带了相同的 `entryId`）会被 dev 校验 warn：下游按条目 id 路由（`of(id)`、设偏好）只能命中其中一条。
+同一个激活对同一个服务名默认只能 `provide` 一次。以同一 id 重复 provide（都不带 `entryId`，或带了相同的 `entryId`）会 warn：下游按条目 id 路由（`of(id)`、设偏好）只能命中其中一条。
 
 要在同一个插件里跑多套配置（例如多个 API key），在定义上声明 `reusable: true`，再用 `name:suffix` 注册多个插件实例。要在单实例里拆子粒度，用 `entryId`。
 

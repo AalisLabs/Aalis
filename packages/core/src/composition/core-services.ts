@@ -174,7 +174,7 @@ export function coreProviders(
     const name = descriptor.name;
     if (c.resources.refuses(`provide("${name}")`)) return () => {};
     const entryId = options?.entryId ?? c.id;
-    if (runtime.devMode && container.hasEntry(name, entryId, c.owner))
+    if (container.hasEntry(name, entryId, c.owner))
       c.logger.warn(
         `服务 "${name}" 已由本激活以 "${entryId}" provide 过一次，按 contextId 路由与设偏好只能命中其中一条。` +
           `一个激活登记多条时各传不同的 options.entryId；多套配置请在定义上声明 reusable，以 "<name>:<suffix>" 注册多个实例。`,

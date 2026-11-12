@@ -20,7 +20,7 @@
 | 场景 | 你要不要做什么 |
 |---|---|
 | 插件 dispose 时不主动 dispose 自己 provided 的服务实例 | **什么都不用做**，激活撤回会从容器注销 |
-| 插件 active 期间临时换一个服务实例（同名 provide 二次） | **不要这么做**。同激活同名不带 `entryId` 的二次登记在 dev 模式下会被 warn，下游按条目 id（`of(id)`、偏好）只命中其中一条。要换实现：`bounce` 自己 |
+| 插件 active 期间临时换一个服务实例（同名 provide 二次） | **不要这么做**。同激活同名不带 `entryId` 的二次登记会被 warn，下游按条目 id（`of(id)`、偏好）只命中其中一条。要换实现：`bounce` 自己 |
 | 插件配置变更触发热重载 | **调用 `updateConfig()`**（换上新配置再按 `bounce` 重启；`bounce` 只按现有配置重启）。PluginManager 负责拆掉激活并重算。下游**不会**一律级联重启 |
 
 选中的那一家换人不一律重启消费者。下游的业务句柄 `use` 每次访问都重新解析；有状态资源用 `follow`，登记用登记型业务层。
@@ -63,7 +63,7 @@ await plugins.use.bounce(lifecycle.use.id);
 
 以任何逻辑身份登记的条目（含以 `entryId` 替别的包登记的）都计入本次激活。
 
-dev 模式下，实际 `provide` 了但未在 `provides` 声明的服务名会 warn。除非有特殊理由，`provides` 应该和本次激活真正登记的服务名完全一致。
+实际 `provide` 了但未在 `provides` 声明的服务名会 warn。除非有特殊理由，`provides` 应该和本次激活真正登记的服务名完全一致。
 
 ---
 
@@ -113,7 +113,7 @@ export default definePlugin({
 
 ### 反模式：单实例 apply 内多次 `provide` 同一服务名
 
-不带 `entryId` 二次登记，下游按条目 id 只会命中其中一个。dev 模式下 `provide` 会 warn。
+不带 `entryId` 二次登记，下游按条目 id 只会命中其中一个。`provide` 会 warn。
 
 正确做法二选一：
 

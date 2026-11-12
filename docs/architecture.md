@@ -21,11 +21,11 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 
 ## 宿主层 vs 核心层（Bootstrap 边界）
 
-`@aalis/core` 在物理上是**环境无关**的内存运行时：运行时代码不加载外部包，`package.json` 没有 `dependencies`，源码不 import 任何 `node:fs` / `node:path` / `node:os` / `node:child_process`，不调用 `process.cwd()` / `process.argv` / `console.*`，也不读 `process.env`（`devMode` 由宿主显式注入）。这意味着同一份 core 理论上可跑在浏览器、Worker、Deno 等任何 JS 运行时。多运行时冒烟（`test/smoke/core-multi-runtime.test.ts`）把同一段场景分别放进 Node（按包名解析到构建产物）与无头 Chromium 的主线程、module Worker 里实跑，核对注册激活、重载、清理、慢激活与停机的结果。
+`@aalis/core` 在物理上是**环境无关**的内存运行时：运行时代码不加载外部包，`package.json` 没有 `dependencies`，源码不 import 任何 `node:fs` / `node:path` / `node:os` / `node:child_process`，不调用 `process.cwd()` / `process.argv` / `console.*`，也不读 `process.env`。这意味着同一份 core 理论上可跑在浏览器、Worker、Deno 等任何 JS 运行时。多运行时冒烟（`test/smoke/core-multi-runtime.test.ts`）把同一段场景分别放进 Node（按包名解析到构建产物）与无头 Chromium 的主线程、module Worker 里实跑，核对注册激活、重载、清理、慢激活与停机的结果。
 
 > 业务插件同样受约束：直接 import `node:fs` / `node:child_process` / `node:os` / `node:http(s)` 被 biome 拦截，必须改走 `@aalis/api-storage` / `@aalis/api-process`。完整白名单与豁免理由见 [node-usage-policy](architecture/node-usage-policy.md)。
 
-环境耦合全部收敛在宿主层 `@aalis/runtime`（monorepo 由仓库根 `src/index.ts` 一行 `startAalis` 启动）。重启策略与 dev 开关经 `new App({ ... })` 注入；插件发现与配置文档由宿主持有，插件定义连同各实例的配置、禁用标记经 `app.pluginAll` 交给 core，宿主路径、日志、配置文档与热扫描以服务的形式登记在根激活上：
+环境耦合全部收敛在宿主层 `@aalis/runtime`（monorepo 由仓库根 `src/index.ts` 一行 `startAalis` 启动）。重启策略经 `new App({ ... })` 注入；插件发现与配置文档由宿主持有，插件定义连同各实例的配置、禁用标记经 `app.pluginAll` 交给 core，宿主路径、日志、配置文档与热扫描以服务的形式登记在根激活上：
 
 | 宿主件 | 接到 core 的方式 | 默认实现（在 `@aalis/runtime`） | 职责 |
 |---|---|---|---|
@@ -34,7 +34,6 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 | 配置文档 | `host-config` 服务（`@aalis/api-host-config`） | `createFsYamlConfigProvider()` + `createFsSecretsProvider()` + `createConfigStore()` / `installHostConfig()` | 配置与密钥文件读 / 写 / `fs.watch` 热重载 |
 | 插件发现 | `app.pluginAll`；热扫描为 `plugin-source` 服务（`@aalis/api-plugin-source`） | `createFsPluginLoader()` / `createNodeModulesPluginLoader()` + `createPluginDiscovery()` | 扫描 `packages/` 或项目依赖 + dynamic import，整批登记 |
 | 重启策略 | `AppOptions.restartStrategy`（`RestartStrategy`） | `createProcessRespawnStrategy()` | `child_process.spawn` 重启进程 |
-| dev 开关 | `AppOptions.devMode`（`boolean`） | `process.env.NODE_ENV !== 'production'` | dev 校验开关 |
 
 `startAalis` 的装配顺序见 [@aalis/runtime](architecture/runtime.md)。
 

@@ -86,8 +86,6 @@ export interface StartAalisOptions {
    * 宿主自管命令行时传显式数组（`[]` 即守护进程）。
    */
   argv?: string[];
-  /** 覆盖 dev/prod 判定，默认按 NODE_ENV !== 'production' */
-  devMode?: boolean;
   /**
    * 插件配置同步政策（schema 默认值回填 / 未知字段裁剪 / 热重载）。
    * `trimUnknownFields=false` 时保留 configSchema 之外的未知字段（默认裁剪）。
@@ -309,8 +307,6 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
             ...(instanceLock ? { env: { [HANDOFF_ENV]: instanceLock.handoffToken } } : {}),
             signal: terminating.signal,
           }),
-    // 宿主层决定 dev/prod；core 不读 process.env
-    devMode: opts.devMode ?? process.env.NODE_ENV !== 'production',
     // 宿主读取 @aalis/core 的实际版本注入启动 banner——core 环境无关、不自读 package.json。
     version: readCoreVersion(),
   });

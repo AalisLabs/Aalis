@@ -60,15 +60,9 @@ export interface AppOptions {
    */
   logger?: Logger;
   /**
-   * 开发模式开关——传递给根激活，决定 `provide` 与激活路径是否跑一致性劝告。
-   * 默认 `true`（dev-safe）；生产宿主应显式传入 `false` 跳过热路径开销。
-   * core 不读 `process.env`，完全以宿主传入为准。
-   */
-  devMode?: boolean;
-  /**
    * 内核版本号，仅用于启动 banner 展示（如 `Aalis Core 0.6.0 - <name>`）。
    * core 环境无关、零依赖，不能自读 package.json；由宿主（@aalis/runtime）读取
-   * `@aalis/core` 的实际版本注入——与 `devMode` 同为"宿主决定"注入项。
+   * `@aalis/core` 的实际版本注入。
    * 缺省时 banner 省略版本段（嵌入 / 测试场景无宿主注入）。
    */
   version?: string;
@@ -129,10 +123,7 @@ export class App {
     const disposeTimeoutMs = cap(options.disposeTimeoutMs ?? 5000);
     const slowMs = cap(options.slowThresholdMs ?? 60_000);
     // 1. 根激活。原语注册表不外露，插件与宿主都经描述符取用
-    this.#host = new ActivationHost(
-      { services: new ServiceContainer(), devMode: options.devMode ?? true },
-      this.logger,
-    );
+    this.#host = new ActivationHost(new ServiceContainer(), this.logger);
     const caps = this.#host.bind(this.#host.root, { provide });
 
     // 2. 插件管理器

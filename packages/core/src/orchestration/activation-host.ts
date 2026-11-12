@@ -1,3 +1,5 @@
+import type { ServiceContainer } from '../primitives/services.js';
+
 import { Activation } from './activation.js';
 import { createSelection } from '../composition/binding.js';
 import { coreProviders, provide } from '../composition/core-services.js';
@@ -12,10 +14,10 @@ export class ActivationHost {
   readonly root: Activation;
   readonly #owners = new Map<symbol, Activation>();
 
-  constructor(base: Pick<ServiceRuntime, 'services' | 'devMode'>, logger: Logger) {
+  constructor(services: ServiceContainer, logger: Logger) {
     const watchers = new Set<(name: string) => void>();
     this.runtime = {
-      ...base,
+      services,
       serviceChanged: name => {
         for (const watcher of watchers) watcher(name);
       },

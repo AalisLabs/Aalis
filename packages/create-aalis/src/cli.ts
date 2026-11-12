@@ -838,8 +838,6 @@ export function renderPackageJson(
       type: 'module',
       description: COPY[ui].description(projectName),
       engines: { node: `>=${MIN_NODE}` },
-      // 默认 dev 模式（startAalis 据 NODE_ENV!=='production' 判定）；
-      // 生产部署用 `NODE_ENV=production node index.mjs`（Windows 用 set/$env:）。
       scripts: {
         start: 'node index.mjs',
       },

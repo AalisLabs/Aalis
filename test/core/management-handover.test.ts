@@ -31,7 +31,6 @@ function capturing(disposeTimeoutMs?: number) {
   const app = new App({
     name: 't',
     logLevel: 'error',
-    devMode: false,
     logger,
     disposeTimeoutMs,
   });
@@ -40,7 +39,7 @@ function capturing(disposeTimeoutMs?: number) {
 }
 
 function world(disposeTimeoutMs?: number) {
-  const app = new App({ name: 't', logLevel: 'error', devMode: false, disposeTimeoutMs });
+  const app = new App({ name: 't', logLevel: 'error', disposeTimeoutMs });
   apps.push(app);
   return app;
 }

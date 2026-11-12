@@ -30,8 +30,8 @@ function hooked(level: 'debug' | 'info' | 'warn' | 'error', needle: string, acti
   return logger;
 }
 
-function makeApp(logger: Logger, devMode = false): App {
-  const app = new App({ name: 'T', logger, devMode });
+function makeApp(logger: Logger): App {
+  const app = new App({ name: 'T', logger });
   apps.push(app);
   return app;
 }
@@ -118,14 +118,13 @@ describe('日志回调里停用插件：不被这次改动写回', () => {
     expect(state(app, 'zz-retry')).toBe('disabled');
   });
 
-  it('devMode 告警未声明的服务时停用它：终态是 disabled，服务不再上线', async () => {
+  it('告警未声明的服务时停用它：终态是 disabled，服务不再上线', async () => {
     let app!: App;
     let disabling: Promise<boolean> | undefined;
     app = makeApp(
       hooked('warn', '未在 provides 中声明', () => {
         disabling = app.plugins.disable('zz-loose');
       }),
-      true,
     );
     const svc = defineService<Box>('zz-log-undeclared');
     await app.plugin(

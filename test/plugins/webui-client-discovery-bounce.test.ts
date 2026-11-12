@@ -44,7 +44,7 @@ it('bounce 与冷启动一样：扫描到的前端不报「未在 provides 中�
     error() {},
     child: () => logger,
   };
-  const app = new App({ name: 'T', logger, devMode: true });
+  const app = new App({ name: 'T', logger });
   provideEvents(app);
   apps.push(app);
   provideHostPaths(app, dir);

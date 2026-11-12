@@ -108,9 +108,9 @@ describe('provide 生产者类型约束', () => {
     ).toBeGreaterThan(0);
   });
 
-  it('负向：provide 未在 provides 声明的描述符——类型不拒，devMode 下 warn', async () => {
+  it('负向：provide 未在 provides 声明的描述符——类型不拒，warn', async () => {
     // Provide 的签名不把 provides 数组收进类型参数，未声明的描述符不是类型错误；
-    // 激活路径在 devMode 下对实际注册但不在 provides 里的服务名劝告。
+    // 激活路径对实际注册但不在 provides 里的服务名劝告。
     const undeclared = `import { definePlugin, defineService, provide } from '@aalis/core';
 const x = defineService<{ n: number }>('x');
 const y = defineService<{ n: number }>('y');
@@ -131,7 +131,6 @@ definePlugin({
       name: 'T',
       logLevel: 'error',
       logger,
-      devMode: true,
     });
     apps.push(app);
     const x = defineService<{ n: number }>('x');
@@ -151,7 +150,7 @@ definePlugin({
     expect(app.plugins.getPlugin('probe-undeclared')?.state).toBe('active');
     expect(
       warns.some(w => w.includes('y') && w.includes('未在 provides')),
-      `devMode 应对未声明的 provide 出声，实际：${warns.join('\n') || '（无 warn）'}`,
+      `应对未声明的 provide 出声，实际：${warns.join('\n') || '（无 warn）'}`,
     ).toBe(true);
   });
 });

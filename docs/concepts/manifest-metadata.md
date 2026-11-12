@@ -73,7 +73,7 @@ export default definePlugin({
 
 以任何逻辑身份登记的条目（含以 `entryId` 替别的包登记的）都计入登记的激活；别的激活登记的同 id 条目不算。
 
-dev 模式下，实际 `provide` 了但没有在 `provides` 里声明的服务名会 warn（下游依赖排序将无法找到该 provider）。
+实际 `provide` 了但没有在 `provides` 里声明的服务名会 warn（下游依赖排序将无法找到该 provider）。
 
 ---
 
