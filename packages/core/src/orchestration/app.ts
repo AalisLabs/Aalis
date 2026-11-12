@@ -297,6 +297,11 @@ export class App {
     return this.#stopping ?? singleFlight(done => (this.#stopping = done), this.#runStop.bind(this));
   }
 
+  /** 应用是否已开始停机：运行中为 false，`stop()` 一开始即 true（重启策略发起的也一样），停完之后不变 */
+  get stopping(): boolean {
+    return this.#stopping !== undefined;
+  }
+
   async #runStop(): Promise<void> {
     this.logger.info('正在停止...');
     this.#plugins.beginShutdown();
