@@ -388,6 +388,8 @@ const REMOVED: Array<[string, string]> = [
   ['installTerminalStateRestorer', 'runtime 退出时的终端复原：改终端模式的插件自己复原'],
   ['disarmTerminalStateRestorer', 'runtime 退出时的终端复原：改终端模式的插件自己复原'],
   ['terminalRestore', 'startAalis 的终端复原开关：改终端模式的插件自己复原'],
+  ['createApp(', 'App 的工厂函数：与 new App 等价，只留构造函数一种写法'],
+  ['`createApp`', 'App 的工厂函数：与 new App 等价，只留构造函数一种写法'],
 ];
 
 /**

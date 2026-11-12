@@ -207,14 +207,14 @@ lifecycle.use.onDispose(() => {
 ## 7. 测试插件的最小写法
 
 ```typescript
-import { createApp } from '@aalis/core';
+import { App } from '@aalis/core';
 import contributionsPlugin from '@aalis/plugin-contributions';
 import eventsPlugin from '@aalis/plugin-events';
 import hooksPlugin from '@aalis/plugin-hooks';
 import myPlugin from './src/index.js';
 
 it('required 依赖到场后激活', async () => {
-  const app = createApp({ name: 'test', logLevel: 'error' });
+  const app = new App({ name: 'test', logLevel: 'error' });
   // 事件、钩子与贡献点由插件提供：插件用到它们时，测试里要一并登记三个默认提供者（部署里由宿主随其他插件整批发现登记）
   await app.pluginAll([{ definition: eventsPlugin }, { definition: hooksPlugin }, { definition: contributionsPlugin }]);
   await app.plugin(fakeDepProvider);
@@ -225,7 +225,7 @@ it('required 依赖到场后激活', async () => {
 });
 ```
 
-`createApp` 是同步的。配置经 `app.plugin(definition, config)` 传入，core 不合并 schema 默认值；插件的 parseConfig 负责解析与默认值。测试里登记的 `@aalis/plugin-events` / `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 放进 devDependencies。`plugin()` 的 true 只说明请求已受理；需要「激活已落定」必须 `await app.plugins.idle()`。`idle()` 不等超过 `slowThresholdMs`（默认 60 秒）转入后台的激活，测试里要等这类激活，按 `getStatus()` 的状态轮询，或把 `slowThresholdMs` 设为 0。不得在插件 `apply` / `onDispose` 内调用 `idle()`（互等死锁）。不要用 `setTimeout` 代替 `idle()`。
+构造是同步的。配置经 `app.plugin(definition, config)` 传入，core 不合并 schema 默认值；插件的 parseConfig 负责解析与默认值。测试里登记的 `@aalis/plugin-events` / `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 放进 devDependencies。`plugin()` 的 true 只说明请求已受理；需要「激活已落定」必须 `await app.plugins.idle()`。`idle()` 不等超过 `slowThresholdMs`（默认 60 秒）转入后台的激活，测试里要等这类激活，按 `getStatus()` 的状态轮询，或把 `slowThresholdMs` 设为 0。不得在插件 `apply` / `onDispose` 内调用 `idle()`（互等死锁）。不要用 `setTimeout` 代替 `idle()`。
 
 用假定时器（`vi.useFakeTimers()`）时注意：激活在落定或转入后台之前留有一个未清除的阈值定时器，`vi.getTimerCount()` 会把它算进去，`vi.runAllTimers()` 会让仍未落定的激活到点转入后台。先 `await app.plugins.idle()` 让激活落定再装假定时器。
 
@@ -238,7 +238,7 @@ it('required 依赖到场后激活', async () => {
 | 一个独立插件实例（默认）| `app.plugin(definition, cfg)` |
 | 按会话/租户差异化配置或服务 | **键控解析**：按 key 查表（参考会话设置的读取器 `fields.get(sessionId)`），不需要上下文隔离 |
 | 同一份定义跑多套独立配置 | 定义声明 `reusable: true`，再以 `app.plugin(definition, cfg, 'name:suffix')` 注册（插件内经 `plugins.register` 同签名）；每个实例是独立的顶层激活，由调度器管理。约束见第 4 节 |
-| 完全独立的事件总线 / 日志通道 / 服务容器 | `createApp(options)` 新建 App；日志通道另传独立的 `logHub` |
+| 完全独立的事件总线 / 日志通道 / 服务容器 | `new App(options)` 新建 App；日志通道另传独立的 `logHub` |
 
 宿主取根激活绑定用 `app.bind(uses)`，与插件同一套描述符；登记归属根激活、随 App 停止撤回。插件拿的是自己激活的绑定，不复用这里的。
 
@@ -393,7 +393,7 @@ declare module '@aalis/api-events' {
 多租户：
 
 - **不同公司**：每租户一个独立进程 + 独立 `AALIS_DATA_DIR`
-- **沙盒/测试**：`createApp(options)` 新建独立 App
+- **沙盒/测试**：`new App(options)` 新建独立 App
 - **同租户内多用户**：profile + 请求级 hint
 
 不要为了多租户改服务容器。让 IoC 保持「一进程 = 一产品实例」。

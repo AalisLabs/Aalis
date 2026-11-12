@@ -20,7 +20,7 @@ export {
 export type { SelectionBasis, ServiceInfo, ServiceView } from './primitives/services.js';
 
 // ----- 编排层：应用骨架与插件管理 -----
-export { App, type AppOptions, createApp } from './orchestration/app.js';
+export { App, type AppOptions } from './orchestration/app.js';
 export { appService, pluginsService } from './orchestration/host-services.js';
 export type { PluginRegistration } from './orchestration/plugin.js';
 // 宿主 SPI：重启策略

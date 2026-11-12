@@ -191,6 +191,6 @@ core 不持配置文档，也不导出配置类型；插件自己的配置视图
 
 ## 编排与宿主 SPI
 
-`App` / `AppOptions` / `createApp`；`PluginEntry` / `PluginState` / `parseInstanceId`；`PluginRegistration`（`app.pluginAll` 的条目）；`RestartStrategy`。插件加载器 `PluginLoader` / `PluginDescriptor` 在 `@aalis/runtime`，插件包入口判定 `pluginDefinitionOf` 在 `@aalis/api-plugin-source`。
+`App` / `AppOptions`；`PluginEntry` / `PluginState` / `parseInstanceId`；`PluginRegistration`（`app.pluginAll` 的条目）；`RestartStrategy`。插件加载器 `PluginLoader` / `PluginDescriptor` 在 `@aalis/runtime`，插件包入口判定 `pluginDefinitionOf` 在 `@aalis/api-plugin-source`。
 
 事件的 `Events` / `EventHandler` / `EventBus`、钩子的 `Hooks` / `MiddlewareFn` / `MiddlewareNext` 与贡献点的 `Contributions` / `ContributionSpec` / `ContributionHandle` 见 [api-events](../api/api-events.md)、[api-hooks](../api/api-hooks.md)、[api-contributions](../api/api-contributions.md)。

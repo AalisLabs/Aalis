@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   App,
   type AppOptions,
-  createApp,
   definePlugin,
   defineService,
   type Logger,
@@ -10,7 +9,7 @@ import {
   provide,
 } from '../../packages/core/src/index.js';
 
-// App 外壳的可观测行为：createApp 工厂、注入的 logger 出错、启动横幅、restart，以及启动 / 停机 / 重启互斥。
+// App 外壳的可观测行为：构造选项、注入的 logger 出错、启动横幅、restart，以及启动 / 停机 / 重启互斥。
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
 type LogRecord = { level: Level; message: string; args: unknown[] };
@@ -45,17 +44,16 @@ function track<T extends App>(app: T): T {
   return app;
 }
 
-describe('createApp 工厂', () => {
-  it('返回按传入选项构造的 App：名称、注入的 logger 与版本号都生效', async () => {
+describe('构造选项', () => {
+  it('名称、注入的 logger 与版本号都生效', async () => {
     const log = recordingLogger();
-    const app = track(createApp({ ...base('Factory'), logger: log, version: '0.0.0-test' }));
+    const app = track(new App({ ...base('Factory'), logger: log, version: '0.0.0-test' }));
 
-    expect(app).toBeInstanceOf(App);
     app.logger.warn('经 app.logger 写入');
     expect(log.messages('warn')).toEqual(['经 app.logger 写入']);
     expect(log.messages('info')[0]).toBe('Aalis Core 0.0.0-test - Factory');
 
-    // 工厂产物是完整可用的 App：注册即激活，停机走完整路径
+    // 注册即激活，停机走完整路径
     const applied: string[] = [];
     await app.plugin(definePlugin({ name: 'p', apply: () => void applied.push('p') }));
     await app.plugins.idle();

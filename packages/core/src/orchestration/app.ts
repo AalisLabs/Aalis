@@ -75,20 +75,6 @@ export interface AppOptions {
 }
 
 /**
- * 创建 App 实例的工厂函数。
- *
- * @example
- * // 浏览器/嵌入式：插件与各自的配置由宿主直接交给 core
- * const app = createApp({ name: 'embedded' });
- * await app.pluginAll([{ definition: memoryPlugin, config: { maxItems: 100 } }, { definition: agentPlugin }]);
- *
- * // Node 宿主由 @aalis/runtime 提供插件发现、配置文档与 fs/yaml/spawn 实现
- */
-export function createApp(options: AppOptions): App {
-  return new App(options);
-}
-
-/**
  * 单飞：先经 publish 交出完成对象，再同步启动 run。run 的同步段里会执行外部代码（宿主日志器、abort 监听器），
  * 那里重入只能拿到这次的完成对象，不会再启动一次
  */
@@ -109,6 +95,13 @@ function singleFlight(publish: (done: Promise<void>) => void, run: () => Promise
  *
  * core 的"内核"——只持有内存中的抽象（services / plugins 与各实例的运行配置），
  * 不接触任何外部 I/O。宿主需要的环境能力经 `AppOptions` 注入。
+ *
+ * @example
+ * // 浏览器/嵌入式：插件与各自的配置由宿主直接交给 core
+ * const app = new App({ name: 'embedded' });
+ * await app.pluginAll([{ definition: memoryPlugin, config: { maxItems: 100 } }, { definition: agentPlugin }]);
+ *
+ * // Node 宿主由 @aalis/runtime 提供插件发现、配置文档与 fs/yaml/spawn 实现
  */
 export class App {
   /** 激活装配。根激活（host.root）是宿主绑定（{@link bind}）与核心服务的归属，不对外：宿主经 bind 取能力 */

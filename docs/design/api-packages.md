@@ -18,7 +18,7 @@
 flowchart TB
   impl["<b>实现包</b>（runtime + business logic）<br/>plugin-llm-deepseek / plugin-llm-openai / plugin-llm-ollama<br/>plugin-memory-sqlite / plugin-memory-mongodb / …<br/>plugin-tools / plugin-commands / plugin-gateway / …"]
   api["<b>api 包</b>（types + 服务描述符 + 钩子/事件增强 + 领域 helper）<br/>api-events / api-hooks / api-contributions / api-host-config / api-plugin-source<br/>api-llm / api-memory / api-storage<br/>api-embedding / api-vectorstore<br/>api-tools / api-commands / api-gateway<br/>api-webui / api-authority / api-agent"]
-  core["<b>@aalis/core</b>（runtime infra + 描述符 + 扩展点）<br/>App · createApp · definePlugin / defineService<br/>内置服务 lifecycle / logger / config / provide / services<br/>插件编排 · Logger · ……<br/> <br/><b>扩展点</b>（由契约包 declaration merging 注入）<br/>· PluginMeta（插件定义的元数据字段）<br/>服务类型随描述符走"]
+  core["<b>@aalis/core</b>（runtime infra + 描述符 + 扩展点）<br/>App · definePlugin / defineService<br/>内置服务 lifecycle / logger / config / provide / services<br/>插件编排 · Logger · ……<br/> <br/><b>扩展点</b>（由契约包 declaration merging 注入）<br/>· PluginMeta（插件定义的元数据字段）<br/>服务类型随描述符走"]
   impl -->|imports types| api
   api -->|imports types + augments| core
 ```

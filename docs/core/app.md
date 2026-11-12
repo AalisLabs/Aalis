@@ -7,10 +7,9 @@
 ## 构造函数
 
 ```typescript
-import { App, createApp } from '@aalis/core';
+import { App } from '@aalis/core';
 
 const app = new App({ name: 'demo', logLevel: 'info' });
-const app2 = createApp({ name: 'demo' });
 ```
 
 core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念，也不持有配置文档。插件从哪里来、配置存在哪里由宿主负责：

@@ -35,7 +35,7 @@ const LIMIT_MS = 30;
 const WAIT_MS = 5000;
 
 export async function smoke(core: typeof Core): Promise<SmokeResult> {
-  const { createApp, definePlugin, defineService, lifecycle, LogHub, provide } = core;
+  const { App, definePlugin, defineService, lifecycle, LogHub, provide } = core;
 
   const hub = new LogHub();
   const warnings: string[] = [];
@@ -44,7 +44,7 @@ export async function smoke(core: typeof Core): Promise<SmokeResult> {
       warnings.push(`${entry.level} ${entry.scope} ${entry.message}`);
     }
   });
-  const app = createApp({ name: 'smoke', logHub: hub, slowThresholdMs: LIMIT_MS, disposeTimeoutMs: LIMIT_MS });
+  const app = new App({ name: 'smoke', logHub: hub, slowThresholdMs: LIMIT_MS, disposeTimeoutMs: LIMIT_MS });
 
   /** apply 走完的先后（各插件在 apply 末尾记一笔），与每个插件 apply 过几次 */
   const loaded: string[] = [];

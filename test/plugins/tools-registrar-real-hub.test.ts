@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { type ProcessService, processService } from '../../packages/api-process/src/index.js';
 import { type BoundTools, tools } from '../../packages/api-tools/src/index.js';
-import { type App, createApp, definePlugin, type Logger, optional, provide } from '../../packages/core/src/index.js';
+import { App, definePlugin, type Logger, optional, provide } from '../../packages/core/src/index.js';
 import type { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 import { makeToolRegistry } from '../fixtures/tool-registry.js';
@@ -21,7 +21,7 @@ afterEach(async () => {
 });
 
 function world() {
-  const app = createApp({ name: 'tools-real-hub', logger: silent });
+  const app = new App({ name: 'tools-real-hub', logger: silent });
   apps.push(app);
   return { app, provide: app.bind({ provide }).provide.use };
 }
