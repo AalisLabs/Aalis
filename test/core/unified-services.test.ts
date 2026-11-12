@@ -4,22 +4,16 @@ import {
   config,
   definePlugin,
   defineService,
-  events,
   type LifecycleCap,
   type Logger,
   lifecycle,
+  logger,
   optional,
   provide,
   services,
 } from '../../packages/core/src/index.js';
 import { deferred } from '../helpers/deferred.js';
 import { HubRegistry, hub } from '../helpers/hub.js';
-
-declare module '@aalis/core' {
-  interface AalisEvents {
-    '__t:unified-services': [];
-  }
-}
 
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
 const apps: App[] = [];
@@ -40,7 +34,7 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
     const app = makeApp();
     const host = app.bind({ services });
     expect(host.services.use.names().sort()).toEqual(
-      ['events', 'lifecycle', 'logger', 'config', 'provide', 'services', 'app', 'plugins'].sort(),
+      ['lifecycle', 'logger', 'config', 'provide', 'services', 'app', 'plugins'].sort(),
     );
   });
 
@@ -163,7 +157,7 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
     expect(() => host.provide.use(unique, { value: 2 })).toThrow(/独占/);
     const off = host.provide.use(ordinary, { value: 1 });
     expect(() => host.provide.use(ordinary, { value: 2 }, { exclusive: true })).toThrow(/独占/);
-    expect(() => host.provide.use(events, () => ({ on: () => () => {}, emit: async () => {} }))).toThrow(/独占/);
+    expect(() => host.provide.use(logger, () => silent)).toThrow(/独占/);
     expect(host.services.use.all(unique)).toHaveLength(1);
     await app.plugins.unload('exclusive-provider');
     host.provide.use(unique, { value: 3 }, { exclusive: true });
@@ -173,43 +167,32 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
     expect(host.services.use.get(ordinary)).toEqual({ value: 4 });
   });
 
-  it('登记型枢纽的登记随消费者撤回，事件在撤回回调发射前已同栈切断', async () => {
+  it('登记型枢纽的登记随消费者撤回，在撤回回调执行前已同栈切断', async () => {
     const app = makeApp();
-    const host = app.bind({ provide, events });
+    const host = app.bind({ provide });
     const registry = new HubRegistry();
     host.provide.use(hub, registry);
-    // 绑定口交给消费者一个开关：调用时在消费者的清理链上挂一条撤回，撤回时向根发射测试事件
-    const cleanupEmitter = defineService<object, () => void>(
-      '__t:cleanup-emitter',
-      port => () => void port.track(() => host.events.use.emit('__t:unified-services')),
+    // 绑定口交给消费者一个开关：调用时在消费者的撤回链上挂一条，撤回时记下登记表此刻的内容
+    const atWithdrawal: string[][] = [];
+    const probe = defineService<object, () => void>(
+      '__t:withdrawal-probe',
+      port => () => void port.track(() => void atWithdrawal.push(registry.list())),
     );
-    host.provide.use(cleanupEmitter, {});
-    let ownHits = 0;
-    let rootHits = 0;
-    host.events.use.on('__t:unified-services', () => {
-      rootHits++;
-    });
+    host.provide.use(probe, {});
     await app.plugin(
       definePlugin({
         name: 'hub-consumer',
-        uses: { hub, events, cleanupEmitter },
-        apply({ hub, events, cleanupEmitter }) {
-          events.use.on('__t:unified-services', () => {
-            ownHits++;
-          });
-          cleanupEmitter.use();
-          events.use.on('__t:unified-services', () => {
-            ownHits++;
-          });
-          hub.use.add('echo', 'executed');
+        uses: { hub, probe },
+        apply({ hub, probe }) {
+          hub.use.add('before', 'v');
+          probe.use();
+          hub.use.add('after', 'v');
         },
       }),
     );
-    expect(registry.list()).toEqual(['hub-consumer/echo=executed']);
-    await host.events.use.emit('__t:unified-services');
-    expect([ownHits, rootHits]).toEqual([2, 1]);
+    expect(registry.list()).toEqual(['hub-consumer/before=v', 'hub-consumer/after=v']);
     await app.plugins.unload('hub-consumer');
+    expect(atWithdrawal, '撤回回调执行时，在它之前与之后登记的两条都已切断').toEqual([[]]);
     expect(registry.list()).toEqual([]);
-    expect([ownHits, rootHits]).toEqual([2, 2]);
   });
 });

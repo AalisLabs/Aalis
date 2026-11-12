@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { type Events, events } from '../../packages/api-events/src/index.js';
 import { llm } from '../../packages/api-llm/src/index.js';
 import { type MemoryService, memory as memoryService } from '../../packages/api-memory/src/index.js';
-import { App, type Events, events, provide } from '../../packages/core/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import userProfile from '../../packages/plugin-user-profile/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';

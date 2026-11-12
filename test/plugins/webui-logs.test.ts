@@ -16,6 +16,7 @@ import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { formatLogLine } from '../../packages/schema-log/src/index.js';
 import { provideHostLogs } from '../fixtures/host-logs.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -73,6 +74,7 @@ async function start(hub = new LogHub()) {
   const file = join(home, 'logs', 'latest.log');
   writeFileSync(file, HISTORY.map(formatLogLine).join(''));
   const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+  provideEvents(app);
   apps.push(app);
   provideHostPaths(app, home);
   provideHostLogs(app, { file });

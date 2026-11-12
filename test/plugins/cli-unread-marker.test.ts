@@ -1,6 +1,8 @@
-import { App, events } from '@aalis/core';
+import { App } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import cliPlugin from '../../packages/plugin-cli/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { fakeTty } from '../helpers/tty.js';
 
 // ════════════════════════════════════════════════════════════
@@ -27,6 +29,7 @@ describe('plugin-cli 非 chat 视图的聊天区新消息提示', () => {
       return true;
     });
     const app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     const lastFrame = () => {
       const all = writes.join('');
       const idx = all.lastIndexOf(FRAME_SPLIT);

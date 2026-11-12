@@ -3,6 +3,7 @@ import { llm } from '../../packages/api-llm/src/index.js';
 import { App, type PluginDefinition } from '../../packages/core/src/index.js';
 import deepseek from '../../packages/plugin-llm-deepseek/src/index.js';
 import openai from '../../packages/plugin-llm-openai/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // OpenAI 兼容 provider 的能力推断。
@@ -34,6 +35,7 @@ async function capabilitiesOf(
 ): Promise<Record<string, string[]>> {
   stubModels(ids);
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   const host = app.bind({ llm });
   await app.plugin(plugin, config);
   await app.plugins.idle();

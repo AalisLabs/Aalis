@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { authority } from '../../packages/api-authority/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { llm } from '../../packages/api-llm/src/index.js';
 import { compression, memory } from '../../packages/api-memory/src/index.js';
@@ -14,7 +15,7 @@ import {
   sessionProtocol,
 } from '../../packages/api-session-protocol/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { type App, events, type Logger, provide } from '../../packages/core/src/index.js';
+import { type App, type Logger, provide } from '../../packages/core/src/index.js';
 import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';

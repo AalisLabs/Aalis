@@ -13,6 +13,7 @@
 
 import { authority } from '@aalis/api-authority';
 import { type CheckResult, doctor } from '@aalis/api-doctor';
+import { events } from '@aalis/api-events';
 import { flowControl } from '@aalis/api-flow-control';
 import { audienceIncludes, INBOUND_PHASE } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
@@ -34,7 +35,7 @@ import {
   type TriggerService,
   trigger,
 } from '@aalis/api-trigger';
-import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { parseConfig } from '@aalis/schema-config';
 import { type TextRef, textClauses, textOf, toSource } from '@aalis/schema-i18n';
 import {

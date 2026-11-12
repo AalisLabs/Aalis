@@ -2,10 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { processService } from '../../packages/api-process/src/index.js';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { App, events, provide } from '../../packages/core/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import { cacheOneAttachment } from '../../packages/plugin-adapter-onebot/src/attachment-cache.js';
 import { materializeAttachments } from '../../packages/plugin-adapter-onebot/src/attachments.js';
 import drawPlugin from '../../packages/plugin-draw/src/index.js';
@@ -13,6 +14,7 @@ import imageSender from '../../packages/plugin-image-sender/src/index.js';
 import processLocal from '../../packages/plugin-process-local/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 画→出站请求→编码 链路测试（真 App/storage/process/Chromium/ffmpeg）：
@@ -42,6 +44,7 @@ describe('绘图产物 → OneBot WebSocket 前的出站编码链路', () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-draw-chain-'));
     for (const d of ['state', 'tmp']) mkdirSync(join(base, d), { recursive: true });
     app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     provideHostPaths(app, base);
     await app.plugin(storageLocal, {});
     await app.plugin(processLocal);

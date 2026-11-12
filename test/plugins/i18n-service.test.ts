@@ -12,7 +12,7 @@ import {
   type LanguagePack,
   textOf,
 } from '../../packages/schema-i18n/src/index.js';
-import { registerHubs } from '../fixtures/hubs.js';
+import { provideEvents, registerHubs } from '../fixtures/hubs.js';
 import { expectProcessTimeZoneDistinct } from '../fixtures/process-time-zone.js';
 import { storedRoom } from '../fixtures/rooms.js';
 import { sessionValuesPlugin, startSettings } from '../fixtures/session-settings.js';
@@ -67,6 +67,7 @@ async function boot(
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   if (options.hubs) await registerHubs(app);
+  else provideEvents(app);
   if (options.sessions) await app.plugin(sessionValuesPlugin(options.sessions));
   await app.plugin(i18nPlugin, options.language === undefined ? {} : { language: options.language });
   await app.plugins.idle();

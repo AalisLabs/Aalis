@@ -3,6 +3,7 @@ import type { ToolService } from '@aalis/api-tools';
 import type { AppService, PluginManagerService, ServiceSelection } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { hostConfig } from '../../packages/api-host-config/src/index.js';
 import {
@@ -10,7 +11,6 @@ import {
   config,
   definePlugin,
   defineService,
-  events,
   lifecycle,
   logger,
   optional,

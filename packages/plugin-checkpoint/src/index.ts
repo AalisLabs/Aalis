@@ -2,13 +2,14 @@ import type {} from '@aalis/api-agent'; // 加载 agent:* 钩子的 HookContextM
 import { authority } from '@aalis/api-authority';
 import { checkpoint } from '@aalis/api-checkpoint';
 import { contributions } from '@aalis/api-contributions';
+import { events } from '@aalis/api-events';
 import { hooks } from '@aalis/api-hooks';
 import { ownHostConfig } from '@aalis/api-host-config';
 import { memory } from '@aalis/api-memory';
 import { roomClass, sessionManager } from '@aalis/api-session-manager';
 import { sessionFields } from '@aalis/api-session-settings';
 import { storage } from '@aalis/api-storage';
-import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { parseConfig } from '@aalis/schema-config';
 import { textOf } from '@aalis/schema-i18n';
 import { configSchema } from './config.js';

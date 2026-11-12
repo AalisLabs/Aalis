@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { commands } from '../../packages/api-commands/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { type ChatModelRequest, type LLMModel, llm } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { userRelation } from '../../packages/api-user-relation/src/index.js';
-import { App, events, LogHub, provide } from '../../packages/core/src/index.js';
+import { App, LogHub, provide } from '../../packages/core/src/index.js';
 import { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import userRelationPlugin, {

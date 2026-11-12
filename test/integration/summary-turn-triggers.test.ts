@@ -1,10 +1,11 @@
 import { afterEach, expect, it } from 'vitest';
 import { agent, type TokenUsageEvent } from '../../packages/api-agent/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { type App, events } from '../../packages/core/src/index.js';
+import type { App } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';

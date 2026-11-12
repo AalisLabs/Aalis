@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { agent as agentService } from '../../packages/api-agent/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type LLMModel, llm } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
-import { App, definePlugin, events, type Logger, lifecycle, provide } from '../../packages/core/src/index.js';
+import { App, definePlugin, type Logger, lifecycle, provide } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';

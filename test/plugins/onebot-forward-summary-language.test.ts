@@ -10,6 +10,7 @@ import { createForwardExpander, type ForwardConfig } from '../../packages/plugin
 import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import { withForwards } from '../../packages/schema-message/src/index.js';
 import { provideHostLanguage } from '../fixtures/host-language.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { fixedRef } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
@@ -44,6 +45,7 @@ afterEach(async () => {
 describe('合并转发摘要的提示词', () => {
   it('全局层设 ja-JP：system 写 日本語 (日本)（ja-JP），user 的目标长度按字符', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     apps.push(app);
     provideHostLanguage(app, ['ja-JP']);
     await app.plugin(i18nPlugin);

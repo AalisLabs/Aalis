@@ -1,14 +1,12 @@
 // ============================================================
-// core-services.ts — 内置六项服务的描述符与提供者
+// core-services.ts — 内置五项服务的描述符与提供者
 //
 // 与契约包的服务同一种做法：提供者由根激活经 provide 登记（独占），描述符的 bind 只用公开的资源口，选择层同样两层。
-// 六项的提供者形状相同：以调用方的 port.identity 为参，交回这次激活的门面；认不出的身份抛错。业务句柄就是这份门面，
+// 五项的提供者形状相同：以调用方的 port.identity 为参，交回这次激活的门面；认不出的身份抛错。业务句柄就是这份门面，
 // 装配时取一次：根是唯一的提供者、活得比插件长，本次激活拆卸之后门面照常可用（logger 不抛、config 照常可读）。
 // 动态查询拿到提供者，也只能以自己的身份取到自己的门面。
 // 原语登记按身份归属，由拆卸的同栈切断统一撤回；手动退订直接撤原语登记，不另记清理链。
 // ============================================================
-
-import type { AalisEvents, EventArgs } from '../types/events.js';
 
 import type { ServiceInfo, ServiceView } from '../primitives/services.js';
 
@@ -16,8 +14,6 @@ import { defineService, type ProviderOf, type ServiceDescriptor } from './descri
 import type { ServiceRuntime } from './runtime.js';
 import type { Logger } from '../infrastructure/logger.js';
 import type { Resources } from '../infrastructure/resources.js';
-
-type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
 /** `provide` 的登记选项 */
 export interface ProvideOptions {
@@ -47,14 +43,6 @@ interface CoreCaller {
 function builtin<B>(name: string): ServiceDescriptor<(identity: symbol) => B, B> {
   return defineService<(identity: symbol) => B, B>(name, port => port.provider(port.identity));
 }
-
-// ----- events -----
-
-export interface Events {
-  on<E extends string & keyof AalisEvents>(event: E, handler: EventHandler<EventArgs<E>>): () => void;
-  emit<E extends string & keyof AalisEvents>(event: E, ...args: EventArgs<E>): Promise<void>;
-}
-export const events = builtin<Events>('events');
 
 // ----- lifecycle -----
 
@@ -159,7 +147,7 @@ export const services = builtin<Services>('services');
 // ----- 提供者 -----
 
 /**
- * 六项内置服务的提供者：`provide` 单列（宿主须先直接登记它来自举），其余五项由根激活经 provide 登记。
+ * 五项内置服务的提供者：`provide` 单列（宿主须先直接登记它来自举），其余四项由根激活经 provide 登记。
  * `caller` 按身份认出调用方激活（认不出就抛错）。
  */
 export function coreProviders(
@@ -168,7 +156,7 @@ export function coreProviders(
 ): { provide: (identity: symbol) => Provide; rest: Array<[AnyDescriptor, (identity: symbol) => unknown]> } {
   const entry = <B>(descriptor: ServiceDescriptor<(identity: symbol) => B, B>, view: (c: CoreCaller) => B) =>
     [descriptor, (identity: symbol) => view(caller(identity, descriptor.name))] as [AnyDescriptor, (i: symbol) => B];
-  const { events: bus, services: container } = runtime;
+  const container = runtime.services;
   const shared: Services = {
     get: <K extends ServiceKey>(key: K) => container.get<KeyedProvider<K>>(keyName(key)),
     all: <K extends ServiceKey>(key: K) => container.getAll<KeyedProvider<K>>(keyName(key)),
@@ -210,10 +198,6 @@ export function coreProviders(
   return {
     provide: provideFor,
     rest: [
-      entry<Events>(events, c => ({
-        on: (event, handler) => (c.resources.refuses(`on("${event}")`) ? () => {} : bus.on(event, handler, c.owner)),
-        emit: (event, ...args) => bus.emit(event, ...args),
-      })),
       entry<LifecycleCap>(lifecycle, c => ({
         id: c.id,
         signal: c.resources.signal,

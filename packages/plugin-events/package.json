@@ -1,0 +1,53 @@
+{
+  "name": "@aalis/plugin-events",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AalisLabs/Aalis.git",
+    "directory": "packages/plugin-events"
+  },
+  "author": "Ace Nyan <ace@acenyan.com>",
+  "bugs": {
+    "url": "https://github.com/AalisLabs/Aalis/issues"
+  },
+  "homepage": "https://github.com/AalisLabs/Aalis#readme",
+  "description": "事件总线：events 服务的默认提供者",
+  "type": "module",
+  "keywords": [
+    "aalis",
+    "aalis-plugin"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@aalis/api-events": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/schema-i18n": "workspace:>=0.1.1 <1.0.0"
+  },
+  "devDependencies": {
+    "@aalis/core": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": ">=0.22.0 <1.0.0"
+  },
+  "aalis": {
+    "service": {
+      "provides": [
+        "events"
+      ],
+      "required": [
+        "logger",
+        "provide"
+      ]
+    }
+  }
+}

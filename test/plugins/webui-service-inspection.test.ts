@@ -10,8 +10,9 @@ import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { HUB_PLUGINS, registerHubs } from '../fixtures/hubs.js';
 import { createInspectableApp } from '../helpers/inspectable-app.js';
 
-/** 出核的两个服务及其默认提供者插件：服务目录与依赖图里按插件身份出现，而非「宿主」 */
+/** 由插件提供的三个枢纽服务及其默认提供者：服务目录与依赖图里按插件身份出现，而非「宿主」 */
 const HUB_PROVIDERS = [
+  ['events', '@aalis/plugin-events'],
   ['hooks', '@aalis/plugin-hooks'],
   ['contributions', '@aalis/plugin-contributions'],
 ] as const;
@@ -34,7 +35,7 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
   const store = createConfigStore({ name: 'inspect-test', logLevel: 'error', plugins: {} });
   const app = createInspectableApp({ name: 'inspect-test', logLevel: 'error', logger: quiet });
   installHostConfig(app, store);
-  // hooks / contributions 已出核：与宿主一样由两个默认提供者插件登记
+  // events / hooks / contributions 由插件提供：与宿主一样登记三个默认提供者
   await registerHubs(app);
   const token = 'service-inspection-test-token-0000';
   const headers = { Cookie: `aalis_webui_token=${token}`, 'Content-Type': 'application/json' };
@@ -73,18 +74,8 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
         }
       >;
     };
-    // 根激活归宿主：core 内置六项、宿主两项与宿主登记的 host-config 都标「宿主」，与市场依赖图同一标签
-    for (const name of [
-      'events',
-      'lifecycle',
-      'logger',
-      'config',
-      'provide',
-      'services',
-      'app',
-      'plugins',
-      'host-config',
-    ]) {
+    // 根激活归宿主：core 内置五项、宿主两项与宿主登记的 host-config 都标「宿主」，与市场依赖图同一标签
+    for (const name of ['lifecycle', 'logger', 'config', 'provide', 'services', 'app', 'plugins', 'host-config']) {
       expect(body.services[name].providers).toEqual([
         expect.objectContaining({
           contextId: 'root',
@@ -124,11 +115,9 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
       services: { required: Array<{ service: string; providedBy: string | null }> };
       serviceDependents: string[];
     };
+    // 本插件必选的只有宿主内置的五项：事件总线由插件提供、可以停用，是可选依赖
     expect(current.services.required).toEqual(
-      ['events', 'logger', 'lifecycle', 'config', 'provide', 'services'].map(service => ({
-        service,
-        providedBy: '宿主',
-      })),
+      ['logger', 'lifecycle', 'config', 'provide', 'services'].map(service => ({ service, providedBy: '宿主' })),
     );
     // 卸载前预警取 package-manager 的服务依赖者判定；服务缺席时为空
     expect(current.serviceDependents).toEqual([]);
@@ -188,17 +177,7 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
     expect(((await managedGraph.json()) as typeof current).serviceDependents).toEqual(['zz-dep']);
     expect(serviceDependents).toHaveBeenCalledWith(webuiServer.name);
 
-    const defaults = [
-      'events',
-      'lifecycle',
-      'logger',
-      'config',
-      'provide',
-      'services',
-      'app',
-      'plugins',
-      'host-config',
-    ];
+    const defaults = ['lifecycle', 'logger', 'config', 'provide', 'services', 'app', 'plugins', 'host-config'];
     const remoteRequired = [...defaults, ...HUB_PROVIDERS.map(([service]) => service), 'inspection-probe', 'missing'];
     const originalFetch = globalThis.fetch;
     const registry = vi.spyOn(globalThis, 'fetch').mockImplementation((url, init) => {

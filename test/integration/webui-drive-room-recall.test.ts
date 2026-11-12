@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TokenUsageEvent } from '../../packages/api-agent/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import type { ChatModelRequest } from '../../packages/api-llm/src/index.js';
 import { memory as memoryService } from '../../packages/api-memory/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { App, events, provide } from '../../packages/core/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';

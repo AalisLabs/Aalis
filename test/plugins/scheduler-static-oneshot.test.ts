@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { cronEngine } from '../../packages/api-cron-engine/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { App, definePlugin, events, provide } from '../../packages/core/src/index.js';
+import { App, definePlugin, provide } from '../../packages/core/src/index.js';
 import schedulerPlugin from '../../packages/plugin-scheduler/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/memory-storage.js';
 
 // ════════════════════════════════════════════════════════════
@@ -37,6 +39,7 @@ afterEach(async () => {
 /** 启动一个实例：storage 是 mem（换实例时文件留着），配置里放 jobs；返回执行过的任务名（按次）。激活落定即返回 */
 async function boot(mem: ReturnType<typeof memoryStorage>, jobs: unknown[]) {
   app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   const host = app.bind({ provide, events });
   host.provide.use(cronEngine, cronEngineStub as never);
   await app.plugins.register(

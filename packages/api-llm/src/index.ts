@@ -3,8 +3,9 @@
 // 提供完整的 LLM 抽象 + 能力声明框架。
 // 任何需要调用或实现 LLM 服务的插件都应从本包导入相关类型。
 
+import type { Events } from '@aalis/api-events';
 import type { ToolDefinition } from '@aalis/api-tools';
-import type { Events, ProviderEntry, ServiceSelection } from '@aalis/core';
+import type { ProviderEntry, ServiceSelection } from '@aalis/core';
 import { defineService } from '@aalis/core';
 import { TextError, type TextRef } from '@aalis/schema-i18n';
 import type { Message, ToolCall } from '@aalis/schema-message';
@@ -202,7 +203,7 @@ export interface LLMUsageEvent {
   outputTokens: number;
 }
 
-declare module '@aalis/core' {
+declare module '@aalis/api-events' {
   interface AalisEvents {
     /** 一次模型调用结束、服务商报了用量：发射方是服务商登记的 {@link metered} 模型，消费方如记账插件 */
     'llm:usage': [usage: LLMUsageEvent];

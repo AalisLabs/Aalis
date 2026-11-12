@@ -1,7 +1,7 @@
 // ----- 记忆服务接口 -----
 import type {} from '@aalis/api-contributions'; // declaration merging 锚点（下方 ContributionPointMap 增强）
+import type {} from '@aalis/api-events'; // declaration merging 锚点（下方 AalisEvents 增强）
 import type { HookContextMap } from '@aalis/api-hooks'; // 也是 declaration merging 的锚点（下方 HookContextMap 增强）
-import type {} from '@aalis/core';
 import { defineService, type Logger } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
 import type { Message } from '@aalis/schema-message';
@@ -328,7 +328,7 @@ export function historyCleared(data: HookContextMap['memory:clear']): boolean {
 // 落库之后动了已有消息的一方发通知：删除由动手的检查点发（回滚），改写由改写的一方发（plugin-message-archive 给发出的附件补上
 // 识图描述、plugin-media 的 update_image_description 写回描述）。消费方：plugin-memory-vector（按会话与时间戳删掉或重收录派生
 // 的向量）、plugin-session-server（history:changed 时通知订阅的客户端重新取快照）。
-declare module '@aalis/core' {
+declare module '@aalis/api-events' {
   interface AalisEvents {
     /** 某会话的若干消息被按时间戳删除（回滚等场景），下游存储应同步清理 */
     'memory:messages-deleted': [payload: { sessionId: string; timestamps: number[] }];
@@ -417,7 +417,7 @@ export function compressionDue(usage: CompressionUsage, lines: CompressionLines)
   return (usage.used >= line || usage.trimmed) && usage.compressible >= line / 2;
 }
 
-declare module '@aalis/core' {
+declare module '@aalis/api-events' {
   interface AalisEvents {
     /** 压缩进度：开始、压成、没压成 */
     'session:compressing': [info: { sessionId: string; status: 'start' | 'done' | 'error' }];

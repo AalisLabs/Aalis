@@ -1,5 +1,6 @@
-import { App, events, LogHub, lifecycle, logger, provide, services } from '@aalis/core';
+import { App, LogHub, lifecycle, logger, provide, services } from '@aalis/core';
 import { describe, expect, it, vi } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { type ChatModelRequest, type ChatResponse, type LLMModel, llm } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
@@ -11,6 +12,7 @@ import { EXTRACTOR_CONFIG_DEFAULTS, RelationExtractor } from '../../packages/plu
 import { RelationService } from '../../packages/plugin-user-relation/src/service.js';
 import { RelationStore } from '../../packages/plugin-user-relation/src/store.js';
 import type { IncomingMessage, Message } from '../../packages/schema-message/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 /**
  * ExtractorConfig 中测试用例普遍不关心的字段，统一从 extractor.ts 导出的单一真源
@@ -69,6 +71,7 @@ function extractNow(extractor: RelationExtractor, sessionId: string): Promise<vo
 
 async function setup(llmContent: string | ChatResponse[], cfg: Partial<ExtractorConfig> = {}) {
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   const host = bindHost(app);
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();
@@ -748,6 +751,7 @@ describe('plugin-user-relation: extractor 随停用中止', () => {
       if (entry.level === 'warn') warns.push(entry.message);
     });
     const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+    provideEvents(app);
     const host = bindHost(app);
     await app.plugins.register(memoryInMemory, {});
     await app.plugins.idle();
@@ -792,6 +796,7 @@ describe('plugin-user-relation: 淘汰前的整理随停用中止', () => {
       if (entry.level === 'warn') warns.push(entry.message);
     });
     const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+    provideEvents(app);
     const host = bindHost(app);
     await app.plugins.register(memoryInMemory, {});
     await app.plugins.idle();

@@ -13,6 +13,7 @@ import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { withForwards } from '../../packages/schema-message/src/index.js';
 import { provideHostLanguage } from '../fixtures/host-language.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { fixedRef } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
@@ -169,6 +170,7 @@ describe('合并转发摘要在长度上限处停下', () => {
 
   it('全局层设 en：标记按 host 读者的语言', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     apps.push(app);
     provideHostLanguage(app, ['en']);
     await app.plugin(i18nPlugin);

@@ -1,16 +1,8 @@
-declare module '@aalis/core' {
-  interface AalisEvents {
-    '__t:save': [data: string];
-    '__t:saved': [data: string];
-  }
-}
-
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   App,
   definePlugin,
   defineService,
-  events,
   type Logger,
   lifecycle,
   optional,
@@ -304,18 +296,35 @@ describe('关停数据链：消费者先收尾、下层后关闭', () => {
 });
 
 describe('收尾段：需要下层回调确认的交接', () => {
-  it('onDrain 里监听还在，能等到下层的确认事件；到 onDispose 时监听已撤回，等不到', async () => {
+  it('onDrain 里登记在下层的确认回调还在，能等到下层的确认；到 onDispose 时登记已撤回，等不到', async () => {
     const w = world();
     const app = makeApp(w);
-    // 下层：收到 save 后异步确认
+    type Ack = (data: string) => void;
+    /** 下层：保存后异步回调登记在它那里的确认函数；上层的登记经归属表，随它的激活撤回 */
+    interface Saver {
+      onSaved(ack: Ack): () => void;
+      save(data: string): Promise<void>;
+    }
+    const saver = defineService<Saver, Saver>('zz-saver', port => {
+      const acks = port.registrar<Ack>({ key: () => 'ack', register: (lower, ack) => lower.onSaved(ack) });
+      return { onSaved: ack => acks.add(ack), save: data => port.provider.save(data) };
+    });
     await app.plugin(
       definePlugin({
         name: 'lower',
-        uses: { events },
-        apply({ events }) {
-          events.use.on('__t:save', async data => {
-            await sleep(5);
-            await events.use.emit('__t:saved', data);
+        provides: [saver],
+        uses: { provide },
+        apply({ provide }) {
+          const acks = new Set<Ack>();
+          provide.use(saver, {
+            onSaved: ack => {
+              acks.add(ack);
+              return () => void acks.delete(ack);
+            },
+            save: async data => {
+              await sleep(5);
+              for (const ack of acks) ack(data);
+            },
           });
         },
       }),
@@ -324,20 +333,16 @@ describe('收尾段：需要下层回调确认的交接', () => {
     await app.plugin(
       definePlugin({
         name: 'upper',
-        uses: { events, lifecycle },
-        apply({ events, lifecycle }) {
-          events.use.on('__t:saved', data => void acked.push(data));
-          lifecycle.use.onDrain(async () => {
-            await events.use.emit('__t:save', 'in-drain');
-          });
-          lifecycle.use.onDispose(async () => {
-            await events.use.emit('__t:save', 'in-dispose');
-          });
+        uses: { saver, lifecycle },
+        apply({ saver, lifecycle }) {
+          saver.use.onSaved(data => void acked.push(data));
+          lifecycle.use.onDrain(() => saver.use.save('in-drain'));
+          lifecycle.use.onDispose(() => saver.use.save('in-dispose'));
         },
       }),
     );
     await app.plugins.idle();
     await app.plugins.unload('upper');
-    expect(acked, '收尾段收得到确认；清理段时自己的监听已撤回').toEqual(['in-drain']);
+    expect(acked, '收尾段收得到确认；清理段时自己的登记已撤回').toEqual(['in-drain']);
   });
 });

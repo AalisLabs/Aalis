@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { agent } from '../../packages/api-agent/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
-import { App, events, LogHub } from '../../packages/core/src/index.js';
+import { App, LogHub } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import archivePlugin from '../../packages/plugin-message-archive/src/index.js';

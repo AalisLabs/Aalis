@@ -9,6 +9,7 @@ import { App, LogHub, type PluginDefinition, services } from '../../packages/cor
 import deepseek from '../../packages/plugin-llm-deepseek/src/index.js';
 import llmOllama from '../../packages/plugin-llm-ollama/src/index.js';
 import llmOpenai from '../../packages/plugin-llm-openai/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 模型请求的超时按停顿计（本机 HTTP 桩）：三家的 timeout 是「多久收不到新的生成内容算超时」。
@@ -183,6 +184,7 @@ async function start(wire: Wire, timeout: number) {
     if (entry.level === 'warn') warns.push(entry.message);
   });
   const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+  provideEvents(app);
   apps.push(app);
   await app.plugin(wire.plugin, { ...wire.config(baseUrl), timeout });
   await app.plugins.idle();

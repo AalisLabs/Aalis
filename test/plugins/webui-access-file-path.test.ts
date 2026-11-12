@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type StorageRootInfo, type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -122,6 +123,7 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
       logLevel: 'debug',
       logger: makeCapturingLogger(lines),
     });
+    provideEvents(app);
     apps.push(app);
     app.bind({ provide }).provide.use(storage, makeFakeStorage());
     await app.plugins.register(webuiServer, {
@@ -160,6 +162,7 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
       logLevel: 'error',
       logger: makeCapturingLogger([]),
     });
+    provideEvents(app);
     apps.push(app);
     app.bind({ provide }).provide.use(storage, makeFakeStorage());
     await app.plugins.register(webuiServer, {
@@ -214,6 +217,7 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
       logLevel: 'debug',
       logger: makeCapturingLogger(lines),
     });
+    provideEvents(app);
     apps.push(app);
     app.bind({ provide }).provide.use(storage, makeFakeStorage({ failWrite: true }));
     await app.plugins.register(webuiServer, {
@@ -257,6 +261,7 @@ describe('停机等本实例自己发起的写盘落定', () => {
   /** 启动本插件并等到监听之后（access.txt 此时已开始写）；不给 initial 时本插件在没有存储的情况下启动，存储由用例之后再提供 */
   async function start(tokenMode: 'ephemeral' | 'persist', initial?: StorageService) {
     const app = new App({ name: 'T', logLevel: 'error', logger: makeCapturingLogger([]) });
+    provideEvents(app);
     apps.push(app);
     if (initial) app.bind({ provide }).provide.use(storage, initial);
     const port = await freePort();

@@ -8,6 +8,7 @@
 
 import { authority, type UserIdentity } from '@aalis/api-authority';
 import { cronEngine } from '@aalis/api-cron-engine';
+import { events } from '@aalis/api-events';
 import { gateway } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { isStorageUri, storage } from '@aalis/api-storage';
@@ -15,7 +16,7 @@ import { actingIdentity, type BoundTools, tools } from '@aalis/api-tools';
 import { type BoundWebui, markdownCode, webuiServer } from '@aalis/api-webui';
 import type { NodeRunInfo, TriggerSpec, WorkflowDef, WorkflowRun, WorkflowService } from '@aalis/api-workflow';
 import { workflow } from '@aalis/api-workflow';
-import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { TextError, type TextRef, textClauses, textOf, toSource } from '@aalis/schema-i18n';
 import { validateIntervalSeconds } from '@aalis/util-cron';

@@ -4,6 +4,7 @@ import { App, LogHub, type PluginDefinition, services } from '../../packages/cor
 import deepseek from '../../packages/plugin-llm-deepseek/src/index.js';
 import llmOllama from '../../packages/plugin-llm-ollama/src/index.js';
 import llmOpenai from '../../packages/plugin-llm-openai/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 模型发现失败（不可达、非 2xx、响应不是模型列表）不等于「远端没有模型」：
@@ -91,6 +92,7 @@ function world() {
     if (entry.level === 'error') errors.push(entry.message);
   });
   const app = new App({ name: 'T', logLevel: 'info', logHub: hub });
+  provideEvents(app);
   apps.push(app);
   const modelIds = (): string[] =>
     app

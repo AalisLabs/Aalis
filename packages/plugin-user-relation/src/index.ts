@@ -18,6 +18,7 @@
 import { commands } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
 import { embedding } from '@aalis/api-embedding';
+import { events } from '@aalis/api-events';
 import { hooks } from '@aalis/api-hooks';
 import { ownHostConfig } from '@aalis/api-host-config';
 import { i18n } from '@aalis/api-i18n';
@@ -30,7 +31,7 @@ import { sessionFields } from '@aalis/api-session-settings';
 import { tools } from '@aalis/api-tools';
 import { userRelation } from '@aalis/api-user-relation';
 import { webuiServer } from '@aalis/api-webui';
-import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { textOf } from '@aalis/schema-i18n';
 import { type EvictionConfig, registerRelationCommands } from './commands.js';

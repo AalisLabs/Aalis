@@ -6,24 +6,15 @@ import { HubRegistry, hub } from '../helpers/hub.js';
 // ════════════════════════════════════════════════════════════
 // 清理项点名：进清理链的条目带标签（跟随为 `watch:服务名`，onDispose 用作者标签）。
 // 把「卸载后还剩几个」升级为「剩的是谁」；不做嵌套树（无 effect 原语）。
-// 事件监听、服务登记与归属表登记（资源口 registrar，样本是测试枢纽 hub）按身份归属、激活关闭时整体切断，不进清理链。
-// 事件键经 declaration merging 登记。
+// 服务登记与归属表登记（资源口 registrar，样本是测试枢纽 hub）按身份归属、激活关闭时整体切断，不进清理链。
 // ════════════════════════════════════════════════════════════
-
-declare module '@aalis/core' {
-  interface AalisEvents {
-    '__t:evt': [];
-  }
-}
-
-const EVT = '__t:evt';
 
 function makeFixture(id = 'root') {
   return createActivationFixture({ id });
 }
 
 describe('清理链点名', () => {
-  it('监听、服务与归属表登记不进清理链、激活关闭时一并撤回（含显式 entryId 的服务登记）；跟随按 watch:服务名 点名', async () => {
+  it('服务与归属表登记不进清理链、激活关闭时一并撤回（含显式 entryId 的服务登记）；跟随按 watch:服务名 点名', async () => {
     const ctx = makeFixture('p');
     const registry = new HubRegistry();
     bindActivationFixture(ctx.host, ctx.host.root).caps.provide.use(hub, registry);
@@ -31,10 +22,6 @@ describe('清理链点名', () => {
     const { hub: ledger } = ctx.host.bind(ctx.activation, { hub });
     const baseline = ctx.activation.resources.withdrawals.labels();
     expect(baseline).toEqual(['watch:__t:hub']);
-    let heard = 0;
-    ctx.caps.events.use.on(EVT, () => {
-      heard++;
-    });
     ledger.use.add('me', 'v');
     ctx.caps.provide.use(defineService('svc'), {});
     ctx.caps.provide.use(defineService('llm'), {} as never, { entryId: 'p/model-a' });
@@ -42,15 +29,11 @@ describe('清理链点名', () => {
 
     expect(ctx.activation.resources.withdrawals.labels()).toEqual([...baseline, 'watch:later']);
     expect(ctx.activation.resources.disposables.labels()).toEqual([]);
-    await ctx.events.emit(EVT);
-    expect(heard).toBe(1);
     expect(registry.list()).toEqual(['p/me=v']);
     expect(ctx.services.get('svc')).toEqual({});
     expect(ctx.services.inspect('llm')).toEqual([expect.objectContaining({ contextId: 'p/model-a' })]);
 
     await ctx.activation.disposeAsync();
-    await ctx.events.emit(EVT);
-    expect(heard).toBe(1);
     expect(registry.list()).toEqual([]);
     expect(ctx.services.get('svc')).toBeUndefined();
     expect(ctx.services.inspect('llm')).toEqual([]);
@@ -65,19 +48,19 @@ describe('清理链点名', () => {
     await ctx.activation.disposeAsync();
   });
 
-  it('手动退订：清理链始终不留条目，退订即同步撤回监听', async () => {
+  it('手动退订：两条清理链都不留条目，退订即同步撤回登记', async () => {
     const ctx = makeFixture('p');
-    const baseline = ctx.activation.resources.disposables.labels();
-    let heard = 0;
-    const off = ctx.caps.events.use.on(EVT, () => {
-      heard++;
-    });
-    expect(ctx.activation.resources.disposables.labels()).toEqual(baseline);
-    await ctx.events.emit(EVT);
+    const registry = new HubRegistry();
+    bindActivationFixture(ctx.host, ctx.host.root).caps.provide.use(hub, registry);
+    const { hub: ledger } = ctx.host.bind(ctx.activation, { hub });
+    const withdrawals = ctx.activation.resources.withdrawals.labels();
+    const disposables = ctx.activation.resources.disposables.labels();
+    const off = ledger.use.add('me', 'v');
+    expect(registry.list()).toEqual(['p/me=v']);
     off();
-    await ctx.events.emit(EVT);
-    expect(heard).toBe(1);
-    expect(ctx.activation.resources.disposables.labels()).toEqual(baseline);
+    expect(registry.list()).toEqual([]);
+    expect(ctx.activation.resources.withdrawals.labels()).toEqual(withdrawals);
+    expect(ctx.activation.resources.disposables.labels()).toEqual(disposables);
     await ctx.activation.disposeAsync();
   });
 

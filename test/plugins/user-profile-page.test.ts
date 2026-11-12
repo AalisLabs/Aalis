@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type CommandHandler, commands } from '../../packages/api-commands/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import { llm } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import type { DeclarativePageView, PageActionResponse } from '../../packages/api-webui/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
-import { App, events, provide, services } from '../../packages/core/src/index.js';
+import { App, provide, services } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import userProfile from '../../packages/plugin-user-profile/src/index.js';
 import { isTextRef, resolveText, type TextRef, toSource } from '../../packages/schema-i18n/src/index.js';

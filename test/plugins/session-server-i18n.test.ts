@@ -6,6 +6,7 @@ import { type AgentService, agent, type TokenUsageEvent } from '../../packages/a
 import { type ApprovalSurface, approvals } from '../../packages/api-approval/src/index.js';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { type CheckpointService, checkpoint } from '../../packages/api-checkpoint/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type I18nService, i18n } from '../../packages/api-i18n/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
@@ -18,7 +19,7 @@ import {
 } from '../../packages/api-session-protocol/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { type BackgroundTaskService, backgroundTasks } from '../../packages/api-tools/src/index.js';
-import { App, definePlugin, events, type Logger, provide, services } from '../../packages/core/src/index.js';
+import { App, definePlugin, type Logger, provide, services } from '../../packages/core/src/index.js';
 import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import {
@@ -36,7 +37,7 @@ import type { IncomingMessage } from '../../packages/schema-message/src/index.js
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { i18nSection, setHostLanguage } from '../fixtures/host-language.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
-import { registerHubs } from '../fixtures/hubs.js';
+import { provideEvents, registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/memory-files.js';
 import { expectProcessTimeZoneDistinct } from '../fixtures/process-time-zone.js';
 import { recordRoom } from '../fixtures/rooms.js';
@@ -335,6 +336,7 @@ describe('会话协议按全局默认层的语言渲染', () => {
 
   it('i18n 的 render 抛错时不抛，只告警一次：出帧按原文发出，各连接照常收到；不再抛错之后照常渲染', async () => {
     const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+    provideEvents(app);
     apps.push(app);
     await app.plugin(i18nPlugin);
     await app.plugins.idle();
@@ -465,6 +467,7 @@ describe('会话协议按全局默认层的语言渲染', () => {
 
   it('业务错误的原因可以是文字对象（failure 收 TextRef），同样按全局默认层的语言渲染', async () => {
     const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+    provideEvents(app);
     apps.push(app);
     await app.plugin(i18nPlugin);
     await app.plugins.idle();

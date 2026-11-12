@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { type AgentService, agent, type PreprocessorFn } from '../../packages/api-agent/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
-import { App, events, provide } from '../../packages/core/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import fileReaderPlugin, { computeFileId } from '../../packages/plugin-file-reader/src/index.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';

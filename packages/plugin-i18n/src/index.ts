@@ -12,6 +12,7 @@
 
 import { contributions } from '@aalis/api-contributions';
 import { type CheckResult, doctor } from '@aalis/api-doctor';
+import { events } from '@aalis/api-events';
 import { ownHostConfig } from '@aalis/api-host-config';
 import { type Audience, i18n, type LanguageInfo } from '@aalis/api-i18n';
 import { placeLabel, type SessionInfo, type SessionManagerService, sessionManager } from '@aalis/api-session-manager';
@@ -23,7 +24,7 @@ import {
   sessionFields,
 } from '@aalis/api-session-settings';
 import { type NoticeHandle, webuiServer } from '@aalis/api-webui';
-import { type BoundOf, config, definePlugin, events, optional, pluginsService, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, optional, pluginsService, provide } from '@aalis/core';
 import { defineConfig } from '@aalis/schema-config';
 import {
   catalogEntries,
@@ -69,8 +70,8 @@ type Fields = SessionFieldReader<typeof configSchema>;
 
 const uses = {
   provide,
-  /** 语言诊断随会话设置、宿主配置的变化重算 */
-  events,
+  /** 语言诊断随会话设置、宿主配置的变化重算。可选：总线由插件提供、可以停用，本插件随它下线的话界面文字全部退回原文 */
+  events: optional(events),
   /** 语言诊断随插件的变化重算（语言包与字典随插件交付与撤回） */
   plugins: optional(pluginsService),
   /** 没有宿主配置文档时 language 的全局层取这里 */

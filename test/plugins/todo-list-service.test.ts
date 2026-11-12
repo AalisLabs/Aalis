@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { type TodoItem, todoList } from '../../packages/api-todo-list/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { App, events, provide } from '../../packages/core/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import todoListPlugin from '../../packages/plugin-todo-list/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';

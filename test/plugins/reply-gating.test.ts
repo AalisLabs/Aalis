@@ -1,9 +1,10 @@
 import { gateway } from '@aalis/api-gateway';
 import { type StorageRootInfo, storage } from '@aalis/api-storage';
-import { App, events, provide } from '@aalis/core';
+import { App, provide } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { agent } from '../../packages/api-agent/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { type FlowControlService, flowControl } from '../../packages/api-flow-control/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';

@@ -39,6 +39,7 @@ import { formatLogLine } from '../../packages/schema-log/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { provideHostLogs } from '../fixtures/host-logs.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { freePort, waitListening } from '../helpers/net.js';
 import { runTscProbe } from '../helpers/tsc-probe.js';
 import { contractRoutes } from '../helpers/webui-contract.js';
@@ -408,6 +409,7 @@ describe('管理面 REST 的回应与契约', () => {
       { plugins: { [PROBE]: { level: 1 } } },
       { logger, provider: { save() {} }, restartStrategy: { restart() {} } },
     ));
+    provideEvents(app);
     provideHostPaths(app, home);
     provideHostLogs(app, { file: join(home, 'logs', 'latest.log') });
     app.bind({ provide }).provide.use(webuiClient, { getClientDir: () => join(home, 'client') });

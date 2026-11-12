@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { agent } from '../../packages/api-agent/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { flowControl } from '../../packages/api-flow-control/src/index.js';
 import { gateway, INBOUND_PHASE } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { type WorkflowDef, workflow } from '../../packages/api-workflow/src/index.js';
-import { App, events, provide } from '../../packages/core/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { llm } from '../../packages/api-llm/src/index.js';
 import { App, LogHub, services } from '../../packages/core/src/index.js';
 import llmOllama from '../../packages/plugin-llm-ollama/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 两次刷新并发时，新模型只算一次新增：两次刷新都在等同一个模型的能力探测，先返回的那次登记它，
@@ -42,6 +43,7 @@ describe('plugin-llm-ollama: 并发刷新不重复计入新增', () => {
     );
 
     const app = new App({ name: 'T', logLevel: 'warn', logHub: new LogHub() });
+    provideEvents(app);
     apps.push(app);
     await app.plugin(llmOllama, { baseUrl: 'http://127.0.0.1:11434' });
     await app.plugins.idle();
@@ -83,6 +85,7 @@ describe('plugin-llm-ollama: 并发刷新不重复计入新增', () => {
     );
 
     const app = new App({ name: 'T', logLevel: 'warn', logHub: new LogHub() });
+    provideEvents(app);
     apps.push(app);
     await app.plugin(llmOllama, { baseUrl: 'http://127.0.0.1:11434' });
     await app.plugins.idle();

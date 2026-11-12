@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { type ToolCallContext, type ToolExecutionResult, tools } from '../../packages/api-tools/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
@@ -60,6 +61,7 @@ beforeAll(async () => {
   }) as never);
 
   app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   const host = app.bind({ provide });
   host.provide.use(tools, {
     register: (t: { definition: { function: { name: string } }; handler: Handler }) => {

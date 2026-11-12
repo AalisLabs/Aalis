@@ -14,6 +14,7 @@ import { App, definePlugin, type Logger } from '../../packages/core/src/index.js
 import contributionsPlugin from '../../packages/plugin-contributions/src/index.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -73,6 +74,7 @@ async function setup(options: { hub?: boolean } = {}) {
     child: () => logger,
   };
   const app = new App({ name: 'T', logLevel: 'warn', logger });
+  provideEvents(app);
   apps.push(app);
   provideHostPaths(app, home);
   await app.pluginAll([

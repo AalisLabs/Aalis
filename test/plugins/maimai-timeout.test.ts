@@ -3,6 +3,7 @@ import { type ToolService, tools } from '../../packages/api-tools/src/index.js';
 import { App, services } from '../../packages/core/src/index.js';
 import maimaiPlugin from '../../packages/plugin-maimai/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
@@ -43,6 +44,7 @@ describe('plugin-maimai: 查分器请求必须带超时', () => {
 
   async function setup(timeoutMs?: number): Promise<ToolService> {
     const app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     apps.push(app);
     await app.plugins.register(toolsPlugin, {});
     await app.plugins.register(maimaiPlugin, {

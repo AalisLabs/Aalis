@@ -10,7 +10,9 @@
  * - 不动 mentionCount / lastMentionedAt（与「显式提及」区分），仅刷 lastSeenAt；
  * - 与 extractionEnabled 解耦：即便关掉写入提取，改名同步仍生效。
  */
-import type { Events, Logger } from '@aalis/core';
+
+import type { Events } from '@aalis/api-events';
+import type { Logger } from '@aalis/core';
 import { type Message, WellKnownMetadataKeys } from '@aalis/schema-message';
 import type { RelationService } from './service.js';
 

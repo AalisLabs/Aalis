@@ -27,7 +27,7 @@ const PACKAGES = join(ROOT, 'packages');
 
 /**
  * 服务名不是字面量的 defineService 只允许出现在这里：文件 → 包装函数名。
- * core 的六项内置服务经同文件的 `builtin('<名>')` 定义，包装函数的字面量实参视同 defineService。
+ * core 的五项内置服务经同文件的 `builtin('<名>')` 定义，包装函数的字面量实参视同 defineService。
  */
 const NAME_WRAPPERS = new Map([['packages/core/src/composition/core-services.ts', 'builtin']]);
 
@@ -202,9 +202,9 @@ function readManifests(): Map<string, Manifest> {
 describe('每个服务名只有一处 defineService', () => {
   const { byName, dynamic } = scanDefinitions();
 
-  it('扫描面覆盖契约包、插件就地定义、core 内置六项与宿主两项', () => {
+  it('扫描面覆盖契约包、插件就地定义、core 内置五项与宿主两项', () => {
     expect(byName.size).toBeGreaterThan(40);
-    for (const name of ['events', 'lifecycle', 'logger', 'config', 'provide', 'services', 'app', 'plugins']) {
+    for (const name of ['lifecycle', 'logger', 'config', 'provide', 'services', 'app', 'plugins']) {
       expect(byName.has(name), `core 的 ${name} 应被识别`).toBe(true);
     }
     expect(byName.get('user-relation')).toEqual([expect.stringMatching(/^packages\/api-user-relation\/src\//)]);

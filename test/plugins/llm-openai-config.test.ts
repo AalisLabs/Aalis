@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type LLMModel, llm } from '../../packages/api-llm/src/index.js';
 import { App, LogHub, services } from '../../packages/core/src/index.js';
 import llmOpenai from '../../packages/plugin-llm-openai/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-llm-openai 读配置：parseConfig 管类型与默认值，插件自己的规则作用于它的结果。
@@ -53,6 +54,7 @@ async function start(config: Record<string, unknown>) {
     if (entry.level === 'warn') warns.push(entry.message);
   });
   const app = new App({ name: 'T', logLevel: 'info', logHub: hub });
+  provideEvents(app);
   apps.push(app);
   await app.plugin(llmOpenai, config);
   await app.plugins.idle();

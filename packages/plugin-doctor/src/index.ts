@@ -12,12 +12,12 @@ import {
   failureText,
   unmetDependencies,
 } from '@aalis/api-doctor';
+import { events } from '@aalis/api-events';
 import { type HostConfig, hostConfig } from '@aalis/api-host-config';
 import { type NoticeHandle, webuiServer } from '@aalis/api-webui';
 import {
   type BoundOf,
   definePlugin,
-  events,
   logger,
   optional,
   type PluginManagerService,

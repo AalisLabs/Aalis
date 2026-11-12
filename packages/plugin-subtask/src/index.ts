@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { agent } from '@aalis/api-agent'; // 也是本包 declaration merging 的激活点（agent:* 钩子）
+import { events } from '@aalis/api-events';
 import { gateway } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { ownHostConfig } from '@aalis/api-host-config';
@@ -9,7 +10,7 @@ import { messageArchive } from '@aalis/api-message-archive';
 import { type SessionInfo, type SessionManagerService, sessionLabel, sessionManager } from '@aalis/api-session-manager';
 import { type SessionFieldReader, sessionSettings } from '@aalis/api-session-settings';
 import { actingIdentity, backgroundTasks, type ToolCallContext, tools } from '@aalis/api-tools';
-import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
+import { type BoundOf, config, definePlugin, lifecycle, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { toSource } from '@aalis/schema-i18n';
 import { type IncomingMessage, type TurnRecord, WellKnownMetadataKeys } from '@aalis/schema-message';

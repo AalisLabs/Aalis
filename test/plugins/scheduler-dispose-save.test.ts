@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { cronEngine } from '../../packages/api-cron-engine/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { App, events, provide, services } from '../../packages/core/src/index.js';
+import { App, provide, services } from '../../packages/core/src/index.js';
 import schedulerPlugin, { scheduler } from '../../packages/plugin-scheduler/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/memory-storage.js';
 import { deferred } from '../helpers/deferred.js';
 
@@ -44,6 +46,7 @@ const job = (name: string) => ({
 /** 启动一个实例：真 tools 与 scheduler、内存 storage（slowWrites 时每次写盘慢 WRITE_MS）、假 cron-engine */
 async function start(slowWrites = false) {
   app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   const mem = memoryStorage();
   const service = slowWrites
     ? {

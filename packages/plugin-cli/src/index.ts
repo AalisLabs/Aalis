@@ -12,6 +12,7 @@ import {
 } from '@aalis/api-approval';
 import { commands } from '@aalis/api-commands';
 import { unmetDependencies } from '@aalis/api-doctor';
+import { events } from '@aalis/api-events';
 import { hostConfig } from '@aalis/api-host-config';
 import { hostLogs } from '@aalis/api-host-logs';
 import { i18n, localizeFor } from '@aalis/api-i18n';
@@ -32,7 +33,6 @@ import {
   config,
   definePlugin,
   defineService,
-  events,
   lifecycle,
   logger,
   optional,
@@ -58,7 +58,7 @@ export type { CLIService } from './types.js';
 // terminal:claimed / terminal:released 是 CLI（独占终端 UI）与宿主
 // console-sink 之间的协调契约：本插件发射，runtime/console-sink.ts 监听
 // （同形声明在彼处亦有一份，接口合并要求两边类型一致）。
-declare module '@aalis/core' {
+declare module '@aalis/api-events' {
   interface AalisEvents {
     'terminal:claimed': [owner: string];
     'terminal:released': [owner: string];

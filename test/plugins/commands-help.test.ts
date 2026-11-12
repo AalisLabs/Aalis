@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AuthorityService } from '../../packages/api-authority/src/index.js';
 import { commands } from '../../packages/api-commands/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import type {} from '../../packages/api-gateway/src/index.js';
-import { type App, definePlugin, events, type Logger } from '../../packages/core/src/index.js';
+import { type App, definePlugin, type Logger } from '../../packages/core/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
 import { brief } from '../../packages/plugin-commands/src/help.js';
@@ -423,7 +424,7 @@ describe('/status：只给计数', () => {
     );
     await app.plugins.idle();
     expect(await ask(MEMBER, '/status')).toMatch(
-      /^系统状态：\n\n- 插件：在跑 6 个，出错 1 个\n- 已注册工具：0 个\n- 已注册指令：\d+ 个\n\n逐项检查用 \/doctor$/,
+      /^系统状态：\n\n- 插件：在跑 7 个，出错 1 个\n- 已注册工具：0 个\n- 已注册指令：\d+ 个\n\n逐项检查用 \/doctor$/,
     );
   });
 });

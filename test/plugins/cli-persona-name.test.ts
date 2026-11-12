@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import type {} from '../../packages/api-host-config/src/index.js';
 import { type PersonaSessionOptions, persona } from '../../packages/api-persona/src/index.js';
 import type {} from '../../packages/api-session-settings/src/index.js';
-import { App, events, provide } from '../../packages/core/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import cliPlugin from '../../packages/plugin-cli/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { fakeTty } from '../helpers/tty.js';
 
 // ════════════════════════════════════════════════════════════
@@ -32,6 +34,7 @@ describe('终端显示的人设名', () => {
     });
     cleanups.push(fakeTty(30, 120).restore);
     const app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     cleanups.push(() => app.stop());
     const host = app.bind({ provide, events });
     const asked: Array<PersonaSessionOptions | undefined> = [];

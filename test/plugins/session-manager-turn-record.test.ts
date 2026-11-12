@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import type { LLMUsageEvent } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
-import { App, events, provide } from '../../packages/core/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import { defineTexts, type TextRef } from '../../packages/schema-i18n/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';

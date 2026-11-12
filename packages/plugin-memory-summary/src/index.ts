@@ -1,6 +1,7 @@
 import type { TokenUsageEvent } from '@aalis/api-agent'; // 也是本包 declaration merging 的激活点（agent:* 钩子、agent:prompt 贡献点与 token:usage 事件）——删掉会丢键类型，不可删
 import { authority } from '@aalis/api-authority';
 import { contributions } from '@aalis/api-contributions';
+import { events } from '@aalis/api-events';
 import { hooks } from '@aalis/api-hooks';
 import { ownHostConfig } from '@aalis/api-host-config';
 import type { ChatResponse, LLMModel } from '@aalis/api-llm';
@@ -12,7 +13,7 @@ import { roomClass, sessionManager } from '@aalis/api-session-manager';
 import { sessionFields } from '@aalis/api-session-settings';
 import { todoList } from '@aalis/api-todo-list';
 import type { BoundOf, Logger } from '@aalis/core';
-import { config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
+import { config, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { TextError, textOf, toSource } from '@aalis/schema-i18n';
 import type { Message } from '@aalis/schema-message';

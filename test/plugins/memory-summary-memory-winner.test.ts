@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import { LLMCapabilities, llm } from '../../packages/api-llm/src/index.js';
 import { compression, type MemoryService, memory } from '../../packages/api-memory/src/index.js';
-import { App, events, provide } from '../../packages/core/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';

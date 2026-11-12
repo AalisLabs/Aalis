@@ -1,9 +1,10 @@
+import { events } from '@aalis/api-events';
 import { ownHostConfig } from '@aalis/api-host-config';
 import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { sessionFields } from '@aalis/api-session-settings';
 import { storage } from '@aalis/api-storage';
 import { backgroundTasks, tools } from '@aalis/api-tools';
-import { config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
+import { config, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { BackgroundTasks, DEFAULT_LIMITS } from './background.js';
 import { t } from './texts.js';

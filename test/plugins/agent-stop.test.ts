@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TurnInput } from '../../packages/api-agent/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatResponse } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { type App, events, provide } from '../../packages/core/src/index.js';
+import { type App, provide } from '../../packages/core/src/index.js';
 import { OneBotV11 } from '../../packages/plugin-adapter-onebot/src/v11.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';

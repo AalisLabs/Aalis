@@ -1,9 +1,10 @@
 import { afterEach, expect, it } from 'vitest';
 import { agent, type TokenUsageEvent } from '../../packages/api-agent/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { type App, events, LogHub } from '../../packages/core/src/index.js';
+import { type App, LogHub } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import openaiPlugin from '../../packages/plugin-llm-openai/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';

@@ -6,6 +6,7 @@ import { type ToolCallContext, type ToolExecutionResult, tools } from '../../pac
 import { App, provide } from '../../packages/core/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
@@ -183,6 +184,7 @@ async function startBrowserTools(
   config: Record<string, unknown>,
 ): Promise<{ app: App; handlers: Record<string, Handler> }> {
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   const host = app.bind({ provide });
   const handlers: Record<string, Handler> = {};
   host.provide.use(tools, {

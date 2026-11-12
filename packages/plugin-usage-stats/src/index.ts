@@ -10,6 +10,7 @@ import { createReadStream } from 'node:fs';
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { events } from '@aalis/api-events';
 import { hostPaths } from '@aalis/api-host-paths';
 import { type LLMBalance, type LLMUsageEvent, llm } from '@aalis/api-llm';
 import { type InfoItem, type TableColumn, type TableRow, webuiServer } from '@aalis/api-webui';
@@ -17,7 +18,6 @@ import {
   type BoundOf,
   config,
   definePlugin,
-  events,
   lifecycle,
   logger,
   optional,

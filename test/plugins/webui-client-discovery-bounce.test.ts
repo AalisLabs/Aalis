@@ -6,6 +6,7 @@ import { webuiClient } from '../../packages/api-webui/src/index.js';
 import { App, definePlugin, type Logger, provide, services } from '../../packages/core/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // webui-server 在就绪时把扫描到的前端包登记成 webui-client 的条目。bounce 出来的新实例在自己激活落定后跑就绪回调，
 // 登记要等插件状态机静置之后，落在这次激活的 provides 核对之后，与冷启动一样；
@@ -44,6 +45,7 @@ it('bounce 与冷启动一样：扫描到的前端不报「未在 provides 中�
     child: () => logger,
   };
   const app = new App({ name: 'T', logger, devMode: true });
+  provideEvents(app);
   apps.push(app);
   provideHostPaths(app, dir);
   await app.plugin(webuiServer, { port: 0, host: '127.0.0.1', autoOpen: false, tokenMode: 'ephemeral' });

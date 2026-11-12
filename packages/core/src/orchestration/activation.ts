@@ -18,7 +18,7 @@ interface Edge {
   readonly drop: () => void;
 }
 
-/** 内部激活记录：身份、资源寿命与依赖边。不提供事件、服务、配置管理等能力门面。 */
+/** 内部激活记录：身份、资源寿命与依赖边。不提供服务、配置管理等能力门面。 */
 export class Activation {
   readonly id: string;
   readonly owner: symbol;

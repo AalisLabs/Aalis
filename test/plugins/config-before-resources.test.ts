@@ -14,6 +14,7 @@ import subtask from '../../packages/plugin-subtask/src/index.js';
 import todo from '../../packages/plugin-todo-list/src/index.js';
 import flat from '../../packages/plugin-vectorstore-flat/src/index.js';
 import lancedb from '../../packages/plugin-vectorstore-lancedb/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 const dbConnect = vi.hoisted(() =>
   vi.fn(async () => {
@@ -30,6 +31,7 @@ afterEach(async () => {
 
 async function activate(plugin: PluginDefinition, config: Record<string, unknown>) {
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   apps.push(app);
   const calls: string[] = [];
   const host = app.bind({ provide });

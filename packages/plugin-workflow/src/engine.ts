@@ -5,6 +5,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 // 副作用引入：激活 api-agent 对 @aalis/api-hooks 的 HookContextMap 的 'agent:turn:after' 增广
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
+import type { Events } from '@aalis/api-events';
 import type { GatewayService } from '@aalis/api-gateway';
 import type { Hooks } from '@aalis/api-hooks';
 import { actingIdentity, type ToolCallRequest, type ToolService } from '@aalis/api-tools';
@@ -17,7 +18,7 @@ import type {
   WaitNodeSpec,
   WorkflowDef,
 } from '@aalis/api-workflow';
-import type { Events, Logger, ServiceSelection } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 import { TextError, type TextRef, textOf, toSource, truncateParams } from '@aalis/schema-i18n';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { MAX_INTERVAL_SECONDS } from '@aalis/util-cron';

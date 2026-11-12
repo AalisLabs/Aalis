@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { commands } from '../../packages/api-commands/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { BACKGROUND_TASK_NOTICE, tools } from '../../packages/api-tools/src/index.js';
-import { type App, events, provide, services } from '../../packages/core/src/index.js';
+import { type App, provide, services } from '../../packages/core/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';

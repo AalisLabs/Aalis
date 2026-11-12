@@ -2,6 +2,7 @@ import { createServer } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import { App, LogHub } from '../../packages/core/src/index.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { freePort } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -26,6 +27,7 @@ describe('webui-server：监听端口被占', () => {
       if (e.level === 'error') errors.push(e.message);
     });
     const app = new App({ name: 'T', logLevel: 'warn', logHub });
+    provideEvents(app);
     try {
       await app.pluginAll([{ definition: webuiServerPlugin, config: { port, host: '127.0.0.1', autoOpen: false } }]);
       await app.start();

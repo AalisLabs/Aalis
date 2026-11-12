@@ -13,6 +13,7 @@ import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 import { toolContext } from '../fixtures/tool-call.js';
 
@@ -94,6 +95,7 @@ beforeAll(async () => {
   port = (server.address() as { port: number }).port;
 
   app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   provideHostPaths(app, base);
   // tmp 是 storage-local 的内部根，映射到数据目录的 tmp/
   await app.plugins.register(storageLocal, {});

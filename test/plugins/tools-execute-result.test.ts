@@ -2,6 +2,7 @@ import { App, type Logger } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { type ToolService, tools as toolsService } from '../../packages/api-tools/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 
 // ToolService.execute 的结果形态：handler 返回字符串或 {content, images}，execute 一律归一为
@@ -10,6 +11,7 @@ import { toolRequest } from '../fixtures/tool-call.js';
 
 async function withTools(fn: (svc: ToolService) => Promise<void>): Promise<void> {
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   await app.plugins.register(toolsPlugin, {});
   await app.plugins.idle();
   const { tools } = app.bind({ tools: toolsService });
@@ -82,6 +84,7 @@ describe('执行层的结局日志按 toolFailed 记', () => {
       child: () => logger,
     };
     const app = new App({ name: 'T', logger });
+    provideEvents(app);
     try {
       await app.plugins.register(toolsPlugin, {});
       await app.plugins.idle();

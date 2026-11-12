@@ -3,12 +3,13 @@ import type { CapabilityConfirm, ExecutionGuardContext, UserIdentity, Verdict } 
 import { authority as authorityService, capabilityMinLevel, sameParticipant } from '@aalis/api-authority';
 import { commands as commandsService } from '@aalis/api-commands';
 import { contributions as contributionsService } from '@aalis/api-contributions';
+import { events } from '@aalis/api-events';
 import { type HostConfig, hostConfig } from '@aalis/api-host-config';
 import { sessionFields } from '@aalis/api-session-settings';
 import { storage as storageService } from '@aalis/api-storage';
 import { tools as toolsService } from '@aalis/api-tools';
 import { type NoticeHandle, webuiServer } from '@aalis/api-webui';
-import { type BoundOf, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { isUnsafeConfigKey } from '@aalis/schema-config';
 import { isTextError, TextError, type TextRef, textClauses, textLines, textOf } from '@aalis/schema-i18n';
 import { setNetworkPolicy } from '@aalis/util-network-guard';

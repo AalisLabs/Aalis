@@ -3,6 +3,7 @@ import { tools } from '../../packages/api-tools/src/index.js';
 import { type App, definePlugin } from '../../packages/core/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
@@ -18,6 +19,7 @@ afterEach(async () => {
 describe('普通工具调用随撤回登记中止', () => {
   it('处理函数在跑、所属插件停用：它收到的信号已断，回执写明撤回登记', async () => {
     const { app } = hostedApp();
+    provideEvents(app);
     apps.push(app);
     const host = app.bind({ tools });
     await app.plugins.register(toolsPlugin, {});

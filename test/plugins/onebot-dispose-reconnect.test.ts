@@ -1,12 +1,14 @@
 import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
-import { App, events, type Logger, lifecycle, provide } from '@aalis/core';
+import { App, type Logger, lifecycle, provide } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { platform } from '../../packages/api-platform/src/index.js';
 import { processService } from '../../packages/api-process/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import onebot from '../../packages/plugin-adapter-onebot/src/index.js';
 import contributionsPlugin from '../../packages/plugin-contributions/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // onebot 关闭一开始（lifecycle.signal 已断）就不再重连：scheduleReconnect 不排新定时器，已排的定时器
@@ -51,6 +53,7 @@ async function world(onRootDrain: (h: { dropClient: () => void; lines: string[] 
   const record = (...args: unknown[]) => void lines.push(args.map(String).join(' '));
   const logger: Logger = { debug() {}, info: record, warn: record, error: record, child: () => logger };
   const app = new App({ name: 'T', logger, devMode: false });
+  provideEvents(app);
   cleanups.push(() => app.stop());
   const root = app.bind({ provide, events, lifecycle, platform });
   root.provide.use(storage, {} as never);

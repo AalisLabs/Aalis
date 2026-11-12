@@ -1,10 +1,12 @@
 import { promises as dns } from 'node:dns';
 import { createServer, type Server } from 'node:http';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type ToolCallContext, type ToolExecutionResult, tools } from '../../packages/api-tools/src/index.js';
-import { App, events, provide } from '../../packages/core/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
@@ -69,6 +71,7 @@ beforeAll(async () => {
   }) as never);
 
   app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   const host = app.bind({ provide, events });
   host.provide.use(tools, {
     register: (t: { definition: { function: { name: string } }; handler: Handler }) => {

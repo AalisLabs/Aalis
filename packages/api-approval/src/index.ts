@@ -13,6 +13,7 @@
  * - 展示方：`list()` 与 `approval:created`、`approval:settled` 事件。
  */
 
+import type {} from '@aalis/api-events'; // declaration merging 锚点（下方 AalisEvents 增强）
 import { defineService } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
 import { t } from './texts.js';
@@ -299,7 +300,7 @@ export const approvals = defineService<ApprovalService, BoundApprovals>('approva
   });
 });
 
-declare module '@aalis/core' {
+declare module '@aalis/api-events' {
   /** 审批事件（由审批服务的提供者发出） */
   interface AalisEvents {
     /** 一个审批推给了审批面 */

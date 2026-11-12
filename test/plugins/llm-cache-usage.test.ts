@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { llm } from '../../packages/api-llm/src/index.js';
 import deepseekPlugin from '../../packages/plugin-llm-deepseek/src/index.js';
 import openaiPlugin from '../../packages/plugin-llm-openai/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 前缀缓存命中量的上报（打真实适配器，非重抄映射）
@@ -40,6 +41,7 @@ function stubFetch(modelId: string, usage: Record<string, unknown>): void {
 async function chatWith(plugin: PluginDefinition, modelId: string, usage: Record<string, unknown>) {
   stubFetch(modelId, usage);
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   await app.plugins.register(plugin, { apiKey: 'test-key' });
   await app.plugins.idle();
   const model = app.bind({ services }).services.use.get(llm);
@@ -126,6 +128,7 @@ describe('前缀缓存命中量上报', () => {
     }) as typeof fetch;
 
     const app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     await app.plugins.register(openaiPlugin, { apiKey: 'test-key' });
     await app.plugins.idle();
     const model = app.bind({ services }).services.use.get(llm);

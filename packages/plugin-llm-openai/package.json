@@ -33,7 +33,8 @@
     "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.11.0 <1.0.0",
     "@aalis/util-text-normalize": "workspace:>=0.6.0 <1.0.0",
-    "undici": "^6.0.0"
+    "undici": "^6.0.0",
+    "@aalis/api-events": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

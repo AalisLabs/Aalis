@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { type ChatModelRequest, estimateMsgTokens, estimateTextTokens, llm } from '../../packages/api-llm/src/index.js';
 import { compression, compressionDue, type MemoryService, memory } from '../../packages/api-memory/src/index.js';
-import { App, events, type Logger, provide } from '../../packages/core/src/index.js';
+import { App, type Logger, provide } from '../../packages/core/src/index.js';
 import { SQLiteMemoryService } from '../../packages/plugin-memory-sqlite/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';

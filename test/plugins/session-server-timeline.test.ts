@@ -6,6 +6,7 @@ import { agent as agentService } from '../../packages/api-agent/src/index.js';
 import { type ApprovalSurface, approvals } from '../../packages/api-approval/src/index.js';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { checkpoint, type RollbackWithChatResult } from '../../packages/api-checkpoint/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatResponse } from '../../packages/api-llm/src/index.js';
@@ -17,7 +18,7 @@ import { type SessionItem, sessionProtocol } from '../../packages/api-session-pr
 import { storage } from '../../packages/api-storage/src/index.js';
 import { type TodoItem, todoList } from '../../packages/api-todo-list/src/index.js';
 import { type ToolCallContext, type ToolDisplay, tools } from '../../packages/api-tools/src/index.js';
-import { App, definePlugin, events, type Logger, provide, services } from '../../packages/core/src/index.js';
+import { App, definePlugin, type Logger, provide, services } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';

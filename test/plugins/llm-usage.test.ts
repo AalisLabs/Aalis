@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import {
   type ChatModelRequest,
   type ChatResponse,
@@ -11,7 +12,6 @@ import {
 import {
   App,
   definePlugin,
-  events,
   type PluginDefinition,
   provide,
   type ServiceSelection,
@@ -19,6 +19,7 @@ import {
 import deepseekPlugin from '../../packages/plugin-llm-deepseek/src/index.js';
 import ollamaPlugin from '../../packages/plugin-llm-ollama/src/index.js';
 import openaiPlugin from '../../packages/plugin-llm-openai/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 模型调用的记账：服务商登记模型时套上 metered，调用拿到用量就发 llm:usage；调用方插件实例由 llm 的绑定接口按
@@ -76,6 +77,7 @@ async function setup(reported: ChatResponse['usage'] | null = USAGE) {
     },
   });
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   apps.push(app);
   const usages: LLMUsageEvent[] = [];
   app.bind({ events }).events.use.on('llm:usage', usage => void usages.push(usage));
@@ -190,6 +192,7 @@ describe('第一方服务商登记的模型都记账', () => {
       },
     });
     const app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     apps.push(app);
     const usages: LLMUsageEvent[] = [];
     app.bind({ events }).events.use.on('llm:usage', usage => void usages.push(usage));

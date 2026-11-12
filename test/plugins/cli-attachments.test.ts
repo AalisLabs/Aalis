@@ -1,13 +1,15 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { App, definePlugin, events, LogHub, provide } from '@aalis/core';
+import { App, definePlugin, LogHub, provide } from '@aalis/core';
 import type { LogEntry } from '@aalis/schema-log';
 import type { OutgoingMessage } from '@aalis/schema-message';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { platform } from '../../packages/api-platform/src/index.js';
 import cliPlugin from '../../packages/plugin-cli/src/index.js';
 import { attachSessionServer } from '../fixtures/cli-session.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { fakeTty } from '../helpers/tty.js';
 
 // CLI 会话里的附件：终端显示不了图片本身，写一行说明（类型、名称、大小、本机路径；取不到路径时写存储地址），
@@ -41,6 +43,7 @@ async function headlessCli(run: (cli: Cli) => Promise<void>, before?: (app: App)
   const entries: LogEntry[] = [];
   const offLog = LogHub.default.onEntry(e => entries.push(e));
   const app = new App({ name: 'T', logLevel: 'info' });
+  provideEvents(app);
   const host = bindHost(app);
   const delivered: OutgoingMessage[] = [];
   host.events.use.on('outbound:delivered', msg => void delivered.push(msg));
@@ -245,6 +248,8 @@ describe('plugin-cli 附件', () => {
     });
     const home = mkdtempSync(join(tmpdir(), 'aalis-cli-attachments-'));
     const app = new App({ name: 'T', logLevel: 'error' });
+    // 接会话服务时事件由它装的枢纽提供
+    if (!subscribed) provideEvents(app);
     const host = app.bind({ events });
     const settle = () => new Promise<void>(r => setImmediate(() => setImmediate(r)));
     try {

@@ -3,6 +3,7 @@ import { type LLMModel, llm, resolveLLMModel, type ThinkingLevels } from '../../
 import { type App, definePlugin, type Logger, lifecycle, provide, services } from '../../packages/core/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // 模型选择框的可选项与旁边的「刷新」都按 provider（插件实例 id）认模型。每个模型条目以 `<实例 id>/<模型 id>` 登记：
@@ -87,6 +88,7 @@ async function thinkingOptions(port: number, dependency?: string): Promise<{ sta
 async function boot(): Promise<{ app: App; port: number }> {
   const port = await freePort();
   const { app } = hostedApp({ name: 'N' }, { logger: silent });
+  provideEvents(app);
   apps.push(app);
   await app.plugin(provider('zz-dynamic', ['m1', 'm2'], true, { m1: DEEP, m2: SWITCH }), {});
   await app.plugin(provider('zz-static', ['s1'], false), {});

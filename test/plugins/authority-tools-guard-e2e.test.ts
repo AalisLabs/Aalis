@@ -7,6 +7,7 @@ import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { selfInitiatedActor } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
@@ -29,6 +30,7 @@ import { toolRequest } from '../fixtures/tool-call.js';
 async function makeApp(appConfig: Record<string, unknown> = {}) {
   // authority 读的是顶层宿主配置（restrictedPolicy / owners / confirmOverrides 等），不是插件入参
   const { app } = hostedApp(appConfig);
+  provideEvents(app);
   await app.plugins.register(toolsPlugin, {});
   await app.plugins.register(authorityPlugin, {});
   await app.plugins.idle();

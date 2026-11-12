@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { agent as agentService, type TokenUsageEvent } from '../../packages/api-agent/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { type ChatModelRequest, type ChatResponse, estimateMsgTokens } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
@@ -9,7 +10,7 @@ import {
   sessionSettings,
 } from '../../packages/api-session-settings/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { type App, events, LogHub } from '../../packages/core/src/index.js';
+import { type App, LogHub } from '../../packages/core/src/index.js';
 import { formatTimeLabel } from '../../packages/plugin-agent/src/helpers.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';

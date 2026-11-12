@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { agent as agentService } from '../../packages/api-agent/src/index.js';
-import { App, events, services } from '../../packages/core/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
+import { App, services } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';

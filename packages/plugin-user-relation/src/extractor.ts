@@ -17,6 +17,7 @@
  * cfg.extractionModel 为空时退化到 llm 服务的当前胜者。
  */
 
+import type { Events } from '@aalis/api-events';
 import {
   type ChatResponse,
   LLMCapabilities,
@@ -27,7 +28,7 @@ import {
 } from '@aalis/api-llm';
 import type { MemoryService, RecentMessageRecord } from '@aalis/api-memory';
 import type { PersonaService } from '@aalis/api-persona';
-import type { Events, LifecycleCap, Logger, ServiceSelection } from '@aalis/core';
+import type { LifecycleCap, Logger, ServiceSelection } from '@aalis/core';
 import type { Message } from '@aalis/schema-message';
 import { DIRECTIVE_KINDS, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { parseLLMJsonObject } from '@aalis/util-json-repair';

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import { sessionDirName } from '../../packages/api-media/src/index.js';
 import type {} from '../../packages/api-memory/src/index.js'; // declaration merging：memory:clear 钩子类型
@@ -14,7 +15,7 @@ import { messageArchive } from '../../packages/api-message-archive/src/index.js'
 import { processService } from '../../packages/api-process/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
-import { App, events, type LifecycleCap, provide } from '../../packages/core/src/index.js';
+import { App, type LifecycleCap, provide } from '../../packages/core/src/index.js';
 import onebotPlugin from '../../packages/plugin-adapter-onebot/src/index.js';
 import drawPlugin from '../../packages/plugin-draw/src/index.js';
 import mediaPlugin from '../../packages/plugin-media/src/index.js';

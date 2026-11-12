@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { media, sessionMediaUri } from '../../packages/api-media/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
@@ -6,7 +7,7 @@ import { messageArchive } from '../../packages/api-message-archive/src/index.js'
 import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { App, events, LogHub, provide } from '../../packages/core/src/index.js';
+import { App, LogHub, provide } from '../../packages/core/src/index.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';

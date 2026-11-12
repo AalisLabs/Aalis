@@ -14,7 +14,7 @@ import {
 // ════════════════════════════════════════════════════════════
 // 类型推导：uses 声明 → apply 参数。负向用例用 @ts-expect-error 钉住——该行若不再报错，
 // tsc（test/architecture/test-types.test.ts）会把多余的 expect-error 当错误报出来。
-// 没有默认注入：没写进 uses 的能力（含 logger / events）在类型上就不存在。
+// 没有默认注入：没写进 uses 的能力（含 logger / config）在类型上就不存在。
 // ════════════════════════════════════════════════════════════
 
 interface KvService {
@@ -95,8 +95,8 @@ describe('uses → apply 的类型推导', () => {
         caps.kv.unprefer();
 
         // 未声明的能力不可见——包括内置的
-        // @ts-expect-error events 未写进 uses
-        caps.events;
+        // @ts-expect-error config 未写进 uses
+        caps.config;
         // @ts-expect-error lifecycle 未写进 uses
         caps.lifecycle;
 

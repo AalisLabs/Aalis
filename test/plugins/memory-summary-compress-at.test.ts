@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { AalisConfig } from '../../packages/api-host-config/src/index.js';
 import { llm } from '../../packages/api-llm/src/index.js';
 import { compression, memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { isSessionSettingsError, sessionSettings } from '../../packages/api-session-settings/src/index.js';
-import { type App, events, provide } from '../../packages/core/src/index.js';
+import { type App, provide } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
 import messageArchive from '../../packages/plugin-message-archive/src/index.js';

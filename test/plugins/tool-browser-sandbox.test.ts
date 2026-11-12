@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { type ToolCallContext, type ToolExecutionResult, tools } from '../../packages/api-tools/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
@@ -66,6 +67,7 @@ afterEach(async () => {
 
 async function navigate(config: Record<string, unknown> = {}) {
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   apps.push(app);
   const host = app.bind({ provide });
   const handlers: Record<string, Handler> = {};

@@ -5,6 +5,7 @@ import { llm } from '../../packages/api-llm/src/index.js';
 import { App, LogHub } from '../../packages/core/src/index.js';
 import ollama from '../../packages/plugin-llm-ollama/src/index.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 消息里的网址图片在发请求前下载成 base64：下载接这次模型调用的中止信号（ChatModelRequest.signal）与本插件这次激活的，与
@@ -41,6 +42,7 @@ async function boot() {
     if (entry.level === 'warn') warns.push(entry.message);
   });
   const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+  provideEvents(app);
   cleanups.push(() => app.stop());
   // 启动时的模型发现与能力探测答空，不连本机的 Ollama；装好之后换回真的 fetch，图片下载打到上游桩
   vi.stubGlobal(

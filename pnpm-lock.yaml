@@ -114,6 +114,9 @@ importers:
       '@aalis/api-contributions':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-contributions
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-hooks':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-hooks
@@ -142,6 +145,9 @@ importers:
 
   packages/api-approval:
     dependencies:
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/schema-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
@@ -278,6 +284,9 @@ importers:
 
   packages/api-doctor:
     dependencies:
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/schema-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
@@ -293,6 +302,18 @@ importers:
         version: 5.9.3
 
   packages/api-embedding:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-events:
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -321,6 +342,9 @@ importers:
       '@aalis/api-agent':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-agent
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-hooks':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-hooks
@@ -361,6 +385,9 @@ importers:
 
   packages/api-host-config:
     dependencies:
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/schema-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
@@ -420,6 +447,9 @@ importers:
 
   packages/api-llm:
     dependencies:
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-tools':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-tools
@@ -448,6 +478,9 @@ importers:
       '@aalis/api-authority':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-authority
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-llm':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../api-llm
@@ -479,6 +512,9 @@ importers:
       '@aalis/api-contributions':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-contributions
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-hooks':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-hooks
@@ -627,6 +663,9 @@ importers:
 
   packages/api-session-manager:
     dependencies:
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/schema-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
@@ -674,6 +713,9 @@ importers:
 
   packages/api-session-settings:
     dependencies:
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-host-config':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-host-config
@@ -717,6 +759,10 @@ importers:
         version: 5.9.3
 
   packages/api-todo-list:
+    dependencies:
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -733,6 +779,9 @@ importers:
       '@aalis/api-authority':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-authority
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/schema-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
@@ -841,6 +890,9 @@ importers:
 
   packages/api-workflow:
     dependencies:
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/schema-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n
@@ -895,6 +947,9 @@ importers:
       '@aalis/api-contributions':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-contributions
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-flow-control':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-flow-control
@@ -977,6 +1032,9 @@ importers:
       '@aalis/api-contributions':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-contributions
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-gateway':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-gateway
@@ -1118,6 +1176,9 @@ importers:
       '@aalis/api-contributions':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-contributions
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-host-config':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-host-config
@@ -1161,6 +1222,9 @@ importers:
       '@aalis/api-authority':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-authority
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-gateway':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-gateway
@@ -1204,6 +1268,9 @@ importers:
       '@aalis/api-contributions':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-contributions
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-hooks':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-hooks
@@ -1256,6 +1323,9 @@ importers:
       '@aalis/api-doctor':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-doctor
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-host-config':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-host-config
@@ -1354,6 +1424,9 @@ importers:
       '@aalis/api-contributions':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-contributions
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-gateway':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-gateway
@@ -1438,6 +1511,9 @@ importers:
       '@aalis/api-doctor':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-doctor
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-host-config':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-host-config
@@ -1560,6 +1636,25 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-events:
+    dependencies:
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
+      '@aalis/schema-i18n':
+        specifier: workspace:>=0.1.1 <1.0.0
+        version: link:../schema-i18n
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-file-reader:
     dependencies:
       '@aalis/api-agent':
@@ -1571,6 +1666,9 @@ importers:
       '@aalis/api-contributions':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-contributions
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-media':
         specifier: workspace:>=0.13.0 <1.0.0
         version: link:../api-media
@@ -1626,6 +1724,9 @@ importers:
       '@aalis/api-agent':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-agent
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-flow-control':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-flow-control
@@ -1678,6 +1779,9 @@ importers:
       '@aalis/api-authority':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-authority
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-gateway':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-gateway
@@ -1737,6 +1841,9 @@ importers:
       '@aalis/api-doctor':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-doctor
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-host-config':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-host-config
@@ -1774,6 +1881,9 @@ importers:
       '@aalis/api-authority':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-authority
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-gateway':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-gateway
@@ -1820,6 +1930,9 @@ importers:
 
   packages/plugin-llm-deepseek:
     dependencies:
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-llm':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../api-llm
@@ -1854,6 +1967,9 @@ importers:
 
   packages/plugin-llm-ollama:
     dependencies:
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-llm':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../api-llm
@@ -1894,6 +2010,9 @@ importers:
 
   packages/plugin-llm-openai:
     dependencies:
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-llm':
         specifier: workspace:>=0.15.0 <1.0.0
         version: link:../api-llm
@@ -2030,6 +2149,9 @@ importers:
       '@aalis/api-doctor':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-doctor
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-hooks':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-hooks
@@ -2212,6 +2334,9 @@ importers:
       '@aalis/api-contributions':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-contributions
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-hooks':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-hooks
@@ -2270,6 +2395,9 @@ importers:
       '@aalis/api-embedding':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-embedding
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-hooks':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-hooks
@@ -2325,6 +2453,9 @@ importers:
       '@aalis/api-authority':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-authority
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-media':
         specifier: workspace:>=0.13.1 <1.0.0
         version: link:../api-media
@@ -2553,6 +2684,9 @@ importers:
 
   packages/plugin-prompt-budget:
     dependencies:
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-tools':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-tools
@@ -2581,6 +2715,9 @@ importers:
       '@aalis/api-authority':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-authority
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-host-paths':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-host-paths
@@ -2612,6 +2749,9 @@ importers:
       '@aalis/api-cron-engine':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-cron-engine
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-session-manager':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-session-manager
@@ -2655,6 +2795,9 @@ importers:
       '@aalis/api-authority':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-authority
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-gateway':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-gateway
@@ -2719,6 +2862,9 @@ importers:
       '@aalis/api-checkpoint':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-checkpoint
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-hooks':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-hooks
@@ -2789,6 +2935,9 @@ importers:
       '@aalis/api-commands':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-commands
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-gateway':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-gateway
@@ -2903,6 +3052,9 @@ importers:
       '@aalis/api-agent':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-agent
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-gateway':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-gateway
@@ -2952,6 +3104,9 @@ importers:
 
   packages/plugin-todo-list:
     dependencies:
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-hooks':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-hooks
@@ -2983,6 +3138,9 @@ importers:
 
   packages/plugin-tool-browser:
     dependencies:
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-media':
         specifier: workspace:>=0.13.0 <1.0.0
         version: link:../api-media
@@ -3221,6 +3379,9 @@ importers:
       '@aalis/api-authority':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-authority
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-host-config':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-host-config
@@ -3267,6 +3428,9 @@ importers:
       '@aalis/api-doctor':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-doctor
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-flow-control':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-flow-control
@@ -3328,6 +3492,9 @@ importers:
 
   packages/plugin-trigger-policy:
     dependencies:
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-flow-control':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-flow-control
@@ -3377,6 +3544,9 @@ importers:
 
   packages/plugin-usage-stats:
     dependencies:
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-host-paths':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-host-paths
@@ -3411,6 +3581,9 @@ importers:
       '@aalis/api-contributions':
         specifier: workspace:>=0.2.0 <1.0.0
         version: link:../api-contributions
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-hooks':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-hooks
@@ -3475,6 +3648,9 @@ importers:
       '@aalis/api-embedding':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-embedding
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-hooks':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-hooks
@@ -3739,6 +3915,9 @@ importers:
       '@aalis/api-doctor':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-doctor
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-host-config':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-host-config
@@ -3833,6 +4012,9 @@ importers:
       '@aalis/api-cron-engine':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-cron-engine
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-gateway':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-gateway
@@ -3885,6 +4067,9 @@ importers:
       '@aalis/api-doctor':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-doctor
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/api-host-config':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-host-config
@@ -3956,6 +4141,9 @@ importers:
 
   packages/schema-message:
     dependencies:
+      '@aalis/api-events':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-events
       '@aalis/schema-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../schema-i18n

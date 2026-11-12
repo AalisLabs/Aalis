@@ -3,11 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { authority, type OriginTurn } from '../../packages/api-authority/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
-import { App, events, provide } from '../../packages/core/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import { principalKind } from '../../packages/plugin-authority/src/authority-model.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
@@ -19,6 +20,7 @@ import {
 } from '../../packages/schema-message/src/index.js';
 import { bytes, FAKE_SQLITE, FAKE_TOKEN, FAKE_YAML, png } from '../fixtures/file-heads.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { storedRoom } from '../fixtures/rooms.js';
 import { toolContext } from '../fixtures/tool-call.js';
 
@@ -49,6 +51,7 @@ const ROOM_CALL = toolContext({ sessionId: ROOM, platform: 'onebot', userId: '90
  */
 function startApp(histories: Record<string, Message[]>) {
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   const handlers: Record<string, ToolHandler> = {};
   const host = app.bind({ provide, events });
   host.provide.use(tools, {

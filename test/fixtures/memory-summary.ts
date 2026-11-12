@@ -1,4 +1,5 @@
 import type { TokenUsageEvent } from '../../packages/api-agent/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import {
   type ChatModelRequest,
@@ -9,7 +10,7 @@ import {
   llm,
 } from '../../packages/api-llm/src/index.js';
 import { compression, memory } from '../../packages/api-memory/src/index.js';
-import { App, events, type Logger, provide, services } from '../../packages/core/src/index.js';
+import { App, type Logger, provide, services } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
 import messageArchive from '../../packages/plugin-message-archive/src/index.js';

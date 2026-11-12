@@ -10,48 +10,48 @@ import { runTscProbe } from '../helpers/tsc-probe.js';
 // 负向探针先确认「去掉错误就能编过」，防恒真。
 // ════════════════════════════════════════════════════════════
 
-const GOOD = `import { type BoundOf, definePlugin, events, lifecycle, logger } from '@aalis/core';
+const GOOD = `import { type BoundOf, config, definePlugin, lifecycle, logger } from '@aalis/core';
 
 type IsAny<T> = 0 extends 1 & T ? true : false;
 
 definePlugin({
   name: 'probe-inline',
-  uses: { logger, events, lifecycle },
+  uses: { logger, config, lifecycle },
   apply(b) {
     b.logger.use.info('x');
-    void b.events.use.on;
+    void b.config.use;
     void b.lifecycle.use.onDispose;
     const notAny: IsAny<typeof b.logger.use> = false;
     void notAny;
   },
 });
 
-const uses = { logger, events };
+const uses = { logger, config };
 type Caps = BoundOf<typeof uses>;
 function run(caps: Caps): void {
   caps.logger.use.info('x');
-  void caps.events.use.on;
+  void caps.config.use;
 }
 definePlugin({ name: 'probe-outer', uses, apply: run });
 `;
 
-const BAD = `import { type BoundOf, definePlugin, events, lifecycle, logger } from '@aalis/core';
+const BAD = `import { type BoundOf, config, definePlugin, lifecycle, logger } from '@aalis/core';
 
 definePlugin({
   name: 'probe-inline',
-  uses: { logger, oops: 42, events, lifecycle }, // BAD-INLINE
+  uses: { logger, oops: 42, config, lifecycle }, // BAD-INLINE
   apply(b) {
     b.logger.use.info('x');
-    void b.events.use.on;
+    void b.config.use;
     void b.lifecycle.use.onDispose;
   },
 });
 
-const uses = { logger, events, bad: 'x' };
+const uses = { logger, config, bad: 'x' };
 type Caps = BoundOf<typeof uses>;
 function run(caps: Caps): void {
   caps.logger.use.info('x');
-  void caps.events.use.on;
+  void caps.config.use;
 }
 definePlugin({ name: 'probe-outer', uses, apply: run }); // BAD-OUTER
 `;

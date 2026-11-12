@@ -4,12 +4,13 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type ApprovalRequest, approvals } from '../../packages/api-approval/src/index.js';
 import { authority } from '../../packages/api-authority/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { hostConfig } from '../../packages/api-host-config/src/index.js';
 import { type I18nService, i18n } from '../../packages/api-i18n/src/index.js';
 import { persona } from '../../packages/api-persona/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { App, events, type Logger, provide } from '../../packages/core/src/index.js';
+import { App, type Logger, provide } from '../../packages/core/src/index.js';
 import cliPlugin from '../../packages/plugin-cli/src/index.js';
 import en from '../../packages/plugin-cli/src/locales/en.js';
 import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
@@ -23,7 +24,7 @@ import type { OutgoingMessage } from '../../packages/schema-message/src/index.js
 import { hostedApp } from '../fixtures/app.js';
 import { attachSessionServer } from '../fixtures/cli-session.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
-import { registerHubs } from '../fixtures/hubs.js';
+import { provideEvents, registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/memory-files.js';
 import { declareToolSystemDisplays } from '../fixtures/tool-display.js';
 import { fakeTty } from '../helpers/tty.js';
@@ -352,6 +353,8 @@ describe('送达失败的原因', () => {
     cleanups.push(fakeTty(20, 100).restore);
     vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const app = new App({ name: 'T', logLevel: 'error' });
+    // 接会话服务时事件由它装的枢纽提供
+    if (!subscribed) provideEvents(app);
     cleanups.push(() => app.stop());
     const host = app.bind({ provide, events });
     let failNext = false;

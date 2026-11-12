@@ -5,6 +5,7 @@
  * 待办项类型与 `todo:updated` 事件，实现见 @aalis/plugin-todo-list。
  */
 
+import type {} from '@aalis/api-events'; // declaration merging 锚点（下方 AalisEvents 增强）
 import { defineService } from '@aalis/core';
 
 export interface TodoItem {
@@ -20,7 +21,7 @@ export interface TodoListService {
   clear(sessionId: string): Promise<void>;
 }
 
-declare module '@aalis/core' {
+declare module '@aalis/api-events' {
   interface AalisEvents {
     /** 某会话的待办整份变了（写入、清空），items 是变化后的全部待办 */
     'todo:updated': [sessionId: string, items: TodoItem[]];

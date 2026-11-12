@@ -5,8 +5,7 @@
 // 下游应 `import { sessionManager } from '@aalis/api-session-manager'`
 // 写入 uses；不要依赖 impl 包，以免工作区依赖与编译循环。
 
-// 锚定 @aalis/core，使下方 declare module 的 AalisEvents 增强生效。
-import type {} from '@aalis/core';
+import type {} from '@aalis/api-events'; // declaration merging 锚点（下方 AalisEvents 增强）
 import { defineService, type ServiceSelection } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
 import type { IncomingMessage } from '@aalis/schema-message';
@@ -479,7 +478,7 @@ export interface SessionManagerService {
   updateSessionTitle(sessionId: string, title: string): Promise<void>;
 }
 
-declare module '@aalis/core' {
+declare module '@aalis/api-events' {
   /** 会话生命周期事件（由 plugin-session-manager 增量声明） */
   interface AalisEvents {
     'session:created': [session: SessionInfo];

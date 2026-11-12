@@ -11,7 +11,7 @@ import type { AppService, PluginManagerService } from '../types/app.js';
 import { defineService } from '../composition/descriptors.js';
 
 export const appService = defineService<AppService>('app');
-/** 提供者形状同内置六项（身份 → 门面，bind 以本资源口的身份取）：watch 的订阅要归到调用方的激活 */
+/** 提供者形状同内置五项（身份 → 门面，bind 以本资源口的身份取）：watch 的订阅要归到调用方的激活 */
 export const pluginsService = defineService<(identity: symbol) => PluginManagerService, PluginManagerService>(
   'plugins',
   port => port.provider(port.identity),

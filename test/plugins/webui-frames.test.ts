@@ -18,6 +18,7 @@ import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { createPageRegistry } from '../../packages/plugin-webui-server/src/pages.js';
 import { catalogEntries, defineTexts } from '../../packages/schema-i18n/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { ref } from '../fixtures/service-ref.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
@@ -295,6 +296,7 @@ async function setup({ instance = OWNER } = {}) {
     child: () => logger,
   };
   const app = new App({ name: 'T', logLevel: 'info', logger });
+  provideEvents(app);
   apps.push(app);
   provideHostPaths(app, tempDir());
   const sessions: Record<string, Pick<SessionInfo, 'id' | 'kind'>> = {

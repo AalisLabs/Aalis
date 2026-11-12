@@ -21,6 +21,7 @@
  *   给人看的文字可以是字符串或 @aalis/schema-i18n 的文字对象，出口按读者语言渲染。
  */
 
+import type {} from '@aalis/api-events'; // declaration merging 锚点（下方 AalisEvents 增强）
 import { defineService } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
 
@@ -73,7 +74,7 @@ export interface DoctorService {
 
 // ===== 模块增强 =====
 
-declare module '@aalis/core' {
+declare module '@aalis/api-events' {
   interface AalisEvents {
     /** 一次诊断完成后发射，供订阅者即时刷新 */
     'doctor:updated': [info: { generatedAt: string; summary: { ok: number; warn: number; error: number } }];

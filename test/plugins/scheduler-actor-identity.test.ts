@@ -1,11 +1,13 @@
 import { storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
-import { App, events, provide, services } from '@aalis/core';
+import { App, provide, services } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import schedulerPlugin, { type SchedulerService, scheduler } from '../../packages/plugin-scheduler/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/memory-storage.js';
 import { pageHost } from '../fixtures/page-host.js';
 
@@ -38,6 +40,7 @@ async function actorOfTriggeredJob(
   storageSeed?: Record<string, string>,
 ): Promise<{ actor: Actor; emitted: boolean }> {
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   const host = app.bind({ provide, services, events });
   // 内存 storage 必需而非锦上添花：没有它，`loadDynamicJobs` 的 `readFile` 必抛并被内层 catch 吞成 `[]`，
   // 那条分支在整个测试集里一次都不会执行。实测过：把它的 actor 缺省从 undefined 退回
@@ -95,6 +98,7 @@ describe('scheduler 代理身份不得由缺省推断出 owner', () => {
   it('静态 YAML 任务的 actor 写成非字符串 → 拒绝激活，不按「留空」补成 owner', async () => {
     for (const bad of [{ actorUserId: [10001] }, { actorPlatform: true }]) {
       const app = new App({ name: 'T', logLevel: 'error' });
+      provideEvents(app);
       try {
         app.bind({ provide }).provide.use(storage, memoryStorage().service as never);
         await app.plugins.register(toolsPlugin, {});
@@ -149,6 +153,7 @@ describe('scheduler 代理身份不得由缺省推断出 owner', () => {
 describe('静态任务的执行身份只写一半：不载入，提示去改配置', () => {
   async function start(storageSeed?: Record<string, string>) {
     const app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     const host = app.bind({ provide, services });
     host.provide.use(storage, memoryStorage(storageSeed).service as never);
     const pages = pageHost();
@@ -228,6 +233,7 @@ describe('scheduler_create_job 的创建者取这次调用的参与者', () => {
   /** 以这几位参与者调 scheduler_create_job（守卫放行，by 是批的人），触发建好的任务，回它发出的消息上的 actor */
   async function creatorOf(participants: Array<{ platform: string; userId: string }>, by?: typeof OWNER) {
     const app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     const host = app.bind({ provide, services, events });
     host.provide.use(storage, memoryStorage().service as never);
     await app.plugins.register(toolsPlugin, {});

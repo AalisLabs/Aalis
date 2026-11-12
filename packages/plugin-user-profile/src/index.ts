@@ -1,6 +1,7 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { commands } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
+import { events } from '@aalis/api-events';
 import { hooks } from '@aalis/api-hooks';
 import { i18n, outputLanguageFor } from '@aalis/api-i18n';
 import { type ChatResponse, chatModelPicker, lightestThinking, llm } from '@aalis/api-llm';
@@ -9,7 +10,7 @@ import { persona } from '@aalis/api-persona';
 import { tools } from '@aalis/api-tools';
 import { userRelation } from '@aalis/api-user-relation';
 import { webuiServer } from '@aalis/api-webui';
-import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
+import { type BoundOf, config, definePlugin, lifecycle, logger, optional } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { TextError, type TextRef, textClauses, textLines, textOf } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message } from '@aalis/schema-message';

@@ -1,6 +1,7 @@
-import { App, events, services } from '@aalis/core';
+import { App, services } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { commands as commandsDescriptor, type ExecutionInput } from '../../packages/api-commands/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import type { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';

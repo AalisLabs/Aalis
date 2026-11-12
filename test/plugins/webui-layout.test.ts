@@ -13,6 +13,7 @@ import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { createLayoutStore } from '../../packages/plugin-webui-server/src/layout.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -65,6 +66,7 @@ async function setup(options: { home?: string; pluginPages?: number; panelPages?
     child: () => logger,
   };
   const app = new App({ name: 'T', logLevel: 'warn', logger });
+  provideEvents(app);
   apps.push(app);
   const paths = provideHostPaths(app, home);
   await app.pluginAll([

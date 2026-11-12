@@ -2,10 +2,11 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { tools as toolsService } from '../../packages/api-tools/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { type WorkflowRun, type WorkflowService, workflow } from '../../packages/api-workflow/src/index.js';
-import { App, events, provide, services } from '../../packages/core/src/index.js';
+import { App, provide, services } from '../../packages/core/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';

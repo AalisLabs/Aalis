@@ -5,6 +5,7 @@ import deepseek from '../../packages/plugin-llm-deepseek/src/index.js';
 import ollama from '../../packages/plugin-llm-ollama/src/index.js';
 import openai from '../../packages/plugin-llm-openai/src/index.js';
 import serper from '../../packages/plugin-websearch-serper/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
@@ -70,6 +71,7 @@ describe('模型发现请求带超时', () => {
   it('Ollama /api/tags', async () => {
     const cap = captureFetch();
     const app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     await load(app, ollama, { baseUrl: 'http://127.0.0.1:11434' });
     expectLiveSignal(cap.signalFor('/api/tags'), 'Ollama /api/tags');
     await app.stop();
@@ -78,6 +80,7 @@ describe('模型发现请求带超时', () => {
   it('OpenAI /models', async () => {
     const cap = captureFetch();
     const app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     await load(app, openai, { apiKey: 'k', baseUrl: 'https://gw.invalid/v1' });
     expectLiveSignal(cap.signalFor('/models'), 'OpenAI /models');
     await app.stop();
@@ -86,6 +89,7 @@ describe('模型发现请求带超时', () => {
   it('DeepSeek /models', async () => {
     const cap = captureFetch();
     const app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     await load(app, deepseek, { apiKey: 'k', baseUrl: 'https://gw.invalid' });
     expectLiveSignal(cap.signalFor('/models'), 'DeepSeek /models');
     await app.stop();

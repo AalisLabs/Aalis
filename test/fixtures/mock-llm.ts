@@ -1,3 +1,4 @@
+import { events } from '../../packages/api-events/src/index.js';
 import type {
   ChatModelRequest,
   ChatResponse,
@@ -6,7 +7,7 @@ import type {
   LLMModel,
 } from '../../packages/api-llm/src/index.js';
 import { LLMCapabilities, llm, metered } from '../../packages/api-llm/src/index.js';
-import { definePlugin, events, provide } from '../../packages/core/src/index.js';
+import { definePlugin, provide } from '../../packages/core/src/index.js';
 
 /**
  * Mock LLM 插件（fixture）

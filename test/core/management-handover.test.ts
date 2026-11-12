@@ -3,7 +3,6 @@ import {
   App,
   definePlugin,
   defineService,
-  events,
   type Logger,
   lifecycle,
   optional,
@@ -584,7 +583,7 @@ describe('跟随者已放弃等待的撤回不再阻塞提供者，包装型提�
 });
 
 describe('归属表条目与原语同一拍撤掉，不等下游交接', () => {
-  it('提供者等慢跟随者交接期间：它登记到枢纽服务的条目与监听一起已撤', async () => {
+  it('提供者等慢跟随者交接期间：它登记到枢纽服务的条目已撤', async () => {
     interface Hub {
       add(name: string): () => void;
     }
@@ -613,16 +612,14 @@ describe('归属表条目与原语同一拍撤掉，不等下游交接', () => {
         },
       }),
     );
-    let heard = 0;
     await app.plugin(
       definePlugin({
         name: 'p',
         provides: [Q],
-        uses: { h: hub, events, provide },
-        apply({ h, events, provide }) {
+        uses: { h: hub, provide },
+        apply({ h, provide }) {
           provide.use(Q, {});
           h.use.register('tool-p');
-          events.use.on('zz:named', () => void heard++);
         },
       }),
     );
@@ -639,11 +636,9 @@ describe('归属表条目与原语同一拍撤掉，不等下游交接', () => {
     await app.plugins.idle();
     const unloading = app.plugins.unload('p');
     await new Promise(r => setTimeout(r, 5));
-    heard = 0;
-    await app.bind({ events }).events.use.emit('zz:named', 'probe');
-    const during = { hubEntry: names.has('tool-p'), heard };
+    const during = names.has('tool-p');
     releaseFollower();
     await unloading;
-    expect(during).toEqual({ hubEntry: false, heard: 0 });
+    expect(during).toBe(false);
   });
 });

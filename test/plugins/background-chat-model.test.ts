@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import { llm } from '../../packages/api-llm/src/index.js';
 import type { MediaService } from '../../packages/api-media/src/index.js';
@@ -10,7 +11,6 @@ import { type ToolCallContext, tools, wrapUntrustedContent } from '../../package
 import {
   App,
   definePlugin,
-  events,
   type Logger,
   provide,
   type ServiceSelection,

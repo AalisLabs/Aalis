@@ -10,11 +10,15 @@ const CORE_PEER = '>=0.21.0 <1.0.0';
  * 其中六个之后移出主仓、改做仓外的扩展插件，仓里剩 101 个
  */
 const CORE_PEER_COUNT = 101;
-/** 留在原下限的包：用不到 core 0.21 的新东西（api-host-paths、api-host-logs 在 2026-11-01 两节里发了新版，同样用不到） */
+/**
+ * 不在这一节里的包。留在原下限的：用不到 core 0.21 的新东西（api-host-paths、api-host-logs 在 2026-11-01 两节里发了新版，
+ * 同样用不到）。之后新增的：api-events、plugin-events 配的是不再内置事件总线的 core
+ */
 const UNRELEASED = [
   'api-asr = >=0.20.0 <1.0.0',
   'api-code-sandbox = >=0.20.0 <1.0.0',
   'api-contributions = >=0.20.0 <1.0.0',
+  'api-events = >=0.22.0 <1.0.0',
   'api-flow-control = >=0.20.0 <1.0.0',
   'api-host-logs = >=0.20.0 <1.0.0',
   'api-host-paths = >=0.20.0 <1.0.0',
@@ -22,6 +26,7 @@ const UNRELEASED = [
   'api-todo-list = >=0.20.0 <1.0.0',
   'api-user-relation = >=0.20.0 <1.0.0',
   'api-vectorstore = >=0.20.0 <1.0.0',
+  'plugin-events = >=0.22.0 <1.0.0',
   'schema-log = >=0.18.0 <1.0.0',
 ];
 
@@ -60,7 +65,7 @@ function gte(a: [number, number, number], b: [number, number, number]): boolean 
 }
 
 describe('发布声明（2026-10-31 一节）', () => {
-  it('带 @aalis/core peer 的包：本批发布、仍在仓里的 101 个为 >=0.21.0 <1.0.0，其余 11 个留在原下限', () => {
+  it('带 @aalis/core peer 的包：本批发布、仍在仓里的 101 个为 >=0.21.0 <1.0.0；其余 11 个留在原下限，2 个是之后新增的', () => {
     const hits: Array<{ dir: string; spec: string }> = [];
     for (const dir of dirs()) {
       const manifest = readManifest(dir);

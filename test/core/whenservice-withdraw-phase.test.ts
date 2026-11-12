@@ -1,16 +1,8 @@
-// 探针事件经真实的 declaration merging 登记，不用 as never 绕过类型面。
-declare module '@aalis/core' {
-  interface AalisEvents {
-    '__t:ws-withdraw-probe': [];
-  }
-}
-
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   type App,
   definePlugin,
   defineService,
-  events,
   type Logger,
   lifecycle,
   optional,
@@ -59,7 +51,7 @@ function makeApp() {
   const logger: Logger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => logger };
   const app = createInspectableApp({ name: 'T', logLevel: 'error', logger });
   apps.push(app);
-  return { app, host: app.bind({ provide, events }) };
+  return { app, host: app.bind({ provide, services }) };
 }
 
 describe('follow cleanup 走撤回段', () => {
@@ -90,37 +82,34 @@ describe('follow cleanup 走撤回段', () => {
     expect(order).toEqual(['close', 'flush:late', 'flush:early']);
   });
 
-  it('用户 onDispose 执行时，经 follow 交出的枢纽登记与 events.on 的监听同为已撤回', async () => {
+  it('用户 onDispose 执行时，经 follow 交出的枢纽登记与自己 provide 的服务同为已撤回', async () => {
     const { app, host } = makeApp();
     const hub = makeHub();
     host.provide.use(hubDesc, hub);
-    let eventCalls = 0;
-    const snapshots: string[][] = [];
+    const mine = defineService('__t:ws-mine');
+    const snapshots: Array<{ hub: string[]; mine: boolean }> = [];
+    const snapshot = () => void snapshots.push({ hub: hub.list(), mine: host.services.use.get(mine) !== undefined });
     await app.plugin(
       definePlugin({
         name: 'p',
-        uses: { hub: optional(hubDesc), events, lifecycle },
-        apply({ hub: hubRef, events: ev, lifecycle }) {
+        uses: { hub: optional(hubDesc), provide, lifecycle },
+        apply({ hub: hubRef, provide, lifecycle }) {
           hubRef.follow(svc => svc.register('my-item', lifecycle.use.id));
-          ev.use.on('__t:ws-withdraw-probe', () => {
-            eventCalls++;
-          });
-          lifecycle.use.onDispose(async () => {
-            await host.events.use.emit('__t:ws-withdraw-probe');
-            snapshots.push(hub.list());
-          });
-          lifecycle.use.onDispose(async () => {
-            snapshots.push(hub.list());
-          });
+          provide.use(mine, {});
+          lifecycle.use.onDispose(async () => snapshot());
+          lifecycle.use.onDispose(snapshot);
         },
       }),
     );
     await app.plugins.idle();
     expect(app.plugins.getPlugin('p')?.state).toBe('active');
     expect(hub.list(), '前置：登记已进枢纽').toEqual(['my-item']);
+    expect(host.services.use.get(mine), '前置：服务已登记').toBeDefined();
     await app.plugins.unload('p');
-    expect(eventCalls, '监听已在原语切断时撤掉').toBe(0);
-    expect(snapshots, '两个 onDispose 看到的都是已撤回的枢纽').toEqual([[], []]);
+    expect(snapshots, '两个 onDispose 看到的都是已撤回的枢纽与服务').toEqual([
+      { hub: [], mine: false },
+      { hub: [], mine: false },
+    ]);
   });
 
   it('撤回段回调里登记的 onDispose 赶得上清理链，按逆序最先执行', async () => {

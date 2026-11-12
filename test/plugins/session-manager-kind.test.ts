@@ -1,5 +1,6 @@
-import { App, events, provide } from '@aalis/core';
+import { App, provide } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionKind, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';

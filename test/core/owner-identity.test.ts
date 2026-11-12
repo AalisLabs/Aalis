@@ -35,7 +35,7 @@ describe('清理身份与逻辑身份分离', () => {
     expect(root.caps.services.use.get(defineService<{ who: string }>('svc'))?.who).toBe('R');
   });
 
-  it('同名 fork：拆左不清右（监听 / 归属表登记）', async () => {
+  it('同名 fork：拆左不清右（归属表登记）', async () => {
     const app = mkApp();
     const host = activationHost(app);
     const root = bindActivationFixture(host, host.root);
@@ -45,14 +45,6 @@ describe('清理身份与逻辑身份分离', () => {
     const right = bindActivationFixture(root.host, root.host.create('dup'));
     const leftHub = root.host.bind(left.activation, { hub }).hub;
     const rightHub = root.host.bind(right.activation, { hub }).hub;
-    const seen: string[] = [];
-    // 事件用真名（同 events-context-cut 的先例）：自造名会让 emit 的 rest 参数推成 never
-    left.caps.events.use.on('zz:named', () => {
-      seen.push('L-evt');
-    });
-    right.caps.events.use.on('zz:named', () => {
-      seen.push('R-evt');
-    });
     leftHub.use.add('x', 'L');
     rightHub.use.add('y', 'R');
     // 同键替换：同名兄弟登记同一局部键（全局键同为 dup/shared），后登记者顶替先登记者；左侧的迟到撤回不得删掉右侧的新占位
@@ -61,8 +53,6 @@ describe('清理身份与逻辑身份分离', () => {
 
     await left.activation.disposeAsync();
 
-    await root.caps.events.use.emit('zz:named', 'x');
-    expect(seen).toEqual(['R-evt']);
     expect(registry.list()).toEqual(['dup/y=R', 'dup/shared=R']);
   });
 
@@ -95,34 +85,5 @@ describe('清理身份与逻辑身份分离', () => {
     expect(root.caps.services.use.all('llm')).toHaveLength(2);
     await p.activation.disposeAsync();
     expect(root.caps.services.use.all('llm')).toHaveLength(0);
-  });
-});
-
-describe('监听登记按次计身份：同一函数对象不因共享而互相误清', () => {
-  it('两个激活用同一函数订阅同一事件：拆左不清右，左的手动退订也不清右', async () => {
-    const app = mkApp();
-    const host = activationHost(app);
-    const root = bindActivationFixture(host, host.root);
-    const calls: string[] = [];
-    function shared() {
-      calls.push('hit');
-    }
-    const left = bindActivationFixture(root.host, root.host.create('l'));
-    const right = bindActivationFixture(root.host, root.host.create('r'));
-    const offLeft = left.caps.events.use.on('zz:named', shared);
-    left.caps.events.use.on('zz:named', shared); // 左的第二条只随拆卸清，让下面的拆卸断言有鉴别力
-    right.caps.events.use.on('zz:named', shared);
-
-    offLeft();
-    await root.caps.events.use.emit('zz:named', 'p');
-    expect(calls, '退订只移除自己那条').toEqual(['hit', 'hit']);
-
-    await left.activation.disposeAsync();
-    await root.caps.events.use.emit('zz:named', 'p');
-    expect(calls, '左拆卸后右的登记仍在').toEqual(['hit', 'hit', 'hit']);
-
-    await right.activation.disposeAsync();
-    await root.caps.events.use.emit('zz:named', 'p');
-    expect(calls, '右拆卸后才真正没人听').toEqual(['hit', 'hit', 'hit']);
   });
 });

@@ -12,6 +12,7 @@
 
 import { isDeepStrictEqual } from 'node:util';
 import { type CheckResult, doctor } from '@aalis/api-doctor';
+import { events } from '@aalis/api-events';
 import {
   type AalisConfig,
   type ApplyPluginConfigResult,
@@ -22,7 +23,6 @@ import {
 } from '@aalis/api-host-config';
 import {
   type App,
-  events,
   type PluginDefinition,
   type PreferenceScope,
   parseInstanceId,

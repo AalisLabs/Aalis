@@ -20,13 +20,11 @@
 //   - 'outbound:message'
 //   - 'outbound:stream'
 //
-// 依赖：@aalis/core（类型锚点）+ @aalis/util-text-normalize（prepareLLMMessages 的 UTF-16 规整）+ @aalis/schema-i18n
+// 依赖：@aalis/api-events（类型锚点）+ @aalis/util-text-normalize（prepareLLMMessages 的 UTF-16 规整）+ @aalis/schema-i18n
 // （给人看的文字对象，只用类型）。
 // ============================================================
 
-// declare module 增强需要原模块可见，本包不用 core 的具体类型，
-// 仅以空导入锚点 @aalis/core 让 TS 解析模块身份。
-import type {} from '@aalis/core';
+import type {} from '@aalis/api-events'; // declaration merging 锚点（下方 AalisEvents 增强）
 import type { TextRef } from '@aalis/schema-i18n';
 import { toWellFormedText } from '@aalis/util-text-normalize';
 import { ATTACHMENT_REF_KINDS, formatAttachmentRef } from './attachment-ref.js';
@@ -546,7 +544,7 @@ export interface StreamChunkMessage {
 
 // ----- 事件签名（declaration merging 注入到 AalisEvents） -----
 
-declare module '@aalis/core' {
+declare module '@aalis/api-events' {
   interface AalisEvents {
     'inbound:message': [message: IncomingMessage];
     /**

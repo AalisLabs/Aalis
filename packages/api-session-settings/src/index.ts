@@ -8,6 +8,7 @@
 // 解析只在本包的 resolveFields 一处做：读取器在插件进程内调它，提供者（@aalis/plugin-session-settings）只交出原样的层值。
 // 提供者缺席时读取器只取全局层，插件配置里的值照常生效。
 
+import type {} from '@aalis/api-events'; // declaration merging 锚点（下方 AalisEvents 增强）
 import type { OwnHostConfig } from '@aalis/api-host-config';
 import type { SessionKind } from '@aalis/api-session-manager';
 import { type BindingPort, defineService, type ServiceSelection } from '@aalis/core';
@@ -389,7 +390,7 @@ export function sessionSettingsError(text: TextRef): SessionSettingsError & { re
   return withText(new SessionSettingsError(toSource(text)), text);
 }
 
-declare module '@aalis/core' {
+declare module '@aalis/api-events' {
   interface AalisEvents {
     /** 宿主文档以外的设置变了：场所与会话记录上的值、字段登记增减、会话增删。宿主文档的变化另有 host-config:changed */
     'session-settings:changed': [];

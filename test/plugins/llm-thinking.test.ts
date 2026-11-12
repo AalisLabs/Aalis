@@ -12,6 +12,7 @@ import deepseekPlugin from '../../packages/plugin-llm-deepseek/src/index.js';
 import ollamaPlugin from '../../packages/plugin-llm-ollama/src/index.js';
 import openaiPlugin from '../../packages/plugin-llm-openai/src/index.js';
 import { isTextError, resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { runTscProbe } from '../helpers/tsc-probe.js';
 
 // ════════════════════════════════════════════════════════════
@@ -65,6 +66,7 @@ async function start(
   const sent: Array<{ path: string; body: Body }> = [];
   stubFetch(models, sent);
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   apps.push(app);
   await app.plugin(plugin, config);
   await app.plugins.idle();

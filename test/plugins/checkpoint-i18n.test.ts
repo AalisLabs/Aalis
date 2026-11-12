@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { commands } from '../../packages/api-commands/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
@@ -11,7 +12,7 @@ import { sessionProtocol } from '../../packages/api-session-protocol/src/index.j
 import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
-import { type App, events, type Logger, type PluginDefinition, provide } from '../../packages/core/src/index.js';
+import { type App, type Logger, type PluginDefinition, provide } from '../../packages/core/src/index.js';
 import checkpointPlugin from '../../packages/plugin-checkpoint/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';

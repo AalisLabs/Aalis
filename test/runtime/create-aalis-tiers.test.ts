@@ -26,9 +26,8 @@ import {
 const run = promisify(execFile);
 const PACKAGES = fileURLToPath(new URL('../../packages/', import.meta.url));
 
-/** core 内置六项，以及宿主（@aalis/runtime 与 App）在根上登记的四项 */
+/** core 内置五项，以及宿主（@aalis/runtime 与 App）在根上登记的几项 */
 const HOST_SERVICES = new Set([
-  'events',
   'lifecycle',
   'logger',
   'config',
@@ -142,6 +141,7 @@ describe('create-aalis 生成的项目', () => {
         '@aalis/plugin-agent',
         '@aalis/plugin-memory-sqlite',
         '@aalis/plugin-message-archive',
+        '@aalis/plugin-events',
         '@aalis/plugin-hooks',
         '@aalis/plugin-contributions',
       ]) {
@@ -149,7 +149,7 @@ describe('create-aalis 生成的项目', () => {
         // 无配置的已安装插件由 runtime 自动发现，不需要空配置桩。
         expect(config.disabledPlugins).not.toContain(name);
       }
-      // 钩子与贡献点不再内置，漏装它们的提供者这里就会点名 gateway / agent 等。
+      // 事件、钩子与贡献点由插件提供，漏装它们的提供者这里就会点名 gateway / agent 等。
       expect(unmetRequirements(Object.keys(pkg.dependencies)), `${tier} 档依赖不闭合`).toEqual([]);
     } finally {
       registry.closeAllConnections();

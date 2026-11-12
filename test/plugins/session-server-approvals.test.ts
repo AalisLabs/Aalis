@@ -12,13 +12,14 @@ import {
   type OriginKind,
 } from '../../packages/api-approval/src/index.js';
 import { authority } from '../../packages/api-authority/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type PlatformAdapter, platform } from '../../packages/api-platform/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type SessionItem, sessionProtocol } from '../../packages/api-session-protocol/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { App, definePlugin, events, type Logger, optional, provide } from '../../packages/core/src/index.js';
+import { App, definePlugin, type Logger, optional, provide } from '../../packages/core/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';

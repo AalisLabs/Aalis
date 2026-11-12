@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { agent } from '../../packages/api-agent/src/index.js';
 import { contributions } from '../../packages/api-contributions/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import type { ChatModelRequest } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
-import { App, definePlugin, events } from '../../packages/core/src/index.js';
+import { App, definePlugin } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';

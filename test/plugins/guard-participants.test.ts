@@ -9,7 +9,7 @@ import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { selfInitiatedActor } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
-import { registerHubs } from '../fixtures/hubs.js';
+import { provideEvents, registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 守卫上下文的参与者（tools、commands → guard → authority）：
@@ -21,6 +21,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 describe('守卫上下文的参与者', () => {
   it('plugin-tools 把参与者交给守卫，platform 保持会话值', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     await app.plugins.register(toolsPlugin, {});
     await app.plugins.idle();
     const { tools } = app.bind({ tools: toolsService });
@@ -73,6 +74,7 @@ describe('守卫上下文的参与者', () => {
     const run = async (participant: { platform: string; userId: string }): Promise<boolean> => {
       // authority 裁决要读配置文档（owners 等），宿主经 host-config 提供
       const { app } = hostedApp();
+      provideEvents(app);
       await app.plugins.register(toolsPlugin, {});
       await app.plugins.register(authority, {});
       await app.plugins.idle();

@@ -8,6 +8,7 @@ import { webuiClient } from '../../packages/api-webui/src/index.js';
 import { App, definePlugin, provide } from '../../packages/core/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { freePort } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -95,6 +96,7 @@ describe('webui-server 前端偏好切换：重挂不依赖落盘成功', () => 
     const port = await freePort();
     const token = 'test-fixed-token-placeholder-0000';
     apps.push(app);
+    provideEvents(app);
     const host = app.bind({ provide, webuiClient });
     host.provide.use(storage, makeFakeStorage());
     // 先注册者默认胜出：A 是启动时挂载的前端，B 是切换目标。逐个 await，登记顺序才确定。

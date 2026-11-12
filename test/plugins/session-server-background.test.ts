@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type AgentService, agent } from '../../packages/api-agent/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatResponse } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
@@ -10,7 +11,7 @@ import { sessionManager } from '../../packages/api-session-manager/src/index.js'
 import { type SessionSummary, sessionProtocol } from '../../packages/api-session-protocol/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { backgroundTasks, type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
-import { App, events, type Logger, provide } from '../../packages/core/src/index.js';
+import { App, type Logger, provide } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';

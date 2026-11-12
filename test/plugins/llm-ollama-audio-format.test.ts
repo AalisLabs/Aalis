@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { type ChatModelRequest, type LLMModel, llm } from '../../packages/api-llm/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import ollamaPlugin from '../../packages/plugin-llm-ollama/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 带音频的请求走 Ollama 的 OpenAI 兼容接口，input_audio 的 format 按 data URL 里写明的音频类型给：只收兼容接口认得的 wav 与
@@ -28,6 +29,7 @@ async function start(): Promise<{ model: LLMModel; sent: Array<{ messages: Array
     return Response.json({ choices: [{ message: { content: '听到了' }, finish_reason: 'stop' }] });
   }) as typeof fetch;
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   apps.push(app);
   await app.plugin(ollamaPlugin, { baseUrl: 'http://127.0.0.1:11434' });
   await app.plugins.idle();

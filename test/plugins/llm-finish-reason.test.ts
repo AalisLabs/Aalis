@@ -10,6 +10,7 @@ import { App, type PluginDefinition } from '../../packages/core/src/index.js';
 import deepseekPlugin from '../../packages/plugin-llm-deepseek/src/index.js';
 import ollamaPlugin from '../../packages/plugin-llm-ollama/src/index.js';
 import openaiPlugin from '../../packages/plugin-llm-openai/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 回复的结束原因：服务商报了才有，stop、length、tool_calls、content_filter 照原样，别的原样值记 other，没报就不带
@@ -80,6 +81,7 @@ function stubOllama(reason: string | undefined): void {
 
 async function modelOf(plugin: PluginDefinition, config: Record<string, unknown>): Promise<LLMModel> {
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   apps.push(app);
   await app.plugin(plugin, config);
   await app.plugins.idle();

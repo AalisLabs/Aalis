@@ -13,6 +13,7 @@
 // @aalis/api-authority（仅入站回合与权限服务的类型）、@aalis/api-session-manager 与 @aalis/api-storage（目录约定与判据用的纯函数）。
 // ============================================================
 
+import type {} from '@aalis/api-events'; // declaration merging 锚点（下方 AalisEvents 增强）
 import type { ModelRef } from '@aalis/api-llm';
 import { defineService } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
@@ -243,7 +244,7 @@ export interface MediaProcessReport {
 
 // ----- 事件 -----
 
-declare module '@aalis/core' {
+declare module '@aalis/api-events' {
   interface AalisEvents {
     /**
      * 一条入站消息的所有附件已被 plugin-media 处理（成功或失败均会发）。

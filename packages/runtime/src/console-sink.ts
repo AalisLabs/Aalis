@@ -1,4 +1,4 @@
-import type { Events } from '@aalis/core';
+import type { Events } from '@aalis/api-events';
 import { LogHub } from '@aalis/core';
 import type { LogEntry, LogLevel } from '@aalis/schema-log';
 import chalk from 'chalk';
@@ -10,7 +10,7 @@ import chalk from 'chalk';
  * - `terminal:claimed`：某 UI（CLI/TUI）开始独占 stdout（alt-screen/raw-mode）
  * - `terminal:released`：归还 stdout
  */
-declare module '@aalis/core' {
+declare module '@aalis/api-events' {
   interface AalisEvents {
     'terminal:claimed': [owner: string];
     'terminal:released': [owner: string];
@@ -81,11 +81,11 @@ function formatEntry(entry: LogEntry): string {
 export interface ConsoleSinkHandle {
   dispose(): void;
   /**
-   * 在 App 构造完成后绑定其事件总线：sink 开始监听 `terminal:claimed/released`，
-   * 当任何 UI 接管终端时自动停止写 stdout。
+   * 在 App 构造完成后登记对 `terminal:claimed/released` 的监听：任何 UI 接管终端时自动停止写 stdout。
    *
    * 必须显式调用——`installConsoleSink()` 在 App 之前运行（需要捕获最早期日志），
-   * 此时还没有事件总线可订阅。传宿主根绑定的 events（`app.bind({ events }).events.use`）。
+   * 此时还没有根绑定可登记。传宿主根绑定的 events（`app.bind({ events }).events.use`）：事件总线由插件提供，
+   * 它上线前登记留在归属表里。
    */
   bindEvents(events: Events): void;
   /** 当前是否染色输出（供调试 / 状态视图使用） */

@@ -4,7 +4,6 @@ import {
   config,
   definePlugin,
   defineService,
-  events,
   type Logger,
   lifecycle,
   logger,
@@ -121,35 +120,32 @@ const hubProvider = (instance: HubService, name = 'hub-provider') =>
 const state = (app: App, id: string) => app.plugins.getStatus().find(s => s.instanceId === id)?.state;
 
 describe('目标接口：声明描述符，拿按激活绑定的接口', () => {
-  it('第一方 events 与未知第三方 zz-hub 同一种接入；卸载后两者都撤净', async () => {
+  it('内置的 provide 与未知第三方 zz-hub 同一种接入；卸载后两者的登记都撤净', async () => {
     const { app } = world();
     const instance = makeHub();
-    let ready = 0;
+    const mine = defineService<{ v: number }>('zz-proto-mine');
     await app.plugin(hubProvider(instance));
     await app.plugin(
       definePlugin({
         name: 'consumer',
-        uses: { hub, events, logger, lifecycle, config },
-        apply({ hub, events, logger, lifecycle, config }) {
+        uses: { hub, provide, logger, lifecycle, config },
+        apply({ hub, provide, logger, lifecycle, config }) {
           hub.use.register({ name: 'echo' });
-          events.use.on('zz:plain', () => {
-            ready++;
-          });
+          provide.use(mine, { v: 1 });
           logger.use.info(`config=${JSON.stringify(config.use)}`);
           lifecycle.use.onDispose(() => {});
         },
       }),
     );
     await app.plugins.idle();
+    const host = app.bind({ services });
     expect(state(app, 'consumer')).toBe('active');
     expect(instance.list()).toEqual(['echo']);
-    await app.bind({ events }).events.use.emit('zz:plain');
-    expect(ready).toBe(1);
+    expect(host.services.use.get(mine)).toEqual({ v: 1 });
 
     await app.plugins.unload('consumer');
     expect(instance.list(), '注册型登记随激活撤回，不靠按名字清扫').toEqual([]);
-    await app.bind({ events }).events.use.emit('zz:plain');
-    expect(ready, '事件监听同样撤回').toBe(1);
+    expect(host.services.use.get(mine), '服务登记同样撤回').toBeUndefined();
   });
 });
 

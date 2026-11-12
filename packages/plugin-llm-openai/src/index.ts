@@ -1,3 +1,4 @@
+import { events } from '@aalis/api-events';
 import type {
   ChatModelRequest,
   ChatResponse,
@@ -17,7 +18,7 @@ import {
   requestedThinking,
 } from '@aalis/api-llm';
 import type { ToolDefinition } from '@aalis/api-tools';
-import { type BoundOf, config, definePlugin, events, type Logger, lifecycle, logger, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, type Logger, lifecycle, logger, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, missingConfigError, parseConfig } from '@aalis/schema-config';
 import { TextError, type TextRef, textClauses, textOf, toSource } from '@aalis/schema-i18n';
 import type { Message, ToolCall } from '@aalis/schema-message';

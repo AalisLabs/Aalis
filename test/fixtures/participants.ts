@@ -10,12 +10,13 @@ import {
   approvals,
 } from '../../packages/api-approval/src/index.js';
 import { authority } from '../../packages/api-authority/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import type { AalisConfig } from '../../packages/api-host-config/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { sessionProtocol } from '../../packages/api-session-protocol/src/index.js';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { type ToolCallRequest, tools } from '../../packages/api-tools/src/index.js';
-import { type App, definePlugin, events, optional, provide } from '../../packages/core/src/index.js';
+import { type App, definePlugin, optional, provide } from '../../packages/core/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';

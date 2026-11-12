@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { platform } from '../../packages/api-platform/src/index.js';
 import { roomClass, type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
-import { App, definePlugin, events, type Logger, provide } from '../../packages/core/src/index.js';
+import { App, definePlugin, type Logger, provide } from '../../packages/core/src/index.js';
 import cliPlugin from '../../packages/plugin-cli/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';

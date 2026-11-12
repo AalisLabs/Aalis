@@ -9,6 +9,7 @@ import {
 import { authority as authorityService, originTurnOf } from '@aalis/api-authority';
 import { commands as commandsService } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
+import { events } from '@aalis/api-events';
 import { gateway as gatewayService } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import { ownHostConfig } from '@aalis/api-host-config';
@@ -40,7 +41,6 @@ import {
   type BoundOf,
   config as configCap,
   definePlugin,
-  events,
   type Logger,
   lifecycle,
   logger as loggerCap,

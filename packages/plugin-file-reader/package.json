@@ -43,7 +43,8 @@
     "@aalis/util-text-normalize": "workspace:>=0.6.0 <1.0.0",
     "mammoth": "^1.8.0",
     "unpdf": "^1.8.1",
-    "@aalis/api-contributions": "workspace:>=0.2.0 <1.0.0"
+    "@aalis/api-contributions": "workspace:>=0.2.0 <1.0.0",
+    "@aalis/api-events": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

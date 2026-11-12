@@ -12,7 +12,7 @@ export class ActivationHost {
   readonly root: Activation;
   readonly #owners = new Map<symbol, Activation>();
 
-  constructor(base: Pick<ServiceRuntime, 'events' | 'services' | 'devMode'>, logger: Logger) {
+  constructor(base: Pick<ServiceRuntime, 'services' | 'devMode'>, logger: Logger) {
     const watchers = new Set<(name: string) => void>();
     this.runtime = {
       ...base,
@@ -26,7 +26,7 @@ export class ActivationHost {
     };
     this.root = this.#make('root', {}, logger);
     const providers = coreProviders(this.runtime, (identity, name) => this.caller(identity, name));
-    // 自举：provide 的提供者须先在容器里，根才能经 uses 取到 provide；其余五项与第三方服务同走 provide
+    // 自举：provide 的提供者须先在容器里，根才能经 uses 取到 provide；其余四项与第三方服务同走 provide
     this.runtime.services.register(provide.name, providers.provide, 'root', this.root.owner, { exclusive: true });
     const root = this.bind(this.root, { provide });
     for (const [descriptor, provider] of providers.rest) root.provide.use(descriptor, provider, { exclusive: true });
@@ -65,10 +65,9 @@ export class ActivationHost {
         this.root.children.delete(activation);
       },
     });
-    // 第一个切断项：原语按归属整体切断，不能逐条 await 时让一半监听仍然对外可用
+    // 第一个切断项：服务登记按归属整体切断，不逐条 await 让一半登记仍然对外可用
     resources.onCut(() => {
       removed = runtime.services.unregisterByOwner(owner);
-      runtime.events.unregisterByOwner(owner);
     });
     const activation = new Activation(id, owner, logger, config, resources, runtime.services, this.#owners);
     this.#owners.set(owner, activation);

@@ -1,19 +1,10 @@
 import { cronEngine } from '@aalis/api-cron-engine';
+import { events } from '@aalis/api-events';
 import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
 import { isStorageNotFound, isStorageUri, storage } from '@aalis/api-storage';
 import { actingIdentity, tools } from '@aalis/api-tools';
 import { type NoticeHandle, type PageContext, webuiServer } from '@aalis/api-webui';
-import {
-  type BoundOf,
-  config,
-  definePlugin,
-  defineService,
-  events,
-  lifecycle,
-  logger,
-  optional,
-  provide,
-} from '@aalis/core';
+import { type BoundOf, config, definePlugin, defineService, lifecycle, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, configError, defineConfig, parseConfig } from '@aalis/schema-config';
 import { TextError, type TextRef, textClauses, textOf, toSource } from '@aalis/schema-i18n';
 import type { IncomingMessage } from '@aalis/schema-message';
@@ -1356,7 +1347,7 @@ function resolvePersistPath(input: string): string {
 }
 
 // ----- 事件类型（declaration merging）-----
-declare module '@aalis/core' {
+declare module '@aalis/api-events' {
   interface AalisEvents {
     /** 任务开始执行 */
     'scheduler:job:start': [jobName: string];

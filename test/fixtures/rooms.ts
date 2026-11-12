@@ -1,9 +1,10 @@
 import { expect, vi } from 'vitest';
 import { commands } from '../../packages/api-commands/src/index.js';
+import { type Events, events } from '../../packages/api-events/src/index.js';
 import { gateway, windowKey } from '../../packages/api-gateway/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import { type SessionInfo, sessionKind } from '../../packages/api-session-manager/src/index.js';
-import { type App, type Events, events } from '../../packages/core/src/index.js';
+import type { App } from '../../packages/core/src/index.js';
 import type { IncomingMessage, OutgoingMessage } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { type AddressInfo, connect, createServer, isIP, type Socket } from 'node:net';
+import { events as eventsService } from '@aalis/api-events';
 import { sessionDirName } from '@aalis/api-media';
 import { processService } from '@aalis/api-process';
 import { rootSessionOf, sessionManager as sessionManagerService } from '@aalis/api-session-manager';
@@ -10,7 +11,6 @@ import {
   type BoundOf,
   config as configService,
   definePlugin,
-  events as eventsService,
   type Logger,
   lifecycle as lifecycleService,
   logger as loggerService,

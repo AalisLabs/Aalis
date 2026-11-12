@@ -6,6 +6,7 @@ import embeddingOpenai from '../../packages/plugin-embedding-openai/src/index.js
 import deepseek from '../../packages/plugin-llm-deepseek/src/index.js';
 import llmOllama from '../../packages/plugin-llm-ollama/src/index.js';
 import llmOpenai from '../../packages/plugin-llm-openai/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // apply 里 await 的启动探测（连通性检查、模型发现）接 lifecycle.signal：停用、重启、停机时 apply 随 abort 落定。
@@ -58,6 +59,7 @@ function world() {
     child: () => logger,
   };
   const app = new App({ name: 'T', logger, disposeTimeoutMs: GRACE_MS });
+  provideEvents(app);
   apps.push(app);
   return { app, lines };
 }

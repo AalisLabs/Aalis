@@ -7,8 +7,9 @@
 // ============================================================
 
 import type { PreprocessorFn } from '@aalis/api-agent';
+import type { Events } from '@aalis/api-events';
 import type { MediaService } from '@aalis/api-media';
-import type { Events, Logger, ServiceSelection } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 
 /** 预处理器用到的能力：广播 media:processed 的 events，与记失败的 logger */

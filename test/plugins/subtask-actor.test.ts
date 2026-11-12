@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { originTurnOf } from '../../packages/api-authority/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
 import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.js';
-import { App, events, provide, services } from '../../packages/core/src/index.js';
+import { App, provide, services } from '../../packages/core/src/index.js';
 import subtask from '../../packages/plugin-subtask/src/index.js';
 import type { FromTurn, IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';

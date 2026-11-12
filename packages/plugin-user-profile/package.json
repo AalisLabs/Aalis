@@ -42,7 +42,8 @@
     "@aalis/api-hooks": "workspace:>=0.3.0 <1.0.0",
     "@aalis/api-contributions": "workspace:>=0.2.0 <1.0.0",
     "@aalis/api-user-relation": "workspace:>=0.2.0 <1.0.0",
-    "@aalis/api-webui": "workspace:>=0.13.0 <1.0.0"
+    "@aalis/api-webui": "workspace:>=0.13.0 <1.0.0",
+    "@aalis/api-events": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

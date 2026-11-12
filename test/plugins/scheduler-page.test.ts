@@ -1,15 +1,17 @@
 import { storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
-import { App, type BoundOf, events, LogHub, provide, services } from '@aalis/core';
+import { App, type BoundOf, LogHub, provide, services } from '@aalis/core';
 import type { LogEntry } from '@aalis/schema-log';
 import { describe, expect, it, vi } from 'vitest';
 import { type CronEngine, cronEngine } from '../../packages/api-cron-engine/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import schedulerPlugin, { type SchedulerService, scheduler } from '../../packages/plugin-scheduler/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { resolveText, toSource } from '../../packages/schema-i18n/src/index.js';
 import { renderIn } from '../fixtures/host-language.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/memory-storage.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 import { toolRequest } from '../fixtures/tool-call.js';
@@ -60,6 +62,7 @@ async function withScheduler(
     if (e.level === 'warn') warns.push(e.message);
   });
   const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+  provideEvents(app);
   const host = app.bind(uses);
   const store = memoryStorage();
   if (options.persisted) store.files.set('data:/scheduler-jobs.json', JSON.stringify(options.persisted));
@@ -443,6 +446,7 @@ describe('行上的动作', () => {
 describe('激活中的页面', () => {
   it('持久化文件读完之前页面不登记；读完后表格同时有配置文件与持久化文件里的任务', async () => {
     const app = new App({ name: 'T', logLevel: 'warn' });
+    provideEvents(app);
     const host = app.bind(uses);
     const store = memoryStorage({
       'data:/scheduler-jobs.json': JSON.stringify({

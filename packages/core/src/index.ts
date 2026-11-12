@@ -1,16 +1,14 @@
 // ============================================================
 // index.ts — @aalis/core 包根导出，按内部分层分节（见 docs/design/core-contract.md 第八节）：
-//   自下而上：类型词汇与扩展点 → 原语注册表 → 服务描述符、内置能力与插件定义 → 编排层（含宿主 SPI）。
+//   自下而上：类型词汇 → 原语注册表 → 服务描述符、内置能力与插件定义 → 编排层（含宿主 SPI）。
 // 资源内核（kernel/）、原语注册表、激活记录与 PluginManager 类不导出：插件与宿主拿到的是按激活绑定的能力，不是内部对象。
 // 领域词汇（消息、工具、LLM 等）一律在各 @aalis/api-* 包，服务类型随描述符走，core 不认识任何业务类型。
 // ============================================================
 
-// ----- 通用数据契约 + 扩展点 -----
+// ----- 通用数据契约 -----
 export {
-  type AalisEvents,
   type AppService,
   type CoreFailureCode,
-  type EventArgs,
   type PluginEntry,
   type PluginManagerService,
   type PluginState,
@@ -30,8 +28,6 @@ export type { RestartStrategy } from './orchestration/providers.js';
 
 export {
   config,
-  type Events,
-  events,
   type LifecycleCap,
   lifecycle,
   logger,

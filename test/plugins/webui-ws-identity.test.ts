@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type SessionPeer, sessionProtocol } from '../../packages/api-session-protocol/src/index.js';
 import { App, type Logger, provide } from '../../packages/core/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { freePort, upgrade, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -49,6 +50,7 @@ async function start() {
   };
   const port = await freePort();
   const app = new App({ name: 'T', logLevel: 'warn', logger });
+  provideEvents(app);
   apps.push(app);
   const peers: SessionPeer[] = [];
   app.bind({ provide }).provide.use(sessionProtocol, {

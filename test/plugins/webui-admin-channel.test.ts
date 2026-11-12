@@ -3,6 +3,7 @@ import type { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { sessionProtocol } from '../../packages/api-session-protocol/src/index.js';
 import {
   type WebuiAdminClientMessage,
@@ -15,7 +16,6 @@ import {
   type AppOptions,
   DefaultLogger,
   definePlugin,
-  events,
   type Logger,
   LogHub,
   provide,
@@ -24,6 +24,7 @@ import {
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { provideHostLogs } from '../fixtures/host-logs.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { freePort, upgrade, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -55,6 +56,7 @@ afterEach(async () => {
 /** 在 app 上装 webui-server（前面的插件由 setup 装）并启动；推给页面的日志取 host-logs，它接进程级的默认中枢 */
 async function start(app: App, setup?: (app: App) => Promise<void>) {
   apps.push(app);
+  provideEvents(app);
   provideHostLogs(app);
   const port = await freePort();
   await setup?.(app);

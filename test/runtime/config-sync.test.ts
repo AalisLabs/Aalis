@@ -1,6 +1,7 @@
 import { type App, config, definePlugin, type Logger, lifecycle, type PluginDefinition } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { ConfigSaveRefusedError } from '../../packages/api-host-config/src/index.js';
+import { createConfigStore } from '../../packages/runtime/src/config-store.js';
 import {
   handleConfigChanged,
   installConfigHotReload,
@@ -10,6 +11,7 @@ import {
 import { createPluginDiscovery, type PluginLoader } from '../../packages/runtime/src/plugin-discovery.js';
 import { validateConfig } from '../../packages/schema-config/src/index.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
+import { createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
 // 配置同步政策 + 热重载编排（宿主层）
@@ -702,6 +704,19 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
     expect(infos.filter(line => line.includes('检测到配置变更'))).toHaveLength(1);
     release();
     await stopping;
+  });
+
+  it('热重载与发现时的配置同步共用一份宿主根绑定：根激活名下的登记不随次数增长', async () => {
+    const store = createConfigStore({ name: 'T', logLevel: 'error', plugins: {} });
+    const app = createInspectableApp({ name: 'T', logLevel: 'error' });
+    const discovery = createPluginDiscovery(app, NO_PLUGINS, store);
+    const held = () => rootActivation(app).resources.withdrawals.labels().length;
+    await handleConfigChanged(app, store, discovery);
+    const before = held();
+    for (let i = 0; i < 5; i++) await handleConfigChanged(app, store, discovery);
+    withPluginConfigSync(app, store);
+    expect(held()).toBe(before);
+    await app.stop();
   });
 });
 

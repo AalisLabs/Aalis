@@ -10,7 +10,7 @@ import type { CommandRegistry } from '../../packages/plugin-commands/src/command
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import drawPlugin from '../../packages/plugin-draw/src/index.js';
 import hooksPlugin from '../../packages/plugin-hooks/src/index.js';
-import { registerHubs } from '../fixtures/hubs.js';
+import { provideEvents, registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // /clear 的类型由处理它的插件经贡献点 memory:clear-type 登记：-t 的可选项、帮助里的说明与「不认识的类型」都按登记表现取，
@@ -50,6 +50,7 @@ async function world(opts: { probes?: ReturnType<typeof probe>[]; noContribution
   const app = new App({ name: 'T', logLevel: 'error' });
   cleanups.push(() => app.stop());
   if (opts.noContributions) {
+    provideEvents(app);
     await app.plugin(hooksPlugin);
     await app.plugins.idle();
   } else {

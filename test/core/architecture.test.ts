@@ -14,8 +14,7 @@ import { runTscProbe } from '../helpers/tsc-probe.js';
 //
 // 分层即目录，自下而上，每层只许 import 本层与更低层：
 // - kernel/：资源生命周期与清理链，只认自己，不引用类型词汇、原语或编排层
-// - primitives/：原语注册表（事件总线与服务容器），只认 kernel 与类型词汇，不认识 Logger、Config
-//   （需要上报的诊断经注入的回调送出）
+// - primitives/：原语注册表（服务容器），只认 kernel 与类型词汇，不认识 Logger、Config
 // - infrastructure/：配置值拷贝、日志与资源记录，只依赖资源内核、原语与基础词汇
 // - composition/：服务描述符、绑定与工厂、默认服务和插件定义，不依赖编排层
 // - orchestration/：把下层机制编排成插件生命周期与应用骨架，含宿主 SPI（重启策略）
@@ -41,18 +40,6 @@ const ROOT_FILES = ['index.ts'];
 /** types/ 里下层不得引用的文件：编排层词汇，以及会把它们一并带出的 barrel；其余为基础词汇 */
 const UPPER_TYPES = new Set(['types/app.ts', 'types/plugin.ts', 'types/index.ts']);
 
-/** 一处事件 `.emit(` / `.notify(` 调用（旧 emitQuietly 也识别并拒绝） */
-interface EmitCall {
-  method: 'emit' | 'emitQuietly' | 'notify';
-  /** 字面量事件名；不是字面量则为 null */
-  event: string | null;
-  /** 发射方在监听器之后才推进：`await x.emit()`，或 `x.emit().then()` 接续 */
-  sequenced: boolean;
-  /** 通过 AST 确认的两个动态转发形状；只在指定文件放行 */
-  forwarding?: 'builtin' | 'notification';
-  line: number;
-}
-
 interface Parsed {
   /** 逐条记录字面量依赖与是否纯类型，避免同包的类型导入掩盖另一条值导入。 */
   specifiers: Array<{ spec: string; typeOnly: boolean }>;
@@ -62,24 +49,11 @@ interface Parsed {
   ambientModules: string[];
   /** 有内容的接口名：自带成员，或经 extends 继承成员 */
   nonEmptyInterfaces: Set<string>;
-  /** 接口的直接成员名（不含继承）；只记本测试要核对的 AalisEvents */
-  eventKeys: string[];
-  /** 全部事件发射调用（属性访问与 `['emit']` 元素访问两种写法） */
-  emits: EmitCall[];
   /** 能自行补出宿主全局、绕过白名单的写法：`declare` 修饰的声明、对 globalThis 的引用、脚本文件（`行号: 写法`） */
   hostEscapes: string[];
 }
 
 const parsed = new Map<string, Parsed>();
-
-function emitMethod(callee: ts.LeftHandSideExpression): EmitCall['method'] | null {
-  const name = ts.isPropertyAccessExpression(callee)
-    ? callee.name.text
-    : ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression)
-      ? callee.argumentExpression.text
-      : null;
-  return name === 'emit' || name === 'emitQuietly' || name === 'notify' ? name : null;
-}
 
 function parse(file: string): Parsed {
   const hit = parsed.get(file);
@@ -95,8 +69,6 @@ function parseSource(file: string, source: string): Parsed {
     computedImports: 0,
     ambientModules: [],
     nonEmptyInterfaces: new Set(),
-    eventKeys: [],
-    emits: [],
     hostEscapes: [],
   };
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
@@ -151,72 +123,6 @@ function parseSource(file: string, source: string): Parsed {
       out.ambientModules.push(node.name.text);
     } else if (ts.isInterfaceDeclaration(node)) {
       if (node.members.length > 0 || node.heritageClauses?.length) out.nonEmptyInterfaces.add(node.name.text);
-      if (node.name.text === 'AalisEvents') {
-        for (const m of node.members) {
-          if (m.name && (ts.isIdentifier(m.name) || ts.isStringLiteralLike(m.name))) out.eventKeys.push(m.name.text);
-        }
-      }
-    } else if (ts.isCallExpression(node)) {
-      const method = emitMethod(node.expression);
-      if (method) {
-        const arg = node.arguments[0];
-        let scope: ts.Node | undefined = node.parent;
-        while (scope && !ts.isFunctionDeclaration(scope) && !ts.isMethodDeclaration(scope)) scope = scope.parent;
-        const directArgs =
-          node.arguments.length === 2 &&
-          ts.isIdentifier(node.arguments[0]) &&
-          node.arguments[0].text === 'event' &&
-          ts.isSpreadElement(node.arguments[1]) &&
-          ts.isIdentifier(node.arguments[1].expression) &&
-          node.arguments[1].expression.text === 'args';
-        const arrow = ts.isArrowFunction(node.parent) ? node.parent : undefined;
-        const builtinForward =
-          directArgs &&
-          node.expression.getText(sf) === 'bus.emit' &&
-          arrow?.body === node &&
-          !arrow.modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword) &&
-          ts.isPropertyAssignment(arrow.parent) &&
-          arrow.parent.name.getText(sf) === 'emit';
-        // notify 可以先 Promise.resolve 接住宿主总线返回值；只认这一层精确包裹。
-        const promise =
-          ts.isCallExpression(node.parent) &&
-          node.parent.expression.getText(sf) === 'Promise.resolve' &&
-          node.parent.arguments.length === 1 &&
-          node.parent.arguments[0] === node
-            ? node.parent
-            : node;
-        const caught =
-          ts.isPropertyAccessExpression(promise.parent) &&
-          promise.parent.name.text === 'catch' &&
-          ts.isCallExpression(promise.parent.parent) &&
-          promise.parent.parent.expression === promise.parent &&
-          promise.parent.parent.arguments.length > 0
-            ? promise.parent.parent
-            : undefined;
-        const notificationForward =
-          directArgs &&
-          node.expression.getText(sf) === 'runtime.events.emit' &&
-          scope &&
-          ts.isFunctionDeclaration(scope) &&
-          scope.name?.text === 'notify' &&
-          caught;
-        // 括号不能绕过 await / then 的顺序约束。
-        let value: ts.Node = caught ?? promise;
-        while (ts.isParenthesizedExpression(value.parent) || ts.isAsExpression(value.parent)) value = value.parent;
-        const sequenced =
-          ts.isAwaitExpression(value.parent) ||
-          (ts.isPropertyAccessExpression(value.parent) && value.parent.name.text === 'then') ||
-          (ts.isElementAccessExpression(value.parent) &&
-            ts.isStringLiteralLike(value.parent.argumentExpression) &&
-            value.parent.argumentExpression.text === 'then');
-        out.emits.push({
-          method,
-          event: arg && ts.isStringLiteralLike(arg) ? arg.text : null,
-          sequenced,
-          forwarding: builtinForward ? 'builtin' : notificationForward ? 'notification' : undefined,
-          line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1,
-        });
-      }
     }
     ts.forEachChild(node, visit);
   };
@@ -315,6 +221,15 @@ describe('core 内部分层（目录即层，依赖只许向下）', () => {
     }
     expect(violations).toEqual([]);
   });
+
+  it('下层绕经内部激活导入仍被拒绝（含 type-only 与动态 import）', () => {
+    const file = join(SRC_DIR, 'composition', 'binding.ts');
+    const source =
+      "import type { Activation } from '../orchestration/activation.js'; void import('../orchestration/activation-host.js');";
+    const imports = parseSource(file, source).specifiers;
+    expect(imports).toHaveLength(2);
+    for (const { spec } of imports) expect(violation('composition', resolveTarget(file, spec)!)).not.toBeNull();
+  });
 });
 
 /**
@@ -382,8 +297,8 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
       'infrastructure/logger.ts',
       'orchestration/app.ts',
       'kernel/disposable-chain.ts',
-      'primitives/events.ts',
-      'types/events.ts',
+      'primitives/services.ts',
+      'types/app.ts',
       'index.ts',
     ]) {
       const file = join(SRC_DIR, path);
@@ -412,19 +327,17 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
     }
   });
 
-  it('core 只剩 AalisEvents 一张扩展点，在 core 里是空的；钩子与贡献点的扩展点在各自契约包里保持为空', () => {
-    // core 自己不发事件，AalisEvents 的条目全由契约包与插件增广注入。服务类型随描述符走；
-    // 钩子与贡献点的扩展点随契约包（@aalis/api-hooks / @aalis/api-contributions）走，契约包只声明空接口，
-    // 条目由领域 -api 包增广注入。
-    const MOVED_OUT = /\binterface\s+(ServiceTypeMap|HookContextMap|ContributionPointMap)\b/;
+  it('core 不承载「名字 → 类型」的扩展表；事件、钩子与贡献点的扩展表在各自契约包里保持为空', () => {
+    // 服务类型随描述符走；事件、钩子与贡献点的扩展表随契约包（@aalis/api-events / @aalis/api-hooks /
+    // @aalis/api-contributions）走，契约包只声明空接口，条目由领域 -api 包与插件增广注入。
+    const MOVED_OUT = /\binterface\s+(ServiceTypeMap|AalisEvents|HookContextMap|ContributionPointMap)\b/;
     const offenders: string[] = [];
-    let eventsRegistered = false;
     for (const file of walk(SRC_DIR)) {
-      if (parse(file).nonEmptyInterfaces.has('AalisEvents')) eventsRegistered = true;
       const hit = readFileSync(file, 'utf-8').match(MOVED_OUT);
       if (hit) offenders.push(`${relToSrc(file)} → core 不再承载 ${hit[1]}`);
     }
     for (const [pkg, name] of [
+      ['api-events', 'AalisEvents'],
       ['api-hooks', 'HookContextMap'],
       ['api-contributions', 'ContributionPointMap'],
     ]) {
@@ -433,8 +346,7 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
         offenders.push(`${pkg} 未声明空的 ${name}`);
       if (parse(file).nonEmptyInterfaces.has(name)) offenders.push(`${pkg} → ${name} 有条目或继承了别的接口`);
     }
-    expect(offenders, '钩子与贡献点的扩展点只在契约包里声明为空接口，条目由 -api 包增广注入').toEqual([]);
-    expect(eventsRegistered, 'core 自己不发事件：AalisEvents 在 core 里不登记条目').toBe(false);
+    expect(offenders, '扩展表只在契约包里声明为空接口，条目由 -api 包与插件增广注入').toEqual([]);
   });
 });
 
@@ -517,65 +429,6 @@ describe('core 环境无关：只用 ES 标准库与登记的宿主全局', () =
   });
 });
 
-/**
- * core 自己不发事件：源码里唯一的 emit 调用是内置 events 能力对总线的直转（确切的箭头形状，文件或目录本身不豁免），
- * 没有通知出口。
- */
-const BUILTIN_EVENTS = 'composition/core-services.ts';
-
-function eventViolations(rel: string, calls: EmitCall[]): string[] {
-  const offenders: string[] = [];
-  for (const { method, event, sequenced, forwarding, line } of calls) {
-    const direct = rel === BUILTIN_EVENTS && method === 'emit' && event === null && forwarding === 'builtin';
-    if (!direct || sequenced)
-      offenders.push(`${rel}:${line} core 不发事件：只有内置 events 能力可以把 emit 直转给总线`);
-  }
-  return offenders;
-}
-
-describe('core 自己不发事件', () => {
-  it('源码里的 emit 只有内置 events 能力对总线的那一处直转', () => {
-    const offenders: string[] = [];
-    let forwards = 0;
-    for (const file of walk(SRC_DIR)) {
-      const { emits } = parse(file);
-      offenders.push(...eventViolations(relToSrc(file), emits));
-      forwards += emits.filter(call => call.forwarding === 'builtin').length;
-    }
-    expect(offenders).toEqual([]);
-    expect(forwards, '没找到那一处直转——守卫在空转').toBe(1);
-  });
-
-  it.each([
-    ['orchestration/app.ts', "await this.events.emit('zz:stopping')"],
-    ['orchestration/app.ts', "void this.events.emit('zz:stopping')"],
-    ['orchestration/plugin.ts', "host.runtime.notify('zz:changed')"],
-    [
-      'orchestration/activation-host.ts',
-      'function notify() { return runtime.events.emit(event, ...args).catch(report); }',
-    ],
-    [BUILTIN_EVENTS, 'const extra = { emit: async (event, ...args) => await bus.emit(event, ...args) };'],
-    ['composition/binding.ts', 'const extra = { emit: (event, ...args) => bus.emit(event, ...args) };'],
-  ])('变异被拒绝：%s — %s', (rel, source) => {
-    expect(eventViolations(rel, parseSource(rel, source).emits).length).toBeGreaterThan(0);
-  });
-
-  it('合法的直转可格式化为多行，守卫按语法结构识别', () => {
-    const builtin = `const cap = { emit: (event, ...args) =>
-      bus.emit(event, ...args) };`;
-    expect(eventViolations(BUILTIN_EVENTS, parseSource(BUILTIN_EVENTS, builtin).emits)).toEqual([]);
-  });
-
-  it('下层绕经内部激活导入仍被拒绝（含 type-only 与动态 import）', () => {
-    const file = join(SRC_DIR, 'composition', 'binding.ts');
-    const source =
-      "import type { Activation } from '../orchestration/activation.js'; void import('../orchestration/activation-host.js');";
-    const imports = parseSource(file, source).specifiers;
-    expect(imports).toHaveLength(2);
-    for (const { spec } of imports) expect(violation('composition', resolveTarget(file, spec)!)).not.toBeNull();
-  });
-});
-
 // ── 覆盖率门禁不能靠跳过统计达成 ──
 //
 // vitest.core-coverage.config.ts 把 core 的四项覆盖率阈值定为 100。覆盖不到的分支只能补测试或删掉，
@@ -595,7 +448,7 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 //
 // 去掉注释与空行后的代码行数。上限按改动后的实测值设定，不留余量；抬高上限的提交要写明理由，不能随别的改动一并抬高。
 // 计数方法：逐字符状态机去注释（识别字符串、模板串含嵌套 ${}），再数非空行。
-const CORE_CODE_LINE_CEILING = 2696;
+const CORE_CODE_LINE_CEILING = 2613;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

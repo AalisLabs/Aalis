@@ -1,6 +1,7 @@
 import { basename } from 'node:path';
 import { agent } from '@aalis/api-agent';
 import { authority } from '@aalis/api-authority';
+import { events } from '@aalis/api-events';
 import { chatScopeOf, windowKey } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import { ownHostConfig } from '@aalis/api-host-config';
@@ -35,7 +36,7 @@ import {
   type WorkspaceInfo,
 } from '@aalis/api-session-manager';
 import { type SessionFieldReader, sessionFields } from '@aalis/api-session-settings';
-import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { defineConfig } from '@aalis/schema-config';
 import { asText, type TextRef, toSource, truncateParams, withText } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message } from '@aalis/schema-message';

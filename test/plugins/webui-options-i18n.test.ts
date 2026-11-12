@@ -8,6 +8,7 @@ import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { defineTexts } from '../../packages/schema-i18n/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { i18nSection, setHostLanguage } from '../fixtures/host-language.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -80,6 +81,7 @@ const owner = definePlugin({
 async function setup({ withI18n = true }: { withI18n?: boolean } = {}) {
   const port = await freePort();
   const { app } = hostedApp(i18nSection(['en']), { logger: silent });
+  provideEvents(app);
   apps.push(app);
   const setLanguage = (language: string[]) => setHostLanguage(app, language);
   await app.plugin(toolsPlugin, {});

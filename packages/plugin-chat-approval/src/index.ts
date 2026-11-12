@@ -19,11 +19,12 @@ import {
   sanitizeForCard,
 } from '@aalis/api-approval';
 import { authority } from '@aalis/api-authority';
+import { events } from '@aalis/api-events';
 import { gateway, INBOUND_PHASE } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { getPlatformAdapters, platform } from '@aalis/api-platform';
 import { oneToOneWith, rootSessionOf, type SessionInfo, sessionManager } from '@aalis/api-session-manager';
-import { type BoundOf, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
+import { type BoundOf, definePlugin, lifecycle, logger, optional } from '@aalis/core';
 import { type TextRef, textLines, toSource } from '@aalis/schema-i18n';
 import { AT_SELF_PATTERN, awaitDelivery, type IncomingMessage, type OutgoingMessage } from '@aalis/schema-message';
 import { createBoundedMap } from '@aalis/util-bounded-map';

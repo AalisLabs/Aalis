@@ -1,12 +1,13 @@
 import { type AgentService, agent } from '@aalis/api-agent';
 import { authority } from '@aalis/api-authority';
+import { events } from '@aalis/api-events';
 import type { GatewayService, InboundPhase, InboundPhaseData } from '@aalis/api-gateway';
 import { chatScopeOf, gateway, INBOUND_PHASE, INBOUND_PHASE_ORDER } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { i18n, localizeFor } from '@aalis/api-i18n';
 import { getPlatformAdapters, platform, sessionTypesOf } from '@aalis/api-platform';
 import { roomClass, sessionManager } from '@aalis/api-session-manager';
-import { type BoundOf, definePlugin, events, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, definePlugin, logger, optional, provide } from '@aalis/core';
 import { toSource } from '@aalis/schema-i18n';
 import { arrivalTag, type IncomingMessage, type OutgoingMessage } from '@aalis/schema-message';
 import { t } from './texts.js';

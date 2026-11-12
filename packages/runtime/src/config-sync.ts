@@ -10,12 +10,24 @@
 // ============================================================
 
 import { isDeepStrictEqual } from 'node:util';
+import { events } from '@aalis/api-events';
 import { type AalisConfig, isConfigSaveRefused } from '@aalis/api-host-config';
-import { type App, events, lifecycle, type PluginDefinition, parseInstanceId, services } from '@aalis/core';
+import { type App, lifecycle, type PluginDefinition, parseInstanceId, services } from '@aalis/core';
 import { deepMergeDefaults, defaultsFrom, removeExtraFields, validateConfig } from '@aalis/schema-config';
 import { applyServicePreferences, type ConfigStore } from './config-store.js';
 import { moduleDefinitionOf, type PluginDiscovery, type PluginDiscoveryOptions } from './plugin-discovery.js';
 import { describeDangling } from './secrets.js';
+
+const bindRoot = (app: App) => app.bind({ events, services });
+const roots = new WeakMap<App, ReturnType<typeof bindRoot>>();
+/** 宿主根上的绑定，每个 App 只做一次：events 的绑定带归属表，每绑一次都在根激活上留一份跟随与订阅，到停机才撤 */
+function rootOf(app: App): ReturnType<typeof bindRoot> {
+  const held = roots.get(app);
+  if (held) return held;
+  const host = bindRoot(app);
+  roots.set(app, host);
+  return host;
+}
 
 export interface ConfigSyncOptions {
   /**
@@ -73,7 +85,7 @@ export function syncPluginDefaults(
  * 配置段被改了的实例各发一次 host-config:changed（带 instanceId）。某个定义同步时抛错只记该条、不登记它，其余照常
  */
 export function withPluginConfigSync(app: App, store: ConfigStore, opts?: ConfigSyncOptions): PluginDiscoveryOptions {
-  const host = app.bind({ events });
+  const host = rootOf(app);
   return {
     prepare(definitions) {
       const ready: PluginDefinition[] = [];
@@ -122,7 +134,7 @@ export async function handleConfigChanged(
   previous?: Readonly<AalisConfig>,
 ): Promise<void> {
   app.logger.info('检测到配置变更，正在热重载...');
-  const host = app.bind({ events, services });
+  const host = rootOf(app);
   try {
     applyServicePreferences(host.services.use, store.getAll(), previous);
     // 后缀实例由配置段定义，冷启动只登记文件里有的；重载同样以文件为准，没有配置段的就卸载，新出现的在最后登记。

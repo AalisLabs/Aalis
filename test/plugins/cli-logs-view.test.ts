@@ -6,6 +6,7 @@ import { App, DefaultLogger, LogHub } from '../../packages/core/src/index.js';
 import cliPlugin from '../../packages/plugin-cli/src/index.js';
 import { formatLogLine } from '../../packages/schema-log/src/index.js';
 import { provideHostLogs } from '../fixtures/host-logs.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { fakeTty } from '../helpers/tty.js';
 
 // ════════════════════════════════════════════════════════════
@@ -39,6 +40,7 @@ async function setup(early: (probe: DefaultLogger) => void) {
   const probe = new DefaultLogger('aalis:zz-probe', 'info', hub);
   early(probe);
   const app = new App({ name: 'T', logLevel: 'error', logHub: hub });
+  provideEvents(app);
   cleanups.push(() => app.stop());
   provideHostLogs(app, { hub, file });
   await app.plugin(cliPlugin, { startupView: 'logs' });

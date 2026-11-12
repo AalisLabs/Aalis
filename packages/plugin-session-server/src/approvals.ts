@@ -35,8 +35,9 @@ import type {
   SettledState,
   SurfaceBinding,
 } from '@aalis/api-approval';
+import type { Events } from '@aalis/api-events';
 import type { ToolDisplay } from '@aalis/api-tools';
-import type { Events, Logger } from '@aalis/core';
+import type { Logger } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
 import { createBoundedMap } from '@aalis/util-bounded-map';
 import { failure, type MethodHandlers } from './connection.js';

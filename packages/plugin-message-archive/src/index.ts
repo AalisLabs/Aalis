@@ -1,11 +1,12 @@
 import { authority } from '@aalis/api-authority';
+import { events } from '@aalis/api-events';
 import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import type { ArchiveNoticeOptions, MessageArchiveService } from '@aalis/api-message-archive';
 import { messageArchive, outboundAddress, speakerOf, unaddressedText } from '@aalis/api-message-archive';
 import { sessionManager } from '@aalis/api-session-manager';
 import { isStorageUri, isWebUrl, parseUriRoot, storage } from '@aalis/api-storage';
-import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { isTextRef, type TextRef, textOf, toSource, truncateParams } from '@aalis/schema-i18n';
 import type { ArchivedAttachment, IncomingMessage, Message, OutgoingMessage } from '@aalis/schema-message';

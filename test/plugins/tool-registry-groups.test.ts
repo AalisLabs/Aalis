@@ -2,6 +2,7 @@ import { App } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { tools as toolsService } from '../../packages/api-tools/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // 分组过滤语义（getDefinitions / getSummaries 共用一套）：
 //   无分组的通用工具恒可见；带分组的只在命中 groups 时可见；'*' = 全部分组。
@@ -12,6 +13,7 @@ async function withRegistry(
   fn: (names: (f?: { groups?: string[] }) => string[], summaries: (f?: { groups?: string[] }) => string[]) => void,
 ): Promise<void> {
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   await app.plugins.register(toolsPlugin, {});
   await app.plugins.idle();
   const { tools } = app.bind({ tools: toolsService });

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { llm } from '../../packages/api-llm/src/index.js';
 import { App, services } from '../../packages/core/src/index.js';
 import openaiPlugin from '../../packages/plugin-llm-openai/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // plugin-llm-openai 的请求体编码：用桩 fetch 捕获请求体，按模型与配置锚定发出的字段。
 
@@ -34,6 +35,7 @@ async function setup(modelId: string) {
   const bodies: Record<string, unknown>[] = [];
   stubFetch(modelId, bodies);
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   await app.plugin(openaiPlugin, { apiKey: 'test-key' });
   await app.plugins.idle();
   const host = app.bind({ services });

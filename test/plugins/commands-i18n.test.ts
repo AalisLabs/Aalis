@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { commands } from '../../packages/api-commands/src/index.js';
 import { contributions } from '../../packages/api-contributions/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { gateway, INBOUND_PHASE } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type I18nService, i18n } from '../../packages/api-i18n/src/index.js';
@@ -13,7 +14,7 @@ import { sessionManager } from '../../packages/api-session-manager/src/index.js'
 import { type SessionItem, sessionProtocol } from '../../packages/api-session-protocol/src/index.js';
 import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { type App, events, type Logger, provide } from '../../packages/core/src/index.js';
+import { type App, type Logger, provide } from '../../packages/core/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import i18nPlugin from '../../packages/plugin-i18n/src/index.js';

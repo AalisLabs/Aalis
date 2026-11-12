@@ -5,6 +5,7 @@ import { App, LogHub, type PluginDefinition, services } from '../../packages/cor
 import deepseek from '../../packages/plugin-llm-deepseek/src/index.js';
 import llmOllama from '../../packages/plugin-llm-ollama/src/index.js';
 import llmOpenai from '../../packages/plugin-llm-openai/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 非 2xx 响应体进错误信息或日志前要截断：网关或反向代理的 HTML 错误页可达数十 KB。模型发现失败的原因带响应体摘录，
@@ -57,6 +58,7 @@ async function start(plugin: PluginDefinition, config: Record<string, unknown>) 
     if (entry.level === 'error') errors.push(entry.message);
   });
   const app = new App({ name: 'T', logLevel: 'info', logHub: hub });
+  provideEvents(app);
   apps.push(app);
   await app.plugin(plugin, config);
   await app.plugins.idle();

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import type { SessionInfo } from '../../packages/api-session-manager/src/index.js';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import {
@@ -8,10 +9,11 @@ import {
   type ToolExecutionResult,
   tools,
 } from '../../packages/api-tools/src/index.js';
-import { type App, definePlugin, events, lifecycle, provide, services } from '../../packages/core/src/index.js';
+import { type App, definePlugin, lifecycle, provide, services } from '../../packages/core/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
@@ -60,6 +62,7 @@ interface Run {
 
 async function start(config: Record<string, unknown> = {}, opts: { storage?: StorageService } = {}) {
   const { app } = hostedApp();
+  provideEvents(app);
   apps.push(app);
   const host = app.bind({ provide, events, tools, backgroundTasks });
   if (opts.storage) host.provide.use(storage, opts.storage);

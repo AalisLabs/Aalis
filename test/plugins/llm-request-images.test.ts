@@ -3,6 +3,7 @@ import { type ChatModelRequest, type LLMModel, llm } from '../../packages/api-ll
 import { App, type PluginDefinition } from '../../packages/core/src/index.js';
 import deepseekPlugin from '../../packages/plugin-llm-deepseek/src/index.js';
 import openaiPlugin from '../../packages/plugin-llm-openai/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 带图的请求：交给模型插件的图一律发出去，插件不自己丢。给不给图由上游按能力标记判定；插件丢了图，标错能力时端点不报错，
@@ -45,6 +46,7 @@ function stub(modelId: string): unknown[][] {
 
 async function modelOf(plugin: PluginDefinition): Promise<LLMModel> {
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   apps.push(app);
   await app.plugin(plugin, { apiKey: 'test-key' });
   await app.plugins.idle();

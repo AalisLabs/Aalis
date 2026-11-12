@@ -1,5 +1,6 @@
-import { events, LogHub, provide } from '@aalis/core';
+import { LogHub, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { llm } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { type SessionManagerService, sessionManager } from '../../packages/api-session-manager/src/index.js';

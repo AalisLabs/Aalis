@@ -3,6 +3,7 @@ import { mkdir, realpath, rm } from 'node:fs/promises';
 // biome-ignore lint/style/noRestrictedImports: 拒读清单与落点按操作系统用户的主目录生成
 import { homedir } from 'node:os';
 import { authority } from '@aalis/api-authority';
+import { events } from '@aalis/api-events';
 import { type HostPaths, hostPaths } from '@aalis/api-host-paths';
 import { processService } from '@aalis/api-process';
 import {
@@ -17,7 +18,7 @@ import {
   withRealRoots,
 } from '@aalis/api-reach';
 import { rootSessionOf, sessionManager } from '@aalis/api-session-manager';
-import { type BoundOf, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { issueCredential } from './credential.js';
 import { codeDirsOf, entryOf, formOf, gitDirOf, realRootsOf } from './host-dirs.js';
 import { loginEnvs } from './process-env.js';

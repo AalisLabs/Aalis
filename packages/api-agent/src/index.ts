@@ -7,6 +7,7 @@
 // 依赖（或 import 一次 side-effect）以确保 TS 编译期看到 augmentation。
 
 import type {} from '@aalis/api-contributions'; // declaration merging 锚点（下方 ContributionPointMap 增强）
+import type {} from '@aalis/api-events'; // declaration merging 锚点（下方 AalisEvents 增强）
 import type {} from '@aalis/api-hooks'; // declaration merging 锚点（下方 HookContextMap 增强）
 import type { ChatResponse, ModelRef } from '@aalis/api-llm';
 import type { ToolCallRequest, ToolDefinition } from '@aalis/api-tools';
@@ -360,7 +361,7 @@ export interface TokenUsageEvent {
   parts: TokenUsagePart[];
 }
 
-declare module '@aalis/core' {
+declare module '@aalis/api-events' {
   interface AalisEvents {
     'token:usage': [usage: TokenUsageEvent];
     /**

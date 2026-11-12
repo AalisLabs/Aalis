@@ -28,6 +28,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
+    "@aalis/api-events": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-host-paths": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-llm": "workspace:>=0.15.0 <1.0.0",
     "@aalis/api-webui": "workspace:>=0.13.0 <1.0.0",

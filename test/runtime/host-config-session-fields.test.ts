@@ -1,15 +1,8 @@
 import { writeFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { type AalisConfig, type HostConfigChange, hostConfig } from '../../packages/api-host-config/src/index.js';
-import {
-  type App,
-  config,
-  definePlugin,
-  defineService,
-  events,
-  LogHub,
-  lifecycle,
-} from '../../packages/core/src/index.js';
+import { type App, config, definePlugin, defineService, LogHub, lifecycle } from '../../packages/core/src/index.js';
 import type { ConfigProvider } from '../../packages/runtime/src/config-store.js';
 import {
   handleConfigChanged,
@@ -19,6 +12,7 @@ import {
 import { createPluginDiscovery, type PluginLoader } from '../../packages/runtime/src/plugin-discovery.js';
 import type { ConfigSchema, SchemaField } from '../../packages/schema-config/src/index.js';
 import { hostedApp, registerFromDoc, type TempConfigHandle, tempConfig } from '../fixtures/app.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { deferred } from '../helpers/deferred.js';
 import { settle, waitFor } from '../helpers/fs-watch.js';
 
@@ -49,6 +43,7 @@ afterEach(async () => {
 
 function world(doc: Partial<AalisConfig>, provider?: ConfigProvider) {
   const w = hostedApp(doc, { provider });
+  provideEvents(w.app);
   apps.push(w.app);
   const changes: HostConfigChange[] = [];
   w.app.bind({ events }).events.use.on('host-config:changed', change => void changes.push(change));

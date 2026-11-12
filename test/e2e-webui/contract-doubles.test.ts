@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { approvals } from '../../packages/api-approval/src/index.js';
 import { checkpoint, type RollbackResult } from '../../packages/api-checkpoint/src/index.js';
+import { type Events, events } from '../../packages/api-events/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { compression } from '../../packages/api-memory/src/index.js';
 import { type TodoItem, todoList } from '../../packages/api-todo-list/src/index.js';
 import { type BackgroundTask, backgroundTasks, tools } from '../../packages/api-tools/src/index.js';
-import { definePlugin, type Events, events, provide, services } from '../../packages/core/src/index.js';
+import { definePlugin, provide, services } from '../../packages/core/src/index.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 import {
   aria,

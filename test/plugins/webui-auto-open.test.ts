@@ -3,6 +3,7 @@ import { type ProcessService, processService } from '../../packages/api-process/
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { App, type Logger, provide } from '../../packages/core/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // 每个 App 首次监听成功都应打开，不能把「token 已持久化」误当成「本次已经开过浏览器」。
 // 同一 App 的普通 bounce 不重复打开；ephemeral 换 token 后仍要重新登录。
@@ -56,6 +57,7 @@ async function opensOverStartAndBounce(
   } as unknown as StorageService;
 
   const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+  provideEvents(app);
   apps.push(app);
   const host = app.bind({ provide });
   host.provide.use(processService, fakeProcess);

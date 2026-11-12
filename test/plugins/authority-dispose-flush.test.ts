@@ -7,6 +7,7 @@ import { AuthorityManager } from '../../packages/plugin-authority/src/authority-
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { mkConfig, silentLogger } from '../fixtures/authority.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // users.json 落盘：save() 只把写挂到 saveChain 上就同步返回。拆卸路径必须 await flushed()，
 // 否则 CLI 子命令退出与 bounce 会丢掉封禁/等级。plugin-authority 在 lifecycle.onDrain 里
@@ -177,6 +178,7 @@ describe('authority 落盘必须可被拆卸路径等待', () => {
   it('装配真实 plugin-authority 后 app.stop 等到收尾里的落盘', async () => {
     const done = { written: false } as { written: boolean; uri?: string };
     const { app } = hostedApp();
+    provideEvents(app);
     apps.push(app);
     const host = app.bind({ provide, authority });
     host.provide.use(storage, pluginSlowStorage(done));
@@ -217,6 +219,7 @@ describe('authority 落盘必须可被拆卸路径等待', () => {
       },
     });
     const { app } = hostedApp();
+    provideEvents(app);
     apps.push(app);
     const host = app.bind({ authority: optional(authority) });
     await app.plugin(authorityPlugin, {});
@@ -234,6 +237,7 @@ describe('authority 落盘必须可被拆卸路径等待', () => {
   it('收尾之后才排上的写：清理时照样等它落定', async () => {
     const done = { written: false } as { written: boolean; uri?: string };
     const { app } = hostedApp();
+    provideEvents(app);
     apps.push(app);
     app.bind({ provide }).provide.use(storage, pluginSlowStorage(done));
     // 与 authority 经 optional 依赖成环且先登记：环内先都收尾，authority 后登记先收尾，这里的收尾落在它收尾之后、关闭之前

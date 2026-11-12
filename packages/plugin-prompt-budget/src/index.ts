@@ -11,8 +11,9 @@
  */
 
 import type { TokenUsageEvent } from '@aalis/api-agent';
+import { events } from '@aalis/api-events';
 import { tools } from '@aalis/api-tools';
-import { type BoundOf, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
+import { type BoundOf, definePlugin, lifecycle, logger, optional } from '@aalis/core';
 import { createBoundedMap } from '@aalis/util-bounded-map';
 import { t } from './texts.js';
 

@@ -4,8 +4,6 @@ import {
   App,
   definePlugin,
   defineService,
-  type Events,
-  events,
   LogHub,
   lifecycle,
   optional,
@@ -49,11 +47,11 @@ afterEach(async () => {
 
 async function world(): Promise<{
   app: App;
-  host: { provide: ServiceSelection<Provide>; events: ServiceSelection<Events>; services: ServiceSelection<Services> };
+  host: { provide: ServiceSelection<Provide>; services: ServiceSelection<Services> };
 }> {
   const app = new App({ name: 'service-change-sync', logLevel: 'error', logHub: new LogHub() });
   apps.push(app);
-  const host = app.bind({ provide, events, services });
+  const host = app.bind({ provide, services });
   await app.plugins.idle();
   return { app, host };
 }

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TokenUsageEvent } from '../../packages/api-agent/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
-import { App, events, LogHub } from '../../packages/core/src/index.js';
+import { App, LogHub } from '../../packages/core/src/index.js';
 import agent from '../../packages/plugin-agent/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchive from '../../packages/plugin-message-archive/src/index.js';

@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { type ToolCallContext, type ToolExecutionResult, tools } from '../../packages/api-tools/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
@@ -79,6 +80,7 @@ let call: Call;
 /** 启动一份浏览器工具，返回按名调用工具、解析文本结果的函数（未接 storage：截图不落盘，随 images 交出） */
 async function startBrowserTools(defaultTimeout: number): Promise<{ app: App; call: Call }> {
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   const host = app.bind({ provide });
   const handlers: Record<string, Handler> = {};
   host.provide.use(tools, {

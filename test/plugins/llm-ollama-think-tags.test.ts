@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { type ChatModelRequest, type LLMModel, llm } from '../../packages/api-llm/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import ollamaPlugin from '../../packages/plugin-llm-ollama/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // Ollama 正文里的 <think> 标签只在这次没发 think 时解析：发了 think（档位开或关）就是 Ollama 在管思考，思考走原生的
@@ -56,6 +57,7 @@ function stubFetch(models: Record<string, { capabilities: string[] | null; reply
 async function start(models: Parameters<typeof stubFetch>[0]): Promise<(id: string) => LLMModel> {
   stubFetch(models);
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   apps.push(app);
   await app.plugin(ollamaPlugin, { baseUrl: 'http://127.0.0.1:11434' });
   await app.plugins.idle();

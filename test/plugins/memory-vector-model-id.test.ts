@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { type EmbeddingService, embedding } from '../../packages/api-embedding/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
@@ -9,7 +10,7 @@ import {
   type VectorStoreService,
   vectorstore,
 } from '../../packages/api-vectorstore/src/index.js';
-import { App, events, LogHub, logger, provide } from '../../packages/core/src/index.js';
+import { App, LogHub, logger, provide } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';

@@ -4,6 +4,7 @@ import { llm } from '../../packages/api-llm/src/index.js';
 import deepseek, { normalizeSystemPlacement } from '../../packages/plugin-llm-deepseek/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { WellKnownKinds } from '../../packages/schema-message/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // DeepSeek 角色归一化：DeepSeek 把 messages 里所有 system 消息提升合并到
@@ -169,6 +170,7 @@ describe('chat 出口接线', () => {
     }) as typeof fetch;
 
     const app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     await app.plugin(deepseek, { apiKey: 'test-key' });
     await app.plugins.idle();
     const model = app.bind({ services }).services.use.get(llm);

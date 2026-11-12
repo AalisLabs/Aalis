@@ -6,11 +6,12 @@
 
 import type { AgentService } from '@aalis/api-agent';
 import type { CheckpointService } from '@aalis/api-checkpoint';
+import type { Events } from '@aalis/api-events';
 import type { CompressionService } from '@aalis/api-memory';
 import type { SessionInfo } from '@aalis/api-session-manager';
 import type { SessionMethodParams, SessionPeer } from '@aalis/api-session-protocol';
 import type { TodoListService } from '@aalis/api-todo-list';
-import type { Events, ServiceSelection } from '@aalis/core';
+import type { ServiceSelection } from '@aalis/core';
 import type { MessageAttachment } from '@aalis/schema-message';
 import { detectMediaFormat, FILE_HEAD_BYTES } from '@aalis/util-file-signature';
 import { failure, type MethodHandlers } from './connection.js';

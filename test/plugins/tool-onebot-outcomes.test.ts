@@ -1,12 +1,13 @@
 import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { media } from '../../packages/api-media/src/index.js';
 import { type PlatformAdapter, platform } from '../../packages/api-platform/src/index.js';
 import { processService } from '../../packages/api-process/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.js';
-import { App, events, provide } from '../../packages/core/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import onebotPlugin from '../../packages/plugin-adapter-onebot/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import toolOnebot from '../../packages/plugin-tool-onebot/src/index.js';

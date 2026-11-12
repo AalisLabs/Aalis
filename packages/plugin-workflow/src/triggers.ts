@@ -8,8 +8,9 @@
 // ============================================================
 
 import type { CronEngine } from '@aalis/api-cron-engine';
+import type { Events } from '@aalis/api-events';
 import type { WorkflowDef } from '@aalis/api-workflow';
-import type { Events, Logger, ServiceSelection } from '@aalis/core';
+import type { Logger, ServiceSelection } from '@aalis/core';
 
 // event 触发器不订阅的事件：负载带会话内容（会话 id、平台、正文等）。编排按定义者的身份运行，事件参数作为运行变量插值进 tool
 // 节点的参数、agent 节点的指令与 send-message 的正文，内容里不可信的部分就以定义者的身份下达；转发到任意 sessionId，又是跨会话

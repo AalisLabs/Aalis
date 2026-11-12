@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { media } from '../../packages/api-media/src/index.js';
 import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.js';
-import { App, events, provide } from '../../packages/core/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
@@ -20,6 +22,7 @@ describe('preview_image 跟随 media 在场', () => {
   beforeEach(async () => {
     registered.clear();
     app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     const host = app.bind({ provide, events });
     host.provide.use(tools, {
       register: (t: { definition: { function: { name: string } } }) => {
@@ -56,6 +59,7 @@ describe('preview_image 跟随 media 在场', () => {
 /** 真插件装进 App，识图替身一直不回、只在收到的信号断开时按中止原因落定（收到时已断的立即落定），记下收到的信号 */
 async function bootPreview() {
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   const host = app.bind({ provide });
   const handlers = new Map<string, RegisteredTool['handler']>();
   host.provide.use(tools, {

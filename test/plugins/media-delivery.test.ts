@@ -1,7 +1,8 @@
 import type { Logger, ServiceView } from '@aalis/core';
-import { App, events, services } from '@aalis/core';
+import { App, services } from '@aalis/core';
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthorityService, OriginTurn } from '../../packages/api-authority/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import type { DescribeInput, MediaProcessor } from '../../packages/api-media/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
@@ -19,6 +20,7 @@ import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import { registerMediaTools } from '../../packages/plugin-media/src/tools.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { IncomingMessage, Message } from '../../packages/schema-message/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { storedRoom } from '../fixtures/rooms.js';
 import { fixedRef, liveLifecycle, ref } from '../fixtures/service-ref.js';
 import { toolRequest } from '../fixtures/tool-call.js';
@@ -160,6 +162,7 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     extraArgs: Record<string, unknown> = {},
   ) {
     const app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     // 工具经宿主根激活的绑定门面登记，落进 plugin-tools 的真实注册表
     const host = app.bind({ services, tools, memory, events });
     await app.plugin(toolsPlugin);
@@ -301,6 +304,7 @@ describe('analyze_image：存储里的图先过媒体判据、读一次、核文
     opts: { delivery: 'passthrough' | 'describe'; call?: ToolCallRequest; sessions?: SessionInfo[]; owner?: boolean },
   ) {
     const app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     const host = app.bind({ services, tools, memory, events });
     await app.plugin(toolsPlugin);
     await app.plugins.idle();
@@ -450,6 +454,7 @@ describe('analyze_image：存储里的图先过媒体判据、读一次、核文
 describe('update_image_description：只改调用所在会话', () => {
   it('传 session_id 被参数校验拒；不传时改调用所在会话', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     const updates: Array<[string, string, string]> = [];
     const history: Message[] = [{ role: 'user', content: '[图片 | ref:data:/images/s/a.png]', timestamp: 1 }];
     const memoryStub = {

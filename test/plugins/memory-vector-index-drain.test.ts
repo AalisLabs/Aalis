@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { type EmbeddingService, embedding } from '../../packages/api-embedding/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type VectorStoreService, vectorstore } from '../../packages/api-vectorstore/src/index.js';
-import { App, events, provide } from '../../packages/core/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';

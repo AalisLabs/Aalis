@@ -2,6 +2,7 @@ import { App } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { tools as toolsService } from '../../packages/api-tools/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
@@ -11,6 +12,7 @@ import { toolRequest } from '../fixtures/tool-call.js';
 
 async function setup() {
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   await app.plugins.register(toolsPlugin, {});
   await app.plugins.idle();
   let executed = 0;

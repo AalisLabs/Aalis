@@ -1,6 +1,7 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { contributions } from '@aalis/api-contributions';
 import { embedding } from '@aalis/api-embedding';
+import { events } from '@aalis/api-events';
 import { hooks } from '@aalis/api-hooks';
 import { ownHostConfig } from '@aalis/api-host-config';
 import { memory } from '@aalis/api-memory';
@@ -14,7 +15,6 @@ import {
   config,
   definePlugin,
   defineService,
-  events,
   lifecycle,
   logger,
   optional,

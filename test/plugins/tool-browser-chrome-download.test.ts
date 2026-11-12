@@ -8,6 +8,7 @@ import { type ExecResult, processService, type SpawnOptions } from '../../packag
 import { type ToolCallContext, type ToolExecutionResult, tools } from '../../packages/api-tools/src/index.js';
 import { App, LogHub, provide } from '../../packages/core/src/index.js';
 import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { fakeChromeCli } from '../fixtures/puppeteer-cli.js';
 import { toolContext } from '../fixtures/tool-call.js';
 
@@ -103,6 +104,7 @@ async function start(proc: object, disposeTimeoutMs?: number, config: Record<str
     if (entry.level === 'error') errors.push(entry.message);
   });
   const app = new App({ name: 'T', logLevel: 'debug', logHub: hub, disposeTimeoutMs });
+  provideEvents(app);
   apps.push(app);
   const host = app.bind({ provide });
   const handlers: Record<string, Handler> = {};

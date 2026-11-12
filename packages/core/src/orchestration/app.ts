@@ -1,6 +1,5 @@
 import type { PluginManagerService } from '../types/app.js';
 
-import { EventBus } from '../primitives/events.js';
 import { ServiceContainer } from '../primitives/services.js';
 
 import { ActivationHost } from './activation-host.js';
@@ -108,7 +107,7 @@ function singleFlight(publish: (done: Promise<void>) => void, run: () => Promise
 /**
  * Aalis 应用主容器
  *
- * core 的"内核"——只持有内存中的抽象（events / services / plugins 与各实例的运行配置），
+ * core 的"内核"——只持有内存中的抽象（services / plugins 与各实例的运行配置），
  * 不接触任何外部 I/O。宿主需要的环境能力经 `AppOptions` 注入。
  */
 export class App {
@@ -138,15 +137,7 @@ export class App {
     const slowMs = cap(options.slowThresholdMs ?? 60_000);
     // 1. 根激活。原语注册表不外露，插件与宿主都经描述符取用
     this.#host = new ActivationHost(
-      {
-        events: new EventBus({
-          onHandlerError: (event, err, contextId) => {
-            this.logger.warn(`事件 "${event}" 的监听器抛错（已隔离${contextId ? `，来自 ${contextId}` : ''}）:`, err);
-          },
-        }),
-        services: new ServiceContainer(),
-        devMode: options.devMode ?? true,
-      },
+      { services: new ServiceContainer(), devMode: options.devMode ?? true },
       this.logger,
     );
     const caps = this.#host.bind(this.#host.root, { provide });
@@ -155,7 +146,7 @@ export class App {
     this.#plugins = new PluginManager(this.#host, this.logger, disposeTimeoutMs, slowMs);
     this.plugins = this.#plugins;
 
-    // 3. 宿主服务：与内置六项同一登记规则（根激活、独占），只交出契约列出的方法
+    // 3. 宿主服务：与内置五项同一登记规则（根激活、独占），只交出契约列出的方法
     caps.provide.use(appService, narrow(this, ['stop', 'restart']), { exclusive: true });
     const managing = narrow(this.plugins, [
       'getStatus',

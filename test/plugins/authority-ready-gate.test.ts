@@ -10,6 +10,7 @@ import { AuthorityManager } from '../../packages/plugin-authority/src/authority-
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import { type TextRef, toSource } from '../../packages/schema-i18n/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
 // ════════════════════════════════════════════════════════════
@@ -70,6 +71,7 @@ afterEach(async () => {
 describe('authority：storage 已在线时 apply 等完等级表加载', () => {
   it('装载返回即可读到 users.json 里的封禁记录（未调 idle）', async () => {
     const { app } = hostedApp();
+    provideEvents(app);
     const host = app.bind({ provide, authority });
     host.provide.use(storage, fsStorage() as never);
     // provide 触发的反应式 recompute 还在飞时，装载请求会排队、在激活发生前就返回。
@@ -269,6 +271,7 @@ describe('authority：storage 刚上线、首次读取尚未发起时的保存',
 /** storage 缺席时装上 authority；返回权限页所在的登记表 */
 async function bootWithoutStorage() {
   const { app } = hostedApp();
+  provideEvents(app);
   const host = app.bind({ provide, authority });
   const pages = pageHost();
   hosts.push(pages);
@@ -333,6 +336,7 @@ describe('authority：加载结果的上报自身抛错', () => {
     try {
       const logger = throwingLogger('warn', m => m.startsWith('授权用户等级加载失败'));
       const { app } = hostedApp({}, { logger });
+      provideEvents(app);
       const host = app.bind({ provide, authority });
       host.provide.use(storage, fsStorage() as never);
       await app.plugins.idle();
@@ -350,6 +354,7 @@ describe('authority：加载结果的上报自身抛错', () => {
   it('宿主注入的 logger 对加载成功的 debug 抛错，authority 照常激活', async () => {
     const logger = throwingLogger('debug', m => m === '授权用户等级已加载');
     const { app } = hostedApp({}, { logger });
+    provideEvents(app);
     const host = app.bind({ provide, authority });
     host.provide.use(storage, fsStorage() as never);
     await app.plugins.idle();
@@ -370,6 +375,7 @@ describe('authority：加载结果的上报自身抛错', () => {
     });
     try {
       const { app } = hostedApp({ logLevel: 'warn' }, { logHub: hub });
+      provideEvents(app);
       const host = app.bind({ provide, authority });
       host.provide.use(storage, fsStorage() as never);
       await app.plugins.idle();

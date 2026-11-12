@@ -5,6 +5,7 @@
 // ════════════════════════════════════════════════════════════
 
 import type { UserIdentity, Verdict } from '@aalis/api-authority';
+import type { Events } from '@aalis/api-events';
 import { isStorageNotFound, type PluginDirStorage } from '@aalis/api-storage';
 import {
   BACKGROUND_TASK_NOTICE,
@@ -20,7 +21,7 @@ import {
   type ToolExecutionResult,
   toolFailed,
 } from '@aalis/api-tools';
-import type { Events, Logger } from '@aalis/core';
+import type { Logger } from '@aalis/core';
 import { asText, type TextRef, toSource, truncateParams } from '@aalis/schema-i18n';
 import type { FromTurn, IncomingMessage } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';

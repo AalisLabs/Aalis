@@ -8,7 +8,7 @@ import ollama from '../../packages/plugin-llm-ollama/src/index.js';
 import mediaPlugin from '../../packages/plugin-media/src/index.js';
 import { scanLLMProcessors } from '../../packages/plugin-media/src/llm-adapter.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
-import { registerHubs } from '../fixtures/hubs.js';
+import { provideEvents, registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 图片拿不到时的两种语义，由调用方经 requireImages 声明。
@@ -31,6 +31,7 @@ const WAV_1B = 'data:audio/wav;base64,UklGRg==';
 
 async function makeModel(): Promise<LLMModel> {
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   // 启动时的模型发现与能力探测答空，不连本机的 Ollama
   vi.stubGlobal(
     'fetch',

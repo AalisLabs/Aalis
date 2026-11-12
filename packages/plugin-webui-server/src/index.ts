@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { approvals } from '@aalis/api-approval';
 import { commands } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
+import { events } from '@aalis/api-events';
 import { hostConfig } from '@aalis/api-host-config';
 import { hostLogs } from '@aalis/api-host-logs';
 import { hostPaths } from '@aalis/api-host-paths';
@@ -41,7 +42,6 @@ import {
   type BoundOf,
   config,
   definePlugin,
-  events,
   type LogEntry,
   lifecycle,
   logger,
@@ -217,8 +217,10 @@ function localScanDirs(appDir: string | undefined): string[] {
 // storage 等一律 optional：webui 是管理面，任何被管对象缺席都只该让对应页面降级，不该把
 // 整个控制台拖进 pending。storage 尤其不能 required——storage 的提供者 bounce 会让它
 // 暂时消失，webui-server 跟着重启会断开所有连接、清空页面登记表（登记门面随后重挂）。
+// events 同理：总线由插件提供、可以在管理页停用，required 的话停用它本插件随之下线，停用又已写进配置，只能手改配置文件
+// 救回。监听经归属表登记，总线不在时留着，回来后补挂
 const uses = {
-  events,
+  events: optional(events),
   logger,
   lifecycle,
   config,

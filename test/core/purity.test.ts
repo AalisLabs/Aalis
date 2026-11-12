@@ -43,7 +43,6 @@ const RUNTIME_EXPORTS = [
   'createApp',
   'definePlugin',
   'defineService',
-  'events',
   'lifecycle',
   'logger',
   'optional',
@@ -287,7 +286,7 @@ function activationViolations(source: string): string[] {
     }
     if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier)) {
       const path = node.moduleSpecifier.text;
-      if (/\/(?:builtins|capabilities|config|definition|activation-host|events)\.js$/.test(path)) {
+      if (/\/(?:builtins|capabilities|config|definition|activation-host)\.js$/.test(path)) {
         violations.push(`Activation 不得依赖能力实现或装配器 ${path}`);
       }
     }

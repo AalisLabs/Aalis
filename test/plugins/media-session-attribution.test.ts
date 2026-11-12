@@ -1,10 +1,11 @@
 import { Buffer } from 'node:buffer';
 import { afterEach, describe, expect, it } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { type LLMModel, type LLMUsageEvent, llm, metered } from '../../packages/api-llm/src/index.js';
 import { type MediaService, media } from '../../packages/api-media/src/index.js';
 import { type ExecResult, type ProcessService, processService } from '../../packages/api-process/src/index.js';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
-import { App, definePlugin, events, provide } from '../../packages/core/src/index.js';
+import { App, definePlugin, provide } from '../../packages/core/src/index.js';
 import mediaPlugin from '../../packages/plugin-media/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { gif } from '../fixtures/file-heads.js';

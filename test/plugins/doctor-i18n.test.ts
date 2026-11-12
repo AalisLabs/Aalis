@@ -8,6 +8,7 @@ import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { defineTexts } from '../../packages/schema-i18n/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { i18nSection, setHostLanguage } from '../fixtures/host-language.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -35,6 +36,7 @@ afterEach(async () => {
 async function setup(servicePreferences: Record<string, string> = {}) {
   const port = await freePort();
   const { app } = hostedApp({ ...i18nSection(['en']), servicePreferences }, { logger: silent });
+  provideEvents(app);
   apps.push(app);
   await app.plugin(i18nPlugin);
   await app.plugin(doctorPlugin);

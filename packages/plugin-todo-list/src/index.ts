@@ -1,8 +1,9 @@
+import { events } from '@aalis/api-events';
 import { hooks } from '@aalis/api-hooks';
 import { clearMetadataNamespaces, memory } from '@aalis/api-memory';
 import { type TodoItem, type TodoListService, todoList } from '@aalis/api-todo-list';
 import { type ToolCallContext, tools } from '@aalis/api-tools';
-import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, logger, optional, provide } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { textOf } from '@aalis/schema-i18n';
 import { t } from './texts.js';

@@ -1,10 +1,11 @@
 import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { processService } from '../../packages/api-process/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { App, events, provide } from '../../packages/core/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import onebotPlugin from '../../packages/plugin-adapter-onebot/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { deferred } from '../helpers/deferred.js';

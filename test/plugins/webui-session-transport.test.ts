@@ -30,7 +30,7 @@ import sessionServerPlugin from '../../packages/plugin-session-server/src/index.
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
-import { registerHubs } from '../fixtures/hubs.js';
+import { provideEvents, registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/memory-files.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 import { freePort, upgrade, waitListening } from '../helpers/net.js';
@@ -104,6 +104,7 @@ async function startStack({ withSessionServer = true } = {}) {
 async function startWithStub() {
   const port = await freePort();
   const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+  provideEvents(app);
   apps.push(app);
   const links: Array<{ peer: SessionPeer; received: string[]; closes: number; send(frame: string): void }> = [];
   app.bind({ provide }).provide.use(sessionProtocol, {

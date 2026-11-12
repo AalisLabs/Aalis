@@ -36,7 +36,8 @@
     "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-host-config": "workspace:>=0.3.0 <1.0.0",
     "@aalis/api-session-settings": "workspace:>=0.1.0 <1.0.0",
-    "@aalis/schema-config": "workspace:>=0.16.0 <1.0.0"
+    "@aalis/schema-config": "workspace:>=0.16.0 <1.0.0",
+    "@aalis/api-events": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -52,13 +53,13 @@
         "i18n"
       ],
       "required": [
-        "events",
         "provide",
         "config"
       ],
       "optional": [
         "contributions",
         "doctor",
+        "events",
         "session-manager",
         "webui-server",
         "host-config",

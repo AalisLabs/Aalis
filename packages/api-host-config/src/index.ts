@@ -7,6 +7,7 @@
  * 管理类插件在 uses 里声明它；没有宿主提供时，声明 optional 的插件要自行降级。
  */
 
+import type {} from '@aalis/api-events'; // declaration merging 锚点（下方 AalisEvents 增强）
 import { defineService, type PreferenceScope } from '@aalis/core';
 import { type TextRef, textOf } from '@aalis/schema-i18n';
 import { t } from './texts.js';
@@ -151,7 +152,7 @@ export const ownHostConfig = defineService<HostConfig, OwnHostConfig>('host-conf
 /** 宿主配置文档在内存里改了哪里：只改了一个实例的配置段时带它的 id，其余（顶层字段、服务偏好、热重载换下整份文档）带 document */
 export type HostConfigChange = { readonly instanceId: string } | { readonly document: true };
 
-declare module '@aalis/core' {
+declare module '@aalis/api-events' {
   interface AalisEvents {
     /**
      * 宿主配置文档在内存里确实被改了，由宿主发，别的插件不发：host-config 的写方法改完、且改前改后确实不同时（写入相同的值

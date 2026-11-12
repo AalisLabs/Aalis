@@ -8,12 +8,13 @@
 
 import { Buffer } from 'node:buffer';
 import type { AuthorityService } from '@aalis/api-authority';
+import type { Events } from '@aalis/api-events';
 import { mediaRef, mediaScopeOf } from '@aalis/api-media';
 import type { MemoryService } from '@aalis/api-memory';
 import type { SessionManagerService } from '@aalis/api-session-manager';
 import { isHostAbsolutePath, isStorageNotFound, isStorageUri, isWebUrl } from '@aalis/api-storage';
 import type { BoundTools } from '@aalis/api-tools';
-import type { Events, ServiceSelection } from '@aalis/core';
+import type { ServiceSelection } from '@aalis/core';
 import { AttachmentRefKind, buildAttachmentRefMatcher, formatAttachmentRef, type Message } from '@aalis/schema-message';
 import { detectMediaFormat, FILE_HEAD_BYTES } from '@aalis/util-file-signature';
 import { readSourceBytes } from './ffmpeg.js';

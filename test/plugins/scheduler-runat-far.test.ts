@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cronEngine } from '../../packages/api-cron-engine/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
-import { App, events, provide, services } from '../../packages/core/src/index.js';
+import { App, provide, services } from '../../packages/core/src/index.js';
 import schedulerPlugin, { scheduler } from '../../packages/plugin-scheduler/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/memory-storage.js';
 import { pageHost } from '../fixtures/page-host.js';
 
@@ -29,6 +31,7 @@ afterEach(() => {
 describe('scheduler 一次性任务的远期 runAt', () => {
   it('runAt = +30 天：推进 25 天不执行，到点执行一次并删除', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     const host = app.bind({ provide, services, events });
     host.provide.use(storage, memoryStorage().service as never);
     host.provide.use(cronEngine, cronEngineStub as never);

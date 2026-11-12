@@ -1,67 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { DefaultLogger, LogHub } from '../../packages/core/src/index.js';
-import { EventBus } from '../../packages/core/src/primitives/events.js';
 
-// 一次派发只送达它开始时已登记的：派发途中新登记的不收这一次，派发途中退订的不再收到。
-// 事件总线与日志分发同一规则，登记也同一规则：每次登记一条，同一函数登记两次各算各的、各自退订。
+// 一次分发只送达它开始时已订阅的：分发途中新订阅的不收这一条，分发途中退订的不再收到。
+// 每次订阅一条，同一函数订阅两次各算各的、各自退订。
 
-declare module '../../packages/core/src/index.js' {
-  interface AalisEvents {
-    'zz-dispatch:tick': [n: number];
-  }
-}
-
-const tick = () => new Promise<void>(resolve => setTimeout(resolve, 0));
 const CAP = 1000; // 违例时会无限送达；数到上限停手，免得阻塞测试进程
 
-describe('事件总线：派发只送达开始时已登记的', () => {
-  it('监听器处理时退订自己再重新登记：一次 emit 只送达一次', async () => {
-    const bus = new EventBus();
-    let calls = 0;
-    bus.on('zz-dispatch:tick', () => {});
-    const arm = () => {
-      const off = bus.on('zz-dispatch:tick', () => {
-        off();
-        if (++calls < CAP) arm();
-      });
-    };
-    arm();
-    await bus.emit('zz-dispatch:tick', 1);
-    expect(calls).toBe(1);
-    await bus.emit('zz-dispatch:tick', 2);
-    expect(calls).toBe(2);
-  });
-
-  it('派发途中被前一个监听器退订的：这一次不再收到', async () => {
-    const bus = new EventBus();
-    const got: string[] = [];
-    let offLater = () => {};
-    bus.on('zz-dispatch:tick', () => {
-      got.push('first');
-      offLater();
-    });
-    offLater = bus.on('zz-dispatch:tick', () => void got.push('later'));
-    await bus.emit('zz-dispatch:tick', 1);
-    expect(got).toEqual(['first']);
-  });
-
-  it('外层派发途中登记、随后嵌套再发一次：登记的监听器只经嵌套那次收到', async () => {
-    const bus = new EventBus();
-    let registered = false;
-    let calls = 0;
-    bus.on('zz-dispatch:tick', async n => {
-      if (registered) return;
-      registered = true;
-      bus.on('zz-dispatch:tick', () => void calls++);
-      await bus.emit('zz-dispatch:tick', n + 1);
-    });
-    await bus.emit('zz-dispatch:tick', 0);
-    await tick();
-    expect(calls).toBe(1);
-  });
-});
-
-describe('日志分发：与事件总线同一规则', () => {
+describe('日志分发', () => {
   it('订阅者处理一条时退订再重订：同一条日志只送达一次', () => {
     const hub = new LogHub();
     const logger = new DefaultLogger('t', 'info', hub);

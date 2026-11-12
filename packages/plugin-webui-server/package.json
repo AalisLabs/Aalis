@@ -55,7 +55,8 @@
     "@aalis/api-host-logs": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-host-paths": "workspace:>=0.3.0 <1.0.0",
     "@aalis/api-package-manager": "workspace:>=0.3.0 <1.0.0",
-    "@aalis/api-contributions": "workspace:>=0.2.0 <1.0.0"
+    "@aalis/api-contributions": "workspace:>=0.2.0 <1.0.0",
+    "@aalis/api-events": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -70,6 +71,7 @@
   "aalis": {
     "service": {
       "optional": [
+        "events",
         "host-config",
         "host-logs",
         "host-paths",
@@ -96,7 +98,6 @@
       ],
       "required": [
         "config",
-        "events",
         "lifecycle",
         "logger",
         "provide",

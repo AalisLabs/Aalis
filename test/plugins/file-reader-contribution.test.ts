@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { type AgentService, agent, type PreprocessorFn } from '../../packages/api-agent/src/index.js';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { contributions } from '../../packages/api-contributions/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { type MediaService, media } from '../../packages/api-media/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
@@ -17,7 +18,7 @@ import {
   storage,
 } from '../../packages/api-storage/src/index.js';
 import { type ToolService, toolFailed, tools } from '../../packages/api-tools/src/index.js';
-import { App, definePlugin, events, logger, provide, services } from '../../packages/core/src/index.js';
+import { App, definePlugin, logger, provide, services } from '../../packages/core/src/index.js';
 import {
   assemblePromptContributions,
   type PromptAssemblyCaps,

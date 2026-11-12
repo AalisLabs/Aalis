@@ -5,6 +5,7 @@ import { App, LogHub, type PluginDefinition, services } from '../../packages/cor
 import deepseek from '../../packages/plugin-llm-deepseek/src/index.js';
 import llmOllama from '../../packages/plugin-llm-ollama/src/index.js';
 import llmOpenai from '../../packages/plugin-llm-openai/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 对话请求失败时的错误信息会经 agent 以「[错误] …」发回会话（群聊也是），要让人看得懂，又不带出响应体与部署细节：
@@ -61,6 +62,7 @@ async function start(plugin: PluginDefinition, config: Record<string, unknown>) 
     if (entry.level === 'warn') warns.push(entry.message);
   });
   const app = new App({ name: 'T', logLevel: 'info', logHub: hub });
+  provideEvents(app);
   apps.push(app);
   await app.plugin(plugin, config);
   await app.plugins.idle();

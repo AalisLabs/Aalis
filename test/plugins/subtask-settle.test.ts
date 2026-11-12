@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
-import { App, events, provide } from '../../packages/core/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionSettingsPlugin from '../../packages/plugin-session-settings/src/index.js';
 import subtask from '../../packages/plugin-subtask/src/index.js';

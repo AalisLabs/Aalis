@@ -7,6 +7,7 @@ import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { defineTexts } from '../../packages/schema-i18n/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { i18nSection, setHostLanguage } from '../fixtures/host-language.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -45,6 +46,7 @@ afterEach(async () => {
 async function setup(service: PackageManagerService = fake) {
   const port = await freePort();
   const { app } = hostedApp(i18nSection(['en']), { logger: silent });
+  provideEvents(app);
   apps.push(app);
   app.bind({ provide }).provide.use(packageManager, service);
   const setLanguage = (language: string[]) => setHostLanguage(app, language);

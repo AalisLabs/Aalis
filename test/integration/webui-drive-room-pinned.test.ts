@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { commands as commandsService } from '../../packages/api-commands/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
@@ -8,7 +9,7 @@ import { sessionManager } from '../../packages/api-session-manager/src/index.js'
 import { sessionSettings } from '../../packages/api-session-settings/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { type App, events, provide } from '../../packages/core/src/index.js';
+import { type App, provide } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';

@@ -7,6 +7,7 @@ import llmOllama from '../../packages/plugin-llm-ollama/src/index.js';
 import llmOpenai from '../../packages/plugin-llm-openai/src/index.js';
 import { isTextError, resolveText } from '../../packages/schema-i18n/src/index.js';
 import { renderIn } from '../fixtures/host-language.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 三个对话模型服务的报错按读者的语言：对话请求非 2xx 与超时抛带文字对象的错误（经 agent 的「[错误] …」进聊天），上游的
@@ -43,6 +44,7 @@ function stubFetch(discovery: 'ok' | 'html', chat: () => Response) {
 
 async function start(plugin: PluginDefinition, config: Record<string, unknown>): Promise<App> {
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   apps.push(app);
   await app.plugin(plugin, config);
   await app.plugins.idle();

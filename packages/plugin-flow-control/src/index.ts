@@ -1,4 +1,5 @@
 import { agent } from '@aalis/api-agent';
+import { events } from '@aalis/api-events';
 import { type FlowControlService, flowControl } from '@aalis/api-flow-control';
 import { audienceIncludes, INBOUND_PHASE } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
@@ -7,7 +8,7 @@ import { messageArchive } from '@aalis/api-message-archive';
 import { fromElsewhere, sessionManager } from '@aalis/api-session-manager';
 import { sessionFields } from '@aalis/api-session-settings';
 import { isStorageNotFound, storage } from '@aalis/api-storage';
-import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { arrivalTag, type IncomingMessage, type OutgoingMessage } from '@aalis/schema-message';
 import { configSchema } from './config.js';
 import { createState, type MutableFlowSessionState, rateLimitUsedNow, sweepStaleStates } from './state.js';

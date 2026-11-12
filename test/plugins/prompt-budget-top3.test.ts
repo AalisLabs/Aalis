@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { TokenUsageEvent } from '../../packages/api-agent/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { App, events, services } from '../../packages/core/src/index.js';
+import { App, services } from '../../packages/core/src/index.js';
 import promptBudget from '../../packages/plugin-prompt-budget/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
@@ -48,6 +50,7 @@ const usage: TokenUsageEvent = {
 describe('prompt_budget_info 的 top3 与 advice', () => {
   it('top3 只含数值桶且等于真实前三；advice 不再教模型调 memory.compress', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     await app.plugin(toolsPlugin, {});
     await app.plugin(promptBudget, {});
     await app.plugins.idle();

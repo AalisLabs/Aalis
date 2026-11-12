@@ -11,6 +11,7 @@ import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { registerMediaRoutes } from '../../packages/plugin-webui-server/src/routes/media.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { freePort } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -42,6 +43,7 @@ describe('WebUI 媒体路由', () => {
     writeFileSync(join(base, 'outside.png'), PNG);
     port = await freePort();
     app = new App({ name: 'media route test', logLevel: 'error' });
+    provideEvents(app);
     provideHostPaths(app, base);
     await app.pluginAll([
       { definition: storageLocalPlugin, config: {} },

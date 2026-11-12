@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { flowControl } from '../../packages/api-flow-control/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { resolveFields } from '../../packages/api-session-settings/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { App, events, provide, services } from '../../packages/core/src/index.js';
+import { App, provide, services } from '../../packages/core/src/index.js';
 import { configSchema, type FlowControlSettings } from '../../packages/plugin-flow-control/src/config.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import {

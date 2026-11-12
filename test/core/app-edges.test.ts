@@ -5,14 +5,12 @@ import {
   createApp,
   definePlugin,
   defineService,
-  events,
   type Logger,
   lifecycle,
   provide,
 } from '../../packages/core/src/index.js';
-import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
 
-// App 外壳的可观测行为：createApp 工厂、注入的 logger 出错、启动横幅、监听器抛错的告警、restart，以及启动 / 停机 / 重启互斥。
+// App 外壳的可观测行为：createApp 工厂、注入的 logger 出错、启动横幅、restart，以及启动 / 停机 / 重启互斥。
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
 type LogRecord = { level: Level; message: string; args: unknown[] };
@@ -139,51 +137,6 @@ describe('启动横幅', () => {
     const log = recordingLogger();
     track(new App({ logger: log }));
     expect(log.messages('info')).toEqual(['Aalis Core - Aalis']);
-  });
-});
-
-describe('事件监听器抛错的告警', () => {
-  it('经 events 能力登记的监听器：告警点名来源插件实例 id，错误对象原样附上，其余监听器照常运行', async () => {
-    const log = recordingLogger();
-    const app = track(new App({ ...base(), logger: log }));
-    const boom = new Error('boom');
-    const reached: string[] = [];
-    await app.plugin(
-      definePlugin({
-        name: 'bad-listener',
-        uses: { events },
-        apply({ events }) {
-          events.use.on('zz:plain', () => {
-            throw boom;
-          });
-          events.use.on('zz:plain', () => void reached.push('after'));
-        },
-      }),
-    );
-    await app.plugins.idle();
-
-    await app.bind({ events }).events.use.emit('zz:plain');
-
-    const warns = log.records.filter(r => r.level === 'warn');
-    expect(warns.map(r => r.message)).toEqual(['事件 "zz:plain" 的监听器抛错（已隔离，来自 bad-listener）:']);
-    expect(warns[0].args).toEqual([boom]);
-    expect(reached).toEqual(['after']);
-  });
-
-  it('无归属的监听器（直接挂在总线上、不经 events 能力）：告警不带来源段', async () => {
-    const log = recordingLogger();
-    const app = track(createInspectableApp({ ...base(), logger: log }));
-    const boom = new Error('ownerless');
-    // 公开面拿不到总线；core 内部确有不带 owner 的订阅（binding 的提供者跟随），这里白盒复现同一形状
-    activationHost(app).runtime.events.on('zz:plain', () => {
-      throw boom;
-    });
-
-    await app.bind({ events }).events.use.emit('zz:plain');
-
-    const warns = log.records.filter(r => r.level === 'warn');
-    expect(warns.map(r => r.message)).toEqual(['事件 "zz:plain" 的监听器抛错（已隔离）:']);
-    expect(warns[0].args).toEqual([boom]);
   });
 });
 

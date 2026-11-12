@@ -7,6 +7,7 @@ import type { AuthorityManager } from '../../packages/plugin-authority/src/autho
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
 // ════════════════════════════════════════════════════════════
@@ -35,6 +36,7 @@ async function boot() {
       },
     },
   );
+  provideEvents(app);
   const pages = pageHost();
   running.push({ app, pages });
   const host = app.bind({ provide, services });

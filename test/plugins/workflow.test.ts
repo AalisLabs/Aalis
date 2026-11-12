@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { Events } from '../../packages/api-events/src/index.js';
 import type { GatewayService } from '../../packages/api-gateway/src/index.js';
 import type { Hooks } from '../../packages/api-hooks/src/index.js';
 import type { BoundTools, ToolService } from '../../packages/api-tools/src/index.js';
 import type { WorkflowDef } from '../../packages/api-workflow/src/index.js';
-import type { Events, Logger } from '../../packages/core/src/index.js';
+import type { Logger } from '../../packages/core/src/index.js';
 import type { EngineCaps } from '../../packages/plugin-workflow/src/engine.js';
 import { runDag, validateGraph } from '../../packages/plugin-workflow/src/engine.js';
 import { resolveText, toSource } from '../../packages/schema-i18n/src/index.js';

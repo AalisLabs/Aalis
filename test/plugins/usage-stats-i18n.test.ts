@@ -2,8 +2,9 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { type LLMModel, llm } from '../../packages/api-llm/src/index.js';
-import { type App, config, definePlugin, events, type Logger, provide } from '../../packages/core/src/index.js';
+import { type App, config, definePlugin, type Logger, provide } from '../../packages/core/src/index.js';
 import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import usageStats from '../../packages/plugin-usage-stats/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
@@ -11,6 +12,7 @@ import { defineTexts, TextError } from '../../packages/schema-i18n/src/index.js'
 import { hostedApp } from '../fixtures/app.js';
 import { i18nSection } from '../fixtures/host-language.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -64,6 +66,7 @@ afterEach(async () => {
 async function serve(home: string, language: string, before: (app: App) => Promise<unknown> = async () => {}) {
   const port = await freePort();
   const { app } = hostedApp(i18nSection([language]), { logger: silent });
+  provideEvents(app);
   apps.push(app);
   provideHostPaths(app, home);
   await app.plugin(i18nPlugin);

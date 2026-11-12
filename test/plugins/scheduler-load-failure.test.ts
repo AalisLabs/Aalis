@@ -9,6 +9,7 @@ import schedulerPlugin, { type SchedulerService, scheduler } from '../../package
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
@@ -70,6 +71,7 @@ describe('scheduler 动态任务：加载失败后拒绝整表回写', () => {
     mkdirSync(join(base, 'state'), { recursive: true });
     mkdirSync(join(base, 'workspace'), { recursive: true });
     app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     provideHostPaths(app, base);
   });
 
@@ -166,6 +168,7 @@ describe('scheduler 动态任务：加载失败后拒绝整表回写', () => {
     await app.stop();
     rmSync(join(base, jobsFile));
     app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     provideHostPaths(app, base);
     await registerStorage();
     await registerScheduler();

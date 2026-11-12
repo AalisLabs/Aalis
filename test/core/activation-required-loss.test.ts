@@ -12,7 +12,7 @@ import {
 } from '../../packages/core/src/index.js';
 import type { PluginManager } from '../../packages/core/src/orchestration/plugin.js';
 import { deferred } from '../helpers/deferred.js';
-import { activationHost, activationOf, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
+import { activationOf, createInspectableApp } from '../helpers/inspectable-app.js';
 
 const dependency = defineService<{ value: number }>('activation-required-loss');
 // apply 解构的绑定会遮住描述符；恢复提供者仍使用契约描述符。
@@ -110,10 +110,8 @@ describe('初始化期间 required 依赖消失', () => {
     expect([...live]).toEqual([]);
   });
 
-  it.each([false, true])('catch 前已恢复仍回滚后重激活，不依赖变化通知来补重试（通知切断=%s）', async muted => {
+  it('catch 前已恢复仍回滚后重激活', async () => {
     const { app, host } = world();
-    // 切断根激活的全部监听（含 PluginManager 对服务上下线的订阅）：重试不能依赖另一条通知补唤醒
-    if (muted) activationHost(app).runtime.events.unregisterByOwner(rootActivation(app).owner);
     let off = host.provide.use(dependency, { value: 1 });
     const trace: string[] = [];
     let applies = 0;

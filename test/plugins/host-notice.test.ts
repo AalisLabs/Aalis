@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { agent } from '../../packages/api-agent/src/index.js';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { embedding } from '../../packages/api-embedding/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { flowControl } from '../../packages/api-flow-control/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { type ChatModelRequest, type LLMModel, llm } from '../../packages/api-llm/src/index.js';
@@ -11,7 +12,7 @@ import { persona } from '../../packages/api-persona/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { type VectorSearchResult, vectorstore } from '../../packages/api-vectorstore/src/index.js';
-import { App, events, lifecycle, logger, provide } from '../../packages/core/src/index.js';
+import { App, lifecycle, logger, provide } from '../../packages/core/src/index.js';
 import { t as onebotText } from '../../packages/plugin-adapter-onebot/src/texts.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
@@ -37,7 +38,7 @@ import {
   WellKnownKinds,
   WellKnownMetadataKeys,
 } from '../../packages/schema-message/src/index.js';
-import { registerHubs } from '../fixtures/hubs.js';
+import { provideEvents, registerHubs } from '../fixtures/hubs.js';
 import { memoryStorage } from '../fixtures/memory-files.js';
 import { inputFromLastUser } from '../fixtures/turn-input.js';
 
@@ -391,6 +392,7 @@ const RELATION_CFG = {
 
 async function setupRelation(cfg: Partial<ExtractorConfig> = {}) {
   const app = newApp();
+  provideEvents(app);
   const host = app.bind({ provide, events, logger, memory, llm, persona, lifecycle });
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();

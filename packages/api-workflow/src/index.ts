@@ -13,7 +13,7 @@ import { defineService } from '@aalis/core';
 //   - 工作流"定义"是用户/AI 资产，存 workspace；"运行实例"是运行时，存 data
 // ============================================================
 
-import type {} from '@aalis/core'; // declaration merging 锚点（下方 AalisEvents 增强）
+import type {} from '@aalis/api-events'; // declaration merging 锚点（下方 AalisEvents 增强）
 import type { TextRef } from '@aalis/schema-i18n';
 
 // ============ 触发器 ============
@@ -180,7 +180,7 @@ export interface WorkflowService {
 
 // ============ 事件契约 ============
 
-declare module '@aalis/core' {
+declare module '@aalis/api-events' {
   interface AalisEvents {
     /** 触发器触发 — 由 scheduler/event/webhook 等触发源发出，workflow 订阅 */
     'trigger:fired': [

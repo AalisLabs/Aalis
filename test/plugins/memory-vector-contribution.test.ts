@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import type { EmbeddingRequestOptions, EmbeddingService } from '../../packages/api-embedding/src/index.js';
 import { embedding } from '../../packages/api-embedding/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { type PlatformAdapter, platform } from '../../packages/api-platform/src/index.js';
@@ -9,7 +10,7 @@ import { sessionManager } from '../../packages/api-session-manager/src/index.js'
 import { tools } from '../../packages/api-tools/src/index.js';
 import type { VectorSearchResult, VectorStoreService } from '../../packages/api-vectorstore/src/index.js';
 import { vectorstore } from '../../packages/api-vectorstore/src/index.js';
-import { App, definePlugin, events, logger, provide, services } from '../../packages/core/src/index.js';
+import { App, definePlugin, logger, provide, services } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memoryVector from '../../packages/plugin-memory-vector/src/index.js';

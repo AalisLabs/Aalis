@@ -10,6 +10,7 @@ import llmOpenai from '../../packages/plugin-llm-openai/src/index.js';
 import serper from '../../packages/plugin-websearch-serper/src/index.js';
 import { configError, missingConfigError } from '../../packages/schema-config/src/index.js';
 import { defineTexts, isTextError, resolveText } from '../../packages/schema-i18n/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 缺必填配置时激活失败是对的，但那是配置没填，不是程序出错：日志只打一行「ConfigError: 消息」，
@@ -36,6 +37,7 @@ function world() {
     if (entry.level === 'error') errors.push(entry.message);
   });
   const app = new App({ name: 'T', logLevel: 'info', logHub: hub });
+  provideEvents(app);
   apps.push(app);
   // whisper.cpp 的 process / storage 是 required：给桩，让它走到 apply 里的配置检查
   const host = app.bind({ provide });

@@ -1,6 +1,7 @@
+import { events } from '../../packages/api-events/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { type App, events, provide } from '../../packages/core/src/index.js';
+import { type App, provide } from '../../packages/core/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';

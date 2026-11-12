@@ -13,6 +13,7 @@
  * - env.node 按最低版本 24.15.0 判定，不够时写明需要的版本与升级方法
  * - 诊断页过登记门槛；每次运行后推 invalidate，有错误或警告时发提示（跳到诊断页），全部通过后撤回
  */
+
 import { syncBuiltinESMExports } from 'node:module';
 import { afterEach, describe, expect, it } from 'vitest';
 import { commands } from '../../packages/api-commands/src/index.js';
@@ -40,6 +41,7 @@ import {
   textLines,
   toSource,
 } from '../../packages/schema-i18n/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
 // ===== helpers =====
@@ -72,6 +74,7 @@ async function boot(
 ) {
   const { before = [], ...appOptions } = options;
   const app = new App({ name: 'T', logLevel: 'error', ...appOptions });
+  provideEvents(app);
   const host = app.bind({ provide, services });
   const recordedCommands: Array<{ name: string; description?: string }> = [];
   const pages = pageHost();

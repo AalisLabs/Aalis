@@ -3,14 +3,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { authority, type OriginTurn } from '../../packages/api-authority/src/index.js';
+import { type Events, events } from '../../packages/api-events/src/index.js';
 import { type SessionInfo, sessionManager, TAKE_UNKNOWN } from '../../packages/api-session-manager/src/index.js';
 import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.js';
-import { App, type Events, events, provide } from '../../packages/core/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import { principalKind } from '../../packages/plugin-authority/src/authority-model.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { storedRoom } from '../fixtures/rooms.js';
 import { type RequestDraft, toolContext } from '../fixtures/tool-call.js';
 
@@ -52,6 +54,7 @@ describe('send_attachment 的 storage_uri', () => {
     mkdirSync(join(base, 'state', 'secret'), { recursive: true });
     writeFileSync(join(base, 'state', 'secret', 'config.yaml'), 'token: PLACEHOLDER\n');
     app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     handlers = {};
     const host = app.bind({ provide, events });
     hostEvents = host.events.use;

@@ -5,14 +5,13 @@ import { HubRegistry, hub } from '../helpers/hub.js';
 
 // ════════════════════════════════════════════════════════════
 // post-dispose 注册政策：实际能力与窄激活记录的行为契约。
-// - 订阅类（events/provide/选择层 follow/资源口 registrar 归属表）：warn + no-op
+// - 订阅类（provide/选择层 follow 与 watch/资源口 registrar 归属表/onReady/plugins.watch）：warn + no-op
 // - 构造类（host.create）：抛错
 // - 清理类（onDispose、onDrain、track）：warn 后仍就地执行（握着资源，no-op 即泄漏）
-// 本文件是该政策的全量行为锚：8 个入口逐一钉死，含幽灵副作用断言与活路径回归。
-// 归属表以测试枢纽 hub 为样本（hooks / contributions / tools 等契约包枢纽同一做法）。
+// 本文件钉住其中 7 个入口，含幽灵副作用断言与活路径回归；onReady 与两个 watch 的拒收在 lifecycle-ready.test.ts、
+// watch.test.ts。
+// 归属表以测试枢纽 hub 为样本（events / hooks / contributions / tools 等契约包枢纽同一做法）。
 // ════════════════════════════════════════════════════════════
-
-const EVT = '__t:pd-evt' as never;
 
 function makeWorld() {
   const lines: string[] = [];
@@ -33,31 +32,10 @@ function makeWorld() {
     const activation = world.host.create(id);
     return { ...bindActivationFixture(world.host, activation), hub: world.host.bind(activation, { hub }).hub };
   };
-  return { make, lines, events: world.events, services: world.services, registry };
+  return { make, lines, registry };
 }
 
 describe('订阅类 post-dispose：warn + no-op', () => {
-  it('on：返回可安全调用的 noop；handler 不进总线（事件发出也不触发）；warn 点名事件', async () => {
-    const { make, lines, events } = makeWorld();
-    const observer = make('observer');
-    const dead = make('dead');
-    await dead.activation.disposeAsync();
-
-    const onSpy = vi.spyOn(events, 'on');
-    let called = 0;
-    const off = dead.caps.events.use.on('zz:named', () => {
-      called++;
-    });
-    // 判别性断言：守卫必须让注册**根本不发生**（无守卫时是幽灵注册秒退，spy 会记到 1 次）
-    expect(onSpy).not.toHaveBeenCalled();
-    await observer.caps.events.use.emit('zz:named', 'x');
-    expect(called).toBe(0);
-    expect(off).toBeTypeOf('function');
-    expect(() => off()).not.toThrow();
-    expect(lines.find(l => l.includes('忽略 on("zz:named")'))).toMatch(/^warn\|/);
-    await observer.activation.disposeAsync();
-  });
-
   it('归属表登记（registrar）：迟到的 add 不进登记表；warn 点名服务与键', async () => {
     const { make, lines, registry } = makeWorld();
     const observer = make('observer');
@@ -116,7 +94,6 @@ describe('订阅类 post-dispose：warn + no-op', () => {
     const ctx = make('p');
     const { ref } = ctx.host.bind(ctx.activation, { ref: defineService('y') });
     await ctx.activation.disposeAsync();
-    ctx.caps.events.use.on(EVT, () => {});
     ctx.hub.use.add('z', 'v');
     ctx.caps.provide.use(defineService('x'), {});
     ref.follow(() => {});
@@ -138,15 +115,12 @@ describe('构造类 post-dispose：抛错', () => {
 });
 
 describe('活路径回归：守卫对未 dispose 的 ctx 零影响', () => {
-  it('四个订阅入口 + onDispose 正常注册、正常触发、dispose 正常清理', async () => {
+  it('三个订阅入口 + onDispose 正常注册、正常触发、dispose 正常清理', async () => {
     const { make } = makeWorld();
     const ctx = make('alive');
     const peer = make('peer');
     const calls: string[] = [];
 
-    ctx.caps.events.use.on('zz:named', () => {
-      calls.push('on');
-    });
     ctx.hub.use.add('a', 'v');
     ctx.caps.provide.use(defineService('alive-svc'), { v: 1 });
     ctx.host.bind(ctx.activation, { ref: defineService('alive-svc') }).ref.follow(() => {
@@ -156,8 +130,6 @@ describe('活路径回归：守卫对未 dispose 的 ctx 零影响', () => {
       calls.push('cleanup');
     });
 
-    await peer.caps.events.use.emit('zz:named', 'x');
-    expect(calls).toContain('on');
     expect(calls).toContain('when');
     expect(peer.caps.services.use.get('alive-svc')).toEqual({ v: 1 });
     expect(peer.hub.use.list()).toEqual(['alive/a=v']);
@@ -239,12 +211,11 @@ describe('清理类迟到登记一律告警并就地执行', () => {
     const dead = make('dead');
     const { ref } = dead.host.bind(dead.activation, { ref: defineService('__t:pd-late-follow') });
     await dead.activation.disposeAsync();
-    dead.caps.events.use.on('zz:named', () => {});
     dead.caps.provide.use(defineService('__t:pd-late-svc'), { v: 1 });
     dead.hub.use.add('late', 'v');
     ref.follow(() => {});
     const refusals = lines.filter(l => l.includes('忽略'));
-    expect(refusals).toHaveLength(4);
+    expect(refusals).toHaveLength(3);
     for (const line of refusals) expect(line).toMatch(/^warn\|激活 "dead" 已关闭，忽略/);
   });
 });

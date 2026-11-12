@@ -14,7 +14,7 @@ import toolSystemPlugin from '../../packages/plugin-tool-system/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { i18nSection, renderIn } from '../fixtures/host-language.js';
-import { registerHubs } from '../fixtures/hubs.js';
+import { provideEvents, registerHubs } from '../fixtures/hubs.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 import { roomCommands, seedRooms } from '../fixtures/rooms.js';
 
@@ -101,6 +101,7 @@ describe('工具插件甲给人看的出口按读者的语言', () => {
     Object.entries(CASES),
   )('%s：浏览器页关闭不存在的页面的报错，关闭全部页面的回执', async (language, expected) => {
     const app = new App({ name: 'T', logger: silent });
+    provideEvents(app);
     apps.push(app);
     const pages = pageHost();
     hosts.push(pages);

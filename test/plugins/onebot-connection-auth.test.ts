@@ -8,6 +8,7 @@ import { processService } from '../../packages/api-process/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import onebot from '../../packages/plugin-adapter-onebot/src/index.js';
 import contributionsPlugin from '../../packages/plugin-contributions/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 连接鉴权：accessToken 放在握手请求头里；实现端拒绝时日志写得出原因。拒绝有两种形态：握手时直接回 HTTP 状态码
@@ -95,6 +96,7 @@ async function world(
   const record = (...args: unknown[]) => void lines.push(args.map(String).join(' '));
   const logger: Logger = { debug() {}, info: record, warn: record, error: record, child: () => logger };
   const app = new App({ name: 'T', logger, devMode: false });
+  provideEvents(app);
   cleanups.push(() => app.stop());
   const root = app.bind({ provide });
   root.provide.use(storage, {} as never);

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type LLMModel, llm } from '../../packages/api-llm/src/index.js';
 import { App, services } from '../../packages/core/src/index.js';
 import ollama from '../../packages/plugin-llm-ollama/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 流式请求被提前退出时必须 cancel 响应体，不能只 releaseLock。
@@ -16,6 +17,7 @@ const apps: App[] = [];
 
 async function makeModel(): Promise<LLMModel> {
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   apps.push(app);
   // 启动时的模型发现与能力探测答空，不连本机的 Ollama
   vi.stubGlobal(

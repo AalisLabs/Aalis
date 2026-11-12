@@ -1,8 +1,10 @@
-import { App, events, LogHub } from '@aalis/core';
+import { App, LogHub } from '@aalis/core';
 import type { LogEntry } from '@aalis/schema-log';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { platform } from '../../packages/api-platform/src/index.js';
 import cliPlugin from '../../packages/plugin-cli/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // stdin / stdout 不是 TTY（日志重定向、容器、systemd）时 CLI 不得接管终端：
 // 不写备用屏序列、不宣告 terminal:claimed（否则 runtime 的控制台日志会停写 stdout），
@@ -33,6 +35,7 @@ describe('plugin-cli 非 TTY', () => {
     const offLog = LogHub.default.onEntry(e => entries.push(e));
 
     const app = new App({ name: 'T', logLevel: 'info' });
+    provideEvents(app);
     // 宿主侧按根激活取绑定接口：事件订阅与平台枚举都走公开门面
     const host = app.bind({ events, platform });
     const claimed = vi.fn();

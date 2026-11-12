@@ -1,14 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import {
-  config,
-  events,
-  lifecycle,
-  logger,
-  provide,
-  services,
-} from '../../packages/core/src/composition/core-services.js';
+import { config, lifecycle, logger, provide, services } from '../../packages/core/src/composition/core-services.js';
 import { dependencies, type Uses } from '../../packages/core/src/composition/descriptors.js';
 import type { PluginDefinition } from '../../packages/core/src/index.js';
 
@@ -31,11 +24,11 @@ const depNames = (uses: Uses, required: boolean): string[] =>
     .map(dep => dep.descriptor.name);
 
 /**
- * core 内置六项的描述符集合，和第三方共同参与依赖声明。增删内置能力必须同步更新本清单。
- * app / plugins 是宿主管理面的普通服务；hooks / contributions / host-config / plugin-source
+ * core 内置五项的描述符集合，和第三方共同参与依赖声明。增删内置能力必须同步更新本清单。
+ * app / plugins 是宿主管理面的普通服务；events / hooks / contributions / host-config / plugin-source
  * 由插件或宿主提供，都不在此列。
  */
-const CORE_SERVICE_NAMES = ['config', 'events', 'lifecycle', 'logger', 'provide', 'services'] as const;
+const CORE_SERVICE_NAMES = ['config', 'lifecycle', 'logger', 'provide', 'services'] as const;
 
 function names(list: unknown): string[] {
   if (!Array.isArray(list)) return [];
@@ -48,9 +41,9 @@ function isDefinition(value: unknown): value is PluginDefinition {
 
 describe('manifest 双源核对', () => {
   it('核心服务均进入与第三方相同的 required / optional 提取', () => {
-    const fromModule = [config, events, lifecycle, logger, provide, services].map(d => d.name).sort();
+    const fromModule = [config, lifecycle, logger, provide, services].map(d => d.name).sort();
     expect([...CORE_SERVICE_NAMES].sort()).toEqual(fromModule);
-    expect(depNames({ config, events, lifecycle, logger, provide, services }, true).sort()).toEqual(fromModule);
+    expect(depNames({ config, lifecycle, logger, provide, services }, true).sort()).toEqual(fromModule);
   });
 
   it('全部 aalis-plugin 包的 aalis.service 与 default 定义的 provides/uses 一致', async () => {

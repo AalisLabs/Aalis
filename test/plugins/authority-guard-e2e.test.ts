@@ -1,6 +1,7 @@
-import { events, type Logger, provide } from '@aalis/core';
+import { type Logger, provide } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { commands as commandsService, type ExecutionInput } from '../../packages/api-commands/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
@@ -10,7 +11,7 @@ import {
   setNetworkPolicy,
 } from '../../packages/util-network-guard/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
-import { registerHubs } from '../fixtures/hubs.js';
+import { provideEvents, registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // authority 执行守卫 —— 端到端（装上去之后真的拦不拦）
@@ -124,6 +125,7 @@ describe('权限插件注入网络出口策略', () => {
       child: () => logger,
     };
     const { app, store } = hostedApp({ network } as never, { logger });
+    provideEvents(app);
     await app.plugin(authorityPlugin, {});
     await app.plugins.idle();
     const changeNetwork = async (next: unknown): Promise<void> => {

@@ -4,6 +4,7 @@ import { App } from '../../packages/core/src/index.js';
 import i18nPlugin from '../../packages/plugin-i18n/src/index.js';
 import { defineTexts, type LocalizeSkip } from '../../packages/schema-i18n/src/index.js';
 import { provideHostLanguage } from '../fixtures/host-language.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { expectProcessTimeZoneDistinct } from '../fixtures/process-time-zone.js';
 
 // ════════════════════════════════════════════════════════════
@@ -86,6 +87,7 @@ describe('outputLanguageFor', () => {
 
   it('i18n 在场：取读者语言链的第一项，写成「自称（标签）」；没有语言包的语言照取', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     apps.push(app);
     const setLanguage = provideHostLanguage(app, ['ja-JP', 'zh-CN']);
     await app.plugin(i18nPlugin);

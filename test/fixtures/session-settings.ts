@@ -1,4 +1,5 @@
 import { authority } from '../../packages/api-authority/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { type AalisConfig, hostConfig, ownHostConfig } from '../../packages/api-host-config/src/index.js';
 import { llm } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
@@ -15,7 +16,6 @@ import {
 import {
   config,
   definePlugin,
-  events,
   type Logger,
   lifecycle,
   optional,

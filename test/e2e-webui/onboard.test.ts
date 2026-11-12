@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { describe, expect, it } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { llm, metered } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import {
@@ -7,7 +8,6 @@ import {
   config,
   definePlugin,
   defineService,
-  events,
   type PluginDefinition,
   provide,
 } from '../../packages/core/src/index.js';

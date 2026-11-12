@@ -21,7 +21,7 @@ import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { missingConfigError } from '../../packages/schema-config/src/index.js';
 import { catalogEntries, defineTexts, fingerprint, TextError } from '../../packages/schema-i18n/src/index.js';
 import { provideHostLanguage } from '../fixtures/host-language.js';
-import { HUB_PLUGINS } from '../fixtures/hubs.js';
+import { HUB_PLUGINS, provideEvents } from '../fixtures/hubs.js';
 import { expectProcessTimeZoneDistinct } from '../fixtures/process-time-zone.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
@@ -320,6 +320,7 @@ async function setup({
     child: () => logger,
   };
   const app = new App({ name: 'T', logLevel: 'info', logger });
+  if (!withHubs) provideEvents(app);
   apps.push(app);
   const frameModule = framePackage();
   const fault: { error?: Error } = {};

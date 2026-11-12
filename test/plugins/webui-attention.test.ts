@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type Approval, type ApprovalService, approvals } from '../../packages/api-approval/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import {
   type AttentionItem,
@@ -13,12 +14,12 @@ import {
   config,
   definePlugin,
   defineService,
-  events,
   type Logger,
   provide,
   services,
 } from '../../packages/core/src/index.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { deferred } from '../helpers/deferred.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
@@ -166,6 +167,7 @@ const approval = (id: string, sessionId: string): Approval => ({
 
 async function start(extra: Parameters<App['plugin']>[0][] = [], options: { slowThresholdMs?: number } = {}) {
   const app = new App({ name: 'T', logLevel: 'error', logger: silent, ...options });
+  provideEvents(app);
   apps.push(app);
   const port = await freePort();
   for (const definition of extra) await app.plugin(definition, {});

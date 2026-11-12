@@ -6,6 +6,7 @@ import { type StorageService, storage } from '../../packages/api-storage/src/ind
 import { App, definePlugin, LogHub, lifecycle, provide } from '../../packages/core/src/index.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -50,6 +51,7 @@ describe('webui-server：就绪回调等待期间被关掉的实例醒来不再�
       if (e.level === 'warn' || e.level === 'error') logs.push(e.message);
     });
     const app = new App({ name: 'T', logLevel: 'warn', logHub });
+    provideEvents(app);
     cleanups.push(() => app.stop());
     provideHostPaths(app, home);
     await app.pluginAll([{ definition: webuiServerPlugin, config: { port, host: '127.0.0.1', autoOpen: false } }]);

@@ -7,7 +7,6 @@ import {
   config,
   definePlugin,
   defineService,
-  events,
   type Logger,
   lifecycle,
   logger,
@@ -90,7 +89,6 @@ describe('两层形状', () => {
   it('内置项、宿主服务、默认契约与自定义绑定的 caps.xxx 都是同一个选择层，成员集合固定', () => {
     const custom = defineService<object, { register(): void }>('zz-shape-custom', () => ({ register() {} }));
     const caps = world().app.bind({
-      events,
       lifecycle,
       logger,
       config,

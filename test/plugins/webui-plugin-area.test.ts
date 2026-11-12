@@ -22,6 +22,7 @@ import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 import type { ConfigProvider } from '../../packages/runtime/src/config-store.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { ref } from '../fixtures/service-ref.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
 import { deferred } from '../helpers/deferred.js';
@@ -238,6 +239,7 @@ describe('webui-server 自己的配置', () => {
       },
       { logger: silent, provider },
     );
+    provideEvents(app);
     apps.push(app);
     await registerFromDoc(app, store, webuiServer);
     await app.start();
@@ -265,6 +267,7 @@ describe('webui-server 自己的配置', () => {
       },
       { logger: silent },
     );
+    provideEvents(app);
     apps.push(app);
     await registerFromDoc(app, store, webuiServer);
     await app.start();

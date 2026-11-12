@@ -1,6 +1,7 @@
 import { App } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import cliPlugin from '../../packages/plugin-cli/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { fakeTty } from '../helpers/tty.js';
 
 // Help 页自己宣传「Home/End 滚动 Logs / Status / Help」，但 handleScrollKey 只认
@@ -32,6 +33,7 @@ async function framesAroundKey(
     return true;
   });
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   try {
     await app.plugin(cliPlugin, { startupView });
     await app.plugins.idle();

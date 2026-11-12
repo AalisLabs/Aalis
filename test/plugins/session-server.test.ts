@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import {
   type AalisConfig,
@@ -21,7 +22,7 @@ import {
 } from '../../packages/api-session-protocol/src/index.js';
 import { SESSION_LAYERS } from '../../packages/api-session-settings/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { App, definePlugin, events, type Logger, provide, services } from '../../packages/core/src/index.js';
+import { App, definePlugin, type Logger, provide, services } from '../../packages/core/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
 import sessionSettingsPlugin from '../../packages/plugin-session-settings/src/index.js';

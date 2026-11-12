@@ -2,6 +2,7 @@ import { agent } from '@aalis/api-agent';
 import { authority } from '@aalis/api-authority';
 import { type CommandArgv, commands as commandsService } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
+import { events } from '@aalis/api-events';
 import { gateway, INBOUND_PHASE, type InboundPhaseData } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import { i18n } from '@aalis/api-i18n';
@@ -12,7 +13,6 @@ import {
   type BoundOf,
   config,
   definePlugin,
-  events,
   lifecycle,
   logger,
   optional,

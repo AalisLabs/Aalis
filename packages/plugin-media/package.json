@@ -46,7 +46,8 @@
     "@aalis/util-file-signature": "workspace:>=0.1.0 <1.0.0",
     "@aalis/util-network-guard": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-hooks": "workspace:>=0.3.0 <1.0.0",
-    "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
+    "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-events": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

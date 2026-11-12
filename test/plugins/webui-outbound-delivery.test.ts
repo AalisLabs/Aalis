@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import { media } from '../../packages/api-media/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
 import { type SessionInfo, sessionManager } from '../../packages/api-session-manager/src/index.js';
-import { App, events, provide } from '../../packages/core/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import messageArchive from '../../packages/plugin-message-archive/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { defineTexts, localize, resolveText, TextError } from '../../packages/schema-i18n/src/index.js';
 import type { Message, OutgoingMessage } from '../../packages/schema-message/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { storedRoom } from '../fixtures/rooms.js';
 import { deferred } from '../helpers/deferred.js';
 import { freePort } from '../helpers/net.js';
@@ -45,6 +47,7 @@ async function startWebui(opts: StartOptions = {}) {
   const port = await freePort();
   const token = 'outbound-delivery-test-token-0000';
   const app = new App({ name: 'WebUI delivery test', logLevel: 'error' });
+  provideEvents(app);
   apps.push(app);
   const host = app.bind({ provide, events });
   const saved: Array<{ sessionId: string; message: Message }> = [];

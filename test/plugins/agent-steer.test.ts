@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { agent as agentService, type TokenUsageEvent, type TurnInput } from '../../packages/api-agent/src/index.js';
 import { contributions } from '../../packages/api-contributions/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { flowControl } from '../../packages/api-flow-control/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
@@ -10,7 +11,7 @@ import { type SessionManagerService, sessionManager } from '../../packages/api-s
 import { storage } from '../../packages/api-storage/src/index.js';
 import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
 import { workflow } from '../../packages/api-workflow/src/index.js';
-import { App, definePlugin, events, provide, services } from '../../packages/core/src/index.js';
+import { App, definePlugin, provide, services } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';

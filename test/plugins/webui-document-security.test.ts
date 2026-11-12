@@ -7,6 +7,7 @@ import { App, provide } from '../../packages/core/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -34,6 +35,7 @@ describe('WebUI 的文档级安全', () => {
     writeFileSync(join(dist, 'assets', 'app.js'), 'console.log(1)');
     port = await freePort();
     app = new App({ name: 'document security test', logLevel: 'error' });
+    provideEvents(app);
     provideHostPaths(app, base);
     app.bind({ provide }).provide.use(webuiClient, { getClientDir: () => dist });
     await app.pluginAll([

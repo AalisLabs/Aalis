@@ -6,6 +6,7 @@ import { App, provide, services } from '../../packages/core/src/index.js';
 import doctorPlugin from '../../packages/plugin-doctor/src/index.js';
 import { createConfigStore, installHostConfig } from '../../packages/runtime/src/config-store.js';
 import { type Localized, toSource } from '../../packages/schema-i18n/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 诊断「服务偏好未生效」：配置文档里每个服务的偏好，指向的提供者此刻不在这个服务里时报一条警告，写明实际在用哪个
@@ -23,6 +24,7 @@ async function boot(
   pluginServicePreferences?: Record<string, Record<string, string>>,
 ) {
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   apps.push(app);
   installHostConfig(app, createConfigStore({ servicePreferences, pluginServicePreferences }));
   const host = app.bind({ provide, services });

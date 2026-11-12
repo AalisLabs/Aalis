@@ -25,6 +25,7 @@ import type {
   UserIdentity,
   Verdict,
 } from '@aalis/api-authority';
+import type {} from '@aalis/api-events'; // declaration merging 锚点（下方 AalisEvents 增强）
 import { defineService } from '@aalis/core';
 import type { TextRef } from '@aalis/schema-i18n';
 
@@ -415,7 +416,7 @@ export const backgroundTasks = defineService<BackgroundTaskService>('background-
 
 // ===== AalisEvents 扩展（declaration merging） =====
 
-declare module '@aalis/core' {
+declare module '@aalis/api-events' {
   interface AalisEvents {
     'tool:execute': [info: ToolExecuteMessage];
     'tool:output': [chunk: ToolOutputMessage];

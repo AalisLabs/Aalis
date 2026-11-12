@@ -85,7 +85,7 @@ const { sessionSettings } = await load('api-session-settings/dist/index.js');
 const { webuiServer } = await load('api-webui/dist/index.js');
 const { createPageRegistry } = await load('plugin-webui-server/dist/pages.js');
 const hostPlugins = await Promise.all(
-  ['plugin-hooks', 'plugin-tools', 'plugin-session-manager', 'plugin-session-settings'].map(
+  ['plugin-events', 'plugin-hooks', 'plugin-tools', 'plugin-session-manager', 'plugin-session-settings'].map(
     async dir => (await load(dir + '/dist/index.js')).default,
   ),
 );

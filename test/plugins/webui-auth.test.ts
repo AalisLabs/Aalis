@@ -11,6 +11,7 @@ import { createRouteGate, type RouteGate } from '../../packages/plugin-webui-ser
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { createLocalizer } from '../../packages/plugin-webui-server/src/localize.js';
 import { validateConfig } from '../../packages/schema-config/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // webui-server auth — 单 token（单 owner）
@@ -569,6 +570,7 @@ describe('固定 token 的长度', () => {
   /** 只激活、不启动应用：webui-server 在应用就绪时才监听，这里不占端口 */
   async function activate(fixedToken: string) {
     const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+    provideEvents(app);
     apps.push(app);
     await app.plugin(webuiServer, { host: '127.0.0.1', autoOpen: false, tokenMode: 'fixed', fixedToken });
     await app.plugins.idle();
@@ -598,6 +600,7 @@ describe('主机白名单的每一项是主机名', () => {
   /** 只激活、不启动应用：webui-server 在应用就绪时才监听，这里不占端口 */
   async function activate(allowedHosts: string[]) {
     const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+    provideEvents(app);
     apps.push(app);
     await app.plugin(webuiServer, { host: '127.0.0.1', autoOpen: false, allowedHosts });
     await app.plugins.idle();

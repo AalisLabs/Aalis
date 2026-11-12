@@ -4,6 +4,7 @@ import { App, type LogEntry, LogHub, type PluginDefinition } from '../../package
 import deepseek from '../../packages/plugin-llm-deepseek/src/index.js';
 import ollama from '../../packages/plugin-llm-ollama/src/index.js';
 import openai from '../../packages/plugin-llm-openai/src/index.js';
+import { provideEvents } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 流式收尾组装 toolCalls 的两条路径（收到终帧 / 流意外结束）行为一致。
@@ -53,6 +54,7 @@ function stubProvider(chatBody: string): void {
 
 async function loadModel(plugin: PluginDefinition, config: Record<string, unknown>, hub?: LogHub): Promise<LLMModel> {
   const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+  provideEvents(app);
   apps.push(app);
   const host = app.bind({ llm });
   await app.plugin(plugin, config);

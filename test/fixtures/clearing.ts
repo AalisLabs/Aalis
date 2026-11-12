@@ -1,7 +1,8 @@
 import { commands } from '../../packages/api-commands/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
-import { type App, definePlugin, events, provide } from '../../packages/core/src/index.js';
+import { type App, definePlugin, provide } from '../../packages/core/src/index.js';
 import type { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import { deferred } from '../helpers/deferred.js';

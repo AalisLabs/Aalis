@@ -2,10 +2,11 @@ import { existsSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, normalize } from 'node:path';
 import { describeUnmet, unmetDependencies } from '@aalis/api-doctor';
+import { events } from '@aalis/api-events';
 import { hostLogs } from '@aalis/api-host-logs';
 import { hostPaths } from '@aalis/api-host-paths';
 import { pluginSource } from '@aalis/api-plugin-source';
-import { App, DefaultLogger, events, LogHub, type LogLevel, provide, services } from '@aalis/core';
+import { App, DefaultLogger, LogHub, type LogLevel, provide, services } from '@aalis/core';
 import { CORE_CONFIG_SCHEMA, CORE_RESTART_KEYS, readFieldValue, type SchemaField } from '@aalis/schema-config';
 import { isTextError, resolveText } from '@aalis/schema-i18n';
 import { createConfigStore, installHostConfig } from './config-store.js';
@@ -114,7 +115,7 @@ function readCoreVersion(): string | undefined {
  * 启动一个 Aalis 实例：YAML 配置 + 插件加载 + 进程级重启 + 日志/终端/子命令宿主件。
  * 返回已启动的 App（便于测试或进一步操作）。
  *
- * 生命周期不变量：① `consoleHandle.bindEvents` 必须在 `new App` 之后（之前没有事件总线）；
+ * 生命周期不变量：① `consoleHandle.bindEvents` 必须在 `new App` 之后（登记经宿主的根绑定）；
  * ② 子命令短路必须在 `app.start` 之前。
  */
 export async function startAalis(opts: StartAalisOptions): Promise<App> {
@@ -217,8 +218,8 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
 
   // ── 最早期：任何日志之前先装 console sink ──
   const subcommandMode = subcommands.length > 0;
-  // console sink 在 App 之前装：此时尚无事件总线（根绑定），sink 处于「无条件写」状态以打印早期启动日志，
-  // 待 App 启动后再 bindEvents 接管 terminal:claimed/released。子命令模式日志走 stderr，stdout 只留命令结果。
+  // console sink 在 App 之前装：此时尚无根绑定，sink 处于「无条件写」状态以打印早期启动日志，
+  // App 建好后再 bindEvents 接管 terminal:claimed/released。子命令模式日志走 stderr，stdout 只留命令结果。
   // consoleSink: false 仍装 stderr + minLevel warn：加载器拒载「另一份 @aalis/core」的插件记 error，不能只剩下游的指令服务不可用报错。
   const consoleHandle: ConsoleSinkHandle = consoleSink
     ? installConsoleSink(subcommandMode ? { target: 'stderr' } : {})
@@ -325,7 +326,7 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
     { rescan: () => discovery.rescan(), loaded: name => discovery.loaded(name) },
     { exclusive: true },
   );
-  // 不变量①：App 构造完成后再让 sink 监听终端归属事件——此前没有事件总线可订阅。
+  // 不变量①：App 构造完成后再让 sink 监听终端归属事件——登记经根绑定；事件总线由插件提供，它上线前登记留在归属表里。
   consoleHandle.bindEvents(host.events.use);
 
   // 每个定义交给 Core 前已经规范化；首次 apply 与配置快照用同一份字段。

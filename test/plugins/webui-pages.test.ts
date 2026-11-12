@@ -16,6 +16,7 @@ import { App, definePlugin, type Logger, optional, provide } from '../../package
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -180,6 +181,7 @@ async function setup({ withStorage = true } = {}) {
     child: () => logger,
   };
   const app = new App({ name: 'T', logLevel: 'info', logger });
+  provideEvents(app);
   apps.push(app);
   provideHostPaths(app, home);
   /** 会话管理的替身：alias 是别名，规范化成 webui:real */

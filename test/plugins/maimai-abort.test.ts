@@ -7,7 +7,7 @@ import type { CommandRegistry } from '../../packages/plugin-commands/src/command
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import maimaiPlugin from '../../packages/plugin-maimai/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
-import { registerHubs } from '../fixtures/hubs.js';
+import { provideEvents, registerHubs } from '../fixtures/hubs.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
@@ -42,6 +42,7 @@ function hangingApi(): AbortSignal[] {
 /** 只开工具的 maimai，返回工具注册表 */
 async function bootTools() {
   const app = new App({ name: 'T', logLevel: 'error' });
+  provideEvents(app);
   apps.push(app);
   await app.plugins.register(toolsPlugin, {});
   await app.plugins.register(maimaiPlugin, { developerToken: 'tok', enableCommands: false });

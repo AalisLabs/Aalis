@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { events } from '../../packages/api-events/src/index.js';
 import {
   type ChatResponse,
   type LLMBalance,
@@ -11,10 +12,11 @@ import {
   metered,
 } from '../../packages/api-llm/src/index.js';
 import { type InfoItem, type PageTab, type TableRow, webuiServer } from '../../packages/api-webui/src/index.js';
-import { App, definePlugin, events, type Logger, provide } from '../../packages/core/src/index.js';
+import { App, definePlugin, type Logger, provide } from '../../packages/core/src/index.js';
 import usageStats from '../../packages/plugin-usage-stats/src/index.js';
 import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { type PageHost, pageHost } from '../fixtures/page-host.js';
 
 // ════════════════════════════════════════════════════════════
@@ -73,6 +75,7 @@ async function start(home: string, config: Record<string, unknown> = {}) {
     child: () => logger,
   };
   const app = new App({ name: 'T', logLevel: 'warn', logger });
+  provideEvents(app);
   apps.push(app);
   provideHostPaths(app, home);
   const pages = pageHost();

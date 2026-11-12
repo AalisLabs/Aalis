@@ -19,6 +19,7 @@
 
 import type { TurnInput } from '@aalis/api-agent';
 import { authority, originTurnOf } from '@aalis/api-authority';
+import { events } from '@aalis/api-events';
 import type {} from '@aalis/api-gateway'; // declaration merging 锚点（outbound:dispatch 钩子）
 import { hooks } from '@aalis/api-hooks';
 import { historyMediaRefs, type MediaScopeCall, media, mediaRef, mediaScopeOf } from '@aalis/api-media';
@@ -26,7 +27,7 @@ import { memory } from '@aalis/api-memory';
 import { sessionManager } from '@aalis/api-session-manager';
 import { isStorageNotFound, isStorageUri, isWebUrl, storage } from '@aalis/api-storage';
 import { actingIdentity, tools } from '@aalis/api-tools';
-import { type BoundOf, definePlugin, events, logger, optional } from '@aalis/core';
+import { type BoundOf, definePlugin, logger, optional } from '@aalis/core';
 import { toSource } from '@aalis/schema-i18n';
 import { awaitDelivery, type Message, type MessageAttachment, type OutgoingMessage } from '@aalis/schema-message';
 import { checkMediaHead, FILE_HEAD_BYTES, type MediaKind } from '@aalis/util-file-signature';

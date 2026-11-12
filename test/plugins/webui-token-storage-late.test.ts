@@ -7,6 +7,7 @@ import { App, definePlugin, provide } from '../../packages/core/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { freePort } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -85,6 +86,7 @@ describe('webui-server 的 token 与访问凭据文件', () => {
     mkdirSync(join(base, 'workspace'), { recursive: true });
     port = await freePort();
     app = new App({ name: 'T', logLevel: 'error' });
+    provideEvents(app);
     provideHostPaths(app, base);
   });
 

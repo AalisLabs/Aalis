@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TurnInput } from '../../packages/api-agent/src/index.js';
 import { authority, type OriginTurn } from '../../packages/api-authority/src/index.js';
+import { events } from '../../packages/api-events/src/index.js';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
 import { sessionDirName } from '../../packages/api-media/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { type RegisteredTool, type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
-import { type App, definePlugin, events, provide } from '../../packages/core/src/index.js';
+import { type App, definePlugin, provide } from '../../packages/core/src/index.js';
 import { principalKind } from '../../packages/plugin-authority/src/authority-model.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';

@@ -10,6 +10,7 @@ import {
 } from '../../packages/core/src/index.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { provideEvents } from '../fixtures/hubs.js';
 import { freePort, waitListening } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
@@ -46,6 +47,7 @@ afterEach(async () => {
 async function start() {
   const saved: unknown[] = [];
   const { app, store } = hostedApp({}, { logger: silent, provider: { save: doc => void saved.push(doc) } });
+  provideEvents(app);
   apps.push(app);
   for (const definition of providers) await app.plugin(definition);
   const selections: Record<string, ServiceSelection<Who>> = {};
