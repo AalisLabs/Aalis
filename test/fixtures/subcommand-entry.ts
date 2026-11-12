@@ -16,6 +16,9 @@
 //   AALIS_E2E_SLOW_MS  内联插件 onDispose 的延迟毫秒数（>=500 即让 app.stop 慢过重启策略的等待窗口）
 //   AALIS_E2E_STARTUP_SIGNAL  startAalis 还没返回时给自己发这个信号，验证启动途中收到终止信号同样走完停机：e2e-probe 的 apply 里发，
 //                      并让这次 apply 再等 1 秒；写成 `<信号>@ready` 则改在它的就绪回调里发，回调再等 1 秒。收尾时写 cwd/disposed
+//   AALIS_E2E_RESTART_SIGNAL  'restart' 模式的第一代调 app.restart() 之后 800ms（重启的停机已开始，配 AALIS_E2E_SLOW_MS 让它还没停完）
+//                      给自己发这个信号：验证重启途中收到终止信号时停下、不再启动第二代。写成 `<信号>@gen2` 则等第二代的 e2e-probe
+//                      开始激活（它已接上信号处理，写下 cwd/gen2-applying）才发，配 AALIS_E2E_APPLY_MS 让第二代还没启动完
 //   AALIS_E2E_APPLY_MS 设了才多登记几个内联插件：e2e-slow 提供 e2e-slow-svc，其 apply 延迟这么多毫秒（验证配置里的
 //                      慢操作阈值）；e2e-waiting 依赖 e2e-slow-svc 与没人提供的 e2e-missing-svc，e2e-patient 只依赖
 //                      e2e-slow-svc，e2e-chained 依赖 e2e-middle 提供的服务、e2e-middle 又依赖激活失败的 e2e-broken 提供的
@@ -42,6 +45,8 @@ const respawns = mode === 'restart' || mode === 'tty-respawn';
 if (gen > (respawns ? 2 : 1)) process.exit(99);
 const slowMs = Number(process.env.AALIS_E2E_SLOW_MS ?? '0');
 const [startupSignal, startupAt] = (process.env.AALIS_E2E_STARTUP_SIGNAL ?? '').split('@');
+const [restartSignal, restartAt] = (process.env.AALIS_E2E_RESTART_SIGNAL ?? '').split('@');
+const GEN2_APPLYING = resolve(process.cwd(), 'gen2-applying');
 if (mode === 'tty' || mode === 'tty-respawn') {
   process.on('uncaughtException', err => appendFileSync(resolve(process.cwd(), 'uncaught.txt'), `${String(err)}\n`));
 }
@@ -58,6 +63,7 @@ const plugin = definePlugin({
   uses: { provide, lifecycle, services, config, logger },
   async apply({ provide, lifecycle, services, config, logger }) {
     writeFileSync(resolve(process.cwd(), 'first-config.json'), JSON.stringify(config.use));
+    if (gen === 2 && restartAt === 'gen2') writeFileSync(GEN2_APPLYING, '');
     provide.use(commands, {
       has: (name: string) => name === 'probe' || name === 'restart',
       async execute(name: string, input: { args: string[] }) {
@@ -159,6 +165,13 @@ if (mode === 'tty') writeFileSync(resolve(process.cwd(), 'ready'), String(proces
 if (respawns && gen === 1) {
   writeFileSync(resolve(process.cwd(), 'gen1-pid.txt'), String(process.pid));
   (app.bind({ services }).services.use.get('app') as { restart(): void }).restart();
+  if (restartSignal && restartAt === 'gen2') {
+    const poll = setInterval(() => {
+      if (!existsSync(GEN2_APPLYING)) return;
+      clearInterval(poll);
+      process.kill(process.pid, restartSignal);
+    }, 20);
+  } else if (restartSignal) setTimeout(() => process.kill(process.pid, restartSignal), 800);
 }
 if (mode === 'tty-respawn' && gen === 2) {
   process.on('exit', code => writeFileSync(resolve(process.cwd(), 'gen2-exit.txt'), String(code)));

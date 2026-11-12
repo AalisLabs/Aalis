@@ -285,6 +285,13 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
       );
     }
   }
+  /** 停机之后、退出之前：给停机尾声的日志一个 tick 入队，再等文件日志写完，latest.log 才含完整的关闭日志 */
+  const flushLogs = async (): Promise<void> => {
+    await new Promise<void>(r => setImmediate(r));
+    await fileLogger?.dispose();
+  };
+  /** 终止信号（或输出断开）发起停机时 abort。交给重启策略：重启途中收到的就此停下，不启动新进程，也不改退出码 */
+  const terminating = new AbortController();
   const app = new App({
     name: store.get('name'),
     logLevel: startup.logLevel as LogLevel | undefined,
@@ -295,11 +302,12 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
     restartStrategy: subcommandMode
       ? undefined
       : hostArgs.service
-        ? createServiceRestartStrategy()
+        ? createServiceRestartStrategy({ signal: terminating.signal, beforeExit: flushLogs })
         : createProcessRespawnStrategy({
             appDir: paths.app,
             cwd: startCwd ?? paths.data,
             ...(instanceLock ? { env: { [HANDOFF_ENV]: instanceLock.handoffToken } } : {}),
+            signal: terminating.signal,
           }),
     // 宿主层决定 dev/prod；core 不读 process.env
     devMode: opts.devMode ?? process.env.NODE_ENV !== 'production',
@@ -336,11 +344,9 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   /** 走完停机后以 exitCode 退出。停机途中再来的不另行执行一次，退出码按先来的那次 */
   const shutdown = (exitCode: number): void => {
     exiting ??= (async () => {
+      terminating.abort();
       await app.stop();
-      // app.stop() 期间和之后插件可能仍在 logger.info('已停止') 等，给微任务一个 tick 把它们
-      // 入队，再等队列清空，确保 latest.log 含完整关闭日志。
-      await new Promise<void>(r => setImmediate(r));
-      await fileLogger?.dispose();
+      await flushLogs();
       return process.exit(exitCode);
     })();
   };

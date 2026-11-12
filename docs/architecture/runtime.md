@@ -38,8 +38,8 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 | `installHostConfig(app, store, opts?)` | 把文档作为 `host-config` 服务独占登记在根激活上，并应用文档里的服务偏好。`opts` 传交给配置同步的同一份，`host-config` 的 `trimUnknownFields` 据此声明宿主的裁剪政策（缺省为裁剪）。插件拿到的 `save()` 兑现即已落盘（宿主不持久化时立即兑现、不写盘），失败以拒绝传出并已记一笔日志（拒写记告警，其它记 error）；`applyPluginConfig` 在这里实现，插件拿到的 `setPluginConfig` 拒收密钥字段上的明文。须在登记任何插件之前调用。 |
 | `withPluginConfigSync(app, store, opts?)` | 加载政策：返回交给 `createPluginDiscovery` 的 `options`（`{ prepare }`）。发现驱动每批定下要登记的定义后、登记前，把 `configSchema` 派生的默认值深合并进文档，默认裁剪 schema 外字段，并把密钥字段上的明文移进密钥存储；这一批有改动就落盘一次（冷启动整批一次）。某个定义同步时抛错只记该条、不登记它。 |
 | `syncPluginDefaults` / `handleConfigChanged` / `installConfigHotReload` | 同一政策的其余入口，参数为 `(app, store, opts?)`，后两者在 `store` 之后另收发现驱动 `discovery`；`syncPluginDefaults` 与 `handleConfigChanged` 另收可选的尾参数 `previous`（变更前的文档，热重载时作拆密钥的基线，`installConfigHotReload` 自动传）。三者依次：为已登记实例补默认值并裁剪（在册而文档里没有配置段的后缀实例除外，它等着卸载，同步与重载都不碰）；处理外部变更（文件里已没有配置段的后缀实例卸载，其余实例解析后的配置与运行态有差异的经 `updateConfig` 重建（禁用插件只换配置、保持禁用），新出现的后缀实例经 `discovery.registerConfiguredInstances()` 登记）；接管变更监听：应用开始停机之后（`app.stopping`）到来的变更不再重载，监听在宿主根收尾时摘掉。 |
-| `createProcessRespawnStrategy({ appDir })` | 进程级重启策略（`app.restart()` → 子进程重生；开发模式在安装集里找本地 tsx）。 |
-| `createServiceRestartStrategy()` / `SERVICE_RESTART_EXIT_CODE` | 服务形态的重启策略：停掉 App 后以 75 退出，由服务管理器重新启动进程（见「实例锁」的服务形态重启）。 |
+| `createProcessRespawnStrategy({ appDir })` | 进程级重启策略（`app.restart()` → 子进程重生；开发模式在安装集里找本地 tsx）。可选的 `signal` 由宿主在因终止信号发起停机时 abort：重启途中收到终止信号的，还没启动新进程就不再启动，已启动、还没报就绪的让它停下（给它的进程组发 SIGTERM；Windows 上是强制结束），进程由那次停机结束，不等新进程退出：它在后台停下，这期间还占着实例锁。 |
+| `createServiceRestartStrategy(hooks?)` / `SERVICE_RESTART_EXIT_CODE` | 服务形态的重启策略：停掉 App 后以 75 退出，由服务管理器重新启动进程（见「实例锁」的服务形态重启）。`hooks.beforeExit` 在退出前等到落定（被拒时记一条、照样退出），`startAalis` 在这里把文件日志写完；`hooks.signal` 同上，退出之前 abort 了就不以 75 退出。 |
 
 两种重启都沿用原来的环境变量：前台重启的新进程继承当前进程的环境，服务形态由服务管理器按服务配置里的环境重新启动进程，都不重读 shell 的配置。改了环境变量要从改过的环境重新启动 Aalis：前台运行的先停掉，再从新开的终端启动；服务形态改了服务配置要让服务管理器重新载入（launchd 先 `bootout` 再 `bootstrap`，systemd 先 `daemon-reload` 再 `restart`）。这样重启不会丢掉启动时在命令前临时给的变量，也不与服务管理器给的环境冲突。
 

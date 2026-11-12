@@ -22,6 +22,8 @@ import {
 
 const spawned = vi.hoisted(() => ({
   calls: 0,
+  kills: 0,
+  pid: undefined as number | undefined,
   cwds: [] as Array<string | undefined>,
   handoffs: [] as Array<string | undefined>,
   paths: [] as Array<string | undefined>,
@@ -37,7 +39,14 @@ vi.mock('node:child_process', async importOriginal => {
       spawned.cwds.push(opts?.cwd);
       spawned.handoffs.push(opts?.env?.AALIS_LOCK_HANDOFF);
       spawned.paths.push(opts?.env?.PATH);
-      const child = Object.assign(new EventEmitter(), { disconnect() {}, unref() {} });
+      const child = Object.assign(new EventEmitter(), {
+        pid: spawned.pid,
+        disconnect() {},
+        unref() {},
+        kill() {
+          spawned.kills++;
+        },
+      });
       const script = spawned.scripts.shift();
       if (script) setImmediate(() => script(child));
       return child;
@@ -57,6 +66,8 @@ let errors: string[];
 
 beforeEach(() => {
   spawned.calls = 0;
+  spawned.kills = 0;
+  spawned.pid = undefined;
   spawned.cwds = [];
   spawned.handoffs = [];
   spawned.paths = [];
@@ -153,6 +164,90 @@ describe('createProcessRespawnStrategy', () => {
     expect(spawned.paths[2]).toBe(process.env.PATH);
     expect(spawned.cwds[2]).toBe('/launch-dir');
   });
+
+  it('停机途中宿主因终止信号发起了停机：停完不再启动新进程，也不自行退出', async () => {
+    const terminating = new AbortController();
+    const strategy = createProcessRespawnStrategy({
+      appDir: '/nonexistent-app',
+      cwd: '/launch-dir',
+      readyTimeoutMs: 10,
+      signal: terminating.signal,
+    });
+    await strategy.restart({ stop: async () => terminating.abort() });
+    expect(spawned.calls).toBe(0);
+  });
+
+  // 替身进程缺省没有 pid，让它停下走的是 child.kill() 那一支（见下一条）；这里给它一个，看按进程组发的那一支
+  it.skipIf(process.platform === 'win32')(
+    '新进程有 pid 时让它停下：向它的进程组发 SIGTERM（开发模式下组里还有包装层），不只发给它自己',
+    async () => {
+      const signals: unknown[][] = [];
+      vi.spyOn(process, 'kill').mockImplementation((...args: unknown[]) => {
+        signals.push(args);
+        return true;
+      });
+      spawned.pid = 4242;
+      const terminating = new AbortController();
+      const strategy = createProcessRespawnStrategy({
+        appDir: '/nonexistent-app',
+        cwd: '/launch-dir',
+        readyTimeoutMs: 5000,
+        signal: terminating.signal,
+      });
+      spawned.scripts.push(() => terminating.abort());
+      await strategy.restart({ stop: async () => {} });
+      expect(signals).toEqual([[-4242, 'SIGTERM']]);
+      expect(spawned.kills).toBe(0);
+    },
+  );
+
+  it('新进程在就绪前退出之后才来终止信号（回滚重装途中）：不再向已退出的新进程发信号', async () => {
+    const terminating = new AbortController();
+    const strategy = createProcessRespawnStrategy({
+      appDir: '/nonexistent-app',
+      cwd: '/launch-dir',
+      readyTimeoutMs: 5000,
+      signal: terminating.signal,
+    });
+    spawned.scripts.push(
+      child => child.emit('exit', 1), // 新进程在 ready 前夭折
+      child => {
+        terminating.abort(); // 重装途中终止信号到
+        child.emit('exit', 0);
+      },
+    );
+    const restarting = (async () =>
+      strategy.restart({
+        stop: async () => {},
+        rollback: {
+          reason: 't',
+          restore: [{ path: file, content: 'OLD' }],
+          postRestore: { cmd: 'npm', args: ['i'], cwd: '/' },
+        },
+      }))();
+    await expect(restarting).rejects.toMatchObject({ code: 1 });
+    expect(spawned.kills).toBe(0);
+  });
+
+  it('新进程已启动、还没报就绪时宿主因终止信号发起了停机：让新进程停下，不等它就绪、不回滚、不自行退出；带回滚凭据时说明一句', async () => {
+    const terminating = new AbortController();
+    const strategy = createProcessRespawnStrategy({
+      appDir: '/nonexistent-app',
+      cwd: '/launch-dir',
+      readyTimeoutMs: 5000,
+      signal: terminating.signal,
+    });
+    // 新进程启动后一直不报就绪；下一拍终止信号到
+    spawned.scripts.push(() => terminating.abort());
+    await strategy.restart({
+      stop: async () => {},
+      rollback: { reason: 'marketplace-update:@aalis/x', restore: [{ path: file, content: 'OLD' }] },
+    });
+    expect(spawned.calls).toBe(1);
+    expect(spawned.kills).toBe(1);
+    expect(readFileSync(file, 'utf-8')).toBe('NEW');
+    expect(errors.join('\n')).toContain('not rolled back automatically (marketplace-update:@aalis/x)');
+  });
 });
 
 describe('createServiceRestartStrategy', () => {
@@ -171,5 +266,47 @@ describe('createServiceRestartStrategy', () => {
     expect(stopped).toBe(true);
     expect(spawned.calls).toBe(0);
     expect(errors.join('\n')).toContain('not rolled back automatically (marketplace-update:@aalis/x)');
+  });
+
+  it('退出前等宿主的收尾落定（文件日志写完），再以服务重启的退出码结束', async () => {
+    const order: string[] = [];
+    const strategy = createServiceRestartStrategy({
+      beforeExit: async () => {
+        await new Promise<void>(r => setImmediate(r));
+        order.push('收尾');
+      },
+    });
+    await expect(strategy.restart({ stop: async () => void order.push('停机') })).rejects.toMatchObject({
+      code: SERVICE_RESTART_EXIT_CODE,
+    });
+    expect(order).toEqual(['停机', '收尾']);
+  });
+
+  it.each([
+    ['停机途中', 'stop'],
+    ['等退出前的收尾期间', 'beforeExit'],
+  ] as const)('%s宿主因终止信号发起了停机：不以服务重启的退出码抢先退出', async (_label, at) => {
+    const terminating = new AbortController();
+    const strategy = createServiceRestartStrategy({
+      signal: terminating.signal,
+      beforeExit: async () => {
+        if (at === 'beforeExit') terminating.abort();
+      },
+    });
+    await strategy.restart({
+      stop: async () => {
+        if (at === 'stop') terminating.abort();
+      },
+    });
+  });
+
+  it('退出前的收尾被拒：记一条后照样以服务重启的退出码结束', async () => {
+    const strategy = createServiceRestartStrategy({
+      beforeExit: async () => {
+        throw new Error('flush failed');
+      },
+    });
+    await expect(strategy.restart({ stop: async () => {} })).rejects.toMatchObject({ code: SERVICE_RESTART_EXIT_CODE });
+    expect(errors.join('\n')).toContain('flush failed');
   });
 });

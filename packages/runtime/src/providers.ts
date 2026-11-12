@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -222,6 +222,26 @@ export interface RespawnOptions {
    * 「子进程在 ready 之前退出」，不是超时。
    */
   readyTimeoutMs?: number;
+  /**
+   * 宿主因终止信号（或输出断开）发起停机时 abort。重启途中 abort 了，操作者要的是停下：还没启动新进程的不再启动；
+   * 已启动、还没报就绪的让它停下（见 `terminate`）。随后策略就此返回、不自行退出，进程由那次停机按它的退出码结束，
+   * 不等新进程退出：它在后台停下，这期间还占着实例锁。带回滚凭据时记一条说明：更新留在盘上，没有新进程替它验证。
+   */
+  signal?: AbortSignal;
+}
+
+/**
+ * 让新进程停下：它自成进程组（detached），开发模式下组里还有 tsx 包装层，整组发 SIGTERM。它已接上信号处理时走完自己的
+ * 停机；三种情形是当场结束、不走停机：刚启动、还没接上信号处理；开发模式下内层没有及时回应包装层（主线程正忙），被包装层
+ * 强制结束；Windows 上没有进程组信号，`child.kill()` 即强制结束。当场结束留下的实例锁，下次启动时按残留处理
+ */
+function terminate(child: ChildProcess): void {
+  try {
+    if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGTERM');
+    else child.kill();
+  } catch {
+    /* 已经退出 */
+  }
 }
 
 /** 组装重生用的 exec + argv。分离出来是为了单测覆盖 execArgv 保留。 */
@@ -251,8 +271,13 @@ export const SERVICE_RESTART_EXIT_CODE = 75;
  * 新进程取锁时本进程的锁已随退出释放。不自己 spawn：detached 的新进程会脱离服务管理器的监管
  * （launchd 不再看着它，systemd 随 cgroup 把它一起杀掉）。
  * 服务形态下没有「新版启动失败就回滚」：带回滚凭据的重启（市场更新）照常退出，并记一条说明。
+ *
+ * `beforeExit` 在退出前等到落定（被拒时记一条、照样退出）：宿主在这里把文件日志写完，停机尾声的日志（最后几个插件的
+ * 收尾、「已停止」）才进得了 latest.log。`signal` 同 {@link RespawnOptions.signal}：退出之前 abort 了就不以这个退出码抢先退出。
  */
-export function createServiceRestartStrategy(): RestartStrategy {
+export function createServiceRestartStrategy(
+  hooks: Pick<RespawnOptions, 'signal'> & { beforeExit?: () => Promise<void> } = {},
+): RestartStrategy {
   let restarting = false;
   return {
     async restart({ stop, rollback }) {
@@ -271,6 +296,13 @@ export function createServiceRestartStrategy(): RestartStrategy {
       } catch (err) {
         console.error('[aalis] Error while stopping the app; restarting anyway:', err);
       }
+      try {
+        await hooks.beforeExit?.();
+      } catch (err) {
+        console.error('[aalis] Error in the pre-exit step; restarting anyway:', err);
+      }
+      // 最后一个 await 之后才看：停机途中与等收尾期间收到的终止信号都算数
+      if (hooks.signal?.aborted) return;
       process.exit(SERVICE_RESTART_EXIT_CODE);
     },
   };
@@ -290,6 +322,9 @@ export function createServiceRestartStrategy(): RestartStrategy {
  *
  * 第 4 步是「更新 core 从不可逆赌博变成可接受操作」的关键：没有它，新 core 启动失败时
  * 父进程已经退了，用户只剩手改 package.json 一条路。
+ *
+ * **终止信号**（`signal`）打断这个时序：第 2 步停完时已经收到的，不走第 3 步；第 4 步等待期间收到的，让新进程
+ * 停下、不再等它。两种情形都就此返回，见 `RespawnOptions.signal`。
  *
  * **单飞**：重启期间的第二次调用直接忽略。窗口是 500ms + stop 耗时 + 等 ready 的全程
  * （最长 30s），期间 HTTP/指令入口仍可能再次触发；不设防会 spawn 出两个 detached
@@ -327,14 +362,31 @@ export function createProcessRespawnStrategy(opts: RespawnOptions): RestartStrat
         // 无法完全停止也要往下走：僵尸态比一次不完全的重启更糟。
         console.error('[aalis] Error while stopping the app; restarting anyway:', err);
       }
+      const interrupted = (): void => {
+        if (isRestartRollback(rollback)) {
+          console.error(
+            `[aalis] Restart interrupted by a termination signal; the update stays in place and is not rolled back automatically (${rollback.reason}).`,
+          );
+        }
+      };
+      if (opts.signal?.aborted) return interrupted();
 
       const child = spawnChild(true);
-      const outcome = await new Promise<'ready' | 'timeout' | 'died'>(resolveOutcome => {
+      const outcome = await new Promise<'ready' | 'timeout' | 'died' | 'interrupted'>(resolveOutcome => {
         const timer = setTimeout(() => resolveOutcome('timeout'), readyTimeoutMs);
-        const done = (o: 'ready' | 'timeout' | 'died') => {
+        // 新进程还没报就绪时来了终止信号：当场让它停下（宿主的停机随后就退出本进程），不等它就绪
+        const onAbort = (): void => {
+          terminate(child);
+          done('interrupted');
+        };
+        // 新进程报就绪、退出或被打断时摘掉监听（超时与就绪一样随即退出本进程，不必摘）：它已退出之后（回滚途中）再来的终止信号
+        // 不该再发给它的进程组号，那个号可能已归别的进程
+        const done = (o: 'ready' | 'timeout' | 'died' | 'interrupted') => {
           clearTimeout(timer);
+          opts.signal?.removeEventListener('abort', onAbort);
           resolveOutcome(o);
         };
+        opts.signal?.addEventListener('abort', onAbort);
         child.on('message', (msg: unknown) => {
           if ((msg as { type?: unknown } | null)?.type === READY_MESSAGE) done('ready');
         });
@@ -342,6 +394,7 @@ export function createProcessRespawnStrategy(opts: RespawnOptions): RestartStrat
         child.on('error', () => done('died'));
       });
 
+      if (outcome === 'interrupted') return interrupted();
       if (outcome !== 'died') {
         try {
           child.disconnect();

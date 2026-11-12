@@ -567,7 +567,48 @@ describe('startAalis 数据目录（真实子进程）', () => {
     expect(r.code).toBe(75);
     expect(readFileSync(join(dir, 'gen.txt'), 'utf-8').trim()).toBe('1');
     expect(readdirSync(join(dir, 'run')).filter(n => n.endsWith('.lock'))).toEqual([]);
+    // 退出前文件日志已写完：停机尾声的日志在 latest.log 里
+    expect(readFileSync(join(dir, 'logs', 'latest.log'), 'utf-8')).toContain('已停止');
   });
+
+  it('前台 /restart 已启动第二代、它还在启动时第一代收到 SIGTERM：第二代也停下，不留在后台', async () => {
+    const dir = tempDir();
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+    // 两代的启动都被慢插件拖住 3 秒：第一代等第二代的插件开始激活（已接上信号处理、还没报就绪）才给自己发信号
+    const r = await run(
+      dir,
+      [],
+      { AALIS_E2E_MODE: 'restart', AALIS_E2E_APPLY_MS: '3000', AALIS_E2E_RESTART_SIGNAL: 'SIGTERM@gen2' },
+      30_000,
+    );
+    expect(r.code).toBe(0);
+    expect(readFileSync(join(dir, 'gen.txt'), 'utf-8').trim()).toBe('2');
+    // 第二代没有走到启动完成之后（夹具在那里写 rescan.json）。它的停机走没走完不在这里断言：这里的第二代经 tsx 包装层
+    // 收信号，内层没有及时回应时会被包装层强制结束
+    expect(existsSync(join(dir, 'rescan.json'))).toBe(false);
+  }, 45_000);
+
+  it.each([
+    ['前台', []],
+    ['以 --service 运行', ['--service']],
+  ] as const)(
+    '%s时 /restart 的停机途中收到 SIGTERM：停下，不启动第二代，exit 0',
+    async (_label, argv) => {
+      const dir = tempDir();
+      writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+      const r = await run(
+        dir,
+        [...argv],
+        { AALIS_E2E_MODE: 'restart', AALIS_E2E_SLOW_MS: '1500', AALIS_E2E_RESTART_SIGNAL: 'SIGTERM' },
+        30_000,
+      );
+      expect(r.code).toBe(0);
+      expect(readFileSync(join(dir, 'gen.txt'), 'utf-8').trim()).toBe('1');
+      expect(readFileSync(join(dir, 'logs', 'latest.log'), 'utf-8')).toContain('已停止');
+      expect(readdirSync(join(dir, 'run')).filter(n => n.endsWith('.lock'))).toEqual([]);
+    },
+    45_000,
+  );
 
   it('respawn 交接：令牌对得上就接手活着的锁；令牌随即从环境里删掉，退出时放掉自己这一代', async () => {
     const dir = tempDir();
