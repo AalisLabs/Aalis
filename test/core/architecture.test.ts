@@ -17,7 +17,7 @@ import { runTscProbe } from '../helpers/tsc-probe.js';
 // - primitives/：原语注册表（服务容器），只认 kernel 与类型词汇，不认识 Logger、Config
 // - infrastructure/：配置值拷贝、日志与资源记录，只依赖资源内核、原语与基础词汇
 // - composition/：服务描述符、绑定与工厂、默认服务和插件定义，不依赖编排层
-// - orchestration/：把下层机制编排成插件生命周期与应用骨架，含宿主 SPI（重启策略）
+// - orchestration/：把下层机制编排成插件生命周期与应用骨架
 // src 根只留 barrel（index）。
 //
 // 检查的是源文件**直接** import 说明符，由 TypeScript 语法树取出（import / export-from / 副作用 import /
@@ -448,7 +448,7 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 //
 // 去掉注释与空行后的代码行数。上限按改动后的实测值设定，不留余量；抬高上限的提交要写明理由，不能随别的改动一并抬高。
 // 计数方法：逐字符状态机去注释（识别字符串、模板串含嵌套 ${}），再数非空行。
-const CORE_CODE_LINE_CEILING = 2619;
+const CORE_CODE_LINE_CEILING = 2594;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

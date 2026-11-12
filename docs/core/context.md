@@ -89,16 +89,17 @@ export default definePlugin({
 
 | 描述符 | 服务名 | 说明 |
 |---|---|---|
-| `appService` | `app` | 停机、重启 |
+| `appService` | `app` | 停机 |
 | `pluginsService` | `plugins` | 插件管理动作与状态 |
 
-宿主还可以在根上提供自己的服务，core 不保证它们在场，插件宜以 `optional` 声明并在缺席时降级。Node 宿主 `@aalis/runtime` 的 `startAalis` 提供四项：
+宿主还可以在根上提供自己的服务，core 不保证它们在场，插件宜以 `optional` 声明并在缺席时降级。Node 宿主 `@aalis/runtime` 的 `startAalis` 提供五项（`host-restart` 只在守护模式）：
 
 | 描述符 | 服务名 | 契约包 | 说明 |
 |---|---|---|---|
 | `hostPaths` | `host-paths` | `@aalis/api-host-paths` | 数据目录、安装集与数据目录布局的绝对路径，见 [api-host-paths](../api/api-host-paths.md) |
 | `hostLogs` | `host-logs` | `@aalis/api-host-logs` | 读日志：最近的历史与此后的实时日志，订阅随激活撤回，见 [api-host-logs](../api/api-host-logs.md) |
 | `hostConfig` | `host-config` | `@aalis/api-host-config` | 配置文档的读写与 `save()`，见 [运行态与配置文档](config.md) |
+| `hostRestart` | `host-restart` | `@aalis/api-host-restart` | 请求宿主重启，可带回滚凭据；不能重启的宿主不提供，见 [api-host-restart](../api/api-host-restart.md) |
 | `pluginSource` | `plugin-source` | `@aalis/api-plugin-source` | 热扫描：`rescan()` 重新发现并登记新插件；`loaded(name)` 查以这个名字登记的插件是不是经插件来源加载的 |
 
 ## provide

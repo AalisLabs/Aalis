@@ -3,11 +3,11 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { RestartRollback } from '../../packages/api-host-restart/src/index.js';
 import {
   createProcessRespawnStrategy,
   createServiceRestartStrategy,
   READY_MESSAGE,
-  type RestartRollback,
   SERVICE_RESTART_EXIT_CODE,
 } from '../../packages/runtime/src/providers.js';
 

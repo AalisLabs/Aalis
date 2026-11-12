@@ -9,20 +9,16 @@ import {
   provide,
 } from '../../packages/core/src/index.js';
 
-// App 外壳的可观测行为：构造选项、注入的 logger 出错、启动横幅、restart，以及启动 / 停机 / 重启互斥。
+// App 外壳的可观测行为：构造选项、注入的 logger 出错、启动横幅，以及启动与停机互斥。
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
-type LogRecord = { level: Level; message: string; args: unknown[] };
+type LogRecord = { level: Level; message: string };
 
 /** 记录全部日志的 Logger；child 共用同一份记录，便于按条断言 */
-function recordingLogger(): Logger & { records: LogRecord[]; messages(level: Level): string[] } {
+function recordingLogger(): Logger & { messages(level: Level): string[] } {
   const records: LogRecord[] = [];
-  const at =
-    (level: Level) =>
-    (message: string, ...args: unknown[]) =>
-      void records.push({ level, message, args });
+  const at = (level: Level) => (message: string) => void records.push({ level, message });
   const logger = {
-    records,
     messages: (level: Level) => records.filter(r => r.level === level).map(r => r.message),
     debug: at('debug'),
     info: at('info'),
@@ -138,89 +134,7 @@ describe('启动横幅', () => {
   });
 });
 
-describe('App.restart', () => {
-  it('未注入 restartStrategy：同步抛「不可用」，不停机', async () => {
-    const log = recordingLogger();
-    const app = track(new App({ ...base(), logger: log }));
-
-    expect(() => app.restart()).toThrow('App.restart() 不可用：未注入 restartStrategy。');
-
-    await new Promise<void>(r => setTimeout(r, 0));
-    expect(app.stopping).toBe(false);
-    expect(log.messages('info')).not.toContain('正在停止...');
-  });
-
-  it('注入策略：下一个微任务里交控制，不在调用方的栈上；core 自己不停机，交给策略的 stop 停的是本应用，rollback 原样透传', async () => {
-    const log = recordingLogger();
-    const order: string[] = [];
-    let received: { stop: () => Promise<void>; rollback?: unknown } | undefined;
-    let handed!: () => void;
-    const handedOver = new Promise<void>(r => {
-      handed = r;
-    });
-    const app = track(
-      new App({
-        ...base(),
-        logger: log,
-        restartStrategy: {
-          restart(opts) {
-            order.push('strategy');
-            received = opts;
-            handed();
-          },
-        },
-      }),
-    );
-    await app.plugin(
-      definePlugin({
-        name: 'p',
-        uses: { lifecycle },
-        apply({ lifecycle }) {
-          lifecycle.use.onDispose(() => void order.push('disposed'));
-        },
-      }),
-    );
-    await app.plugins.idle();
-
-    const token = { snapshot: 'placeholder' };
-    app.restart({ rollback: token });
-    expect(order, 'restart() 返回时策略还没被调').toEqual([]);
-    await handedOver;
-
-    expect(received?.rollback).toBe(token);
-    // 何时停由策略决定：交出控制时应用仍在运行
-    expect(order).toEqual(['strategy']);
-    expect(app.plugins.getPlugin('p')?.state).toBe('active');
-
-    const stopping = received!.stop();
-    // 交出的 stop 就是本应用的单飞停机：与直接调 app.stop() 是同一个 Promise
-    expect(app.stop()).toBe(stopping);
-    await stopping;
-    expect(order).toEqual(['strategy', 'disposed']);
-    expect(log.messages('info')).toContain('已停止');
-  });
-
-  it.each([
-    [
-      '同步抛错',
-      () => {
-        throw new Error('策略坏了');
-      },
-    ],
-    ['返回被拒的 Promise', () => Promise.reject(new Error('策略坏了'))],
-  ])('策略的 restart %s：记 error「restart 失败」并附上原因，不外泄成未处理拒绝', async (_, restart) => {
-    const log = recordingLogger();
-    const app = track(new App({ ...base(), logger: log, restartStrategy: { restart } }));
-    app.restart();
-    await new Promise<void>(r => setTimeout(r, 0));
-    const failed = log.records.find(r => r.level === 'error' && r.message === 'restart 失败:');
-    expect((failed?.args[0] as Error | undefined)?.message).toBe('策略坏了');
-  });
-});
-
-describe('启动与停机、重启互斥', () => {
-  const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
-
+describe('启动与停机互斥', () => {
   it('重复调用 start 返回同一个 Promise，就绪回调只跑一次', async () => {
     const app = track(new App(base()));
     let ready = 0;
@@ -238,40 +152,5 @@ describe('启动与停机、重启互斥', () => {
     await app.start();
     expect(log.messages('warn')).toEqual(['应用已开始停机，忽略 start()']);
     expect(log.messages('info')).not.toContain('正在启动...');
-  });
-
-  it('重启已受理后再调 restart 记 debug 后返回，停机开始后也是：只调一次策略', async () => {
-    let calls = 0;
-    let received: { stop: () => Promise<void> } | undefined;
-    const log = recordingLogger();
-    const app = track(
-      new App({
-        ...base(),
-        logger: log,
-        restartStrategy: {
-          restart(opts) {
-            calls++;
-            received = opts;
-          },
-        },
-      }),
-    );
-    app.restart();
-    app.restart();
-    await sleep(5);
-    const stopping = received!.stop();
-    expect(() => app.restart()).not.toThrow();
-    await stopping;
-    expect(calls).toBe(1);
-    expect(log.messages('debug').filter(m => m.startsWith('restart'))).toEqual([
-      'restart: 已受理过一次，本次忽略',
-      'restart: 已受理过一次，本次忽略',
-    ]);
-  });
-
-  it('未受理过重启、停机已开始：restart 抛错', () => {
-    const app = track(new App({ ...base(), restartStrategy: { restart() {} } }));
-    void app.stop();
-    expect(() => app.restart()).toThrow('App.restart() 不可用：应用已开始停机。');
   });
 });

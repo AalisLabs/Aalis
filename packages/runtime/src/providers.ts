@@ -3,8 +3,9 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { AalisConfig } from '@aalis/api-host-config';
+import type { HostRestart, RestartRollback } from '@aalis/api-host-restart';
 import { declaresPlugin } from '@aalis/api-plugin-source';
-import type { RestartStrategy } from '@aalis/core';
+import type { App } from '@aalis/core';
 import { DefaultLogger } from '@aalis/core';
 import { CORE_CONFIG_SCHEMA, defaultsFrom } from '@aalis/schema-config';
 import { stringify as stringifyYaml } from 'yaml';
@@ -178,31 +179,43 @@ export function createFsPluginLoader(rootDir: string): PluginLoader {
 export const READY_MESSAGE = 'aalis:ready';
 
 /**
- * 重启回滚凭据——「更新后新实例无法启动」时把工程恢复到更新前的手段。
- *
- * 由发起方（市场的 core/runtime 更新）在改写 `package.json` **之前**构造，经
- * `app.restart({ rollback })` 交给策略，**全程只在父进程内存里**：触发条件（新进程
- * ready 前退出）与执行者都是父进程，不跨 spawn 边界，因此不需要落盘。
+ * 重启策略：怎么换一个新实例。host-restart 服务受理请求后把控制交给它，**时序由策略决定**——何时停掉当前实例、
+ * 何时拉起下一代、新实例没接管怎么办。
  */
-export interface RestartRollback {
-  /** 人类可读的来由，仅用于日志（如 `marketplace-update:@aalis/core`）。 */
-  reason: string;
+export interface RestartStrategy {
   /**
-   * 需要还原的文件：绝对路径 → 更新前的原始内容。
-   *
-   * `deleteIfEmpty` 表示该文件**更新前并不存在**（如原本无 lockfile 的工程被
-   * `npm install` 新建了一个），回滚时应删除而非写空——留着它会让后续的重装判定
-   * 新版仍然满足，从而什么都不做，把回滚变成一句谎话。
+   * @param opts.stop 优雅停掉当前 App
+   * @param opts.rollback 发起方给的回滚凭据：仅当策略判定「新实例未能接管」时才使用
    */
-  restore: Array<{ path: string; content: string; deleteIfEmpty?: boolean }>;
-  /**
-   * 还原文件后需要跑的命令——`package.json` 回退了，`node_modules` 还停在新版，
-   * 必须再执行一次安装才能真正回到旧状态。省略则只还原文件。
-   */
-  postRestore?: { cmd: string; args: string[]; cwd: string };
+  restart(opts: { stop: () => Promise<void>; rollback?: RestartRollback }): void | Promise<void>;
 }
 
-/** 判定不透明的 rollback 透传值是否是可用的凭据（core 不解释形状，由本层校验）。 */
+/**
+ * host-restart 服务的实现：受理一次重启请求，下一个微任务里把控制交给策略（不在调用方的栈上），自己不停机。
+ * 只受理一次：已受理过的再调记 debug 后返回（策略交出的 stop 已开始也是）；未受理过而停机已开始时抛错。
+ * 策略抛错或返回被拒的 Promise 只记 error
+ */
+export function createHostRestart(
+  app: Pick<App, 'stop' | 'stopping' | 'logger'>,
+  strategy: RestartStrategy,
+): HostRestart {
+  let accepted = false;
+  return {
+    restart(opts) {
+      if (accepted) {
+        app.logger.debug('restart: 已受理过一次，本次忽略');
+        return;
+      }
+      if (app.stopping) throw new Error('重启不可用：应用已开始停机');
+      accepted = true;
+      Promise.resolve()
+        .then(() => strategy.restart({ stop: () => app.stop(), rollback: opts?.rollback }))
+        .catch(err => app.logger.error('restart 失败:', err));
+    },
+  };
+}
+
+/** 发起方交来的 rollback 是否是可用的凭据：插件给的值在宿主这一层校验形状 */
 export function isRestartRollback(v: unknown): v is RestartRollback {
   const r = v as RestartRollback | null;
   return !!r && typeof r.reason === 'string' && Array.isArray(r.restore);

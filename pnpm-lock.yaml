@@ -426,6 +426,18 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/api-host-restart:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/api-i18n:
     dependencies:
       '@aalis/api-contributions':
@@ -1433,6 +1445,9 @@ importers:
       '@aalis/api-hooks':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-hooks
+      '@aalis/api-host-restart':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-restart
       '@aalis/api-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-i18n
@@ -2573,6 +2588,9 @@ importers:
       '@aalis/api-host-paths':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-host-paths
+      '@aalis/api-host-restart':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-restart
       '@aalis/api-package-manager':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-package-manager
@@ -2592,9 +2610,6 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/runtime':
-        specifier: workspace:*
-        version: link:../runtime
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -3927,6 +3942,9 @@ importers:
       '@aalis/api-host-paths':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-host-paths
+      '@aalis/api-host-restart':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-restart
       '@aalis/api-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-i18n
@@ -4079,6 +4097,9 @@ importers:
       '@aalis/api-host-paths':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-host-paths
+      '@aalis/api-host-restart':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-restart
       '@aalis/api-plugin-source':
         specifier: workspace:>=0.3.0 <1.0.0
         version: link:../api-plugin-source

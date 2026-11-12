@@ -317,29 +317,6 @@ describe('lifecycle.onReady：启动之后才激活的插件', () => {
     expect(log).toEqual(['consumer']);
   });
 
-  it('重启已受理、策略还没停机：这时重启出来的新实例照样跑就绪回调', async () => {
-    const { app } = world({ restartStrategy: { restart() {} } });
-    const log: string[] = [];
-    let generation = 0;
-    await app.plugin(
-      definePlugin({
-        name: 'p',
-        uses: { lifecycle },
-        apply({ lifecycle }) {
-          const mine = ++generation;
-          lifecycle.use.onReady(() => void log.push(`ready#${mine}`));
-        },
-      }),
-    );
-    await app.start();
-    app.restart();
-    await tick();
-    await app.plugins.bounce('p');
-    await app.plugins.idle();
-    await tick();
-    expect(log).toEqual(['ready#1', 'ready#2']);
-  });
-
   it('转入后台、还没激活完的插件：start() 不跑它的回调，它落定后自己跑', async () => {
     const { app } = world();
     const log: string[] = [];

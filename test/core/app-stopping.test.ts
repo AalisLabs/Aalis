@@ -34,24 +34,6 @@ describe('App.stopping', () => {
     expect(app.stopping).toBe(true);
   });
 
-  it('重启已受理、策略还没开始停机时仍是 false；策略调交给它的 stop 之后是 true', async () => {
-    let strategyStop: (() => Promise<void>) | undefined;
-    const app = world({
-      restartStrategy: {
-        restart: ({ stop }) => {
-          strategyStop = stop;
-        },
-      },
-    });
-    app.restart();
-    // 策略在下一拍才拿到 stop
-    await tick();
-    expect(app.stopping).toBe(false);
-    const stopping = strategyStop!();
-    expect(app.stopping).toBe(true);
-    await stopping;
-  });
-
   it('停机一开始就读得到：仍在初始化的插件在取消信号的监听器里读到 true', async () => {
     const app = world();
     let atAbort: boolean | undefined;

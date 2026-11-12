@@ -97,7 +97,6 @@ export default defineLocale<Source>()({
   configNotSaved: 'Not written to the config file ({error}); this change was rolled back',
   savedRestart: 'Global config saved; it takes effect after a restart',
   saved: 'Global config updated and saved',
-  noApp: 'The app is unavailable',
   restartFailed: 'Restart failed ({error}); the changes take effect at the next start',
   restarting: 'Restarting the app',
   configNotObject: 'The config field must be an object',

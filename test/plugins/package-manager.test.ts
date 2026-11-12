@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { hostConfig } from '../../packages/api-host-config/src/index.js';
+import { hostRestart, type RestartRollback } from '../../packages/api-host-restart/src/index.js';
 import { packageManager } from '../../packages/api-package-manager/src/index.js';
 import { pluginSource } from '../../packages/api-plugin-source/src/index.js';
 import {
@@ -1862,7 +1863,7 @@ describe('生产接线：装卸按插件名（即包名），卸载清理全部�
     }
   });
 
-  it('宿主没有重启策略：更新装完，回执写明 app.restart() 给的原因，包管理照常可用', async () => {
+  it('宿主不提供重启服务：更新装完，回执写明原因，包管理照常可用', async () => {
     const ROOT_DIR = '/abs-pm-norestart';
     const { app } = hostedApp({ name: 'PM' });
     productionApps.push(app);
@@ -1883,9 +1884,39 @@ describe('生产接线：装卸按插件名（即包名），卸载清理全部�
     expect(toSource(r)).toEqual({
       ok: true,
       restarting: false,
-      message: '已更新 foo@1.0.1，但应用无法自己重启（App.restart() 不可用：未注入 restartStrategy。），手动重启后生效',
+      message:
+        '已更新 foo@1.0.1，但应用无法自己重启（服务 "host-restart" 不可用（"@aalis/plugin-package-manager" 声明的依赖当前没有提供者）），手动重启后生效',
     });
     expect(toSource((await svc.update([{ name: 'foo', version: '1.0.1' }])).message)).not.toContain('正在进行中');
+  });
+
+  it('宿主提供重启服务：更新装完后请它重启一次，带上回滚凭据（来由、要还原的文件、还原后的安装命令）', async () => {
+    const ROOT_DIR = '/abs-pm-restart';
+    const { app } = hostedApp({ name: 'PM' });
+    productionApps.push(app);
+    const host = app.bind({ provide, services });
+    const asked: Array<{ rollback?: RestartRollback } | undefined> = [];
+    host.provide.use(hostRestart, { restart: opts => void asked.push(opts) }, { exclusive: true });
+    host.provide.use(
+      defineService<object>('process'),
+      mockProcess({
+        [`${ROOT_DIR}/package.json`]: JSON.stringify({ dependencies: { foo: '^1.0.0' } }),
+        [`${ROOT_DIR}/node_modules/foo/package.json`]: JSON.stringify({ name: 'foo', version: '1.0.0' }),
+      }),
+    );
+    provideHostPaths(app, ROOT_DIR);
+    await app.plugins.register(packageManagerPlugin, {});
+    await app.plugins.idle();
+    const svc = host.services.use.get(packageManager);
+    if (!svc) throw new Error('package-manager 未就绪');
+    const r = await svc.update([{ name: 'foo', version: '1.0.1' }]);
+    expect(r.ok).toBe(true);
+    expect(r.restarting).toBe(true);
+    expect(asked).toHaveLength(1);
+    const rollback = asked[0]?.rollback;
+    expect(rollback?.reason).toBe('marketplace-update:foo@1.0.1');
+    expect(rollback?.restore.map(file => file.path)).toContain(`${ROOT_DIR}/package.json`);
+    expect(rollback?.postRestore).toMatchObject({ cmd: 'npm', cwd: ROOT_DIR });
   });
 });
 

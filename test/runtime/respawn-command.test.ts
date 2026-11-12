@@ -65,7 +65,7 @@ describe('buildRespawnCommand（重生命令组装）', () => {
 // 从子进程环境里剔掉。
 // ════════════════════════════════════════════════════════════
 
-describe('isRestartRollback（core 透传的不透明凭据在本层校验）', () => {
+describe('isRestartRollback（插件交来的回滚凭据在宿主这一层校验）', () => {
   it('结构合格才认', () => {
     expect(isRestartRollback({ reason: 'x', restore: [] })).toBe(true);
     expect(isRestartRollback({ reason: 'x', restore: [{ path: '/a', content: 'c' }] })).toBe(true);

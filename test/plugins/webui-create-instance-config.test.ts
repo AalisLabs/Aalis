@@ -1,7 +1,7 @@
 import type { Logger, ServiceSelection } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { hostConfig } from '../../packages/api-host-config/src/index.js';
-import { type App, appService, config, definePlugin, pluginsService } from '../../packages/core/src/index.js';
+import { type App, config, definePlugin, pluginsService } from '../../packages/core/src/index.js';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 import { hostedApp } from '../fixtures/app.js';
 import { fixedRef, ref } from '../fixtures/service-ref.js';
@@ -53,12 +53,12 @@ async function setup(register: (app: App) => Promise<unknown> = app => app.plugi
   apps.push(app);
   await register(app);
   await app.plugins.idle();
-  const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+  const bound = app.bind({ plugins: pluginsService, hostConfig });
   const { expressApp, invoke } = captureRoutes();
   registerPluginRoutes(
     expressApp,
     {
-      app: refStub(bound.app.use),
+      restart: { use: { restart() {} } },
       source: ref(),
       plugins: refStub(bound.plugins.use),
       hostConfig: refStub(bound.hostConfig.use),

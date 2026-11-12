@@ -40,6 +40,7 @@
     "@aalis/api-host-config": "workspace:>=0.3.0 <1.0.0",
     "@aalis/api-host-logs": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-host-paths": "workspace:>=0.3.0 <1.0.0",
+    "@aalis/api-host-restart": "workspace:>=0.1.0 <1.0.0",
     "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-events": "workspace:>=0.1.0 <1.0.0"
   },

@@ -9,14 +9,14 @@
 //                      'tty'（守护进程，另载终端界面插件，e2e-probe 收尾时记一条 warn、经控制台日志写到 stderr；未捕获的异常
 //                      当场记进 cwd/uncaught.txt，fatal handler 的崩溃日志是异步追加的，赶不上先落定的停机；startAalis
 //                      返回后写 cwd/ready，不自发信号，由测试关掉它所在的伪终端）|
-//                      'tty-respawn'（守护进程，启动后经 app.restart() 启动第二代进程：respawn 出来的后代自成会话，关掉终端时收不到
+//                      'tty-respawn'（守护进程，启动后经 host-restart 服务启动第二代进程：respawn 出来的后代自成会话，关掉终端时收不到
 //                      SIGHUP。第二代启动后当即并且之后每 100ms 记一条 warn（经控制台日志写到 stderr），随后写 cwd/ready（内容为本进程与
 //                      父进程的 pid），退出时把退出码记进 cwd/gen2-exit.txt，未捕获的异常同 'tty' 记进 cwd/uncaught.txt）
 //   AALIS_E2E_ARGV     'daemon'、'tty'、'tty-respawn' 传给 startAalis 的 argv（空格隔开，缺省为空），如 --service
 //   AALIS_E2E_SLOW_MS  内联插件 onDispose 的延迟毫秒数（>=500 即让 app.stop 慢过重启策略的等待窗口）
 //   AALIS_E2E_STARTUP_SIGNAL  startAalis 还没返回时给自己发这个信号，验证启动途中收到终止信号同样走完停机：e2e-probe 的 apply 里发，
 //                      并让这次 apply 再等 1 秒；写成 `<信号>@ready` 则改在它的就绪回调里发，回调再等 1 秒。收尾时写 cwd/disposed
-//   AALIS_E2E_RESTART_SIGNAL  'restart' 模式的第一代调 app.restart() 之后 800ms（重启的停机已开始，配 AALIS_E2E_SLOW_MS 让它还没停完）
+//   AALIS_E2E_RESTART_SIGNAL  'restart' 模式的第一代请求重启之后 800ms（重启的停机已开始，配 AALIS_E2E_SLOW_MS 让它还没停完）
 //                      给自己发这个信号：验证重启途中收到终止信号时停下、不再启动第二代。写成 `<信号>@gen2` 则等第二代的 e2e-probe
 //                      开始激活（它已接上信号处理，写下 cwd/gen2-applying）才发，配 AALIS_E2E_APPLY_MS 让第二代还没启动完
 //   AALIS_E2E_APPLY_MS 设了才多登记几个内联插件：e2e-slow 提供 e2e-slow-svc，其 apply 延迟这么多毫秒（验证配置里的
@@ -24,7 +24,7 @@
 //                      e2e-slow-svc，e2e-chained 依赖 e2e-middle 提供的服务、e2e-middle 又依赖激活失败的 e2e-broken 提供的
 //                      （验证启动收敛后的告警：缺的沿链追到根，只在等的不算缺）
 //
-// 代数护栏：cwd/gen.txt 记录本入口被启动的次数。若重启策略在子命令模式下被错误注入，`restart`
+// 代数护栏：cwd/gen.txt 记录本入口被启动的次数。若 host-restart 在子命令模式下被错误提供，`restart`
 // 子命令会 spawn 一个 argv 仍带 restart 的 detached 子进程——第二代在这里立刻退出，不再往下走，
 // 测试据 gen.txt 断言只有一代。
 import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -32,7 +32,9 @@ import { resolve } from 'node:path';
 import { config, definePlugin, defineService, lifecycle, logger, provide, services } from '@aalis/core';
 import { commands } from '../../packages/api-commands/src/index.js';
 import { hostConfig } from '../../packages/api-host-config/src/index.js';
+import { hostLogs } from '../../packages/api-host-logs/src/index.js';
 import { hostPaths } from '../../packages/api-host-paths/src/index.js';
+import { hostRestart } from '../../packages/api-host-restart/src/index.js';
 import { pluginSource } from '../../packages/api-plugin-source/src/index.js';
 import { type StartAalisOptions, startAalis } from '../../packages/runtime/src/start.js';
 
@@ -40,7 +42,7 @@ const GEN_FILE = resolve(process.cwd(), 'gen.txt');
 const gen = (existsSync(GEN_FILE) ? Number(readFileSync(GEN_FILE, 'utf-8').trim() || '0') : 0) + 1;
 writeFileSync(GEN_FILE, String(gen));
 const mode = process.env.AALIS_E2E_MODE ?? 'subcommand';
-// 'restart' 与 'tty-respawn' 模式的第一代经 app.restart() 启动第二代进程，第二代照常运行；除此之外的第二次启动都是不该发生的
+// 'restart' 与 'tty-respawn' 模式的第一代经 host-restart 服务启动第二代进程，第二代照常运行；除此之外的第二次启动都是不该发生的
 const respawns = mode === 'restart' || mode === 'tty-respawn';
 if (gen > (respawns ? 2 : 1)) process.exit(99);
 const slowMs = Number(process.env.AALIS_E2E_SLOW_MS ?? '0');
@@ -73,9 +75,12 @@ const plugin = definePlugin({
           return `paths ${JSON.stringify({ data: paths.data, profile: paths.profile ?? null })}`;
         }
         if (name === 'probe') return `probe ok ${input.args.join(' ')}`.trim();
-        // 镜像 CommandRegistry：handler 抛错折成「指令执行失败」文本，不向上抛。
+        // 镜像 CommandRegistry：handler 抛错折成「指令执行失败」文本，不向上抛。宿主不提供 host-restart 时指令插件
+        // 拿到的是「服务不可用」
+        const host = services.use.get('host-restart') as { restart(): void } | undefined;
+        if (!host) return '指令执行失败: 服务 "host-restart" 不可用';
         try {
-          (services.use.get('app') as { restart(): void }).restart();
+          host.restart();
           return '正在重启应用…';
         } catch (err) {
           return `指令执行失败: ${err instanceof Error ? err.message : String(err)}`;
@@ -160,11 +165,11 @@ const opts = {
 } as StartAalisOptions;
 const app = await startAalis(opts);
 if (mode === 'tty') writeFileSync(resolve(process.cwd(), 'ready'), String(process.pid));
-// 'restart' 模式的第一代：守护进程启动后调 app.restart()。前台由重启策略启动第二代进程并交出实例锁，第二代就绪后
+// 'restart' 模式的第一代：守护进程启动后请求重启。前台由重启策略启动第二代进程并交出实例锁，第二代就绪后
 // 第一代退出；以 --service 启动时第一代停掉后以服务重启的退出码结束，由服务管理器重新启动进程（这里没有服务管理器）。
 if (respawns && gen === 1) {
   writeFileSync(resolve(process.cwd(), 'gen1-pid.txt'), String(process.pid));
-  (app.bind({ services }).services.use.get('app') as { restart(): void }).restart();
+  (app.bind({ services }).services.use.get('host-restart') as { restart(): void }).restart();
   if (restartSignal && restartAt === 'gen2') {
     const poll = setInterval(() => {
       if (!existsSync(GEN2_APPLYING)) return;
@@ -182,7 +187,7 @@ if (mode === 'tty-respawn' && gen === 2) {
 }
 // 守护路径：startAalis 已挂好信号处理器，自发一次走优雅退出（app.stop → flush → exit 0）。
 // 退出前经宿主提供的插件来源重扫一次，记下返回的新登记名单（插件都已注册，应为空）与 e2e-probe 是不是经它加载的；
-// 再记下宿主装配的配置文档：host-config 是否在根上、文档里的服务偏好是否已应用。
+// 再记下宿主装配的配置文档：host-config 是否在根上、文档里的服务偏好是否已应用；以及宿主提供的服务里哪些拒绝再登记一个提供者。
 if (mode === 'daemon' || (mode === 'restart' && gen === 2)) {
   const host = app.bind({ services }).services.use;
   const rescanned = await host.get(pluginSource)?.rescan();
@@ -209,6 +214,16 @@ if (mode === 'daemon' || (mode === 'restart' && gen === 2)) {
       preferred: host.preferred(commands) ?? null,
     }),
   );
+  const root = app.bind({ provide });
+  const exclusive = [hostPaths, hostLogs, hostConfig, hostRestart, pluginSource].filter(descriptor => {
+    try {
+      root.provide.use(descriptor as never, {} as never)();
+      return false;
+    } catch (err) {
+      return (err as { code?: string }).code === 'exclusive-conflict';
+    }
+  });
+  writeFileSync(resolve(process.cwd(), 'exclusive.json'), JSON.stringify(exclusive.map(d => d.name)));
   // 写出错走 console 的真实路径：底层写失败，错误由流在下一拍发出。前面的写还在途时，排队的块经 _writev 一并写出
   const outputError = process.env.AALIS_E2E_OUTPUT_ERROR;
   if (outputError) {

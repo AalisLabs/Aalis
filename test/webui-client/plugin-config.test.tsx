@@ -3,7 +3,7 @@ import type { ConfigSchema } from '@aalis/schema-config';
 import { fireEvent, screen, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { hostConfig } from '../../packages/api-host-config/src/index.js';
-import { type App, appService, config, definePlugin, pluginsService, services } from '../../packages/core/src/index.js';
+import { type App, config, definePlugin, pluginsService, services } from '../../packages/core/src/index.js';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { ref } from '../fixtures/service-ref.js';
@@ -90,12 +90,12 @@ async function boot(
     }),
   );
   await app.plugins.idle();
-  const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig, services });
+  const bound = app.bind({ plugins: pluginsService, hostConfig, services });
   const { expressApp, invoke } = captureRoutes();
   registerPluginRoutes(
     expressApp,
     {
-      app: bound.app,
+      restart: { use: { restart() {} } },
       source: ref(),
       plugins: bound.plugins,
       hostConfig: bound.hostConfig,

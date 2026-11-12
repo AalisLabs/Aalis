@@ -1,6 +1,7 @@
 import { failureText, unmetDependencies } from '@aalis/api-doctor';
 import { hostConfig } from '@aalis/api-host-config';
 import { hostPaths } from '@aalis/api-host-paths';
+import { hostRestart, type RestartRollback } from '@aalis/api-host-restart';
 import {
   type InstallResult,
   type PackageManagerService,
@@ -12,7 +13,6 @@ import {
 import { declaresPlugin, pluginSource } from '@aalis/api-plugin-source';
 import { type ExecResult, type ProcessService, processService } from '@aalis/api-process';
 import {
-  appService,
   type BoundOf,
   definePlugin,
   lifecycle,
@@ -23,7 +23,6 @@ import {
   provide,
   services,
 } from '@aalis/core';
-import type { RestartRollback } from '@aalis/runtime';
 import { TextError, type TextRef, textClauses, textOf, toSource } from '@aalis/schema-i18n';
 import { classifyDepSpec, type DepOrigin, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
 import { t } from './texts.js';
@@ -208,7 +207,8 @@ const uses = {
   logger,
   provide,
   services,
-  app: appService,
+  /** 更新成功之后请宿主重启接管；宿主不提供重启时包照常装好、回执写明不会自动重启 */
+  restart: optional(hostRestart),
   plugins: pluginsService,
   hostConfig: optional(hostConfig),
   source: optional(pluginSource),
@@ -244,9 +244,8 @@ function createService(caps: Caps): PackageManagerService {
     pluginStatus: () => caps.plugins.use.getStatus(),
     availableServices: () => caps.services.use.names(),
     idle: () => caps.plugins.use.idle(),
-    // 重启并交付回滚凭据。core 只透传 rollback（不解释形状），由 runtime 的重启策略
-    // 在「新实例 ready 前夭折」时消费——触发者与执行者同为父进程，全程内存不落盘。
-    restartApp: rollback => caps.app.use.restart({ rollback }),
+    // 重启并交付回滚凭据：由宿主在「新实例 ready 前夭折」时消费——触发者与执行者同为宿主进程，全程内存不落盘。
+    restartApp: rollback => caps.restart.use.restart({ rollback }),
     // 彻底卸载：dispose 上下文并从注册表移除。
     // 区别于 disable（仅置禁用态，仍滞留在插件列表里）。
     // 撤销通道 = 市场页能用所依赖的三样：页面本身 / 托管它的服务端 / 装卸能力本身。
@@ -342,8 +341,7 @@ export interface PackageManagerDeps {
    */
   cleanupConfig(instanceIds: string[], removeConfig: boolean): Promise<void>;
   /**
-   * 重启进程并交付回滚凭据（新实例启动失败时由重启策略消费）。宿主没有重启策略或应用已开始停机时同步抛错
-   * （core 的 `app.restart()`）。
+   * 重启进程并交付回滚凭据（新实例启动失败时由宿主消费）。宿主不提供重启（host-restart 缺席）或应用已开始停机时同步抛错。
    */
   restartApp(rollback: RestartRollback): void;
 }
@@ -699,7 +697,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
   }
 
   /**
-   * 操作前的 package.json 与锁文件（RestartRollback 的 restore 形状）：被打断时由本插件写回，更新成功时原样交给重启策略作回滚。
+   * 操作前的 package.json 与锁文件（RestartRollback 的 restore 形状）：被打断时由本插件写回，更新成功时原样交给宿主作回滚。
    * 原本没有的记为「写回时删掉」：npm install 会新建锁文件，回滚只写回不删的话，留着它会让 postRestore 判定新版仍满足
    * 还原后的范围、`up to date` 什么都不做；用空内容占位也不行（会得到坏 JSON）。readText 不分不存在与读失败：读不到的再看
    * 在不在，在而读不出的不启动 npm，免得记成「原本没有」、还原时把它删掉。取不到快照（在而读不出，或查在不在时被中止）时交回
@@ -1022,7 +1020,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     if (verdict) return reject(verdict);
 
     // ── 快照：预检过了才有必要 ──
-    // lockfile 与 package.json 必须一起回退，否则还原后的树是「声明旧版、锁定新版」。被打断时本插件按它写回，装完交给重启策略
+    // lockfile 与 package.json 必须一起回退，否则还原后的树是「声明旧版、锁定新版」。被打断时本插件按它写回，装完交给宿主
     const restore = await snapshotProject(root);
     if (!Array.isArray(restore)) return { ok: false, message: restore };
 
@@ -1047,12 +1045,12 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     }
 
     // ── 重启接管 ──
-    // 回滚凭据交给重启策略：只有它能观察到「新实例 ready 前夭折」。插件级失败不在此列
+    // 回滚凭据交给宿主：只有它能观察到「新实例 ready 前夭折」。插件级失败不在此列
     // ——插件启动失败会停在 error 态且 WebUI 可见，自动回滚反而会掩盖问题。
     // postRestore 钉**精确旧版**，不用裸 `npm install`。
     // 裸 install 只能按还原后的 package.json 重解析，而声明通常是 caret 范围（`^1.0.0`），
     // 刚崩掉的新版（1.1.0）本身就满足它——于是 npm 又把它装回来，node_modules 分毫未变，
-    // 而重启策略照样报告已回滚，并重新启动进程运行旧版本。实测：有锁时正常，无锁时静默失效。
+    // 而宿主照样报告已回滚，并重新启动进程运行旧版本。实测：有锁时正常，无锁时静默失效。
     // `--no-save` 保证 package.json 维持 restore 写回的原样，不被 npm 改写成 `^旧版`。
     // 降级守卫已保证每个 target 都有已装版本（读不到的在那里就被拒了），此处的 undefined
     // 过滤只是让类型收窄，不承担逻辑。
@@ -1078,7 +1076,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
         postRestore: { cmd: 'npm', args: ['install', ...pinned, '--no-save', '--no-audit', '--no-fund'], cwd: root },
       });
     } catch (err) {
-      // 宿主没有重启策略（嵌入宿主）或应用已开始停机时 core 同步抛错：包已装好、不会重启，锁照常放开，回执照实说
+      // 宿主不提供重启（嵌入宿主）或应用已开始停机时同步抛错：包已装好、不会重启，锁照常放开，回执照实说
       return { ok: true, restarting: false, message: t('updatedRestartUnavailable', { specs, error: textOf(err) }) };
     }
     log.info(`更新完成，正在重启接管: ${specs.join(' ')}`);

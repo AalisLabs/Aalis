@@ -5,6 +5,7 @@ import { describeUnmet, unmetDependencies } from '@aalis/api-doctor';
 import { events } from '@aalis/api-events';
 import { hostLogs } from '@aalis/api-host-logs';
 import { hostPaths } from '@aalis/api-host-paths';
+import { hostRestart } from '@aalis/api-host-restart';
 import { pluginSource } from '@aalis/api-plugin-source';
 import { App, DefaultLogger, LogHub, type LogLevel, provide, services } from '@aalis/core';
 import { CORE_CONFIG_SCHEMA, CORE_RESTART_KEYS, readFieldValue, type SchemaField } from '@aalis/schema-config';
@@ -28,6 +29,7 @@ import { createPluginDiscovery, type PluginLoader } from './plugin-discovery.js'
 import {
   createFsSecretsProvider,
   createFsYamlConfigProvider,
+  createHostRestart,
   createProcessRespawnStrategy,
   createServiceRestartStrategy,
   READY_MESSAGE,
@@ -53,7 +55,7 @@ import { tryDispatchSubcommand } from './subcommand.js';
 // 数据目录没初始化就拒绝启动，只提示怎样初始化：绝不在找不到数据目录时静默创建一个空的家。
 //
 // 子命令进程是与守护进程零通信的一次性实例，因此不装文件日志（会把守护进程正在写的 latest.log 轮转走）、
-// 不注入重启策略（`restart` 会 spawn 出 argv 仍带 restart 的 detached 子进程，无限连环——实测）。
+// 不提供 host-restart 服务（`restart` 会 spawn 出 argv 仍带 restart 的 detached 子进程，无限连环——实测）。
 //
 // 宿主的「I/O 那一层」（日志 sink / 子命令分发）全在本包，core 只产生 LogEntry。终端模式由改它的插件自己复原。
 
@@ -294,19 +296,6 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
     name: store.get('name'),
     logLevel: startup.logLevel as LogLevel | undefined,
     slowThresholdMs: startup.slowThresholdMs as number | undefined,
-    // 子命令进程没有重启能力，不注入策略：`app.restart()` 按 core 语义抛「不可用」，指令层折成失败文案。
-    // 注入的话，`restart` 子命令在 app.stop 超过策略 500ms 等待时会 spawn 一个 argv 仍带 restart 的
-    // detached 子进程，新进程再命中 restart……无限连环（实测 5 代，Ctrl+C 打不到）。
-    restartStrategy: subcommandMode
-      ? undefined
-      : hostArgs.service
-        ? createServiceRestartStrategy({ signal: terminating.signal, beforeExit: flushLogs })
-        : createProcessRespawnStrategy({
-            appDir: paths.app,
-            cwd: startCwd ?? paths.data,
-            ...(instanceLock ? { env: { [HANDOFF_ENV]: instanceLock.handoffToken } } : {}),
-            signal: terminating.signal,
-          }),
     // 宿主读取 @aalis/core 的实际版本注入启动 banner——core 环境无关、不自读 package.json。
     version: readCoreVersion(),
   });
@@ -317,6 +306,20 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   // 日志接 App 写的那个中枢（runtime 不注入，即默认中枢），历史读本轮的文件日志
   host.provide.use(hostPaths, paths, { exclusive: true });
   host.provide.use(hostLogs, createHostLogs(LogHub.default, fileLogger, app.logger), { exclusive: true });
+  // 子命令进程没有重启能力，不提供 host-restart：`restart` 子命令拿到「服务不可用」，指令层折成失败文案。
+  // 提供的话，`restart` 子命令在 app.stop 超过策略 500ms 等待时会 spawn 一个 argv 仍带 restart 的
+  // detached 子进程，新进程再命中 restart……无限连环（实测 5 代，Ctrl+C 打不到）。
+  if (!subcommandMode) {
+    const strategy = hostArgs.service
+      ? createServiceRestartStrategy({ signal: terminating.signal, beforeExit: flushLogs })
+      : createProcessRespawnStrategy({
+          appDir: paths.app,
+          cwd: startCwd ?? paths.data,
+          ...(instanceLock ? { env: { [HANDOFF_ENV]: instanceLock.handoffToken } } : {}),
+          signal: terminating.signal,
+        });
+    host.provide.use(hostRestart, createHostRestart(app, strategy), { exclusive: true });
+  }
   installHostConfig(app, store, opts.configSync);
   // 默认值从 configSchema 派生（唯一声明来源），发现驱动每批定下要登记的定义后、登记前深合并进文档；登记时原样交给 core
   const discovery = createPluginDiscovery(

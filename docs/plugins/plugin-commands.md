@@ -24,6 +24,7 @@ export default definePlugin({
     contributions: optional(contributions),
     i18n: optional(i18n),
     app: appService,
+    restart: optional(hostRestart),
     events,
     hooks,
     lifecycle,

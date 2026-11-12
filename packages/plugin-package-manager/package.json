@@ -34,23 +34,21 @@
     "@aalis/api-plugin-source": "workspace:>=0.3.0 <1.0.0",
     "@aalis/api-host-config": "workspace:>=0.3.0 <1.0.0",
     "@aalis/api-host-paths": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-host-restart": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-package-manager": "workspace:>=0.3.0 <1.0.0",
     "@aalis/schema-i18n": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/runtime": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.21.0 <1.0.0",
-    "@aalis/runtime": ">=0.20.0 <1.0.0"
+    "@aalis/core": ">=0.21.0 <1.0.0"
   },
   "aalis": {
     "service": {
       "required": [
-        "app",
         "host-paths",
         "lifecycle",
         "logger",
@@ -61,6 +59,7 @@
       ],
       "optional": [
         "host-config",
+        "host-restart",
         "plugin-source"
       ],
       "provides": [

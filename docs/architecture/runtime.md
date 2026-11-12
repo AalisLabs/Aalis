@@ -5,9 +5,9 @@
 Aalis 把「内核」和「宿主」分开：
 
 - **`@aalis/core`** = **环境无关内核**。不碰 I/O、不读 `process.env`、不知道 node_modules，
-  环境专有件（重启策略、版本号等）经 `AppOptions` 注入，日志时钟随 logger 注入；插件定义与各实例配置由宿主登记时交来（设计理念见 docs/core）。
+  环境专有件（版本号等）经 `AppOptions` 注入，日志时钟随 logger 注入；插件定义与各实例配置由宿主登记时交来（设计理念见 docs/core）。
 - **`@aalis/runtime`** = **Node 宿主层**。用 Node API 承担 core 刻意不做的几件事
-  （插件发现 / 配置文档 / 重启策略），并提供「一行启动」`startAalis`。
+  （插件发现 / 配置文档 / 重启），并提供「一行启动」`startAalis`。
 
 core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Deno / 浏览器 / 嵌入环境中运行，
 **另写一个宿主包**实现同样契约即可，core 与各插件契约保持不变（忒修斯之船）。
@@ -38,7 +38,8 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 | `installHostConfig(app, store, opts?)` | 把文档作为 `host-config` 服务独占登记在根激活上，并应用文档里的服务偏好。`opts` 传交给配置同步的同一份，`host-config` 的 `trimUnknownFields` 据此声明宿主的裁剪政策（缺省为裁剪）。插件拿到的 `save()` 兑现即已落盘（宿主不持久化时立即兑现、不写盘），失败以拒绝传出并已记一笔日志（拒写记告警，其它记 error）；`applyPluginConfig` 在这里实现，插件拿到的 `setPluginConfig` 拒收密钥字段上的明文。须在登记任何插件之前调用。 |
 | `withPluginConfigSync(app, store, opts?)` | 加载政策：返回交给 `createPluginDiscovery` 的 `options`（`{ prepare }`）。发现驱动每批定下要登记的定义后、登记前，把 `configSchema` 派生的默认值深合并进文档，默认裁剪 schema 外字段，并把密钥字段上的明文移进密钥存储；这一批有改动就落盘一次（冷启动整批一次）。某个定义同步时抛错只记该条、不登记它。 |
 | `syncPluginDefaults` / `handleConfigChanged` / `installConfigHotReload` | 同一政策的其余入口，参数为 `(app, store, opts?)`，后两者在 `store` 之后另收发现驱动 `discovery`；`syncPluginDefaults` 与 `handleConfigChanged` 另收可选的尾参数 `previous`（变更前的文档，热重载时作拆密钥的基线，`installConfigHotReload` 自动传）。三者依次：为已登记实例补默认值并裁剪（在册而文档里没有配置段的后缀实例除外，它等着卸载，同步与重载都不碰）；处理外部变更（文件里已没有配置段的后缀实例卸载，其余实例解析后的配置与运行态有差异的经 `updateConfig` 重建（禁用插件只换配置、保持禁用），新出现的后缀实例经 `discovery.registerConfiguredInstances()` 登记）；接管变更监听：应用开始停机之后（`app.stopping`）到来的变更不再重载，监听在宿主根收尾时摘掉。 |
-| `createProcessRespawnStrategy({ appDir })` | 进程级重启策略（`app.restart()` → 子进程重生；开发模式在安装集里找本地 tsx）。可选的 `signal` 由宿主在因终止信号发起停机时 abort：重启途中收到终止信号的，还没启动新进程就不再启动，已启动、还没报就绪的让它停下（给它的进程组发 SIGTERM；Windows 上是强制结束），进程由那次停机结束，不等新进程退出：它在后台停下，这期间还占着实例锁。 |
+| `createHostRestart(app, strategy)` | `host-restart` 服务的实现（`@aalis/api-host-restart`）：受理一次重启请求，下一个微任务里把控制交给重启策略 `strategy.restart({ stop, rollback })`，停机与换新实例的时序由策略决定。只受理一次：已受理过的再调记 debug 后返回；未受理过而停机已开始时抛错；策略失败只记 error。 |
+| `createProcessRespawnStrategy({ appDir })` | 进程级重启策略（子进程重生；开发模式在安装集里找本地 tsx）。可选的 `signal` 由宿主在因终止信号发起停机时 abort：重启途中收到终止信号的，还没启动新进程就不再启动，已启动、还没报就绪的让它停下（给它的进程组发 SIGTERM；Windows 上是强制结束），进程由那次停机结束，不等新进程退出：它在后台停下，这期间还占着实例锁。 |
 | `createServiceRestartStrategy(hooks?)` / `SERVICE_RESTART_EXIT_CODE` | 服务形态的重启策略：停掉 App 后以 75 退出，由服务管理器重新启动进程（见「实例锁」的服务形态重启）。`hooks.beforeExit` 在退出前等到落定（被拒时记一条、照样退出），`startAalis` 在这里把文件日志写完；`hooks.signal` 同上，退出之前 abort 了就不以 75 退出。 |
 
 两种重启都沿用原来的环境变量：前台重启的新进程继承当前进程的环境，服务形态由服务管理器按服务配置里的环境重新启动进程，都不重读 shell 的配置。改了环境变量要从改过的环境重新启动 Aalis：前台运行的先停掉，再从新开的终端启动；服务形态改了服务配置要让服务管理器重新载入（launchd 先 `bootout` 再 `bootstrap`，systemd 先 `daemon-reload` 再 `restart`）。这样重启不会丢掉启动时在命令前临时给的变量，也不与服务管理器给的环境冲突。
@@ -130,7 +131,7 @@ profile 只由 `--profile` 与 `AALIS_PROFILE` 给出：经 `--data` 或 `AALIS_
 子命令进程是完整加载全部插件、但与正在运行的守护进程零通信的一次性实例，由此有三条边界：
 
 - 不写 `logs/latest.log`，也不轮转（否则会把守护进程正在写的日志改名移走）；日志走 stderr，stdout 只有命令结果，便于脚本消费；
-- 没有重启能力：不注入重启策略，`restart` 子命令返回「不可用」而非重启守护进程；
+- 没有重启能力：不提供 `host-restart` 服务，`restart` 子命令返回「不可用」而非重启守护进程；
 - `status` / `shutdown` 只作用于这个临时实例。写数据的指令按数据落在哪分两类：落在 `aalis.config.yaml`
   的（如 `auto`）经保存触发守护进程的配置热重载，会生效；落在各插件自己内存态并各自落盘的
   （如 `level` 的等级表、`session.*` 的会话覆盖）在守护进程运行期间不会对其生效，且可能被守护进程下次落盘
@@ -143,8 +144,8 @@ profile 只由 `--profile` 与 `AALIS_PROFILE` 给出：经 `--data` 或 `AALIS_
 0. **数据目录与安装集**：解析数据目录（见「数据目录」），处理 `--init`，没初始化就退出；没传插件加载器而安装集里没有 `package.json` 时也退出。
 1. **实例锁**：守护模式取实例锁（见「实例锁」），被占用就退出。之后才装日志 sink、写日志：第二个实例不会把正在用的 `latest.log` 轮转走。
 2. **文档与密钥**：`createFsYamlConfigProvider(<数据目录>/aalis.config.yaml)` 读 YAML，`createFsSecretsProvider(<数据目录>/secrets.yaml)` 读密钥，`createConfigStore(config, provider, secrets)` 建配置文档。任一文件写坏或读不了时一行报错退出（exit 1），报错不含文件内容。
-3. **App**：`new App({ name, logLevel, slowThresholdMs, restartStrategy, version })`，`name`、`logLevel` 与 `slowThresholdMs` 取自文档，后两个按 `CORE_CONFIG_SCHEMA` 判定、不合法的告警后交给 core 默认。子命令模式不注入重启策略。
-4. **host-paths、host-logs 与 host-config**：在根上独占提供 `host-paths` 与 `host-logs`（`createHostLogs`：历史读本轮的 `logs/latest.log`，实时接默认日志中枢；子命令模式不写文件日志，没有历史），再 `installHostConfig(app, store, opts.configSync)`。文档里的服务偏好在全部提供者上线之前生效。
+3. **App**：`new App({ name, logLevel, slowThresholdMs, version })`，`name`、`logLevel` 与 `slowThresholdMs` 取自文档，后两个按 `CORE_CONFIG_SCHEMA` 判定、不合法的告警后交给 core 默认。
+4. **host-paths、host-logs、host-restart 与 host-config**：在根上独占提供 `host-paths` 与 `host-logs`（`createHostLogs`：历史读本轮的 `logs/latest.log`，实时接默认日志中枢；子命令模式不写文件日志，没有历史）；守护模式再独占提供 `host-restart`（`createHostRestart`，带 `--service` 时用服务形态的策略，否则用进程重生的策略；子命令模式不提供）；然后 `installHostConfig(app, store, opts.configSync)`。文档里的服务偏好在全部提供者上线之前生效。
 5. **加载政策**：`withPluginConfigSync(app, store, opts.configSync)` 建配置同步。
 6. **发现**：`createPluginDiscovery(app, loader, store, <配置同步>)` 建发现驱动（加载器缺省 `createNodeModulesPluginLoader(<安装集>)`，配置同步经 `prepare` 挂上），`startAalis` 以它的 `rescan` 与 `loaded` 在根上独占提供 `plugin-source`；守护模式在 `loadAll()` 之前挂上终止信号与输出断开的处理器，此后收到的都走完停机；`loadAll()` 整批登记全部插件，首批规范化结果在登记前落盘一次。子命令模式在此分发并退出，否则 `app.start()`；加载或启动期间已开始停机的，不再往下走（不向父进程报就绪、不接热重载）。
 7. **热重载**：`installConfigHotReload(app, store, discovery, opts.configSync)`，文件里新出现的后缀实例经发现驱动登记；应用开始停机之后到来的变更不再重载，宿主根收尾时摘掉监听。
@@ -162,8 +163,8 @@ profile 只由 `--profile` 与 `AALIS_PROFILE` 给出：经 `--data` 或 `AALIS_
 
 ## 怎么为别的环境写宿主
 
-core 的 `App` 构造只接收环境无关的选项（`name` / `logLevel` / `restartStrategy` /
-`version` / `logHub` / `logger` / `disposeTimeoutMs` / `slowThresholdMs`，全部可省），插件发现与配置文档都不经它注入。
+core 的 `App` 构造只接收环境无关的选项（`name` / `logLevel` /
+`version` / `logHub` / `logger` / `disposeTimeoutMs` / `slowThresholdMs`，全部可省），插件发现、配置文档与重启都不经它注入。
 `startAalis` 从配置文件顶层读 `slowThresholdMs` 注入（改了要重启），其余时长用 core 默认值。
 `@aalis/runtime` 的包入口会引入 Node 模块，非 Node 宿主不能直接复用，要用该环境的 API 自备以下几样：
 
@@ -177,10 +178,8 @@ core 的 `App` 构造只接收环境无关的选项（`name` / `logLevel` / `res
   文档里的服务偏好经根绑定的 `services.use.prefer` 应用（全局偏好与给 `{ for }` 的本插件偏好），放在登记插件之前。schema 里 `secret: true` 的字段存在哪由宿主定：
   Node 宿主存进 `secrets.yaml`、文档里只留引用，交给 core 之前解析回原值；不做这一层的宿主把值以明文留在文档里，
   插件读取的方式不变。
-- **重启策略**：实现 `RestartStrategy`，经 `AppOptions.restartStrategy` 注入（例：浏览器里「重启」改为重建实例）；
-  不注入时 `app.restart()` 抛错。
 
-四项宿主服务都经根绑定 `app.bind({ provide })` 登记：
+五项宿主服务都经根绑定 `app.bind({ provide })` 登记：
 
 - `hostPaths`（`@aalis/api-host-paths`）：数据目录与安装集的绝对路径。`@aalis/plugin-storage-local` 与
   `@aalis/plugin-package-manager` 以 required 声明它，不提供时两者停在 pending；WebUI 以 `optional` 声明，
@@ -188,8 +187,9 @@ core 的 `App` 构造只接收环境无关的选项（`name` / `logLevel` / `res
 - `hostLogs`（`@aalis/api-host-logs`）：要让插件读日志流时提供（CLI 与 WebUI 的日志页以 `optional` 声明，缺席时日志页为空、WebUI 的日志历史接口返回 503）。
 - `hostConfig`（`@aalis/api-host-config`）：要让管理类插件读写配置文档时提供。
 - `pluginSource`（`@aalis/api-plugin-source`）：能在运行中重新发现插件时提供。
+- `hostRestart`（`@aalis/api-host-restart`）：宿主能重启时提供（例：浏览器里「重启」改为重建实例）。不提供时 `/restart` 指令与 WebUI 的重启按钮回报失败，市场更新照常装好、回执写明不会自动重启。
 
 `hostPaths` 与 `hostConfig` 都要在登记任何插件之前就位，顺序为先提供 `hostPaths`，再 `installHostConfig`。
-后三项不提供时，以 `optional` 声明它们的插件自行降级：市场视同没有新插件，WebUI 读写配置文档与扫描插件的接口返回 503。
+后四项不提供时，以 `optional` 声明它们的插件自行降级：市场视同没有新插件，WebUI 读写配置文档与扫描插件的接口返回 503。
 
 在此之上再写一个等价的 `startXxx`。**core 与各插件契约不变**——这正是把 runtime 单独成包的目的。

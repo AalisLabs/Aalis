@@ -4,15 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { hostConfig } from '../../packages/api-host-config/src/index.js';
 import { llm } from '../../packages/api-llm/src/index.js';
 import type { SessionMethodResult } from '../../packages/api-session-protocol/src/index.js';
-import {
-  type App,
-  appService,
-  config,
-  definePlugin,
-  optional,
-  pluginsService,
-  services,
-} from '../../packages/core/src/index.js';
+import { type App, config, definePlugin, optional, pluginsService, services } from '../../packages/core/src/index.js';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 import type { ConfigSchema } from '../../packages/schema-config/src/index.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
@@ -166,12 +158,12 @@ async function boot({
     definePlugin({ name: NAME, configSchema: SCHEMA, uses: { config, llm: optional(llm) }, apply() {} }),
   );
   await app.plugins.idle();
-  const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig, services });
+  const bound = app.bind({ plugins: pluginsService, hostConfig, services });
   const { expressApp, invoke } = captureRoutes();
   registerPluginRoutes(
     expressApp,
     {
-      app: bound.app,
+      restart: { use: { restart() {} } },
       source: ref(),
       plugins: bound.plugins,
       hostConfig: bound.hostConfig,

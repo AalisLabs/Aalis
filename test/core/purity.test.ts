@@ -54,6 +54,7 @@ const RUNTIME_EXPORTS = [
 /** 已删机制或内部实现，不得从包根出现 */
 const FORBIDDEN_ROOT_EXPORTS = [
   'createApp',
+  'RestartStrategy',
   'formatLogLine',
   'parseLogLine',
   'ModuleHandle',
@@ -167,7 +168,7 @@ describe('core 公开面快照（增删必须是有意识的决定）', () => {
   ContributionSpec,
   ContributionHandle,
 } from '@aalis/core';
-import { ContributionRegistry, createApp, EventBus, formatLogLine, HookRegistry, parseLogLine, PluginManager, requiresBounceOnDepChange, ServiceContainer, serviceFactory, unwrapPluginModule, useModule, pluginDefinitionOf, ConfigManager, hostConfig, hooks, contributions } from '@aalis/core';
+import { ContributionRegistry, createApp, RestartStrategy, EventBus, formatLogLine, HookRegistry, parseLogLine, PluginManager, requiresBounceOnDepChange, ServiceContainer, serviceFactory, unwrapPluginModule, useModule, pluginDefinitionOf, ConfigManager, hostConfig, hooks, contributions } from '@aalis/core';
 `;
     const good = runTscProbe(header);
     expect(good, `合法探针应能编过，实际：${good.join('\n') || '（零错误）'}`).toEqual([]);

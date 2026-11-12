@@ -1,9 +1,9 @@
 import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type AalisConfig, hostConfig } from '../../packages/api-host-config/src/index.js';
+import { hostRestart } from '../../packages/api-host-restart/src/index.js';
 import {
   type App,
-  appService,
   definePlugin,
   optional,
   type PluginDefinition,
@@ -32,7 +32,7 @@ function world(config: Partial<AalisConfig>) {
   const { expressApp, invoke } = captureRoutes();
   const panel = definePlugin({
     name: 'console',
-    uses: { app: optional(appService), plugins: optional(pluginsService), hostConfig: optional(hostConfig) },
+    uses: { restart: optional(hostRestart), plugins: optional(pluginsService), hostConfig: optional(hostConfig) },
     apply(caps) {
       registerPluginRoutes(
         expressApp,

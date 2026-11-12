@@ -5,6 +5,7 @@ import { contributions } from '@aalis/api-contributions';
 import { events } from '@aalis/api-events';
 import { gateway, INBOUND_PHASE, type InboundPhaseData } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
+import { hostRestart } from '@aalis/api-host-restart';
 import { i18n } from '@aalis/api-i18n';
 import { type ClearTypeContribution, memory } from '@aalis/api-memory';
 import { tools } from '@aalis/api-tools';
@@ -80,6 +81,8 @@ const uses = {
   /** 回复与帮助按这条指令所在会话的语言渲染；缺席时按原文 */
   i18n: optional(i18n),
   app: appService,
+  /** /restart 请宿主重启；宿主不提供重启时指令回报失败 */
+  restart: optional(hostRestart),
   events,
   hooks,
   /** 停用时结算等待中的意图确认 */
@@ -111,6 +114,7 @@ function registerCommands({
   contributions,
   i18n,
   app,
+  restart,
   events,
   hooks,
   lifecycle,
@@ -284,7 +288,7 @@ function registerCommands({
   });
 
   commands.use.command('restart', t('restartDescription'), { visibility: 'restricted' }).action(async () => {
-    app.use.restart();
+    restart.use.restart();
     return t('restarting');
   });
 

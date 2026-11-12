@@ -34,6 +34,7 @@
 | [api-hooks](./api-hooks.md) | `hooks` 描述符 + `Hooks`（`middleware` / `run`）+ 扩展点 `HookContextMap` | plugin-hooks |
 | [api-host-config](./api-host-config.md) | `hostConfig` 描述符（服务名 `host-config`）+ `HostConfig` + 配置文档类型 `AalisConfig` | 宿主提供（`@aalis/runtime`） |
 | [api-host-logs](./api-host-logs.md) | `hostLogs` 描述符（服务名 `host-logs`）+ `HostLogs`：最近的日志与此后的实时日志 | 宿主提供（`@aalis/runtime`） |
+| [api-host-restart](./api-host-restart.md) | `hostRestart` 描述符（服务名 `host-restart`）+ `HostRestart`：请求宿主重启，可带回滚凭据 `RestartRollback` | 宿主提供（`@aalis/runtime`） |
 | [api-host-paths](./api-host-paths.md) | `hostPaths` 描述符（服务名 `host-paths`）+ `HostPaths`：数据目录、安装集与数据目录布局的绝对路径 | 宿主提供（`@aalis/runtime`） |
 | [api-i18n](./api-i18n.md) | `i18n` 描述符 + `I18nService`；出口共用的 `localizeFor`、贡献点 `i18n:pack` | plugin-i18n |
 | [api-media](../services/media.md) | `media` 描述符 | plugin-media |

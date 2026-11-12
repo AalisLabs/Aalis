@@ -17,10 +17,10 @@ function world() {
 const keysOf = (value: unknown) => Object.keys(value as object).sort();
 
 describe('宿主服务只交出契约方法', () => {
-  it('app：只有 stop / restart，拿不到注册表与根绑定', () => {
+  it('app：只有 stop，拿不到注册表与根绑定', () => {
     const app = world();
     const svc = app.bind({ services }).services.use.get(appService);
-    expect(keysOf(svc)).toEqual(['restart', 'stop']);
+    expect(keysOf(svc)).toEqual(['stop']);
     const raw = svc as unknown as Record<string, unknown>;
     expect(raw.services).toBeUndefined();
     expect(raw.bind).toBeUndefined();

@@ -93,7 +93,6 @@ const SOURCE = {
   configNotSaved: '未写入配置文件（{error}），本次修改已撤回',
   savedRestart: '全局配置已保存，重启后生效',
   saved: '全局配置已更新并保存',
-  noApp: 'App 不可用',
   restartFailed: '重启失败（{error}），改动在下次启动时生效',
   restarting: '正在重启应用',
   configNotObject: 'config 字段必须是对象',

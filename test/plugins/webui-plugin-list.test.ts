@@ -1,6 +1,6 @@
 import type { CommandService } from '@aalis/api-commands';
 import type { ToolService } from '@aalis/api-tools';
-import type { AppService, PluginManagerService, ServiceSelection } from '@aalis/core';
+import type { PluginManagerService, ServiceSelection } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { events } from '../../packages/api-events/src/index.js';
@@ -69,7 +69,7 @@ function mountPluginRoutes(
   registerPluginRoutes(
     expressApp,
     {
-      app: stub<AppService>({ restart: () => {} }),
+      restart: { use: { restart() {} } },
       source: ref(),
       plugins: stub<PluginManagerService>(app.plugins),
       hostConfig: app.bind({ hostConfig }).hostConfig,

@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { type Approval, type ApprovalService, approvals } from '../../packages/api-approval/src/index.js';
 import { commands } from '../../packages/api-commands/src/index.js';
 import { contributions } from '../../packages/api-contributions/src/index.js';
+import { hostRestart } from '../../packages/api-host-restart/src/index.js';
 import { type LLMModel, llm } from '../../packages/api-llm/src/index.js';
 import { packageManager } from '../../packages/api-package-manager/src/index.js';
 import { type PlatformAdapter, platform } from '../../packages/api-platform/src/index.js';
@@ -405,13 +406,11 @@ describe('管理面 REST 的回应与契约', () => {
     });
 
     const port = await freePort();
-    ({ app } = hostedApp(
-      { plugins: { [PROBE]: { level: 1 } } },
-      { logger, provider: { save() {} }, restartStrategy: { restart() {} } },
-    ));
+    ({ app } = hostedApp({ plugins: { [PROBE]: { level: 1 } } }, { logger, provider: { save() {} } }));
     provideEvents(app);
     provideHostPaths(app, home);
     provideHostLogs(app, { file: join(home, 'logs', 'latest.log') });
+    app.bind({ provide }).provide.use(hostRestart, { restart() {} }, { exclusive: true });
     app.bind({ provide }).provide.use(webuiClient, { getClientDir: () => join(home, 'client') });
     await app.pluginAll(
       [storageLocalPlugin, contributionsPlugin, i18nPlugin, doubles, model, failing, probe(home)].map(definition => ({

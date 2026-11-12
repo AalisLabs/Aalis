@@ -4,10 +4,10 @@ import type { Socket } from 'node:net';
 import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type AalisConfig, hostConfig } from '../../packages/api-host-config/src/index.js';
+import { hostRestart } from '../../packages/api-host-restart/src/index.js';
 import {
   type App,
   type AppOptions,
-  appService,
   config,
   definePlugin,
   defineService,
@@ -54,7 +54,7 @@ function world(
   const panel = definePlugin({
     name: SELF,
     uses: {
-      app: optional(appService),
+      restart: optional(hostRestart),
       plugins: optional(pluginsService),
       hostConfig: optional(hostConfig),
       services,

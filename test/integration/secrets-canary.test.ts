@@ -6,7 +6,6 @@ import { parse, stringify } from 'yaml';
 import { hostConfig } from '../../packages/api-host-config/src/index.js';
 import {
   App,
-  appService,
   config,
   definePlugin,
   type Logger,
@@ -98,12 +97,12 @@ describe('金丝雀密钥不进主配置文件', () => {
     expect(canaries(), '启动同步把手写进配置文件的明文移走').toEqual([]);
     expect(seen).toEqual(['CANARY-1-PLACEHOLDER']);
 
-    const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+    const bound = app.bind({ plugins: pluginsService, hostConfig });
     const { expressApp, invoke } = captureRoutes();
     registerPluginRoutes(
       expressApp,
       {
-        app: refStub(bound.app.use),
+        restart: { use: { restart() {} } },
         source: ref(),
         plugins: refStub(bound.plugins.use),
         hostConfig: refStub(bound.hostConfig.use),

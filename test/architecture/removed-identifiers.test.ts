@@ -391,6 +391,8 @@ const REMOVED: Array<[string, string]> = [
   ['createApp(', 'App 的工厂函数：与 new App 等价，只留构造函数一种写法'],
   ['`createApp`', 'App 的工厂函数：与 new App 等价，只留构造函数一种写法'],
   ['devMode', '只管两条告警报不报的开关（重复 provide、提供了却没写进 provides），两条常开'],
+  ['restartStrategy', 'AppOptions 的重启策略选项：重启由宿主以 host-restart 服务提供'],
+  ['app.restart(', 'App 与应用服务上的重启入口：改经 host-restart 服务'],
 ];
 
 /**

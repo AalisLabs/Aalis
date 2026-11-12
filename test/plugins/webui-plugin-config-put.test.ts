@@ -1,9 +1,9 @@
-import type { AppService, Logger, PluginManagerService, ServiceSelection } from '@aalis/core';
+import type { Logger, PluginManagerService, ServiceSelection } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type AalisConfig, type HostConfig, hostConfig } from '../../packages/api-host-config/src/index.js';
 import { assertValidInstanceId } from '../../packages/core/src/composition/plugin-definition.js';
-import { App, appService, config, definePlugin, pluginsService } from '../../packages/core/src/index.js';
+import { App, config, definePlugin, pluginsService } from '../../packages/core/src/index.js';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 import { type ConfigStore, createConfigStore, installHostConfig } from '../../packages/runtime/src/config-store.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
@@ -39,19 +39,14 @@ function silentApp(opts?: { config?: Partial<AalisConfig>; logger?: Logger }): {
   return hosted;
 }
 
-function attachRoutes(opts: {
-  app: AppService;
-  plugins: PluginManagerService;
-  hostConfig: HostConfig;
-  logger?: Logger;
-}): {
+function attachRoutes(opts: { plugins: PluginManagerService; hostConfig: HostConfig; logger?: Logger }): {
   putPlugin: (name: string, body: unknown) => Promise<{ status: number; body?: unknown }>;
 } {
   const { expressApp, invoke } = captureRoutes();
   registerPluginRoutes(
     expressApp,
     {
-      app: refStub(opts.app),
+      restart: { use: { restart() {} } },
       source: ref(),
       plugins: refStub(opts.plugins),
       hostConfig: refStub(opts.hostConfig),
@@ -111,9 +106,8 @@ describe('PUT /api/plugins/:name/config 与 watch 路径对齐', () => {
     expect(app.plugins.getPlugin('target')?.state).toBe('active');
     expect(seen?.apiKey).toBe('sk-REAL-SECRET');
 
-    const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+    const bound = app.bind({ plugins: pluginsService, hostConfig });
     const api = attachRoutes({
-      app: bound.app.use,
       plugins: bound.plugins.use,
       hostConfig: bound.hostConfig.use,
     });
@@ -165,9 +159,8 @@ describe('PUT /api/plugins/:name/config 与 watch 路径对齐', () => {
     await app.plugins.idle();
     expect(app.plugins.getPlugin('target')?.state).toBe('active');
 
-    const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+    const bound = app.bind({ plugins: pluginsService, hostConfig });
     const api = attachRoutes({
-      app: bound.app.use,
       plugins: bound.plugins.use,
       hostConfig: bound.hostConfig.use,
       logger,
@@ -199,9 +192,8 @@ describe('PUT /api/plugins/:name/config 与 watch 路径对齐', () => {
     });
     await registerFromDoc(app, store, definePlugin({ name: 'target', configSchema: SCHEMA, apply() {} }));
     await app.plugins.idle();
-    const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+    const bound = app.bind({ plugins: pluginsService, hostConfig });
     const api = attachRoutes({
-      app: bound.app.use,
       plugins: bound.plugins.use,
       hostConfig: bound.hostConfig.use,
     });
@@ -241,10 +233,10 @@ describe('PUT /api/plugins/:name/config 按宿主的裁剪政策', () => {
       }),
     );
     await app.plugins.idle();
-    const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+    const bound = app.bind({ plugins: pluginsService, hostConfig });
     const host = bound.hostConfig.use;
     expect(host.trimUnknownFields, 'host-config 如实声明宿主的裁剪政策').toBe(false);
-    const api = attachRoutes({ app: bound.app.use, plugins: bound.plugins.use, hostConfig: host });
+    const api = attachRoutes({ plugins: bound.plugins.use, hostConfig: host });
 
     const reply = await api.putPlugin('target', { timeoutMs: 60000, sneaky: true });
     expect(reply.body).toEqual({ ok: true, message: '插件 target 配置已更新', ignored: [], removed: [] });
@@ -280,7 +272,7 @@ describe('PUT /api/plugins/:name/config 无改动时不重建插件', () => {
       }),
     );
     await app.plugins.idle();
-    const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+    const bound = app.bind({ plugins: pluginsService, hostConfig });
     // 落盘计数挂在存储层：applyPluginConfig 在宿主内部落盘，不经插件拿到的 save
     let saves = 0;
     const persist = store.persist;
@@ -289,7 +281,6 @@ describe('PUT /api/plugins/:name/config 无改动时不重建插件', () => {
       return persist();
     };
     const api = attachRoutes({
-      app: bound.app.use,
       plugins: bound.plugins.use,
       hostConfig: bound.hostConfig.use,
     });
@@ -333,9 +324,8 @@ describe('PUT /api/plugins/:name/config 无改动时不重建插件', () => {
     // 运行态直接拿到 FULL，文档里没有这个插件的配置段
     await app.plugin(definePlugin({ name: 'target', configSchema: SCHEMA, apply() {} }), { ...FULL });
     await app.plugins.idle();
-    const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+    const bound = app.bind({ plugins: pluginsService, hostConfig });
     const api = attachRoutes({
-      app: bound.app.use,
       plugins: bound.plugins.use,
       hostConfig: bound.hostConfig.use,
     });
@@ -388,9 +378,8 @@ describe('PUT /api/plugins/:name/config 保存前校验：拦新不追旧', () =
     const { app, store } = silentApp({ config: { plugins: { target: stored } } });
     await registerFromDoc(app, store, definePlugin({ name: 'target', configSchema: CHECKED, apply() {} }));
     await app.plugins.idle();
-    const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+    const bound = app.bind({ plugins: pluginsService, hostConfig });
     const api = attachRoutes({
-      app: bound.app.use,
       plugins: bound.plugins.use,
       hostConfig: bound.hostConfig.use,
     });
@@ -455,9 +444,8 @@ describe('PUT /api/plugins/:name/config 保留配置块键序', () => {
     });
     await registerFromDoc(app, store, definePlugin({ name: 'target', configSchema: SCHEMA, apply() {} }));
     await app.plugins.idle();
-    const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+    const bound = app.bind({ plugins: pluginsService, hostConfig });
     const api = attachRoutes({
-      app: bound.app.use,
       plugins: bound.plugins.use,
       hostConfig: bound.hostConfig.use,
     });
@@ -489,9 +477,8 @@ describe('PUT /api/plugins/:name/config 清空顶层字段', () => {
     const { app, store } = silentApp({ config: { plugins: { target } } });
     await registerFromDoc(app, store, definePlugin({ name: 'target', configSchema: NESTED, apply() {} }));
     await app.plugins.idle();
-    const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+    const bound = app.bind({ plugins: pluginsService, hostConfig });
     const api = attachRoutes({
-      app: bound.app.use,
       plugins: bound.plugins.use,
       hostConfig: bound.hostConfig.use,
     });
@@ -547,9 +534,8 @@ describe('PUT /api/plugins/:name/config 请求体', () => {
     // 不带 schema：没有裁剪兜底，下标键会原样写进配置文件
     await registerFromDoc(app, store, definePlugin({ name: 'loose', apply() {} }));
     await app.plugins.idle();
-    const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+    const bound = app.bind({ plugins: pluginsService, hostConfig });
     const api = attachRoutes({
-      app: bound.app.use,
       plugins: bound.plugins.use,
       hostConfig: bound.hostConfig.use,
     });
@@ -568,7 +554,7 @@ describe('PUT /api/plugins/:name/config 非法 id', () => {
     // `constructor` 是定义闸已拒的形状（危险键）。在窄面外用同一道闸包一层，
     // 钉的是路由「core 抛 Error → 400 + message」而不是自己猜非法规则。
     const { app } = silentApp();
-    const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+    const bound = app.bind({ plugins: pluginsService, hostConfig });
     const inner = bound.hostConfig.use;
     const gated: HostConfig = Object.create(inner) as HostConfig;
     gated.getPluginConfig = (id: string) => {
@@ -580,7 +566,6 @@ describe('PUT /api/plugins/:name/config 非法 id', () => {
       inner.setPluginConfig(id, cfg);
     };
     const api = attachRoutes({
-      app: bound.app.use,
       plugins: bound.plugins.use,
       hostConfig: gated,
     });
@@ -601,9 +586,8 @@ describe('PUT /api/plugins/:name/config 非法 id', () => {
 
   it('PUT /api/plugins/__proto__/config 返回 400 且 message 含 插件 id 不合法：__proto__', async () => {
     const { app } = silentApp();
-    const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+    const bound = app.bind({ plugins: pluginsService, hostConfig });
     const api = attachRoutes({
-      app: bound.app.use,
       plugins: bound.plugins.use,
       hostConfig: bound.hostConfig.use,
     });

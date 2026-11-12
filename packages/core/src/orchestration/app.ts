@@ -6,7 +6,6 @@ import type { Activation } from './activation.js';
 import { ActivationHost } from './activation-host.js';
 import { appService, narrow, pluginsService } from './host-services.js';
 import { PluginManager, type PluginRegistration } from './plugin.js';
-import type { RestartStrategy } from './providers.js';
 import { provide } from '../composition/core-services.js';
 import type { BoundOf, Uses } from '../composition/descriptors.js';
 import type { PluginDefinition } from '../composition/plugin-definition.js';
@@ -18,16 +17,14 @@ import { DefaultLogger, type Logger, LogHub, type LogLevel, quietLogger } from '
  * App 构造选项
  *
  * core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念，也不持有配置文档：插件从哪里来、
- * 配置存在哪里都是宿主的事，core 只接收注册时交来的插件定义、配置与禁用标记。
- * 选项全部可省：`restartStrategy` 省略则 `restart()` 抛错。
+ * 配置存在哪里、怎么重启都是宿主的事，core 只接收注册时交来的插件定义、配置与禁用标记。
+ * 选项全部可省。
  */
 export interface AppOptions {
   /** 应用名，只用于启动横幅；缺省 'Aalis' */
   name?: string;
   /** 默认 Logger 的级别；缺省 'info'。注入了 `logger` 时不用 */
   logLevel?: LogLevel;
-  /** 重启策略；缺省=`restart()` 抛错 */
-  restartStrategy?: RestartStrategy;
   /**
    * 单个异步清理项（onDispose 返回的 promise）的等待上限（毫秒），默认 5000。
    * 用于插件 unload / bounce / 停机路径的 disposeAsync——网络类关闭（数据库/
@@ -106,11 +103,8 @@ export class App {
   readonly #plugins: PluginManager;
   readonly logger: Logger;
 
-  readonly #restartStrategy?: RestartStrategy;
   /** 启动单飞：重入返回同一 Promise */
   #starting?: Promise<void>;
-  /** 已受理过重启：再调 restart() 记 debug 后返回 */
-  #restartAccepted = false;
   /** 停机单飞：重入返回同一 Promise；完成后仍保留，再调 stop() 立即落定 */
   #stopping?: Promise<void>;
 
@@ -118,7 +112,6 @@ export class App {
     this.logger = quietLogger(
       options.logger ?? new DefaultLogger('aalis', options.logLevel ?? 'info', options.logHub ?? LogHub.default),
     );
-    this.#restartStrategy = options.restartStrategy;
     // 定时器的最大延迟是 2³¹−1ms，更大的值（含 Infinity）会被运行时当成 1ms
     const cap = (ms: number): number => Math.min(ms, 2 ** 31 - 1);
     const disposeTimeoutMs = cap(options.disposeTimeoutMs ?? 5000);
@@ -131,7 +124,7 @@ export class App {
     this.#plugins = new PluginManager(this.#host, this.logger, disposeTimeoutMs, slowMs);
 
     // 3. 宿主服务：与内置五项同一登记规则（根激活、独占），只交出契约列出的方法
-    caps.provide.use(appService, narrow(this, ['stop', 'restart']), { exclusive: true });
+    caps.provide.use(appService, narrow(this, ['stop']), { exclusive: true });
     const managing = narrow(this.#plugins, [
       'getStatus',
       'getPlugin',
@@ -223,31 +216,6 @@ export class App {
   }
 
   /**
-   * 重启应用——委托给 `restartStrategy`。
-   *
-   * core 只负责把 `stop` 回调交给策略（下一个微任务里调它，不在调用方的栈上）；
-   * **任何"等响应返回"的延迟、stop 与 restart 的顺序都由策略决定**。
-   *
-   * 只受理一次：已受理过的再调记 debug 后返回（策略交出的 stop 已开始也是）；未受理过而停机已开始时抛错。
-   * 未注入策略时抛错（明确暴露"嵌入式宿主没声明重启能力"的事实）。
-   */
-  restart(opts?: { rollback?: unknown }): void {
-    if (!this.#restartStrategy) {
-      throw new Error('App.restart() 不可用：未注入 restartStrategy。');
-    }
-    if (this.#restartAccepted) {
-      this.logger.debug('restart: 已受理过一次，本次忽略');
-      return;
-    }
-    if (this.#stopping) throw new Error('App.restart() 不可用：应用已开始停机。');
-    this.#restartAccepted = true;
-    const strategy = this.#restartStrategy;
-    Promise.resolve()
-      .then(() => strategy.restart({ stop: () => this.stop(), rollback: opts?.rollback }))
-      .catch(err => this.logger.error('restart 失败:', err));
-  }
-
-  /**
    * 停止应用。单飞：重入返回同一 Promise。
    *
    * 先让插件管理进入停机终态（之后管理动作一律拒绝），再 `idle()` 排干在飞者，最后 stopAll。已静置时 `idle()` 仍让出
@@ -262,7 +230,7 @@ export class App {
     return this.#stopping ?? singleFlight(done => (this.#stopping = done), this.#runStop.bind(this));
   }
 
-  /** 应用是否已开始停机：运行中为 false，`stop()` 一开始即 true（重启策略发起的也一样），停完之后不变 */
+  /** 应用是否已开始停机：运行中为 false，`stop()` 一开始即 true（宿主重启时发起的也一样），停完之后不变 */
   get stopping(): boolean {
     return this.#stopping !== undefined;
   }

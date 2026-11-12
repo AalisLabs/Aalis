@@ -14,6 +14,7 @@ import { events } from '@aalis/api-events';
 import { hostConfig } from '@aalis/api-host-config';
 import { hostLogs } from '@aalis/api-host-logs';
 import { hostPaths } from '@aalis/api-host-paths';
+import { hostRestart } from '@aalis/api-host-restart';
 import { i18n } from '@aalis/api-i18n';
 import { llm, modelRefOf, resolveLLMModel } from '@aalis/api-llm';
 import { messageArchive } from '@aalis/api-message-archive';
@@ -233,7 +234,8 @@ const uses = {
   /** 日志页的历史（/api/logs/*）与 /admin 上的实时推送 */
   logs: optional(hostLogs),
   paths: optional(hostPaths),
-  app: optional(appService),
+  /** 设置页的重启按钮（POST /api/restart）；宿主不提供重启时回 500 */
+  restart: optional(hostRestart),
   plugins: optional(pluginsService),
   source: optional(pluginSource),
   packageManager: optional(packageManager),
@@ -539,7 +541,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   registerPluginRoutes(
     expressApp,
     {
-      app: caps.app,
+      restart: caps.restart,
       plugins: caps.plugins,
       source: caps.source,
       hostConfig: caps.hostConfig,

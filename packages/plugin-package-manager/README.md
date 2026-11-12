@@ -13,7 +13,7 @@ pnpm add @aalis/plugin-package-manager
 `definePlugin` 默认导出：
 
 - provides：`packageManager`（服务名 `package-manager`；描述符来自 `@aalis/api-package-manager`）
-- uses：`proc`（`process`）、`paths`（`host-paths`）、`lifecycle`、`logger`、`provide`、`services`、`app`、`plugins`；可选 `hostConfig`（`host-config`）、`source`（`plugin-source`）
+- uses：`proc`（`process`）、`paths`（`host-paths`）、`lifecycle`、`logger`、`provide`、`services`、`plugins`；可选 `restart`（`host-restart`）、`hostConfig`（`host-config`）、`source`（`plugin-source`）
 
 装卸落在宿主安装集（`host-paths` 的 `app`，与插件加载器读同一份 `package.json`）的 `dependencies`，随后经宿主的 `plugin-source` 服务 `rescan()` 让加载器发现；宿主不提供插件来源时视同本次没有新插件。卸载后经 `host-config` 清掉各实例的禁用标记；配置块与密钥默认留着（重装后照原配置启动），调用方传 `removeConfig: true` 时一并删掉配置块与只有它们用的密钥。配置文件没写成时包照样卸掉，回执写明原因；宿主未提供配置文档时不整理。
 

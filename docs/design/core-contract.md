@@ -38,7 +38,7 @@ preflight 执行；core 源码禁用 v8 / c8 / istanbul 的 ignore 注释，由 
 - 经 `registrar` 登记到枢纽服务的条目是本激活对外可见的能力，与原语同一拍撤回，不等下游交接；异步部分在撤回链收口时等待。同一张归属表对同一个键只有一条规则：后调用者胜出（含在前一次登记的回调里重入的调用），被取代的那条随之撤回，它的旧退订不再起作用。一个激活的关闭顺序：收尾（`onDrain`）→ 切断（原语与 `registrar` 条目）→ 等挂在本激活所提供服务上的跟随者交接落定 → 撤回链（`follow` 返回的 cleanup、`track`）→ 清理链（`onDispose`）。撤回链整体先于清理链，各自逆序；单个清理器抛错不影响其余。
 - `onDrain` 在撤回之前执行：此刻本激活的监听、登记与声明的依赖都还在，用于停接新活、把在手的数据交给下层并等待确认。`onDispose` 在对外登记已撤回之后执行；依赖可能已不可用。异步清理在 `disposeAsync` 路径被等待（带 `disposeTimeoutMs` 护栏）；超时只是停止等待，不代表资源已释放。
 - 激活 = 提供者先于消费者（required 依赖拓扑）。关闭按每个激活的 drain 与 close 两阶段编排。插件用别的插件的服务：消费者整个 close 完，提供者才 drain；边对消费方声明的服务（required 与 optional，含尚未访问的）在编排那一刻的全部对外提供者建。根激活使用插件的服务：根 drain 先于该插件 close。插件使用根激活登记的服务：不往排序图加边，由归属保证插件 close 先于根 close。依赖成环时先只让仅被 optional 边挡着的成员 drain（不告警），required 消费者仍先关完；环全由 required 边构成时，环内成员先全部 drain 再关并告警——drain 期间对方仍活着，双方 `onDrain` 都能调用对方，`onDispose` 时提供者可能已收尾。归属约束与环外约束一条不松。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。`App.stop()` 把全部 active 插件与根激活放进同一张计划。单独 `unload` / `disable` / `bounce` 走同一套分阶段关闭：正在用该插件所提供服务的 required 下游（传递闭包）并入同一批，先收尾、先关；判据是下游此刻选中的那一家属于要走的激活，空档里不切到后备。这项同批保证覆盖动作发起时处于 active 或仍在初始化（在飞或后台）的 required 下游；并发的另一个管理动作里已在收尾、依赖本次要关的插件所提供服务的下游，本次动作等它关完才让提供者收尾（与停机计划等在途激活同一条规则；不另设时限，那份计划逐项受同一上限约束，总会关完）；以下情形与本次管理动作彼此不排序：在管理动作期间才开始激活的下游，管理动作进行中发生的停机。提供者清理之前，挂在它所提供服务上、尚未进关闭计划的 `follow` / `registrar` 跟随者在它切断之后就地驱动交接，旧清理落定后提供者才清理；交接不经 `watch` 的通知，`watch` 的回调也不被等待，一个跟随者的清理阻塞时不阻塞别的跟随者。已进关闭计划的跟随者（同批下游、停机计划或别的计划里的）不由提供者驱动，旧清理在各自的撤回段执行，可能晚于提供者的 `onDispose`（根激活用插件服务时的停机、optional 环、管理动作的主体反向跟随它的 required 下游）；这类跟随者要在依赖仍可用时交接，放在 `onDrain`。动态查询拿到的原始实例不产生边。
-- App 只有一轮生命周期：`start()` 单飞，停机开始后调用记 warn 后直接返回，启动途中停机开始则还没轮到的就绪回调不再跑；`restart()` 只受理一次，已受理过的再调记 debug 后返回，未受理过而停机已开始时抛错。
+- App 只有一轮生命周期：`start()` 单飞，停机开始后调用记 warn 后直接返回，启动途中停机开始则还没轮到的就绪回调不再跑。重启不在 core：宿主以 `host-restart` 服务提供。
 - 就绪回调（`lifecycle.use.onReady`）每次激活跑一次：`start()` 等插件状态机静置后，按激活顺序逐个激活、同一激活内按登记序逐个等，宿主根排在全部插件之后；启动之后才激活的在自己的 `apply` 落定后跑，重算与 `idle()` 不等它；本激活的就绪回调开始跑之后才登记的（含在回调里登记的），下一个微任务另跑，不排进这一趟，`start()` 不等它。单个回调至多等 `slowThresholdMs`，超过即告警点名、不再等它；抛错与拒绝只记在本激活名下。退订的、本激活已开始关闭的不跑；在跑的回调算这次激活的在飞工作，关闭在收尾段之后等它落定。
 - 清理走 `onDrain` / `onDispose`，bounce / unload / disable / 停机都走到。插件读不到应用是否在停机，持有 App 本体的宿主读 `App.stopping`（`stop()` 一开始即为 true）。`App.stop()` 顺序：`beginShutdown()`（冻结新增绑定、丢弃排队的重算并进入停机态；`apply` 尚未完成的激活此刻 abort）→ `idle()`（等待已在飞的重算和挂起段）→ 关停计划。从 `beginShutdown()` 起，新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 一律立即返回 false，不更改条目状态或配置，也不加入额外拆卸；已有停机计划负责清理，完整完成信号是 `App.stop()`。正常运行中已在途的 `unload` 仍 join，其他正常幂等行为不变。已冻激活上 `provide` 记 warn 后忽略、不抛。停机完成后 `idle()` 落定。
 - 非管理动作引起的提供者换人（提供者自行撤回登记、偏好切换、更高优先级上线）不改变插件的目标状态，经选择层的 `watch` 可观察。要跟随换人用 `follow`，不要指望消费者被级联重启。管理动作拆掉下游选中的那一家时 required 下游随之重启，见上文关闭编排一条。提供者因自己的 required 依赖丢失而退场时，required 服务会随它一起失去全部提供者的下游（传递闭包）并入同一批，先收尾、先关；还有后备提供者的不算，不重启（别的计划正关着的提供者不算后备）。
@@ -75,7 +75,7 @@ preflight 执行；core 源码禁用 v8 / c8 / istanbul 的 ignore 注释，由 
 
 | 层 | 成员 | 承诺 |
 |---|---|---|
-| stable | `definePlugin` / `defineService` / `optional`、选择层 `ServiceSelection` 的 `list()` / `use` / `of()` / `present` / `follow()` 与条目 `ProviderEntry`、业务句柄的转发语义、基础服务描述符（`logger` / `config` / `lifecycle` / `provide` / `services`）、宿主描述符（`appService` / `pluginsService`）、`App.plugin` / `App.pluginAll` / `App.bind` / `App.plugins` 与 `AppOptions` 的全部成员：宿主注入件 `restartStrategy` / `logger` / `logHub` / `version`，调节项 `name` / `logLevel` / `disposeTimeoutMs` / `slowThresholdMs`（接口即清单）、`PluginManagerService` 接口的全部成员（接口即清单，不在此另抄一份）、core 自己的失败所带 `code` 的取值与各自的数据属性（`CoreFailureCode`：`required-retry-exhausted` 带 `service`，`provides-not-registered` 带 `services`，`exclusive-conflict` 带 `service`，`service-unavailable` 带 `service` 与 `provider`） | 1.x 内不破坏 |
+| stable | `definePlugin` / `defineService` / `optional`、选择层 `ServiceSelection` 的 `list()` / `use` / `of()` / `present` / `follow()` 与条目 `ProviderEntry`、业务句柄的转发语义、基础服务描述符（`logger` / `config` / `lifecycle` / `provide` / `services`）、宿主描述符（`appService` / `pluginsService`）、`App.plugin` / `App.pluginAll` / `App.bind` / `App.plugins` 与 `AppOptions` 的全部成员：宿主注入件 `logger` / `logHub` / `version`，调节项 `name` / `logLevel` / `disposeTimeoutMs` / `slowThresholdMs`（接口即清单）、`PluginManagerService` 接口的全部成员（接口即清单，不在此另抄一份）、core 自己的失败所带 `code` 的取值与各自的数据属性（`CoreFailureCode`：`required-retry-exhausted` 带 `service`，`provides-not-registered` 带 `services`，`exclusive-conflict` 带 `service`，`service-unavailable` 带 `service` 与 `provider`） | 1.x 内不破坏 |
 | internal | `@internal` 标注成员、私有方法、激活记录类、注册表类 `ServiceContainer` 与 `PluginManager` 类、`DisposableChain` 等未从包根导出者 | 无承诺 |
 
 ## 七、1.0 之前的实况（避免误读上表）
@@ -124,7 +124,7 @@ core 源码按职责分目录，依赖方向由 `test/core/architecture.test.ts`
 - **协作原语** `primitives/`（services）：服务注册表及登记元数据。依赖 kernel 与基础类型，不认识激活记录、Logger 或 Config；诊断经回调送出。
 - **基础设施** `infrastructure/`（resources、config-values、logger）：一次激活的资源记录、就绪回调与关闭过程（收尾、撤回、清理三条链，初始化等待，完成信号，在飞工作的记录）、配置值的安全处理（危险键闸与拷贝）、日志通道。依赖 kernel、primitives 与基础类型，不负责服务装配和插件调度。
 - **服务装配** `composition/`：`descriptors` 保存服务描述符、类型推导与依赖提取；`binding` 保存选择层、活句柄、资源口、不可用错误与 `follow` / `watch` / `registrar`；`core-services` 定义内置五项的描述符与提供者；其余包含 runtime 接线与 plugin-definition。依赖基础设施、原语和 kernel，不 import 编排层。
-- **插件编排** `orchestration/`（app、activation、activation-host、close-plan、plugin、plugin-activation、plugin-topology、host-services、providers）：创建激活、经根激活登记内置服务、启动、调度、关停，以及宿主 SPI 和管理服务描述符。
+- **插件编排** `orchestration/`（app、activation、activation-host、close-plan、plugin、plugin-activation、plugin-topology、host-services）：创建激活、经根激活登记内置服务、启动、调度、关停，以及管理服务描述符。
 
 src 根只留 `index.ts`。`types/` 按种类存放词汇；`types/app.ts`、`types/plugin.ts` 属编排契约，类型 barrel 会带出它们，下层不得经 barrel 反向引用。基础词汇文件只相互引用。
 
@@ -143,8 +143,7 @@ src 根只留 `index.ts`。`types/` 按种类存放词汇；`types/app.ts`、`ty
 插件能力与公开管理条目类型不包含内部激活记录；宿主两服务在容器里只放契约列出的方法，`getPlugin()` 交出调用时刻的浅快照，`config` 是当前配置的一份拷贝，`definition` 是登记时的定义对象（字段已在登记时取定）。插件拿到的是窄能力对象，第三方 binder 拿到的是 BindingPort。私有成员一律写成 `#` 私有字段（不带 `_` 前缀），不用 TypeScript 的 `private` / `protected` / `public` 修饰符与构造函数参数属性：前者由 Biome 的 useConsistentMemberAccessibility 拦，后者由 core 编译选项 `erasableSyntaxOnly` 拦。公开面与分层分别由 purity / architecture 测试约束。
 
 诊断与错误的写法（文字规矩，无机器守——正则守卫经变异证明会被折行调用与含引号的英文骗过）：错误对象一律作 logger 的附加参数
-（`logger.error('xxx 失败:', err)`），不内插进消息——内插只剩 message，丢掉 stack 与 cause 链；日志行编码与转义由宿主负责。宿主 SPI
-（重启策略）的失败一律 `error` 级。
+（`logger.error('xxx 失败:', err)`），不内插进消息——内插只剩 message，丢掉 stack 与 cause 链；日志行编码与转义由宿主负责。
 
 外来代码（插件定义与配置里的 getter、Proxy 陷阱，宿主日志器，监听器与回调）不在判定与写入之间执行：外来输入在判定之前
 读完（登记时取定定义字段、拷好配置，再查重与写入）；外来回调在状态写完之后才执行（插件管理器的日志晚一个微任务交给宿主、

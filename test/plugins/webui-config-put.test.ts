@@ -1,4 +1,4 @@
-import type { AppService, Logger, PluginManagerService, ServiceSelection } from '@aalis/core';
+import type { Logger, PluginManagerService, ServiceSelection } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { ConfigSaveRefusedError, type HostConfig } from '../../packages/api-host-config/src/index.js';
 import { registerPluginRoutes, saveAfterApply } from '../../packages/plugin-webui-server/src/routes/plugins.js';
@@ -55,7 +55,7 @@ function setup(opts: { save?: () => Promise<void>; restart?: () => void } = {}) 
   registerPluginRoutes(
     expressApp,
     {
-      app: stub<AppService>({ restart: opts.restart ?? (() => calls.push('restart')) }),
+      restart: { use: { restart: opts.restart ?? (() => void calls.push('restart')) } },
       source: ref(),
       plugins: stub<PluginManagerService>({}),
       hostConfig: stub<HostConfig>(hostConfig),
@@ -190,17 +190,17 @@ describe('POST /api/restart', () => {
     expect(calls).toEqual(['restart']);
   });
 
-  it('宿主没注入重启策略 → 500 写明原因，记一笔 error', async () => {
+  it('宿主不提供重启 → 500 写明原因，记一笔 error', async () => {
     const { errors, restart } = setup({
       restart: () => {
-        throw new Error('App.restart() 不可用：未注入 restartStrategy。');
+        throw new Error('服务 "host-restart" 不可用');
       },
     });
     expect(await restart()).toEqual({
       status: 500,
-      body: { error: '重启失败（App.restart() 不可用：未注入 restartStrategy。），改动在下次启动时生效' },
+      body: { error: '重启失败（服务 "host-restart" 不可用），改动在下次启动时生效' },
     });
-    expect(errors).toEqual(['重启失败（App.restart() 不可用：未注入 restartStrategy。），改动在下次启动时生效']);
+    expect(errors).toEqual(['重启失败（服务 "host-restart" 不可用），改动在下次启动时生效']);
   });
 });
 

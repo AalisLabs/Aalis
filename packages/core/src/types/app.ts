@@ -11,14 +11,6 @@ import type { PluginDefinition } from '../composition/plugin-definition.js';
 export interface AppService {
   /** 停止应用 */
   stop(): Promise<void>;
-  /**
-   * 重启应用（延迟 spawn 新实例后退出当前实例；具体机制由宿主注入的 RestartStrategy 决定）。
-   * 只受理一次：已受理过的再调记 debug 后返回；未受理过而停机已开始时抛错，未注入策略时也抛错。
-   *
-   * @param opts.rollback 不透明回滚凭据，仅在「新实例未能接管」时由策略消费。
-   *   形状由宿主策略与发起方约定，core 只透传（见 `RestartStrategy`）。
-   */
-  restart(opts?: { rollback?: unknown }): void;
 }
 
 /** 插件管理面 getStatus 返回的一条：一个插件实例此刻的状态 */

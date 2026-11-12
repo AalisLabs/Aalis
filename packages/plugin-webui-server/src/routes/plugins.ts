@@ -7,11 +7,11 @@ import {
   isConfigSaveRefused,
   saveFailureText,
 } from '@aalis/api-host-config';
+import type { HostRestart } from '@aalis/api-host-restart';
 import type { PluginSourceService } from '@aalis/api-plugin-source';
 import type { ToolService } from '@aalis/api-tools';
 import type { ErrorResponse } from '@aalis/api-webui';
 import type {
-  AppService,
   Logger,
   PluginManagerService,
   PluginState,
@@ -155,7 +155,7 @@ function refuse(
 
 /** 插件管理 + 全局配置路由用到的能力 */
 interface PluginRoutesCaps {
-  app: Pick<ServiceSelection<AppService>, 'present' | 'use'>;
+  restart: Pick<ServiceSelection<HostRestart>, 'use'>;
   plugins: Pick<ServiceSelection<PluginManagerService>, 'present' | 'use'>;
   /** 宿主的插件来源；打包宿主不提供，扫描路由随之报不可用 */
   source: Pick<ServiceSelection<PluginSourceService>, 'present' | 'use'>;
@@ -232,9 +232,8 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
 
   // 获取插件列表及状态
   route(expressApp, 'GET /api/plugins', gate(), (_req, res) => {
-    const app = caps.app.present ? caps.app.use : undefined;
     const pm = caps.plugins.present ? caps.plugins.use : undefined;
-    if (!app || !pm) {
+    if (!pm) {
       res.json({ plugins: [], secretRefCounts: {} });
       return;
     }
@@ -381,16 +380,11 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     });
   });
 
-  // 重启应用。发起之后的停机是异步的（何时停机由重启策略决定），这条回复来得及发出；
-  // 宿主没注入重启策略时 restart() 同步抛错，回 500，界面据此不去等待重连
+  // 重启应用。发起之后的停机是异步的（何时停机由宿主决定），这条回复来得及发出；
+  // 宿主不提供重启（host-restart 缺席）或应用已开始停机时同步抛错，回 500，界面据此不去等待重连
   route(expressApp, 'POST /api/restart', gate(), (_req, res) => {
-    const app = caps.app.present ? caps.app.use : undefined;
-    if (!app) {
-      res.status(500).json({ error: t('noApp') });
-      return;
-    }
     try {
-      app.restart();
+      caps.restart.use.restart();
     } catch (err) {
       const reason = t('restartFailed', { error: textOf(err) });
       caps.logger?.error(reason.source);

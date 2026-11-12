@@ -24,7 +24,7 @@ import { nodeProcessProbe } from '../../packages/runtime/src/instance-lock.js';
 // ════════════════════════════════════════════════════════════
 // startAalis 子命令模式 — 真实子进程 e2e
 //
-// startAalis 的编排（文件日志装载时机、重启策略注入、子命令命中/未命中后的退出）在进程内
+// startAalis 的编排（文件日志装载时机、重启服务的提供、子命令命中/未命中后的退出）在进程内
 // 无法单测：它挂全局 fatal handler、最终 process.exit。这里用 tsx 跑 test/fixtures/subcommand-entry.ts
 // （只走 runtime 源码），每个用例一个临时目录，既是 cwd 也经 AALIS_DATA 当数据目录，断言全部基于「进程退出后」的退出码 / 输出 / 文件内容，
 // 计时相关的用例（慢激活）都留足余量。
@@ -32,7 +32,7 @@ import { nodeProcessProbe } from '../../packages/runtime/src/instance-lock.js';
 // 三条被守的不变量（对应曾实测出的故障）：
 // 1. 子命令进程不碰 logs/latest.log，也不轮转——否则守护进程正在写的日志被改名移走；
 // 2. 未命中的子命令报错退出（exit 2），绝不进守护进程——否则打错字就启动第二个实例；
-// 3. 子命令进程无重启策略——否则 `restart` 在 app.stop ≥ 500ms 时 spawn 出 argv 仍带 restart 的
+// 3. 子命令进程不提供 host-restart 服务——否则 `restart` 在 app.stop ≥ 500ms 时 spawn 出 argv 仍带 restart 的
 //    detached 子进程，无限连环（实测 5 代）。
 //
 // 守护路径（不带子命令）作为对照：旧日志轮转为 latest.1.log、文件日志照常写、SIGTERM 与 SIGHUP 优雅退出；另守启动收敛后的 pending 告警把「等待仍在激活的
@@ -215,19 +215,19 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     expect(existsSync(join(dir, 'disposed'))).toBe(false);
   });
 
-  it('restart 子命令：无重启策略，慢拆卸下也不 spawn 第二代', async () => {
+  it('restart 子命令：宿主不提供重启服务，慢拆卸下也不 spawn 第二代', async () => {
     const dir = project();
-    // onDispose 1500ms > 重启策略的 500ms 等待窗口——策略若被注入，必然 spawn。
+    // onDispose 1500ms > 重启策略的 500ms 等待窗口——服务若被提供，必然 spawn。
     const r = await run(dir, ['restart'], { AALIS_E2E_SLOW_MS: '1500' }, 15_000);
     expect(r.signal).toBeNull();
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('指令执行失败');
-    expect(r.stdout).toContain('未注入 restartStrategy');
+    expect(r.stdout).toContain('服务 "host-restart" 不可用');
     expect(readGen(dir)).toBe('1');
     expect(readLog(dir)).toBe(SENTINEL);
   }, 20_000);
 
-  it('对照·守护路径：显式 argv: [] 压过非空的命令行参数，旧日志轮转为 latest.1.log、照常写文件日志，宿主提供插件来源与配置文档，SIGTERM 优雅退出', async () => {
+  it('对照·守护路径：显式 argv: [] 压过非空的命令行参数，旧日志轮转为 latest.1.log、照常写文件日志，宿主提供插件来源与配置文档、它的服务都是独占登记，SIGTERM 优雅退出', async () => {
     const dir = project();
     writeFileSync(
       join(dir, 'aalis.config.yaml'),
@@ -250,6 +250,14 @@ describe('startAalis 子命令模式（真实子进程）', () => {
       probeConfig: { known: 3, nested: { filled: 9 } },
       preferred: 'e2e-probe',
     });
+    // 宿主在根上提供的服务都是独占登记：再登记一个同名的提供者被拒，插件抢不走
+    expect(JSON.parse(readFileSync(join(dir, 'exclusive.json'), 'utf8'))).toEqual([
+      'host-paths',
+      'host-logs',
+      'host-config',
+      'host-restart',
+      'plugin-source',
+    ]);
     // 配置同步裁掉 schema 外字段、回填默认值后落盘，服务偏好随文档写回，不被裁
     const saved = readFileSync(join(dir, 'aalis.config.yaml'), 'utf8');
     expect(saved).toContain('filled: 9');
@@ -548,7 +556,7 @@ describe('startAalis 数据目录（真实子进程）', () => {
   it('/restart 经重启策略交接实例锁：第二代接手、令牌不留在环境里，第一代退出后只剩第二代持锁', async () => {
     const dir = tempDir();
     writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
-    // 第一代经 app.restart() 启动第二代进程（继承本测试给的管道，run 会等到两代都退出）
+    // 第一代请求重启、启动第二代进程（继承本测试给的管道，run 会等到两代都退出）
     const r = await run(dir, [], { AALIS_E2E_MODE: 'restart' }, 30_000);
     expect(r.code).toBe(0);
     expect(readFileSync(join(dir, 'gen.txt'), 'utf-8').trim()).toBe('2');

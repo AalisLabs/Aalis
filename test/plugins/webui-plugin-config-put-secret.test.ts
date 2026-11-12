@@ -1,4 +1,4 @@
-import type { AppService, PluginManagerService, ServiceSelection } from '@aalis/core';
+import type { PluginManagerService, ServiceSelection } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import type { HostConfig } from '../../packages/api-host-config/src/index.js';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
@@ -48,7 +48,7 @@ function setup() {
   registerPluginRoutes(
     expressApp,
     {
-      app: stub<AppService>({ restart: () => {} }),
+      restart: { use: { restart() {} } },
       source: ref(),
       plugins: stub<PluginManagerService>({
         getPlugin: () => ({

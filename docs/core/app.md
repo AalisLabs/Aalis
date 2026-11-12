@@ -13,7 +13,7 @@ const app = new App({ name: 'demo', logLevel: 'info' });
 ```
 
 core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念，也不持有配置文档。插件从哪里来、配置存在哪里由宿主负责：
-宿主把插件定义连同各实例的配置与禁用标记经 `app.plugin` / `app.pluginAll` 交进来；重启经注入的 `restartStrategy` 完成。
+宿主把插件定义连同各实例的配置与禁用标记经 `app.plugin` / `app.pluginAll` 交进来。重启也是宿主的事：core 没有重启的概念，宿主以 `host-restart` 服务提供（见 [api-host-restart](../api/api-host-restart.md)）。
 Node 宿主 `@aalis/runtime` 的做法见文末与 [运行态与配置文档](config.md)。
 
 `AppOptions` 的字段全部可选：
@@ -22,7 +22,6 @@ Node 宿主 `@aalis/runtime` 的做法见文末与 [运行态与配置文档](co
 |---|---|---|
 | `name` | `string` | 应用名，只用于启动横幅；缺省 `'Aalis'` |
 | `logLevel` | `LogLevel` | 默认 Logger 的级别；缺省 `'info'`。注入了 `logger` 时不用 |
-| `restartStrategy` | `RestartStrategy` | 重启策略；缺省=`restart()` 抛错 |
 | `logHub` | `LogHub` | 自定义日志通道；缺省=`LogHub.default`（进程级共享）。注入了 `logger` 时不用 |
 | `logger` | `Logger` | 自定义 Logger 实现；缺省=`DefaultLogger`（写入 logHub）。注入的与缺省的都由 App 包一层再用：日志方法抛错或返回被拒的 Promise 不传进 core 与插件，`child` 派生失败（抛错，或派生出的不是日志器）时沿用上一层，`app.logger` 也是包过的这层。插件管理器（作用域 `plugins`）的日志推迟一个微任务交给它，彼此先后不变：日志回调里发起的管理动作或 `stop()` 看到的是改完之后的状态；插件自己的日志不推迟。要按 App 固定日志时间戳，注入 `new DefaultLogger('aalis', level, hub, now)` |
 | `disposeTimeoutMs` | `number` | 单个异步清理项的等待上限（毫秒），默认 5000；也是停用、卸载、重启、停机撞上仍在初始化的插件，或后台激活的 required 依赖下线时 abort 后的宽限（见下文）。0=不设限 |
@@ -35,7 +34,7 @@ Node 宿主 `@aalis/runtime` 的做法见文末与 [运行态与配置文档](co
 
 - 初始化服务容器、logger 及根激活
 - 创建 `ActivationHost`：直接登记 `provide` 的提供者来自举，再由根激活经 `provide` 独占登记其余四项基础服务
-- 创建 `PluginManager`，由根激活经 `provide` 独占登记 `appService` / `pluginsService`：容器里放的只是契约列出的方法（窄面），App / PluginManager 本体不外露；`getPlugin` 交出调用时刻的浅快照，不含内部激活记录
+- 创建 `PluginManager`，由根激活经 `provide` 独占登记 `appService` / `pluginsService`：`appService` 在容器里是只有 `stop` 的对象，`pluginsService` 在容器里是按调用方的激活交出门面的函数，门面上只有契约列出的方法；App / PluginManager 本体不外露；`getPlugin` 交出调用时刻的浅快照，不含内部激活记录
 - 打印启动横幅（`name` 与宿主注入的 `version`）
 
 配置文档与其中的服务偏好由宿主接入，不在构造时处理：runtime 的 `installHostConfig` 在登记任何插件之前应用偏好。
@@ -46,7 +45,7 @@ Node 宿主 `@aalis/runtime` 的做法见文末与 [运行态与配置文档](co
 |---|---|---|
 | `plugins` | `PluginManagerService` | 插件管理面（与插件经 `pluginsService` 拿到的同一契约） |
 | `logger` | `Logger` | 日志器 |
-| `stopping` | `boolean` | 应用是否已开始停机：运行中为 false，`stop()` 一开始即 true（重启策略发起的也一样），停完之后不变 |
+| `stopping` | `boolean` | 应用是否已开始停机：运行中为 false，`stop()` 一开始即 true（宿主重启时发起的也一样），停完之后不变 |
 
 根激活不对外。宿主经 `bind` 取能力；插件经自己激活上的 `uses` 取能力。原语注册表不外露：宿主查询服务、看元数据经 `app.bind({ services })`，消费服务经 `app.bind({ x: descriptor })`。
 
@@ -98,14 +97,6 @@ resolve 语义 = 登记完成 + 尽力即时激活。有在飞 recompute 或管�
 批量注册。条目为 `{ definition, config?, instanceId?, disabled? }`，各字段同 `app.plugin` 的参数；返回值与 `items` 逐项对应，口径同 `app.plugin`，单项校验失败只拒该项。
 
 整批同步登记后只重算一次：依赖方在同一次重算里按拓扑序排在它 required 服务的全部提供者之后激活，不会先挂到先登记的后备提供者上。同时就绪的插件按登记序激活。宿主的冷启动与热扫描都走这里。resolve 语义同 `app.plugin`。
-
-### `app.restart()`
-
-委托给注入的 `restartStrategy`：在下一个微任务里调用
-`strategy.restart({ stop })`（stop / restart 时序由策略决定）。**未注入 `restartStrategy` 时抛错**，
-自身不保存任何数据、也不直接 spawn 进程。
-
-每个 App 只受理一次重启：已受理过的再调记一条 debug 后返回，策略交出的 `stop` 已开始也是（只调一次策略）；未受理过而停机已开始时抛错。策略失败（记 error）而没有停机时，App 照常运行，之后再调 `restart()` 仍只记 debug、不再受理。
 
 ## 基础指令
 

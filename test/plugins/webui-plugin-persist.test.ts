@@ -1,9 +1,9 @@
 import type { AppOptions, Logger } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type AalisConfig, ConfigSaveRefusedError, hostConfig } from '../../packages/api-host-config/src/index.js';
+import { hostRestart } from '../../packages/api-host-restart/src/index.js';
 import {
   App,
-  appService,
   config,
   definePlugin,
   defineService,
@@ -90,7 +90,12 @@ function world(
   const { expressApp, invoke } = captureRoutes();
   const panel = definePlugin({
     name: 'console',
-    uses: { app: optional(appService), plugins: optional(pluginsService), hostConfig: optional(hostConfig), services },
+    uses: {
+      restart: optional(hostRestart),
+      plugins: optional(pluginsService),
+      hostConfig: optional(hostConfig),
+      services,
+    },
     apply(caps) {
       // 管理面的 unload 按需注入故障，其余成员沿原型链落到真实的业务句柄上
       const plugins = {
