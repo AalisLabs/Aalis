@@ -42,7 +42,11 @@ export class PluginManager implements PluginManagerService {
   readonly #disposeTimeoutMs: number;
   /** 激活超过它仍未完成即转入后台（毫秒；非正数=不设限），由 App 注入 */
   readonly #slowMs: number;
-  /** 已转入后台、尚未落定也未被接手的激活（getStatus 据此给出 slow；abort 时据此判断 flight 是否早已放开它） */
+  /**
+   * 已转入后台、尚未落定也未被接手的激活（abort 时据此判断 flight 是否早已放开它）。getStatus 的 slow 是它与 state 的合取：
+   * 成员在落定之后才摘，而落定的收尾（失败转 error 或依赖丢失回到 pending 之后的清理、成功转 active 之后的服务上线与
+   * 随之的重算通知）里 state 已经改写，只看成员的话这一段会给出 error、pending 或 active 又带 slow。两种取值只在这一段不同
+   */
   readonly #background = new Set<Activation>();
   /**
    * 旧实例关完仍有工作没落定（清理或被拆的初始化超过宽限）的实例 id：落定之前不启动同 id 的新实例，条目卸载后照样记着
@@ -443,7 +447,7 @@ export class PluginManager implements PluginManagerService {
       uses: entry.spec.deps.map(dep => ({ ...dep })),
       error: errorOf(entry.failure),
       failure: entry.failure,
-      slow: (entry.activation !== undefined && this.#background.has(entry.activation)) || undefined,
+      slow: (entry.state === 'activating' && this.#background.has(entry.activation!)) || undefined,
       lingering: this.#lingering.has(entry.instanceId) || undefined,
     }));
   }

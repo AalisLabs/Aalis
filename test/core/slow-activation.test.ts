@@ -278,6 +278,55 @@ describe('慢激活转入后台', () => {
     expect(w.host.services.use.get(store)).toBeUndefined();
   });
 
+  it('slow 只随 activating 给出：后台激活失败、它的清理还没跑完时，状态已是 error、不带 slow', async () => {
+    const w = world({ disposeTimeoutMs: 1000 });
+    const gate = deferred();
+    const cleaning = deferred();
+    releases.push(gate.resolve, cleaning.resolve);
+    await w.app.plugin(
+      definePlugin({
+        name: 'failing',
+        uses: { lifecycle },
+        async apply({ lifecycle }) {
+          lifecycle.use.onDispose(() => cleaning.promise);
+          await gate.promise;
+          throw new Error('初始化失败');
+        },
+      }),
+    );
+    await until(() => w.status('failing')?.slow === true, '转入后台');
+    gate.resolve();
+    await until(() => w.status('failing')?.state === 'error', '进 error');
+    expect(w.status('failing')?.slow).toBeUndefined();
+  });
+
+  it('slow 只随 activating 给出：后台激活成功落定时，插件状态的订阅读不到 active 又带 slow', async () => {
+    const w = world();
+    const store = defineService<object>('zz-slow-landing');
+    const gate = deferred();
+    releases.push(gate.resolve);
+    const seen: string[] = [];
+    w.app.plugins.watch(() => {
+      const entry = w.status('landing');
+      if (entry) seen.push(`${entry.state}${entry.slow ? '+slow' : ''}`);
+    });
+    await w.app.plugin(
+      definePlugin({
+        name: 'landing',
+        provides: [store],
+        uses: { provide },
+        async apply({ provide }) {
+          provide.use(store, {});
+          await gate.promise;
+        },
+      }),
+    );
+    await until(() => w.status('landing')?.slow === true, '转入后台');
+    gate.resolve();
+    await until(() => seen.at(-1) === 'active', '订阅读到 active');
+    expect(seen).not.toContain('active+slow');
+  });
+
   it('apply 很快失败、失败回滚的清理慢于阈值：不算慢激活，flight 等回滚收完', async () => {
     const w = world({ slowThresholdMs: 20, disposeTimeoutMs: 1000 });
     await w.app.plugins.idle();
