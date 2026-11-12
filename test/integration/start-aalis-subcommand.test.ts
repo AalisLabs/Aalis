@@ -208,6 +208,13 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     expect(hasRotated(dir)).toBe(false);
   });
 
+  it('子命令进程不接终止信号：加载途中收到 SIGTERM 按默认动作当场结束，不走停机', async () => {
+    const dir = project();
+    const r = await run(dir, ['probe'], { AALIS_E2E_STARTUP_SIGNAL: 'SIGTERM' });
+    expect(r.code).not.toBe(0);
+    expect(existsSync(join(dir, 'disposed'))).toBe(false);
+  });
+
   it('restart 子命令：无重启策略，慢拆卸下也不 spawn 第二代', async () => {
     const dir = project();
     // onDispose 1500ms > 重启策略的 500ms 等待窗口——策略若被注入，必然 spawn。
@@ -258,6 +265,24 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     expect(readLog(dir)).toContain('已停止');
     expect(r.stderr).not.toContain('to quit now');
     expect(readdirSync(join(dir, 'run')).filter(n => n.endsWith('.lock'))).toEqual([]);
+  });
+
+  it.each([
+    ['SIGTERM', '插件还在激活'],
+    ['SIGINT', '插件还在激活'],
+    ['SIGHUP', '插件还在激活'],
+    ['SIGTERM@ready', '就绪回调还在跑'],
+  ])('守护路径：启动途中收到 %s（%s）同样走完停机：插件收尾执行、关闭日志落盘、放掉实例锁，exit 0', async when => {
+    const dir = project();
+    const r = await run(dir, [], { AALIS_E2E_MODE: 'daemon', AALIS_E2E_STARTUP_SIGNAL: when });
+    expect(r.signal).toBeNull();
+    expect(r.code).toBe(0);
+    expect(existsSync(join(dir, 'disposed'))).toBe(true);
+    expect(readLog(dir)).toContain('已停止');
+    expect(readdirSync(join(dir, 'run')).filter(n => n.endsWith('.lock'))).toEqual([]);
+    // 停机已开始：不再往下启动，startAalis 不返回
+    expect(readLog(dir)).not.toContain('忽略 start()');
+    expect(existsSync(join(dir, 'rescan.json'))).toBe(false);
   });
 
   // EIO：终端已挂断；EPIPE：输出接在管道上而读端已走。以 --service 运行时停完以 75 退出，交给服务管理器重新启动进程

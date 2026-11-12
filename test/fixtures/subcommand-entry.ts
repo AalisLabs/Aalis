@@ -14,6 +14,8 @@
 //                      父进程的 pid），退出时把退出码记进 cwd/gen2-exit.txt，未捕获的异常同 'tty' 记进 cwd/uncaught.txt）
 //   AALIS_E2E_ARGV     'daemon'、'tty'、'tty-respawn' 传给 startAalis 的 argv（空格隔开，缺省为空），如 --service
 //   AALIS_E2E_SLOW_MS  内联插件 onDispose 的延迟毫秒数（>=500 即让 app.stop 慢过重启策略的等待窗口）
+//   AALIS_E2E_STARTUP_SIGNAL  startAalis 还没返回时给自己发这个信号，验证启动途中收到终止信号同样走完停机：e2e-probe 的 apply 里发，
+//                      并让这次 apply 再等 1 秒；写成 `<信号>@ready` 则改在它的就绪回调里发，回调再等 1 秒。收尾时写 cwd/disposed
 //   AALIS_E2E_APPLY_MS 设了才多登记几个内联插件：e2e-slow 提供 e2e-slow-svc，其 apply 延迟这么多毫秒（验证配置里的
 //                      慢操作阈值）；e2e-waiting 依赖 e2e-slow-svc 与没人提供的 e2e-missing-svc，e2e-patient 只依赖
 //                      e2e-slow-svc，e2e-chained 依赖 e2e-middle 提供的服务、e2e-middle 又依赖激活失败的 e2e-broken 提供的
@@ -39,6 +41,7 @@ const mode = process.env.AALIS_E2E_MODE ?? 'subcommand';
 const respawns = mode === 'restart' || mode === 'tty-respawn';
 if (gen > (respawns ? 2 : 1)) process.exit(99);
 const slowMs = Number(process.env.AALIS_E2E_SLOW_MS ?? '0');
+const [startupSignal, startupAt] = (process.env.AALIS_E2E_STARTUP_SIGNAL ?? '').split('@');
 if (mode === 'tty' || mode === 'tty-respawn') {
   process.on('uncaughtException', err => appendFileSync(resolve(process.cwd(), 'uncaught.txt'), `${String(err)}\n`));
 }
@@ -53,7 +56,7 @@ const plugin = definePlugin({
     token: { type: 'string', label: 'T', secret: true },
   },
   uses: { provide, lifecycle, services, config, logger },
-  apply({ provide, lifecycle, services, config, logger }) {
+  async apply({ provide, lifecycle, services, config, logger }) {
     writeFileSync(resolve(process.cwd(), 'first-config.json'), JSON.stringify(config.use));
     provide.use(commands, {
       has: (name: string) => name === 'probe' || name === 'restart',
@@ -76,7 +79,14 @@ const plugin = definePlugin({
     lifecycle.use.onDispose(async () => {
       if (slowMs > 0) await new Promise<void>(r => setTimeout(r, slowMs));
       if (mode === 'tty') logger.use.warn('e2e-probe 收尾');
+      if (startupSignal) writeFileSync(resolve(process.cwd(), 'disposed'), '');
     });
+    const interrupt = async () => {
+      process.kill(process.pid, startupSignal);
+      await new Promise<void>(r => setTimeout(r, 1000));
+    };
+    if (startupSignal && startupAt === 'ready') lifecycle.use.onReady(interrupt);
+    else if (startupSignal) await interrupt();
   },
 });
 export default plugin;
