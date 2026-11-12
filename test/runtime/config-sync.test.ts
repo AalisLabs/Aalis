@@ -24,6 +24,8 @@ function makeApp(pluginsConfig: Record<string, Record<string, unknown>>, disable
   return hostedApp({ plugins: pluginsConfig, disabledPlugins });
 }
 
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
 /** 不发现任何插件的加载器：热重载登记后缀实例时取注册表里已登记的定义，用不到加载器 */
 const NO_PLUGINS: PluginLoader = { discover: async () => [], load: async () => null };
 
@@ -524,7 +526,8 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
   });
 
   describe('后缀实例以配置文件为准：没有配置段的卸载，重新出现的登记', () => {
-    function fixture(plugins: Record<string, Record<string, unknown>>) {
+    /** slowToClose：这个实例的清理要等一会儿，卸载它的那一轮重载停在这里 */
+    function fixture(plugins: Record<string, Record<string, unknown>>, slowToClose?: string) {
       let push: ((next: Record<string, unknown>) => void) | undefined;
       const saved: Array<{ plugins: Record<string, unknown> }> = [];
       const { app, store } = hostedApp(
@@ -548,20 +551,29 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
           port: { type: 'number', label: 'P', default: 8080 },
           tag: { type: 'string', label: 'T' },
         },
-        apply() {},
+        uses: { config, lifecycle },
+        apply({ config: cfg, lifecycle }) {
+          applied.push(`${lifecycle.use.id} ${JSON.stringify(cfg.use)}`);
+          if (lifecycle.use.id === slowToClose) lifecycle.use.onDispose(() => sleep(150));
+        },
       });
-      // 与 installConfigHotReload 同一接线，另外留住这次重载的 Promise，等它整段走完再断言
+      /** 每次激活拿到的配置 */
+      const applied: string[] = [];
+      // 与 installConfigHotReload 同一接线（每次变更各起一轮，不排队），另外留住各轮重载的 Promise，等它们整段走完再断言
       const discovery = createPluginDiscovery(app, NO_PLUGINS, store);
-      let reloading: Promise<void> = Promise.resolve();
-      store.watch(() => {
-        reloading = handleConfigChanged(app, store, discovery);
-      });
-      async function fileChanged(next: Record<string, Record<string, unknown>>) {
+      const rounds: Promise<void>[] = [];
+      store.watch(() => void rounds.push(handleConfigChanged(app, store, discovery)));
+      const edit = (next: Record<string, Record<string, unknown>>) =>
         push?.({ name: 'T', logLevel: 'error', plugins: next });
-        await reloading;
+      async function settled() {
+        await Promise.all(rounds);
         await app.plugins.idle();
       }
-      return { app, store, multi, saved, fileChanged };
+      async function fileChanged(next: Record<string, Record<string, unknown>>) {
+        edit(next);
+        await settled();
+      }
+      return { app, store, multi, saved, applied, edit, settled, fileChanged };
     }
 
     it('WebUI 新建后未能落盘的实例：修好配置文件后热重载将其卸载，不按默认值重建，也不写回文件', async () => {
@@ -624,6 +636,59 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
       expect(f.app.plugins.getPlugin('multi:b')?.state).toBe('active');
       expect(f.app.plugins.getPlugin('multi:b')?.config).toEqual({ port: 9000, tag: 'mine' });
       await f.app.stop();
+    });
+
+    async function threeInstances() {
+      const f = fixture({ multi: { port: 1 }, 'multi:x': { port: 2 }, 'multi:b': { port: 3 } }, 'multi:x');
+      await registerFromDoc(f.app, f.store, f.multi);
+      await registerFromDoc(f.app, f.store, f.multi, 'multi:x');
+      await registerFromDoc(f.app, f.store, f.multi, 'multi:b');
+      await f.app.plugins.idle();
+      return f;
+    }
+
+    it('两轮重载交叠：前一轮还在等一个实例卸载时文件又删掉另一个，后者照样卸载，不带着默认值重新激活，也不写回文件', async () => {
+      const f = await threeInstances();
+      f.edit({ multi: { port: 1 }, 'multi:b': { port: 3 } });
+      await f.fileChanged({ multi: { port: 1 } });
+
+      expect(f.app.plugins.getStatus().map(s => s.instanceId)).toEqual(['multi']);
+      expect(f.store.get('plugins')).toEqual({ multi: { port: 1 } });
+      expect(f.saved.filter(s => Object.hasOwn(s.plugins, 'multi:b'))).toEqual([]);
+      expect(f.applied).toEqual(['multi {"port":1}', 'multi:x {"port":2}', 'multi:b {"port":3}']);
+      await f.app.stop();
+    });
+
+    it('前一轮正在重载别的实例时文件删掉两个实例：后一轮还没轮到卸载的那个，前一轮不按文档重载它', async () => {
+      const f = await threeInstances();
+      // 前一轮：主实例换配置，停在等它重新激活上
+      f.edit({ multi: { port: 5 }, 'multi:x': { port: 2 }, 'multi:b': { port: 3 } });
+      // 后一轮：两个后缀实例都删掉，停在等 multi:x 卸载上，multi:b 还在册
+      await f.fileChanged({ multi: { port: 5 } });
+
+      expect(f.app.plugins.getStatus().map(s => s.instanceId)).toEqual(['multi']);
+      expect(f.applied).toEqual(['multi {"port":1}', 'multi:x {"port":2}', 'multi:b {"port":3}', 'multi {"port":5}']);
+      await f.app.stop();
+    });
+
+    it('前一轮还在等一个实例卸载时文件把另一个删掉的实例加了回来：按当前文档看，它不再被卸载', async () => {
+      const f = await threeInstances();
+      f.edit({ multi: { port: 1 } });
+      await f.fileChanged({ multi: { port: 1 }, 'multi:b': { port: 3 } });
+
+      expect(f.app.plugins.getStatus().map(s => s.instanceId)).toEqual(['multi', 'multi:b']);
+      expect(f.applied).toEqual(['multi {"port":1}', 'multi:x {"port":2}', 'multi:b {"port":3}']);
+      await f.app.stop();
+    });
+
+    it('重载途中开始停机：还没轮到卸载的实例不写回文件', async () => {
+      const f = await threeInstances();
+      f.edit({ multi: { port: 1 } });
+      await f.app.stop();
+      await f.settled();
+
+      expect(f.store.get('plugins')).toEqual({ multi: { port: 1 } });
+      expect(f.saved.filter(s => Object.hasOwn(s.plugins, 'multi:b'))).toEqual([]);
     });
   });
 

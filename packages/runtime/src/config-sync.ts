@@ -29,6 +29,15 @@ function rootOf(app: App): ReturnType<typeof bindRoot> {
   return host;
 }
 
+/**
+ * 后缀实例由配置段定义：在册而文档里没有它的段，就是等着卸载的（文件里删了它，卸载还没轮到、或被停机拒绝），不是缺配置的。
+ * 只有卸载碰它：同步会把默认值当成它的新配置段写回文件，重载会让它带着默认值重新激活。各轮热重载不排队，
+ * 判断一律按当前文档现取，一轮开头的名单在它等待期间可能已经过时
+ */
+function awaitsUnload(store: ConfigStore, instanceId: string): boolean {
+  return parseInstanceId(instanceId).suffix !== undefined && !Object.hasOwn(store.get('plugins'), instanceId);
+}
+
 export interface ConfigSyncOptions {
   /**
    * 是否按 configSchema 裁剪未知字段（默认 `true`）。
@@ -42,7 +51,8 @@ export interface ConfigSyncOptions {
  * 将各插件 schema 派生默认值中缺失的字段合并到配置；同时按 configSchema
  * 移除多余字段。返回发生变更的插件 instanceId 列表。
  *
- * 覆盖已登记的实例，以及文档里新出现、尚未登记的 `name:suffix` 实例（模块已登记且 reusable 时，定义取法同热重载登记）：
+ * 覆盖已登记的实例（等着卸载的后缀实例除外，见 {@link awaitsUnload}），以及文档里新出现、尚未登记的 `name:suffix` 实例
+ * （模块已登记且 reusable 时，定义取法同热重载登记）：
  * 后者随后由热重载按文档登记，先在这里规范化，首次 apply 拿到的就是带默认值的这一份。
  *
  * `previous` 是热重载前的文档：密钥字段上的明文写进它在同一位置引用的键，与 WebUI 替换同一规则。
@@ -63,7 +73,7 @@ export function syncPluginDefaults(
   const baseOf = (id: string) => (previous && Object.hasOwn(previous.plugins, id) ? previous.plugins[id] : undefined);
   for (const status of app.plugins.getStatus()) {
     const entry = app.plugins.getPlugin(status.instanceId);
-    if (!entry) continue;
+    if (!entry || awaitsUnload(store, status.instanceId)) continue;
     const id = status.instanceId;
     if (syncPluginConfig(app, store, entry.definition, id, moved, opts, baseOf(id))) changed.push(id);
   }
@@ -138,11 +148,9 @@ export async function handleConfigChanged(
   try {
     applyServicePreferences(host.services.use, store.getAll(), previous);
     // 后缀实例由配置段定义，冷启动只登记文件里有的；重载同样以文件为准，没有配置段的就卸载，新出现的在最后登记。
-    // 留着不管的话，下面的同步会把它当成缺配置的实例：运行态配置被换成默认值（无默认值时是 {}），
-    // 默认值还会作为一个新配置段写回文件。
-    const plugins = store.get('plugins');
+    // 这里没卸成的，下面的同步与重载都不碰，见 awaitsUnload
     for (const status of app.plugins.getStatus()) {
-      if (!parseInstanceId(status.instanceId).suffix || Object.hasOwn(plugins, status.instanceId)) continue;
+      if (!awaitsUnload(store, status.instanceId)) continue;
       app.logger.info(`实例 ${status.instanceId} 已不在配置文件中，正在卸载...`);
       await app.plugins.unload(status.instanceId);
     }
@@ -186,7 +194,7 @@ export function installConfigHotReload(
 }
 
 /**
- * 按文档重新解析一个已登记实例的配置，悬空引用记 error。与运行态相同返回 undefined；不同则按状态记一行（`change` 是起因，
+ * 按文档重新解析一个已登记实例的配置，悬空引用记 error。与运行态相同、或它是等着卸载的后缀实例时返回 undefined；不同则按状态记一行（`change` 是起因，
  * 如「配置已变更」）并返回新配置，由调用方交给 updateConfig（即 bounce；禁用态只换配置、保持禁用）。
  * 热重载与改了共用密钥之后的重载共用；不在这里 await，没有改动时调用方一路同步走完
  */
@@ -197,7 +205,7 @@ export function configToReload(
   change: string,
 ): Record<string, unknown> | undefined {
   const entry = app.plugins.getPlugin(instanceId);
-  if (!entry) return undefined;
+  if (!entry || awaitsUnload(store, instanceId)) return undefined;
   // 拿解析后的配置与运行态比：文档里是引用、运行态是原值，直接比永远不等
   const { config, dangling } = store.resolvePluginConfig(instanceId, entry.definition.configSchema);
   if (dangling.length > 0) app.logger.error(describeDangling(instanceId, dangling).source);
