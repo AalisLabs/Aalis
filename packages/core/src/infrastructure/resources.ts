@@ -12,7 +12,7 @@ interface ResourceHooks {
 }
 
 /**
- * 一次激活的资源记录与关闭过程；不了解服务、事件或插件调度。
+ * 一次激活的资源记录、就绪回调与关闭过程；不了解服务、事件或插件调度。
  * disposed 表示已开始关闭；disposables.disposed 表示清理链已被取走。两者之间仍允许登记，
  * 以接住初始化期间迟到的资源。
  */
@@ -27,6 +27,10 @@ export class Resources {
   readonly #inflight = new Map<Promise<void>, string>();
   /** 其中超过宽限、收口不再等的；关完仍有未落定的工作，旧实例就还没停下（见 lingering） */
   readonly #abandoned = new Set<Promise<void>>();
+  /** onReady 登记的就绪回调，跑过即摘掉 */
+  readonly #readyHooks = new Set<() => unknown>();
+  /** 已就绪（见 {@link ready}）：此后登记的回调各自另跑 */
+  #ready = false;
   #closing = false;
   #drained?: Promise<void>;
   #completion?: Promise<void>;
@@ -61,6 +65,37 @@ export class Resources {
   refuses(what: string): boolean {
     if (this.#closing) this.#logger.warn(`激活 "${this.#id}" 已关闭，忽略 ${what}`);
     return this.#closing;
+  }
+
+  /** 登记就绪回调：{@link ready} 时跑一次；已就绪之后登记的，下一个微任务另跑。返回退订 */
+  onReady(fn: () => void | Promise<void>): () => void {
+    if (this.refuses('onReady')) return () => {};
+    // 每次登记一个独立包装：同一个回调登记两次各算一条
+    const hook = () => fn();
+    this.#readyHooks.add(hook);
+    if (this.#ready) void this.#runReady(hook);
+    return () => void this.#readyHooks.delete(hook);
+  }
+
+  /**
+   * 就绪（由编排者在整体装好、本激活已激活时调用）：此刻已登记的回调按登记序逐个跑，单个至多等 limitMs（非正数不设限），
+   * 超过记 warn、转向下一个。返回时这些回调都已落定或已放弃等待。回调跑过即摘掉，再调一次不会重跑。
+   */
+  async ready(limitMs: number): Promise<void> {
+    this.#ready = true;
+    for (const hook of [...this.#readyHooks])
+      await awaitWithTimeout(this.#runReady(hook), limitMs, this.#timeout('等待 onReady 回调'));
+  }
+
+  /**
+   * 跑一个就绪回调，晚一拍、执行时才核对：排上之后被退订的、已开始关闭的不跑。记进在飞工作：关闭在每段收口等它落定，
+   * 超过宽限仍没落定的由 lingering 看到。
+   */
+  #runReady(hook: () => unknown): Promise<void> {
+    const run = Promise.resolve()
+      .then(() => (this.#readyHooks.delete(hook) && !this.#closing ? hook() : undefined))
+      .catch(error => this.#logger.warn(`Resources "${this.#id}": onReady 回调抛错，已忽略:`, error));
+    return this.holdInflight(run, 'onReady 回调');
   }
 
   /** 跟踪中的初始化尚未落定 */

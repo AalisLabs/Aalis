@@ -80,9 +80,9 @@ export interface PluginManagerService {
   /**
    * 增量重载单个插件：按现有配置拆掉当前激活 → 转 pending → 重算后重新激活。换配置走 updateConfig。
    * 插件要重启自己就调它。不换代码——要换代码走 `unload` + `register`。disabled 态被政策挡下（warn，返回 false）。
-   * 不得在插件 apply / onDrain / onDispose 内 await 针对自身或自身用到的任何提供者（required、optional 或 follow 跟随）的
-   * 本动作：拆卸可能要等这些回调返回，两边至多互等到宽限超时（`disposeTimeoutMs` 为 0 时一直等），旧实例超过宽限仍未
-   * 停下（`lingering`）。
+   * 不得在插件 apply / onReady 回调 / onDrain / onDispose 内 await 针对自身或自身用到的任何提供者（required、optional 或
+   * follow 跟随）的本动作：拆卸可能要等这些回调返回，两边至多互等到宽限超时（`disposeTimeoutMs` 为 0 时一直等），旧实例
+   * 超过宽限仍未停下（`lingering`）。
    */
   bounce(instanceId: string): Promise<boolean>;
   /**
@@ -107,7 +107,8 @@ export interface PluginManagerService {
    * 等待插件状态机静置（无在飞/排队的 recompute）。变更 API 在 flight 在飞时
    * 排队早退，需要"尘埃落定后再观察"的调用方在变更后 await 本方法。
    * 不等转入后台的激活（超过 slowThresholdMs 仍未完成的，以 activating、`slow: true` 可见）：它落定后另触发一次重算。
-   * 不得在插件 apply / onDispose 内调用（互等死锁）。
+   * 不得在插件 apply / onDispose 内调用（互等死锁）。onReady 回调里可以等，但要与本激活的 `signal` 赛跑：等待期间本激活
+   * 开始关闭时，关闭等这个回调落定、回调等静置、静置等这次关闭，互等到宽限超时（`disposeTimeoutMs` 为 0 时一直等）。
    */
   idle(): Promise<void>;
 }

@@ -194,6 +194,7 @@ async function applySandbox(proc: ProcessService): Promise<CodeSandboxService> {
   const lifecycle: LifecycleCap = {
     id: codeSandboxOs.name,
     signal: new AbortController().signal,
+    onReady: () => () => {},
     onDrain: () => () => {},
     onDispose: () => () => {},
   };

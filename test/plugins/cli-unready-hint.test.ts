@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { doctor } from '../../packages/api-doctor/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
-import { type App, definePlugin, defineService, type Logger, provide } from '../../packages/core/src/index.js';
+import { definePlugin, defineService, type Logger, provide } from '../../packages/core/src/index.js';
 import cliPlugin from '../../packages/plugin-cli/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import doctorPlugin from '../../packages/plugin-doctor/src/index.js';
@@ -40,15 +40,11 @@ afterEach(async () => {
 
 /**
  * withDoctor：装上指令服务与诊断插件（有 /doctor）；否则只装指令服务。
- * beforeStart：启动之前最后一步，可以让一次激活停在半路
+ * cli：false 时不装终端界面，留给用例在启动之后自己装
  */
 async function boot(
   extra: ReturnType<typeof definePlugin>[],
-  {
-    withDoctor,
-    beforeStart,
-    slowThresholdMs,
-  }: { withDoctor: boolean; beforeStart?: (app: App) => Promise<void>; slowThresholdMs?: number },
+  { withDoctor, slowThresholdMs, cli = true }: { withDoctor: boolean; slowThresholdMs?: number; cli?: boolean },
 ) {
   const writes: string[] = [];
   vi.spyOn(process.stdout, 'write').mockImplementation(chunk => {
@@ -65,17 +61,16 @@ async function boot(
   await app.plugin(commandsPlugin, {});
   if (withDoctor) await app.plugin(doctorPlugin, {});
   for (const definition of extra) await app.plugin(definition, {});
-  await app.plugin(cliPlugin, { startupView: 'chat' });
+  if (cli) await app.plugin(cliPlugin, { startupView: 'chat' });
   await app.plugins.idle();
-  if (app.plugins.getPlugin(cliPlugin.name)?.state !== 'active') throw new Error('plugin-cli 未激活');
-  await beforeStart?.(app);
+  if (cli && app.plugins.getPlugin(cliPlugin.name)?.state !== 'active') throw new Error('plugin-cli 未激活');
   await app.start();
   await settle();
   const frame = () => {
     const all = writes.join('');
     return all.slice(all.lastIndexOf(FRAME_SPLIT)).replace(ANSI_RE, '');
   };
-  return { host, frame };
+  return { app, host, frame };
 }
 
 describe('终端欢迎行下面的指路', () => {
@@ -134,15 +129,15 @@ describe('终端欢迎行下面的指路', () => {
         throw new Error('连不上上游');
       },
     });
-    let activating: Promise<boolean> | undefined;
-    const { frame } = await boot([], {
-      withDoctor: true,
-      beforeStart: async app => {
-        activating = app.plugin(late, {});
-        await entered.promise;
-      },
-    });
+    // 启动之后热装：终端界面与排在它后面的插件在同一轮重算里激活，界面在自己激活落定后就启动，那时后一个还卡在 apply 里
+    const { app, frame } = await boot([], { withDoctor: true, cli: false });
+    const activating = app.pluginAll([
+      { definition: cliPlugin, config: { startupView: 'chat' } },
+      { definition: late, config: {} },
+    ]);
+    await entered.promise;
     await settle();
+    expect(frame()).toContain('欢迎使用 Aalis。');
     expect(frame()).not.toContain('无法启动');
     gate.resolve();
     await activating;

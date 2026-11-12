@@ -42,6 +42,8 @@ export interface ActivationDeps {
   disposeTimeoutMs?: number;
   /** 初始化期 required 缺失时记一次重试，返回这次拆卸的目标态（见 PluginManager 的 #spendRetry） */
   spendRetry: (entry: PluginRecord, missing: string, cause?: unknown) => 'pending' | 'error';
+  /** 激活刚落定为 active：就绪相位已开始时由此跑它的就绪回调，不等 */
+  activated: (activation: Activation) => void;
   /** 关完的激活仍有工作没落定（rest 落定时兑现）：记在实例 id 名下，落定之前同一 id 不启动新实例 */
   linger: (instanceId: string, rest: Promise<unknown>) => void;
 }
@@ -196,4 +198,6 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
   // recompute flight 内逐个 entry 调用，等会让一个旁观者的慢 handler 挡住下一个插件的激活，
   // 监听器里 `await plugins.idle()` 更是互等死锁（idle 等 flight 排干，flight 等它返回）。
   host.runtime.notify('plugin:loaded', entry.instanceId);
+  // 就绪回调同样不参与归因、flight 不等它：回调里 `await plugins.idle()` 才不会互等
+  deps.activated(activation);
 }

@@ -70,6 +70,17 @@ export interface LifecycleCap {
    */
   readonly signal: AbortSignal;
   /**
+   * 登记就绪回调：整体装好之后开始对外干活（连接、监听端口、起子进程、开定时器），每次激活跑一次。
+   * `App.start()` 等插件状态机静置后，按激活顺序逐个激活、同一激活内按登记序逐个等，宿主根排在全部插件之后；启动之后
+   * 才激活的（启用、重启、热装）在自己的 apply 落定后跑，重算与 `plugins.idle()` 不等它；本激活的就绪回调开始跑之后
+   * 才登记的（含在回调里登记的），下一个微任务另跑，不排进这一趟，`start()` 不等它。
+   * 单个回调至多等 `slowThresholdMs`，超过记 warn、不再等它；抛错与拒绝只记在本激活名下，不影响别的回调与
+   * `start()`。退订的、本激活已开始关闭的不跑。在跑的回调算这次激活的在飞工作：关闭在收尾段之后等它落定，至多等
+   * `disposeTimeoutMs`；要它随关闭尽早停下，在回调里看 `signal`。所以回调不得 await 会关掉本激活的管理动作与 `stop()`，
+   * 等 `plugins.idle()` 要与 `signal` 赛跑（见 PluginManagerService 的 bounce 与 idle）。
+   */
+  onReady(fn: () => void | Promise<void>): () => void;
+  /**
    * 登记收尾：在本激活撤回登记之前执行，用于停接新活、把在手数据交给下层并等待确认。
    * 依赖可用性取决于关停图：普通消费者先关，宿主根与循环依赖采用各自的阶段顺序；
    * 不保护动态查询、缓存裸引用或提供者主动提前释放的资源。
@@ -206,6 +217,7 @@ export function coreProviders(
       entry<LifecycleCap>(lifecycle, c => ({
         id: c.id,
         signal: c.resources.signal,
+        onReady: fn => c.resources.onReady(fn),
         onDrain: (fn, label) => c.resources.onDrain(fn, label),
         onDispose: (fn, label) => c.resources.onDispose(fn, label),
       })),

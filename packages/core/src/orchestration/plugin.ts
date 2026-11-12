@@ -72,6 +72,26 @@ export class PluginManager implements PluginManagerService {
   #shutdownSettle?: Map<Activation, () => void>;
   /** 激活序缓存：只随注册表增删失效（依赖声明与 provides 每条不变） */
   #order?: PluginRecord[];
+  /** 就绪相位已开始（{@link ready} 置位，不复位）：此后激活落定的插件各自跑就绪回调 */
+  #ready = false;
+
+  /**
+   * 就绪相位（App.start 单飞，只调一次）：此刻已激活的插件按激活顺序逐个就绪，宿主根最后（它用插件的服务）。
+   * 开头取定的是激活本身、不是条目：相位途中才激活的（含重启出来的新实例）不在这一趟里，落定时自己跑（见
+   * ActivationDeps.activated）；途中开始关闭的（含停机冻结），回调在执行时跳过（见 Resources.ready）。轮到时才从条目上读
+   * 的话，读到的可能是重启出来的新实例：它还在 apply 就被提前跑了回调，或者它已经自己开跑、这里再跑一遍与之并行。
+   */
+  async ready(): Promise<void> {
+    this.#ready = true;
+    const active = this.#activationOrder().flatMap(entry => (entry.state === 'active' ? [entry.activation!] : []));
+    for (const activation of active) await activation.resources.ready(this.#slowMs);
+    await this.#host.root.resources.ready(this.#slowMs);
+  }
+
+  #activationOrder(): PluginRecord[] {
+    this.#order ??= topoSortByDeps([...this.#plugins.values()], this.#logger);
+    return this.#order;
+  }
 
   /**
    * 停机截止点（App.stop 单飞，只调一次）：置 `#shuttingDown`，并把根激活与全部插件激活冻进一张计划。
@@ -100,7 +120,7 @@ export class PluginManager implements PluginManagerService {
    * 后台激活落定时自己再触发一次重算。
    *
    * **不得在插件 apply / onDispose 内调用**——flight 正等着你返回，
-   * 等 flight 结束即互等死锁。
+   * 等 flight 结束即互等死锁。onReady 回调里等它的约束见 {@link PluginManagerService.idle}。
    */
   idle(): Promise<void> {
     if (!this.#reloading && !this.#suspended && !this.#queued) return Promise.resolve();
@@ -127,6 +147,9 @@ export class PluginManager implements PluginManagerService {
       logger: this.#logger,
       disposeTimeoutMs,
       spendRetry: (...args) => this.#spendRetry(...args),
+      activated: activation => {
+        if (this.#ready) void activation.resources.ready(this.#slowMs);
+      },
       linger: (id, rest) => {
         // join 同一次拆卸的计划各报一次；同一 id 停下之前不会有第二个旧实例
         if (this.#lingering.has(id)) return;
@@ -541,8 +564,7 @@ export class PluginManager implements PluginManagerService {
     converge: while (changed && !this.#shuttingDown) {
       changed = false;
 
-      this.#order ??= topoSortByDeps([...this.#plugins.values()], this.#logger);
-      const order = this.#order;
+      const order = this.#activationOrder();
 
       // Phase A：缺 required 的，连同随这批（与别的计划正关着的提供者）失去全部提供者的下游，成批关闭、下游先收尾
       const services = this.#host.runtime.services;

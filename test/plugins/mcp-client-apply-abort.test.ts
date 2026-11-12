@@ -107,6 +107,7 @@ describe('plugin-mcp-client 握手与列工具随 lifecycle.signal 中止', () =
     const lifecycle: LifecycleCap = {
       id: mcpClient.name,
       signal: abort.signal,
+      onReady: () => () => {},
       onDrain: () => () => {},
       onDispose: fn => {
         disposers.push(fn);

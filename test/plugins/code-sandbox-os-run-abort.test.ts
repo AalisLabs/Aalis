@@ -51,6 +51,7 @@ describe('code-sandbox-os 的 run 随中止停下', () => {
     const lifecycle: LifecycleCap = {
       id: codeSandboxOs.name,
       signal: activation.signal,
+      onReady: () => () => {},
       onDrain: () => () => {},
       onDispose: () => () => {},
     };

@@ -96,6 +96,7 @@ function caps(id: string) {
   const lifecycle: LifecycleCap = {
     id,
     signal: new AbortController().signal,
+    onReady: () => () => {},
     onDrain: () => noop,
     onDispose: () => noop,
   };

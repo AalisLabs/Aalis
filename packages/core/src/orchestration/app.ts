@@ -245,7 +245,9 @@ export class App {
 
   async #runStart(): Promise<void> {
     this.logger.info('正在启动...');
-    // 注：消息路由由网关插件承担，不在 core。
+    // 整体装好才算就绪：先等在飞的重算静置（转入后台的激活不等，它落定后自己跑就绪回调）
+    await this.#plugins.idle();
+    await this.#plugins.ready();
     await this.#events.emit('app:ready');
     if (this.#stopping) return;
     this.logger.info('启动完成');
@@ -286,8 +288,8 @@ export class App {
    * 否则同轮排队的 bounce 会在置位前过闸、停机后留下 pending 幽灵。
    *
    * 每次调用都返回完整停机的同一 Promise，包括屏障监听器与清理期间的调用。
-   * `app:stopping` 监听器与清理回调不得 await 或返回该 Promise，否则会等待自身（监听器至多等到
-   * `slowThresholdMs`、清理项至多等到 `disposeTimeoutMs` 后被放弃）。
+   * `app:stopping` 监听器、onReady 回调与清理回调不得 await 或返回该 Promise，否则会等待自身（监听器至多等到
+   * `slowThresholdMs`、其余至多等到 `disposeTimeoutMs` 后被放弃，为 0 时一直等）。
    * 仍在初始化的插件在 `beginShutdown()` 冻结时即 abort，flight 不再等它；两个上限都非 0 时停机总能结束。
    */
   stop(): Promise<void> {

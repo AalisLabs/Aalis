@@ -111,6 +111,7 @@ function applyWith(proc: ProcessService, signal: AbortSignal) {
   const lifecycle: LifecycleCap = {
     id: codeSandboxOs.name,
     signal,
+    onReady: () => () => {},
     onDrain: () => () => {},
     onDispose: () => () => {},
   };

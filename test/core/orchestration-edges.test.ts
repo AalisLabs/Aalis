@@ -140,6 +140,13 @@ describe('插件拓扑：required 真环', () => {
       ['ring-b', 'pending'],
     ]);
     expect(w.at('warn')).toContain('topoSortByDeps: 检测到 required 依赖环，残留 2 个按声明序追加');
+
+    // 激活序只在名单变了时重排：之后的重算（重启环外的插件）沿用它，环的告警不再记一遍
+    const cycleWarns = () => w.at('warn').filter(text => text.includes('required 依赖环')).length;
+    const before = cycleWarns();
+    await w.app.plugins.bounce('p1');
+    await w.app.plugins.idle();
+    expect(cycleWarns()).toBe(before);
   });
 });
 

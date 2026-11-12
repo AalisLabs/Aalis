@@ -64,6 +64,7 @@ function harness() {
   const lifecycle: LifecycleCap = {
     id: '@aalis/plugin-memory-mongodb',
     signal: abort.signal,
+    onReady: () => () => {},
     onDrain: () => () => {},
     onDispose: () => () => {},
   };
