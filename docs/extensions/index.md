@@ -56,19 +56,22 @@
 
 | api 包 | 注入的事件键 |
 |---|---|
-| `@aalis/schema-message` | `inbound:message` / `inbound:message:archived` / `assistant:message:archived` / `outbound:message` / `outbound:stream` |
-| `@aalis/api-agent` | `token:usage` / `token:request` |
+| `@aalis/schema-message` | `inbound:message` / `inbound:message:archived` / `assistant:message:archived` / `outbound:message` / `outbound:delivered` / `outbound:stream` |
+| `@aalis/api-agent` | `token:usage` / `token:request` / `agent:queue` |
 | `@aalis/api-approval` | `approval:created` / `approval:settled` |
 | `@aalis/api-doctor` | `doctor:updated` |
 | `@aalis/api-gateway` | `gateway:phase:done` |
+| `@aalis/api-host-config` | `host-config:changed` |
+| `@aalis/api-llm` | `llm:usage` |
 | `@aalis/api-media` | `media:processed` |
 | `@aalis/api-memory` | `memory:messages-deleted` / `memory:messages-rewritten` / `history:changed` / `session:compressing` |
 | `@aalis/api-session-manager` | `session:created` / `session:updated` / `session:completed` / `session:deleted` |
-| `@aalis/api-tools` | `tool:execute` |
+| `@aalis/api-session-settings` | `session-settings:changed` |
+| `@aalis/api-todo-list` | `todo:updated` |
+| `@aalis/api-tools` | `tool:execute` / `tool:output` / `background:changed` |
 | `@aalis/api-workflow` | `trigger:fired` / `workflow:run:start` / `workflow:run:done` / `workflow:run:error` / `workflow:node:done` |
 | `@aalis/plugin-scheduler` | `scheduler:job:start` / `scheduler:job:done` / `scheduler:job:error` |
-| `@aalis/plugin-todo-list` | `todo:updated` |
-| `@aalis/runtime`、`@aalis/plugin-cli` | `terminal:claimed` / `terminal:released`（同一对键，两处等价声明） |
+| `@aalis/runtime`、`@aalis/plugin-cli` | `terminal:claimed` / `terminal:released`（同一对键，两处等价声明；runtime 的在 `packages/runtime/src/console-sink.ts`） |
 
 ---
 

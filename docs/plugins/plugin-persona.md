@@ -19,6 +19,7 @@ export default definePlugin({
     logger,
     lifecycle,
     hooks,
+    contributions: optional(contributions),
     platform: optional(platform),
     storage: optional(storage),
     sessionManager: optional(sessionManager),

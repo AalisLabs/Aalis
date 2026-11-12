@@ -31,6 +31,10 @@ runtime 的发现驱动（`createPluginDiscovery`）拿到定义后整批交给 
 
 ```ts
 import { events } from '@aalis/api-events';
+import { ownHostConfig } from '@aalis/api-host-config';
+import { sessionManager } from '@aalis/api-session-manager';
+import { sessionFields } from '@aalis/api-session-settings';
+import { storage } from '@aalis/api-storage';
 import { backgroundTasks, tools } from '@aalis/api-tools';
 import { config, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 
@@ -42,9 +46,10 @@ export default definePlugin({
   provides: [tools, backgroundTasks],
   uses: {
     logger, provide, events, lifecycle, config,
-    sessionManager: optional(sessionManager),
+    sessionFields: optional(sessionFields),
+    document: optional(ownHostConfig),
     storage: optional(storage),
-    authority: optional(authority),
+    sessionManager: optional(sessionManager),
   },
   apply(caps) {
     // …
@@ -54,7 +59,7 @@ export default definePlugin({
 });
 ```
 
-对应的 `aalis.service`：`provides` 为 `tools`、`background-tasks`；`required` 为 `config`、`events`、`lifecycle`、`logger`、`provide`；`optional` 为 `session-manager`、`storage`、`authority`。
+对应的 `aalis.service`：`provides` 为 `tools`、`background-tasks`；`required` 为 `config`、`events`、`lifecycle`、`logger`、`provide`；`optional` 为 `storage`、`host-config`、`session-settings`、`session-manager`。
 
 `configSchema` 由 `@aalis/schema-config` 经 declaration merging 挂到 `PluginMeta` 上，是配置的唯一声明来源。`extends` 由 `@aalis/api-webui` 挂到 `PluginMeta`，写在 `definePlugin({ extends: { events, hooks } })` 里，供前端展示；webui-server 读 `entry.definition.extends`。
 

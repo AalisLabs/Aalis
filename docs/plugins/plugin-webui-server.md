@@ -40,6 +40,7 @@ export default definePlugin({
     llm: optional(llm),
     contributions: optional(contributions),
     archive: optional(messageArchive),
+    i18n: optional(i18n),
   },
   apply(caps) { /* 见源码 */ },
 });
