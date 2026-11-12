@@ -29,8 +29,8 @@ export default definePlugin({
 });
 ```
 
-- `events`：发 `tool:output`、`background:changed` 与后台任务的结束通知；收听 `session:deleted` 与 `app:stopping`。
-- `lifecycle`：停用时把在跑的后台任务落成 `aborted` 并写盘。
+- `events`：发 `tool:output`、`background:changed` 与后台任务的结束通知；收听 `session:deleted`。
+- `lifecycle`：收尾时（应用停机或本插件停用）把在跑的后台任务落成 `aborted` 并写盘，原因写「Aalis 停止或工具注册表停用时还在跑」。
 - 可选 `sessionFields`、`document`：按会话读「工具分组」（`sessionGroups`）；会话设置缺席时只取插件配置里的值。
 - 可选 `sessionManager`：工具分组哪一层都没设时看根会话从哪里建的（见下文「配置」）；缺席时这种会话一律不开。
 - 可选 `storage`：后台任务登记写进插件数据 `pluginData:/tools/background-tasks.json`；没有时只记在内存里。存储可能晚于本插件上线，有了插件数据根时读回一次。
@@ -80,7 +80,7 @@ export default definePlugin({
 - **结局**：结果带 `error` 或命令种类的退出码不为 0 为 `failed`（与会话服务的工具卡同一判据 `toolFailed`），`stop` 停的为 `stopped`，其余 `completed`；结束的留着工具的结果。命令种类的退出码记在任务的 `exitCode`，失败的 `reason` 只取结果里的 `error`。工具撤回登记（所属插件停用）时，执行器把它在跑的调用一并中止，后台的落成 `aborted`；本插件停用时全部落成 `aborted`，此后到的可转后台调用不执行、不过守卫，直接回「工具注册表正在停用，未执行」。会话删除时停掉它的任务并删掉登记；归档不停。
 - **检查点**：转到后台的调用在回合提交之后经存储写的文件不进这一轮的检查点，回滚撤不回（见 [plugin-checkpoint](plugin-checkpoint.md)）。
 - **落盘**：状态变了（登记、结束、删除）才写 `pluginData:/tools/background-tasks.json`，写入排队、整份写入；只记字段（含退出码），不记发起它的身份、输出与结果（读回的任务不再通知，身份没有用处）；每个会话留在跑的与最近 20 条结束的。启动读回时还在跑的落成 `aborted`，原因写「Aalis 重启时还在跑」。读不出来（权限、存储不可用）时告警，本次运行只记在内存里、不覆盖原文件。
-- **结束通知**：正常结束（含失败）时注入一条宿主通知 `inbound:message`：`hostNotice.kind` 为 api-tools 的 `BACKGROUND_TASK_NOTICE`（`background-task`）、`id` 为任务 id、`facts` 为给界面的事实（工具名、结局、用时与失败的命令的退出码，见 [api-tools 的结束通知](../api/api-tools.md#结束通知)），`source` 为 `bg:<任务 id>`，`fromTurn` 是发起它的那次调用所在那一轮（平台、发言者、这次调用的参与者（经审批放行的是批的人）、来源与那一轮自己的 `fromTurn`），不设 `actor`，`platform` 同那一轮（续做跟着发起它的那一轮，见 [security-model](../concepts/security-model.md#宿主通知的身份)），`hostNotice.replyTo` 取发起它那次调用的入站消息 id（`ToolCallContext.inbound.messageId`），她回复这条通知时引用那条消息（支持引用的平台，如 OneBot）。正文写给模型，只写宿主取得的事实：任务 id、工具名、结局与退出码、用时；参数、输出与结果由模型用 `background_output` 取。由结束通知开的回合里转后台的任务不再通知，链只延续一层。被停止的、工具撤回或本插件停用中断的、收到 `app:stopping` 之后结束的都不通知。通知经网关入站，房间在 [plugin-flow-control](plugin-flow-control.md) 的作用域内时对它不查冷却、照查限速，超限吞掉并影子归档。
+- **结束通知**：正常结束（含失败）时注入一条宿主通知 `inbound:message`：`hostNotice.kind` 为 api-tools 的 `BACKGROUND_TASK_NOTICE`（`background-task`）、`id` 为任务 id、`facts` 为给界面的事实（工具名、结局、用时与失败的命令的退出码，见 [api-tools 的结束通知](../api/api-tools.md#结束通知)），`source` 为 `bg:<任务 id>`，`fromTurn` 是发起它的那次调用所在那一轮（平台、发言者、这次调用的参与者（经审批放行的是批的人）、来源与那一轮自己的 `fromTurn`），不设 `actor`，`platform` 同那一轮（续做跟着发起它的那一轮，见 [security-model](../concepts/security-model.md#宿主通知的身份)），`hostNotice.replyTo` 取发起它那次调用的入站消息 id（`ToolCallContext.inbound.messageId`），她回复这条通知时引用那条消息（支持引用的平台，如 OneBot）。正文写给模型，只写宿主取得的事实：任务 id、工具名、结局与退出码、用时；参数、输出与结果由模型用 `background_output` 取。由结束通知开的回合里转后台的任务不再通知，链只延续一层。被停止的、工具撤回或本插件收尾中断的都不通知。通知经网关入站，房间在 [plugin-flow-control](plugin-flow-control.md) 的作用域内时对它不查冷却、照查限速，超限吞掉并影子归档。
 
 ### 后台任务工具
 

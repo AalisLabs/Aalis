@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { type ExecResult, processService } from '../../packages/api-process/src/index.js';
+import { type ExecResult, processService, type SpawnHandle } from '../../packages/api-process/src/index.js';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
 import { App, definePlugin, lifecycle, optional, services } from '../../packages/core/src/index.js';
 import processLocal, {
@@ -16,7 +16,7 @@ import processLocal, {
 //   2) 超时打的是整个进程组（detached 使子进程成为组长），孙进程同死；
 //   3) detached 后 Ctrl+C 不再直达子进程 → 停机时由 killAll 按进程组收尸：先整组 SIGTERM，宽限后还有成员的整组 SIGKILL；
 //      调用方显式 detached 的不登记。收在本插件自己的清理里：用 process 服务的插件先关完、先按自己的方式停下各自的子进程；
-//      本插件被 bounce 时不收，别的插件正在跑的子进程不随之结束；登记表在模块级、bounce 前后的实例共用，停机时连旧实例启动的组一起收；
+//      本插件单独停用、重启、卸载时同样收：它启动的进程组属于它，它关完时不留下还在跑的；
 //   4) 直接子进程退出后组里的进程也都退了，即撤这个组的登记，停机不再对空出来、可能被复用的组号发信号；
 //   5) 宿主没走完停机就退出（kill -9 等）时，宿主进程退出后由看门进程照停机的规矩收掉仍登记的组。
 // 均为 POSIX 语义，非 POSIX 平台跳过。
@@ -198,52 +198,43 @@ describe('process-local 子进程生命周期', () => {
     },
   );
 
-  it.skipIf(!posix)('本插件被 bounce：别的插件正在跑的子进程不随之结束', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
-    let pid: number | undefined;
-    const consumer = definePlugin({
-      name: 'zz-spawn-consumer',
-      uses: { lifecycle, proc: optional(processService) },
-      apply({ lifecycle, proc }) {
-        pid = proc.use.spawn('sleep', ['30'], { stdio: 'ignore', signal: lifecycle.use.signal }).pid;
-      },
-    });
-    await app.plugin(processLocal);
-    await app.plugin(consumer);
-    await app.plugins.idle();
-    if (pid === undefined) throw new Error('子进程未能启动');
-    try {
-      await app.plugins.bounce(processLocal.name);
+  // 可选依赖本插件的插件不随它重启：子进程被收掉，它从 wait() 拿到被信号结束的结果
+  it.skipIf(!posix)(
+    '本插件被 bounce：它启动的进程组随它的清理收掉，先整组 SIGTERM、等它收尾退出，重启完成时组里已没有进程',
+    async () => {
+      const app = new App({ name: 'T', logLevel: 'error' });
+      let run: SpawnHandle | undefined;
+      let applied = 0;
+      const consumer = definePlugin({
+        name: 'zz-spawn-consumer',
+        uses: { lifecycle, proc: optional(processService) },
+        apply({ lifecycle, proc }) {
+          applied++;
+          // 收尾要花一点时间：清理不等它的话，重启完成时组里还有进程
+          run = proc.use.spawn('bash', ['-c', "trap 'sleep 0.3; echo bye; exit 0' TERM; echo ready; sleep 30 & wait"], {
+            signal: lifecycle.use.signal,
+          });
+        },
+      });
+      await app.plugin(processLocal);
+      await app.plugin(consumer);
       await app.plugins.idle();
-      // 收的话第一下就是 SIGTERM，sleep 立即退出
-      await sleep(300);
-      expect(groupAlive(pid)).toBe(true);
-    } finally {
-      await app.stop();
-    }
-  });
-
-  it.skipIf(!posix)('本插件被 bounce 过：停机连旧实例启动的进程组一起收，先整组 SIGTERM，等它收尾退出', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
-    await app.plugin(processLocal);
-    await app.plugins.idle();
-    const old = app.bind({ services }).services.use.get(processService);
-    if (!old) throw new Error('process 服务未注册');
-    // 收尾要花一点时间：停机不等它的话，停完时组里还有进程
-    const run = old.spawn('bash', ['-c', "trap 'sleep 0.3; echo bye; exit 0' TERM; echo ready; sleep 30 & wait"], {});
-    const ended = run.wait();
-    await new Promise(ready => run.stdout?.once('data', ready));
-    const pid = run.pid!;
-    try {
-      await app.plugins.bounce(processLocal.name);
-      await app.plugins.idle();
-      await app.stop();
-      expect(groupAlive(pid), '停机等到组里的进程都退出').toBe(false);
-      expect((await ended).stdout).toBe('ready\nbye\n');
-    } finally {
-      if (groupAlive(pid)) process.kill(-pid, 'SIGKILL');
-    }
-  });
+      if (!run?.pid) throw new Error('子进程未能启动');
+      const pid = run.pid;
+      const ended = run.wait();
+      await new Promise(ready => run?.stdout?.once('data', ready));
+      try {
+        await app.plugins.bounce(processLocal.name);
+        await app.plugins.idle();
+        expect(groupAlive(pid), '重启等到组里的进程都退出').toBe(false);
+        expect((await ended).stdout).toBe('ready\nbye\n');
+        expect(applied, '可选依赖方不随之重启').toBe(1);
+      } finally {
+        if (groupAlive(pid)) process.kill(-pid, 'SIGKILL');
+        await app.stop();
+      }
+    },
+  );
 });
 
 describe.skipIf(!posix)('process-local 宿主退出时收掉它启动的进程组', () => {
@@ -256,8 +247,8 @@ describe.skipIf(!posix)('process-local 宿主退出时收掉它启动的进程�
   });
 
   /** 启动扮演宿主的进程，等它报出已启动进程组的组号 */
-  async function startHost(mode: 'kill' | 'bounce') {
-    const host = spawn(process.execPath, ['--import', 'tsx', fixture, mode], {
+  async function startHost() {
+    const host = spawn(process.execPath, ['--import', 'tsx', fixture], {
       cwd: repoRoot,
       env: { ...process.env, TSX_TSCONFIG_PATH: join(repoRoot, 'tsconfig.test.json') },
       stdio: ['ignore', 'pipe', 'inherit'],
@@ -270,23 +261,16 @@ describe.skipIf(!posix)('process-local 宿主退出时收掉它启动的进程�
     });
     const groups = line.trim().split(' ').map(Number);
     for (const group of groups) leftovers.push(() => groupAlive(group) && process.kill(-group, 'SIGKILL'));
-    return { host, groups, exited };
+    return { host, groups };
   }
 
   it('宿主被 kill -9：照停机的规矩收掉，忽略 SIGTERM 的宽限后被 SIGKILL', async () => {
-    const { host, groups } = await startHost('kill');
+    const { host, groups } = await startHost();
     const [plain, stubborn] = groups as [number, number];
     expect([groupAlive(plain), groupAlive(stubborn)]).toEqual([true, true]);
     host.kill('SIGKILL');
     await vi.waitFor(() => expect(groupAlive(plain)).toBe(false), { timeout: 1000 });
     expect(groupAlive(stubborn), '忽略 SIGTERM 的还在宽限里').toBe(true);
     await vi.waitFor(() => expect(groupAlive(stubborn)).toBe(false), { timeout: ABORT_KILL_GRACE_MS + 1000 });
-  });
-
-  it('bounce 本插件后正常停机退出：旧实例启动的进程组一并收掉', async () => {
-    const { groups, exited } = await startHost('bounce');
-    const [group] = groups as [number];
-    await exited;
-    await vi.waitFor(() => expect(groupAlive(group)).toBe(false), { timeout: 1000 });
   });
 });

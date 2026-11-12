@@ -8,14 +8,14 @@ import {
   type ToolExecutionResult,
   tools,
 } from '../../packages/api-tools/src/index.js';
-import { type App, events, provide, services } from '../../packages/core/src/index.js';
+import { type App, definePlugin, events, lifecycle, provide, services } from '../../packages/core/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
-// plugin-tools 的转后台接线：配置的两项上限、backgroundTasks 服务、会话删除与 app:stopping 两个事件、
+// plugin-tools 的转后台接线：配置的两项上限、backgroundTasks 服务、会话删除事件与应用停机、
 // 停用时落成 aborted 并写进插件数据、停用之后不再接可转后台的调用、storage 晚于本插件上线时照样读回。
 // 执行器本身的规则见 tools-background.test.ts，重启读回见 test/integration/background-restart.test.ts。
 // ════════════════════════════════════════════════════════════
@@ -142,17 +142,54 @@ describe('plugin-tools 的转后台接线', () => {
     expect(w.tasks().list()).toEqual([]);
   });
 
-  it('正常结束通知发起它的会话；收到 app:stopping 之后结束的不通知', async () => {
+  it('正常结束通知发起它的会话；停机途中、工具注册表还没开始收尾时结束的照常通知', async () => {
     const w = await start();
+    let release!: () => void;
+    const held = new Promise<void>(resolve => (release = resolve));
+    let reached!: () => void;
+    const draining = new Promise<void>(resolve => (reached = resolve));
+    // 用着工具注册表的插件：停机时它先收尾，卡在收尾里的这段时间工具注册表还没开始收尾
+    await w.app.plugin(
+      definePlugin({
+        name: 'zz-tool-user',
+        uses: { lifecycle, tools },
+        apply: caps =>
+          void caps.lifecycle.use.onDrain(() => {
+            reached();
+            return held;
+          }),
+      }),
+    );
+    await w.app.plugins.idle();
     await w.run({ runInBackground: true });
     await w.run({ runInBackground: true });
     w.runs[0].finish();
     await w.settle();
     expect(w.notices).toHaveLength(1);
-    await w.host.events.use.emit('app:stopping');
+    const stopping = w.app.stop();
+    await draining;
     w.runs[1].finish();
     await w.settle();
-    expect(w.notices).toHaveLength(1);
+    expect(
+      w
+        .tasks()
+        .list()
+        .map(task => task.status),
+    ).toEqual(['completed', 'completed']);
+    expect(w.notices).toHaveLength(2);
+    release();
+    await stopping;
+  });
+
+  it('应用停机时在跑的落成 aborted 并写进插件数据', async () => {
+    const files = new Map<string, string>();
+    const w = await start({}, { storage: pluginDataStorage(files) });
+    await w.run({ runInBackground: true });
+    await w.app.stop();
+    const saved = JSON.parse(files.get(FILE) ?? '{}') as { tasks: Array<Record<string, unknown>> };
+    expect(saved.tasks.map(t => [t.status, t.reason])).toEqual([
+      ['aborted', expect.objectContaining({ source: 'Aalis 停止或工具注册表停用时还在跑' })],
+    ]);
   });
 
   it('停用时在跑的落成 aborted 并写进插件数据', async () => {
@@ -165,7 +202,7 @@ describe('plugin-tools 的转后台接线', () => {
     await w.app.plugins.unload(toolsPlugin.name);
     const saved = JSON.parse(files.get(FILE) ?? '{}') as { tasks: Array<Record<string, unknown>> };
     expect(saved.tasks.map(t => [t.status, t.reason])).toEqual([
-      ['aborted', expect.objectContaining({ source: '工具注册表停用时还在跑' })],
+      ['aborted', expect.objectContaining({ source: 'Aalis 停止或工具注册表停用时还在跑' })],
       ['completed', undefined],
     ]);
   });

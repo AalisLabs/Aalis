@@ -11,7 +11,7 @@
 
 import { isDeepStrictEqual } from 'node:util';
 import { type AalisConfig, isConfigSaveRefused } from '@aalis/api-host-config';
-import { type App, events, type PluginDefinition, parseInstanceId, services } from '@aalis/core';
+import { type App, events, lifecycle, type PluginDefinition, parseInstanceId, services } from '@aalis/core';
 import { deepMergeDefaults, defaultsFrom, removeExtraFields, validateConfig } from '@aalis/schema-config';
 import { applyServicePreferences, type ConfigStore } from './config-store.js';
 import { moduleDefinitionOf, type PluginDiscovery, type PluginDiscoveryOptions } from './plugin-discovery.js';
@@ -158,8 +158,8 @@ export async function handleConfigChanged(
 }
 
 /**
- * 接管配置外部变更监听（provider 不支持 watch 时为 no-op），在 app:stopping（在飞动作排干后）停止监听。
- * startAalis 默认调用；嵌入式宿主可自行选择是否接。
+ * 接管配置外部变更监听（provider 不支持 watch 时为 no-op）。应用开始停机之后到来的变更不再重载；监听在宿主根收尾时
+ * 摘掉（那时插件都已收尾）。startAalis 默认调用；嵌入式宿主可自行选择是否接。
  */
 export function installConfigHotReload(
   app: App,
@@ -167,8 +167,10 @@ export function installConfigHotReload(
   discovery: Pick<PluginDiscovery, 'registerConfiguredInstances'>,
   opts?: ConfigSyncOptions,
 ): void {
-  store.watch(previous => void handleConfigChanged(app, store, discovery, opts, previous));
-  app.bind({ events }).events.use.on('app:stopping', () => store.unwatch());
+  store.watch(previous => {
+    if (!app.stopping) void handleConfigChanged(app, store, discovery, opts, previous);
+  });
+  app.bind({ lifecycle }).lifecycle.use.onDrain(() => store.unwatch());
 }
 
 /**

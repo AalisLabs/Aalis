@@ -322,9 +322,6 @@ export class BackgroundTasks implements BackgroundTaskService {
   private writing: Promise<void> = Promise.resolve();
   /** 已排上、还没开始的一次写：之后的变化由它一并写入 */
   private writeQueued = false;
-  /** 收到 app:stopping 之后：不再通知 */
-  private shuttingDown = false;
-
   constructor(deps: BackgroundTasksDeps) {
     this.logger = deps.logger;
     this.events = deps.events;
@@ -500,14 +497,9 @@ export class BackgroundTasks implements BackgroundTaskService {
     this.persist();
   }
 
-  /** 收到 app:stopping：此后结束的不通知 */
-  shutdown(): void {
-    this.shuttingDown = true;
-  }
-
   /** 停用（收尾）：在跑的调用一并中止，后台的落成 aborted，等写盘落定 */
   async close(): Promise<void> {
-    this.abortWhere(() => true, t(this.shuttingDown ? 'restarted' : 'closed'));
+    this.abortWhere(() => true, t('closed'));
     await this.writing;
   }
 
@@ -620,7 +612,7 @@ export class BackgroundTasks implements BackgroundTaskService {
     const error = status === 'failed' ? errorIn(result.content) : undefined;
     const reason = error === undefined ? undefined : truncateChars(error, REASON_MAX, '…');
     this.land(record, status, { ...ending, ...(reason !== undefined ? { reason } : {}) });
-    if (record.notice && !this.shuttingDown) this.notify(record, status, record.notice);
+    if (record.notice) this.notify(record, status, record.notice);
   }
 
   private land(

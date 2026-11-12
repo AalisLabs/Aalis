@@ -722,7 +722,10 @@ describe('停止、撤回、停用与会话删除', () => {
     await w.registry.execute('zz_slow', { runInBackground: true }, turn().ctx);
     await w.close();
     expect(w.runs[0].ctx.signal?.aborted).toBe(true);
-    expect(w.tasks.list()[0]).toMatchObject({ status: 'aborted', reason: { source: '工具注册表停用时还在跑' } });
+    expect(w.tasks.list()[0]).toMatchObject({
+      status: 'aborted',
+      reason: { source: 'Aalis 停止或工具注册表停用时还在跑' },
+    });
     expect(store.saved()?.tasks[0]).toMatchObject({ status: 'aborted' });
     w.runs[0].finish();
     await flush();
@@ -1066,16 +1069,6 @@ describe('结束通知', () => {
       await w.registry.execute('zz_slow', { runInBackground: true }, turn({ inbound: { source: 'bg:bg_x_1' } }).ctx),
     );
     expect(result.message).toContain('不再通知');
-    w.runs[0].finish();
-    await flush();
-    expect(w.notices()).toEqual([]);
-  });
-
-  it('收到 app:stopping 之后结束的不通知', async () => {
-    const w = world();
-    w.slow();
-    await w.registry.execute('zz_slow', { runInBackground: true }, turn().ctx);
-    w.tasks.shutdown();
     w.runs[0].finish();
     await flush();
     expect(w.notices()).toEqual([]);

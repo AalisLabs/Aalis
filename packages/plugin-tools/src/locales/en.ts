@@ -11,7 +11,7 @@ export default defineLocale<Source>()({
   maxPerSessionDescription:
     'How many tool calls that can move to the background may run at once in one session, foreground and background counted together; once full, new calls are refused.',
   restarted: 'Still running when Aalis restarted',
-  closed: 'Still running when the tool registry was disabled',
+  closed: 'Still running when Aalis stopped or the tool registry was disabled',
   withdrawn: 'Tool {name} was unregistered',
   noticeCompleted: 'Background task {id} ({tool}) completed in {ms, duration}',
   noticeFailedExit: 'Background task {id} ({tool}) failed with exit code {code} after {ms, duration}',

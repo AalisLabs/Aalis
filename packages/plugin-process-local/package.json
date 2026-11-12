@@ -49,7 +49,6 @@
         "process"
       ],
       "required": [
-        "events",
         "lifecycle",
         "logger",
         "provide"

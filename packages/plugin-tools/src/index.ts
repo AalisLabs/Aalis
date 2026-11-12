@@ -53,7 +53,7 @@ export default definePlugin({
   uses: {
     logger,
     provide,
-    /** 后台任务的 tool:output、background:changed 与结束通知；会话删除与停机 */
+    /** 后台任务的 tool:output、background:changed 与结束通知；会话删除 */
     events,
     lifecycle,
     config,
@@ -95,7 +95,6 @@ export default definePlugin({
       signal: lifecycle.use.signal,
     });
     events.use.on('session:deleted', sessionId => tasks.deleteSession(sessionId));
-    events.use.on('app:stopping', () => tasks.shutdown());
     // 停接新活时：在跑的落成 aborted 并写盘，这时依赖的存储还在
     lifecycle.use.onDrain(() => tasks.close());
     // 登记表读回一次：optional 依赖不参与激活顺序，存储可能晚于本插件上线，有了插件数据根才读

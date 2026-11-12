@@ -12,7 +12,7 @@ const SOURCE = {
   maxPerSessionLabel: '每个会话同时在跑的上限',
   maxPerSessionDescription: '同一会话里同时在运行的可转后台工具调用上限，前台与后台一起数；满了时新的调用直接被拒绝。',
   restarted: 'Aalis 重启时还在跑',
-  closed: '工具注册表停用时还在跑',
+  closed: 'Aalis 停止或工具注册表停用时还在跑',
   withdrawn: '工具 {name} 已撤回登记',
   noticeCompleted: '后台任务 {id}（{tool}）已完成，用时 {ms, duration}',
   noticeFailedExit: '后台任务 {id}（{tool}）失败：退出码 {code}，用时 {ms, duration}',

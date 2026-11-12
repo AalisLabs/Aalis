@@ -10,7 +10,7 @@ import type { ExecResult, ProcessService, SpawnHandle, SpawnOptions, TempDirHand
 import { makeTempDirViaStorage, processService } from '@aalis/api-process';
 import type { StorageService } from '@aalis/api-storage';
 import { storage } from '@aalis/api-storage';
-import { definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
+import { definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { t } from './texts.js';
 
 /** wait() 默认累计缓冲上限（stdout+stderr 合计）：10MB，足够正常输出，又防失控输出 OOM。 */
@@ -179,9 +179,8 @@ function killOnAbort(child: ChildProcess, signal: AbortSignal): void {
 
 /**
  * 存活进程组登记表（键 = 直接子进程 pid = pgid）。detached 后终端 Ctrl+C 不再直达子进程，改由 killAll
- * 在停机时统一收尸；`cmd &` 留下的孙进程在直接子进程退出后仍占着这个组，所以按组而非按子进程登记。
- * 模块级、与看门进程同寿，一个进程一份：本插件被 bounce 后新旧实例共用，停机时连旧实例启动的进程组一起收；同一进程里启动了
- * 几个 App 的也共用，其中一个停机就收全部。
+ * 在本插件关闭时统一收尸；`cmd &` 留下的孙进程在直接子进程退出后仍占着这个组，所以按组而非按子进程登记。
+ * 模块级、与看门进程同寿，一个进程一份：同一进程里启动了几个 App 的也共用，其中一个的本插件关闭就收全部。
  * 登记与撤销同步告诉看门进程（见 tellWatchdog），宿主意外退出时由它收掉；只在组空时撤销（子进程退出时或 sweep 里）。
  */
 const groups = new Map<number, ChildProcess>();
@@ -189,7 +188,7 @@ const groups = new Map<number, ChildProcess>();
 let sweeper: NodeJS.Timeout | undefined;
 
 /**
- * 宿主停机时收掉仍有成员的进程组，维持「Aalis 退出，工具子进程一起退出」。与中止同一规矩：整组 SIGTERM，至多等
+ * 本插件关闭时收掉仍有成员的进程组，维持「Aalis 退出，工具子进程一起退出」。与中止同一规矩：整组 SIGTERM，至多等
  * ABORT_KILL_GRACE_MS 让它们自己收尾，还有成员的再整组 SIGKILL。Windows 没有优雅终止，立即结束整棵树。
  */
 export async function killAll(): Promise<void> {
@@ -389,21 +388,15 @@ export default definePlugin({
   subsystem: 'system',
   provides: [processService],
   // storage 只被 makeTempDir 用到，缺席时其余方法照常可用：声明为可选，不拦激活。
-  uses: { provide, events, lifecycle, logger, storage: optional(storage) },
+  uses: { provide, lifecycle, logger, storage: optional(storage) },
   apply(caps) {
     const service = new LocalProcessService(caps.storage.use);
     caps.provide.use(processService, service);
-    // detached 让子进程脱离宿主进程组，终端 Ctrl+C 不再直达它们——停机时在本插件的清理里收掉，停机等到收完。
-    // 收在清理里：声明了 process 服务的插件（optional 也算）整个关完本插件才收尾（依赖成环时除外），它们先按自己的方式
-    // 停下各自的子进程（随中止信号停、发退出命令、等它写完），剩下的再收。只在停机时收：本插件被 bounce 时，别的插件正在跑的
-    // 子进程（ffmpeg 等）不该随之结束
-    let stopping = false;
-    caps.events.use.on('app:stopping', () => {
-      stopping = true;
-    });
-    caps.lifecycle.use.onDispose(async () => {
-      if (stopping) await killAll();
-    });
+    // detached 让子进程脱离宿主进程组，终端 Ctrl+C 不再直达它们——在本插件的清理里收掉，关闭等到收完。
+    // 收在清理里：停机时声明了 process 服务的插件（optional 也算）整个关完本插件才收尾（依赖成环时除外），它们先按自己的方式
+    // 停下各自的子进程（随中止信号停、发退出命令、等它写完），剩下的再收。单独停用、重启、卸载时同样收：经本插件启动的进程组
+    // 属于本插件，可选依赖它的插件不随之关闭，从 wait() 拿到被信号结束的结果
+    caps.lifecycle.use.onDispose(killAll);
     caps.logger.use.info('process-local 就绪');
   },
 });

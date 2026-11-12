@@ -1,4 +1,4 @@
-import { type App, config, definePlugin, type Logger, type PluginDefinition } from '@aalis/core';
+import { type App, config, definePlugin, type Logger, lifecycle, type PluginDefinition } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { ConfigSaveRefusedError } from '../../packages/api-host-config/src/index.js';
 import {
@@ -625,7 +625,7 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
     });
   });
 
-  it('app:stopping 时（在飞动作排干后）停止监听外部变更：provider 的退订被调用，此后推送不再触发重载', async () => {
+  it('停机时停止监听外部变更：provider 的退订被调用，停完之后可以重新订阅', async () => {
     let stops = 0;
     let push: (() => void) | undefined;
     const { app, store } = hostedApp(
@@ -647,6 +647,61 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
     expect(stops).toBe(1);
     // 已退订：store 不再持有订阅者，可以重新订阅
     expect(() => store.watch(() => {})).not.toThrow();
+  });
+
+  it('停机开始之后推送的外部变更不触发重载：别的插件还在收尾、监听还没摘掉的这段时间也不', async () => {
+    let push: (() => void) | undefined;
+    const infos: string[] = [];
+    const logger: Logger = {
+      debug() {},
+      info: (...args: unknown[]) => void infos.push(args.map(String).join(' ')),
+      warn() {},
+      error() {},
+      child: () => logger,
+    };
+    const { app, store } = hostedApp(
+      {},
+      {
+        logger,
+        provider: {
+          watch: cb => {
+            push = () => cb({ name: 'T', logLevel: 'error', plugins: {} });
+            return () => {};
+          },
+        },
+      },
+    );
+    installConfigHotReload(app, store, createPluginDiscovery(app, NO_PLUGINS, store));
+    let release!: () => void;
+    const held = new Promise<void>(resolve => (release = resolve));
+    let reached!: () => void;
+    const draining = new Promise<void>(resolve => (reached = resolve));
+    await app.plugin(
+      definePlugin({
+        name: 'zz-slow-drain',
+        uses: { lifecycle },
+        apply: caps =>
+          void caps.lifecycle.use.onDrain(() => {
+            reached();
+            return held;
+          }),
+      }),
+    );
+    await app.plugins.idle();
+    push?.();
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(
+      infos.filter(line => line.includes('检测到配置变更')),
+      '运行中的推送照常重载',
+    ).toHaveLength(1);
+
+    const stopping = app.stop();
+    await draining;
+    push?.();
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(infos.filter(line => line.includes('检测到配置变更'))).toHaveLength(1);
+    release();
+    await stopping;
   });
 });
 
