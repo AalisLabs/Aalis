@@ -15,7 +15,7 @@ export interface SmokeResult {
   cascade: { consumerAlone?: State; loaded: string[]; states: Record<string, State> };
   /** bounce 提供者：依赖方随之拆掉重建，拿到新一代提供者 */
   bounce: { loaded: string[]; consumerSaw: number[]; consumerDisposed: number[] };
-  /** 听到 app:ready 的监听器，按先后 */
+  /** 跑过的就绪回调，按先后 */
   ready: string[];
   /** 提供者每次拆卸时完成的异步清理（排在超时放弃的那一项之后） */
   flushed: string[];
@@ -35,7 +35,7 @@ const LIMIT_MS = 30;
 const WAIT_MS = 5000;
 
 export async function smoke(core: typeof Core): Promise<SmokeResult> {
-  const { createApp, definePlugin, defineService, events, lifecycle, LogHub, provide } = core;
+  const { createApp, definePlugin, defineService, lifecycle, LogHub, provide } = core;
 
   const hub = new LogHub();
   const warnings: string[] = [];
@@ -46,19 +46,22 @@ export async function smoke(core: typeof Core): Promise<SmokeResult> {
   });
   const app = createApp({ name: 'smoke', logHub: hub, slowThresholdMs: LIMIT_MS, disposeTimeoutMs: LIMIT_MS });
 
-  const host = app.bind({ events });
+  /** apply 走完的先后（各插件在 apply 末尾记一笔），与每个插件 apply 过几次 */
   const loaded: string[] = [];
-  const waiters = new Map<string, () => void>();
-  host.events.use.on('plugin:loaded', id => {
+  const applied = new Map<string, number>();
+  const applyDone = (id: string): void => {
     loaded.push(id);
-    waiters.get(id)?.();
-  });
+    applied.set(id, (applied.get(id) ?? 0) + 1);
+  };
+  /** 等 id 再激活一次：从现在起它又走完一次 apply，且状态已是 active */
   const nextLoad = (id: string) =>
     new Promise<void>((resolve, reject) => {
+      const from = applied.get(id) ?? 0;
       const timer = setTimeout(() => reject(new Error(`${WAIT_MS}ms 内没等到 ${id} 激活`)), WAIT_MS);
-      waiters.set(id, () => {
+      const off = app.plugins.watch(() => {
+        if ((applied.get(id) ?? 0) <= from || status(id).state !== 'active') return;
         clearTimeout(timer);
-        waiters.delete(id);
+        off();
         resolve();
       });
     });
@@ -86,6 +89,7 @@ export async function smoke(core: typeof Core): Promise<SmokeResult> {
       });
       // 超过宽限才落定：拆卸等满 disposeTimeoutMs 后放弃它、接着执行先登记的那一项；它落定之前同 id 不启动新实例
       lifecycle.use.onDispose(() => new Promise<void>(resolve => setTimeout(resolve, LIMIT_MS * 3)), 'hang');
+      applyDone('provider');
     },
   });
 
@@ -94,13 +98,14 @@ export async function smoke(core: typeof Core): Promise<SmokeResult> {
   const signals: AbortSignal[] = [];
   const consumer = definePlugin({
     name: 'consumer',
-    uses: { store, events, lifecycle },
-    apply({ store, events, lifecycle }) {
+    uses: { store, lifecycle },
+    apply({ store, lifecycle }) {
       const { generation } = store.use;
       consumerSaw.push(generation);
       signals.push(lifecycle.use.signal);
-      events.use.on('app:ready', () => void ready.push(`consumer#${generation}`));
+      lifecycle.use.onReady(() => void ready.push(`consumer#${generation}`));
       lifecycle.use.onDispose(() => void consumerDisposed.push(generation));
+      applyDone('consumer');
     },
   });
 
@@ -111,16 +116,18 @@ export async function smoke(core: typeof Core): Promise<SmokeResult> {
   await app.plugins.idle();
   const cascade = { consumerAlone, loaded: loaded.splice(0), states: states() };
 
-  // app:ready 是 sticky：启动后才登记的监听器也会补收一次
+  // 启动之后才激活的插件：自己的 apply 落定后跑就绪回调
   await app.start();
   await app.plugin(
     definePlugin({
       name: 'late',
-      uses: { events },
-      apply: ({ events }) => void events.use.on('app:ready', () => void ready.push('late')),
+      uses: { lifecycle },
+      apply: ({ lifecycle }) => void lifecycle.use.onReady(() => void ready.push('late')),
     }),
   );
   await app.plugins.idle();
+  // 就绪回调不在重算里等：让出一拍，等它跑完
+  await new Promise<void>(resolve => setTimeout(resolve, 0));
 
   // bounce 提供者：依赖方先拆后建；提供者卡住的清理超时放弃，其后的异步清理照常执行，旧实例停下后才启动新实例
   loaded.length = 0;
@@ -136,7 +143,7 @@ export async function smoke(core: typeof Core): Promise<SmokeResult> {
     release = resolve;
   });
   const landed = nextLoad('slow');
-  await app.plugin(definePlugin({ name: 'slow', apply: () => gate }));
+  await app.plugin(definePlugin({ name: 'slow', apply: () => gate.then(() => applyDone('slow')) }));
   const during = status('slow');
   release();
   await landed;

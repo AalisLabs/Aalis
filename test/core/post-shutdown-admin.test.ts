@@ -1,16 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  App,
-  definePlugin,
-  defineService,
-  events,
-  type Logger,
-  lifecycle,
-  provide,
-} from '../../packages/core/src/index.js';
+import { App, definePlugin, defineService, type Logger, lifecycle, provide } from '../../packages/core/src/index.js';
 import { deferred } from '../helpers/deferred.js';
 
-// app:stopping 时停机已冻结，清理由已有计划负责，管理动作不得抢关提供者。停机中、停机后六个管理动作一律回 false、
+// 停机一开始就已冻结，清理由已有计划负责，管理动作不得抢关提供者。停机中、停机后六个管理动作一律回 false、
 // 不改状态与配置，由 shutdown-regressions.test.ts 按各条目状态与两个阶段守。
 
 const apps: App[] = [];
@@ -43,9 +35,15 @@ function capturingApp(opts?: { disposeTimeoutMs?: number }): { app: App; warning
   return { app, warnings };
 }
 
-async function stopWithin(app: App, ms = 2000): Promise<'ok' | 'hung'> {
+/**
+ * 停机并限时等它落定。afterFreeze 在 stop() 返回的那一刻跑：停机闸已冻、关停计划已排好，计划还没开始执行；
+ * 它返回的 Promise 也一并等。
+ */
+async function stopWithin(app: App, afterFreeze?: () => unknown, ms = 2000): Promise<'ok' | 'hung'> {
+  const stopping = app.stop();
+  const during = afterFreeze?.();
   return Promise.race([
-    app.stop().then(() => 'ok' as const),
+    Promise.all([stopping, during]).then(() => 'ok' as const),
     new Promise<'hung'>(r => setTimeout(() => r('hung'), ms)),
   ]);
 }
@@ -97,34 +95,32 @@ async function storeAndWriter(
   return { saved, log, store };
 }
 
-describe('app:stopping 窗口', () => {
-  it('监听器里 await disable 提供者：消费者 onDrain 仍能 require', async () => {
+describe('停机已开始、关停计划执行之前', () => {
+  it('await disable 提供者：消费者 onDrain 仍能 require', async () => {
     const { app } = capturingApp();
     const { saved, log } = await storeAndWriter(app, 'psa-stop-dis');
-    const { events: bus } = app.bind({ events });
-    bus.use.on('app:stopping', async () => {
+    const during = async () => {
       log.push('stopping');
       await app.plugins.disable('store');
       log.push('disabled');
-    });
-    expect(await stopWithin(app)).toBe('ok');
+    };
+    expect(await stopWithin(app, during)).toBe('ok');
     expect(saved, `log=${log.join('>')}`).toEqual(['writer:last']);
     expect(log.indexOf('stopping')).toBeLessThan(log.indexOf('writer-drain'));
   });
 
-  it('监听器里 fire-and-forget unload 提供者：消费者 onDrain 仍能 require', async () => {
+  it('fire-and-forget unload 提供者：消费者 onDrain 仍能 require', async () => {
     const { app } = capturingApp();
     const { saved, log } = await storeAndWriter(app, 'psa-stop-ul');
-    const { events: bus } = app.bind({ events });
-    bus.use.on('app:stopping', () => {
+    const during = () => {
       log.push('stopping');
       void app.plugins.unload('store');
-    });
-    expect(await stopWithin(app)).toBe('ok');
+    };
+    expect(await stopWithin(app, during)).toBe('ok');
     expect(saved, `log=${log.join('>')}`).toEqual(['writer:last']);
   });
 
-  it('监听器里 bounce 提供者：返回 false、不重建，停机计划仍关掉原实例', async () => {
+  it('bounce 提供者：返回 false、不重建，停机计划仍关掉原实例', async () => {
     const { app, warnings } = capturingApp();
     const saved: string[] = [];
     const log: string[] = [];
@@ -164,12 +160,11 @@ describe('app:stopping 窗口', () => {
       }),
     );
     await app.plugins.idle();
-    const { events: bus } = app.bind({ events });
     let bounced: boolean | undefined;
-    bus.use.on('app:stopping', async () => {
+    const during = async () => {
       bounced = await app.plugins.bounce('store');
-    });
-    expect(await stopWithin(app)).toBe('ok');
+    };
+    expect(await stopWithin(app, during)).toBe('ok');
     expect(bounced).toBe(false);
     expect(
       warnings.some(x => x.startsWith('debug:') && x.includes('bounce: 插件 "store" 处于停机终态')),
@@ -185,14 +180,13 @@ describe('app:stopping 窗口', () => {
     ).toBe(true);
   });
 
-  it('监听器里 register：返回 false，apply 不执行', async () => {
+  it('register：返回 false，apply 不执行', async () => {
     const { app, warnings } = capturingApp();
     await app.plugin(definePlugin({ name: 'p', apply() {} }));
     await app.plugins.idle();
-    const { events: bus } = app.bind({ events });
     let accepted: boolean | undefined;
     let apply = 0;
-    bus.use.on('app:stopping', async () => {
+    const during = async () => {
       accepted = await app.plugin(
         definePlugin({
           name: 'latecomer',
@@ -201,8 +195,8 @@ describe('app:stopping 窗口', () => {
           },
         }),
       );
-    });
-    expect(await stopWithin(app)).toBe('ok');
+    };
+    expect(await stopWithin(app, during)).toBe('ok');
     expect(accepted).toBe(false);
     expect(apply).toBe(0);
     expect(app.plugins.getPlugin('latecomer')).toBeUndefined();
@@ -212,20 +206,19 @@ describe('app:stopping 窗口', () => {
     ).toBe(true);
   });
 
-  it('监听器里 provide：按冻结语义 warn 忽略，不抛', async () => {
+  it('宿主 provide：按冻结语义 warn 忽略，不抛', async () => {
     const { app, warnings } = capturingApp();
     const extra = defineService<{ n: number }>('psa-late-prov');
     const { provide: hostProvide } = app.bind({ provide });
-    const { events: bus } = app.bind({ events });
     let threw: string | false = false;
-    bus.use.on('app:stopping', () => {
+    const during = () => {
       try {
         hostProvide.use(extra, { n: 1 });
       } catch (err) {
         threw = err instanceof Error ? err.message : String(err);
       }
-    });
-    expect(await stopWithin(app)).toBe('ok');
+    };
+    expect(await stopWithin(app, during)).toBe('ok');
     expect(threw).toBe(false);
     expect(
       warnings.some(x => x.includes('已关闭') && x.includes('provide')),

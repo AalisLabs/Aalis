@@ -1,12 +1,12 @@
 // ============================================================
-// events.ts — 事件扩展点：内置事件表 + declaration merging 靶子。
+// events.ts — 事件扩展点：业务事件的 declaration merging 靶子。
 // 服务类型由各自的描述符承载。
 // ============================================================
 
 /**
- * 内置事件表
+ * 事件表：业务事件的 declaration merging 靶子，core 自己不发任何事件。
  *
- * 第三方插件可通过 TypeScript declaration merging 扩展：
+ * 契约包与插件经 TypeScript declaration merging 声明自己的事件（未声明的事件名编译报错）：
  * ```ts
  * declare module '@aalis/core' {
  *   interface AalisEvents {
@@ -14,57 +14,12 @@
  *   }
  * }
  * ```
+ * 消息事件在 @aalis/schema-message，工具事件在 @aalis/api-tools，网关相位事件在 @aalis/api-gateway。发射方等不等监听器由它自己定。
  *
- * core 自持的条目按「发射方等不等监听器」分两节，这是契约，节由前缀判定：
- * - **屏障**（`app:*`）：emit 是 `App` 生命周期方法里的一步，逐个等监听器返回后才推进下一步，
- *   监听器可以据此在「X 之前 / 之后」插入工作。单个监听器至多等 `AppOptions.slowThresholdMs`，
- *   超过即 warn 点名、不再等它（它之后的拒绝照常上报）。
- * - **通知**（`service:*` / `plugin:*` / `plugins:changed`）：发射方经宿主注入的 `notify` 发出，**不等**
- *   监听器。发射点要么是同步的注册 / 拆卸收尾（`provide`、退订、teardown），要么在 `PluginManager` 的
- *   recompute flight 或挂起段内——那里等监听器会与 `plugins.idle()` 互等死锁。监听器因此不能假设
- *   「我返回了状态机才继续」，要看尘埃落定后的状态请 `await plugins.idle()`。
- * 两节的调用形式由 `test/core/architecture.test.ts` 按语法树守；第三方增广的事件由其发射方自定。
+ * 生命周期与变化通知不在这里：启动就绪是 `lifecycle.onReady`，停机看 `lifecycle.stopping`，某个服务的提供者变了是
+ * 选择层的 `watch`，插件状态变了是 `plugins.watch`。
  */
-export interface AalisEvents {
-  // 业务事件由各契约包经 declaration merging 注入：消息事件在 @aalis/schema-message，
-  // 工具事件在 @aalis/api-tools，网关相位事件在 @aalis/api-gateway。
-  /**
-   * 通知：某服务的提供者或选择可能变了，请重读（选择层的 `list()` / `present`，动态查询的 `get` / `all`）。可能变化时
-   * 就发，不保证恰好一次、也不说明变了什么：`provide`、退订、激活拆卸、激活转入后台与完成后上线、偏好（全局与本插件）切换都发
-   */
-  'service:changed': [name: string];
-  /** 通知：插件已激活。同一轮 recompute 可能紧接着激活下一个插件，不等本事件的监听器 */
-  'plugin:loaded': [instanceId: string];
-  /**
-   * 通知：插件已拆卸。只发给发过 `plugin:loaded` 的激活：从未激活完成的（激活失败的回滚、仍在初始化时被拆）
-   * 不发；关机拆卸（`stop()` 自有事件）也不发
-   */
-  'plugin:unloaded': [instanceId: string];
-  /** 通知：一轮 recompute 收敛，插件状态集合可能已变；关机轮不发 */
-  'plugins:changed': [];
-  /**
-   * 屏障：应用启动的第一相位，插件在此建立「启动后才成立」的东西。
-   *
-   * 与 `app:started` 是两个相位，不是同一里程碑的两个名字：`start()` 串行 await 两次 emit，
-   * 全部 `app:ready` 监听器完成之后才发 `app:started`。要在别人都就绪之后才动手（如 CLI 接管终端），
-   * 挂 `app:started`。两者都是 sticky：晚注册的监听器（如 bounce 出来的新实例，含派发进行中登记的）会在下一个微任务被补发一次，`start()` 不等它返回。
-   */
-  'app:ready': [];
-  /** 屏障：应用启动的第二相位，全部 `app:ready` 监听器已完成，适合 CLI / TUI 等用户交互入口接管终端 */
-  'app:started': [];
-  /** 屏障：`App.restart()` 先发本事件，监听器全部完成后才把控制交给宿主注入的 `RestartStrategy` */
-  'app:restarting': [];
-  /**
-   * 屏障：`stop()` 冻结新激活并等管理操作静置后、执行激活关停计划之前。
-   *
-   * 本事件用于**知会**（如 CLI 打印告别语、状态条切换），**不是清理通道**。
-   *
-   * 插件内部清理副作用（关连接、停计时器、flush 缓冲区、落盘等）一律用
-   * `lifecycle.onDrain(cb)` / `lifecycle.onDispose(cb)`：它们覆盖 bounce / unload / updateConfig 等
-   * 全部拆卸路径，且异步清理会被编排层的 disposeAsync 等待完成。
-   * 本事件只在 app 全局停机时触发一次，用它做清理会在热重载路径上
-   * 造成资源泄漏与数据丢失。
-   * 监听器不能 await 或返回 App.stop() 的完成 Promise，否则与自身形成互等。
-   */
-  'app:stopping': [];
-}
+export interface AalisEvents {}
+
+/** 事件 E 的参数表。表里没有条目时 `AalisEvents[E]` 推不出数组形状，经它收成参数表 */
+export type EventArgs<E extends keyof AalisEvents> = AalisEvents[E] extends infer Args extends unknown[] ? Args : never;

@@ -72,7 +72,7 @@ export function abortInitializing(settle: Map<Activation, () => void>): void {
  * 关闭一组激活（根激活连同它名下的插件激活），返回时都已关完。roots 的给定次序就是无依赖关系时的关闭次序。
  * 逐阶段串行等待；关闭位与取消信号同步设置，收尾、撤回与清理回调都不在调用方的栈上执行（见 Resources.drain）。
  *
- * `settle` 传入时复用已冻的计划（停机：先冻再发 `app:stopping`，监听器里的 dispose 汇入同一张图）。
+ * `settle` 传入时复用已冻的计划（停机：一开始就冻，之后才发起的 dispose 汇入同一张图）。
  */
 export async function closeActivations(
   roots: Activation[],

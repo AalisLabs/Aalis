@@ -12,7 +12,7 @@
 // App 生命周期接口
 export type { AppService, PluginManagerService, PluginStatusEntry } from './app.js';
 // 事件扩展点
-export type { AalisEvents } from './events.js';
+export type { AalisEvents, EventArgs } from './events.js';
 // core 自己的失败的 code
 export type { CoreFailureCode } from './failure.js';
 // 插件注册表词汇

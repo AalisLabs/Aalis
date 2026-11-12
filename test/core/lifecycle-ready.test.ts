@@ -205,6 +205,27 @@ describe('lifecycle.onReady：start() 里的次序与等待', () => {
     expect(warns[1]).toBe('[aalis:hanging] Resources "hanging": onReady 回调抛错，已忽略: Error: 迟到的拒绝');
   });
 
+  it('阈值为 0：逐个等到回调返回，不告警', async () => {
+    const { app, warns } = world({ slowThresholdMs: 0 });
+    const log: string[] = [];
+    await app.plugin(
+      definePlugin({
+        name: 'p',
+        uses: { lifecycle },
+        apply({ lifecycle }) {
+          lifecycle.use.onReady(async () => {
+            await sleep(60);
+            log.push('慢的');
+          });
+          lifecycle.use.onReady(() => void log.push('后一个'));
+        },
+      }),
+    );
+    await within(app.start(), 1000, 'start');
+    expect(log).toEqual(['慢的', '后一个']);
+    expect(warns).toEqual([]);
+  });
+
   it('启动途中停机开始：还没轮到的回调不再跑，也不记「启动完成」', async () => {
     const infos: string[] = [];
     const logger: Logger = {
@@ -270,6 +291,53 @@ describe('lifecycle.onReady：启动之后才激活的插件', () => {
     expect(log.includes('结束'), 'idle() 不等就绪回调').toBe(false);
     await sleep(40);
     expect(log).toEqual(['apply', '开始', '结束']);
+  });
+
+  it('就绪相位途中才激活的插件（它等的服务在别人的就绪回调里才上线）：落定后自己跑一次', async () => {
+    const { app } = world();
+    const late = defineService<{ v: number }>('ready-test:late');
+    const log: string[] = [];
+    await app.plugin(
+      definePlugin({
+        name: 'consumer',
+        uses: { lifecycle, late },
+        apply: ({ lifecycle }) => void lifecycle.use.onReady(() => void log.push('consumer')),
+      }),
+    );
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('consumer')?.state).toBe('pending');
+    // 宿主在自己的就绪回调里才提供这个服务，随后另一个回调还在等
+    const host = app.bind({ lifecycle, provide });
+    host.lifecycle.use.onReady(() => void host.provide.use(late, { v: 1 }));
+    host.lifecycle.use.onReady(() => sleep(30));
+    await within(app.start(), 1000, 'start');
+    await app.plugins.idle();
+    await sleep(10);
+    expect(app.plugins.getPlugin('consumer')?.state).toBe('active');
+    expect(log).toEqual(['consumer']);
+  });
+
+  it('重启已受理、策略还没停机：这时重启出来的新实例照样跑就绪回调', async () => {
+    const { app } = world({ restartStrategy: { restart() {} } });
+    const log: string[] = [];
+    let generation = 0;
+    await app.plugin(
+      definePlugin({
+        name: 'p',
+        uses: { lifecycle },
+        apply({ lifecycle }) {
+          const mine = ++generation;
+          lifecycle.use.onReady(() => void log.push(`ready#${mine}`));
+        },
+      }),
+    );
+    await app.start();
+    app.restart();
+    await tick();
+    await app.plugins.bounce('p');
+    await app.plugins.idle();
+    await tick();
+    expect(log).toEqual(['ready#1', 'ready#2']);
   });
 
   it('转入后台、还没激活完的插件：start() 不跑它的回调，它落定后自己跑', async () => {

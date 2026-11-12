@@ -521,7 +521,7 @@ export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyn
           () => store.removePluginConfig(instanceId),
         ),
       isPluginDisabled: store.isPluginDisabled,
-      // 启停不通知：另有 plugins:changed
+      // 启停不通知：由插件管理面的 watch 通知
       setPluginEnabled: store.setPluginEnabled,
       getServicePreferences: scope => structuredClone(store.getServicePreferences(scope)),
       setServicePreference: (name, contextId, scope) =>

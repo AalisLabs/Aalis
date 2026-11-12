@@ -45,16 +45,16 @@ describe('订阅类 post-dispose：warn + no-op', () => {
 
     const onSpy = vi.spyOn(events, 'on');
     let called = 0;
-    const off = dead.caps.events.use.on('plugin:loaded', () => {
+    const off = dead.caps.events.use.on('zz:named', () => {
       called++;
     });
     // 判别性断言：守卫必须让注册**根本不发生**（无守卫时是幽灵注册秒退，spy 会记到 1 次）
     expect(onSpy).not.toHaveBeenCalled();
-    await observer.caps.events.use.emit('plugin:loaded', 'x');
+    await observer.caps.events.use.emit('zz:named', 'x');
     expect(called).toBe(0);
     expect(off).toBeTypeOf('function');
     expect(() => off()).not.toThrow();
-    expect(lines.find(l => l.includes('忽略 on("plugin:loaded")'))).toMatch(/^warn\|/);
+    expect(lines.find(l => l.includes('忽略 on("zz:named")'))).toMatch(/^warn\|/);
     await observer.activation.disposeAsync();
   });
 
@@ -75,17 +75,16 @@ describe('订阅类 post-dispose：warn + no-op', () => {
     await observer.activation.disposeAsync();
   });
 
-  it('provide：不产生幽灵服务，也不向活总线发 service:changed', async () => {
+  it('provide：不产生幽灵服务，也不报服务变更', async () => {
     const { make, lines } = makeWorld();
     const observer = make('observer');
     const dead = make('dead');
     await dead.activation.disposeAsync();
 
     const seen: string[] = [];
-    observer.caps.events.use.on('service:changed', name => void seen.push(name));
+    observer.watchServices(name => void seen.push(name));
 
     const off = dead.caps.provide.use(defineService('ghost-svc'), { v: 1 });
-    // 事件总线是异步 emit——冲刷微任务后仍必须零事件
     await new Promise(r => setTimeout(r, 0));
     expect(seen).toEqual([]);
     expect(observer.caps.services.use.get('ghost-svc')).toBeUndefined();
@@ -145,7 +144,7 @@ describe('活路径回归：守卫对未 dispose 的 ctx 零影响', () => {
     const peer = make('peer');
     const calls: string[] = [];
 
-    ctx.caps.events.use.on('plugin:loaded', () => {
+    ctx.caps.events.use.on('zz:named', () => {
       calls.push('on');
     });
     ctx.hub.use.add('a', 'v');
@@ -157,7 +156,7 @@ describe('活路径回归：守卫对未 dispose 的 ctx 零影响', () => {
       calls.push('cleanup');
     });
 
-    await peer.caps.events.use.emit('plugin:loaded', 'x');
+    await peer.caps.events.use.emit('zz:named', 'x');
     expect(calls).toContain('on');
     expect(calls).toContain('when');
     expect(peer.caps.services.use.get('alive-svc')).toEqual({ v: 1 });
@@ -240,7 +239,7 @@ describe('清理类迟到登记一律告警并就地执行', () => {
     const dead = make('dead');
     const { ref } = dead.host.bind(dead.activation, { ref: defineService('__t:pd-late-follow') });
     await dead.activation.disposeAsync();
-    dead.caps.events.use.on('plugin:loaded', () => {});
+    dead.caps.events.use.on('zz:named', () => {});
     dead.caps.provide.use(defineService('__t:pd-late-svc'), { v: 1 });
     dead.hub.use.add('late', 'v');
     ref.follow(() => {});

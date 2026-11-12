@@ -4,14 +4,13 @@ import {
   config,
   definePlugin,
   defineService,
-  events,
   type Logger,
   lifecycle,
   provide,
 } from '../../packages/core/src/index.js';
 import { deferred } from '../helpers/deferred.js';
 
-// stop() 单飞：重入汇入同一 Promise；app:stopping 派发期间再调不得无界重入。
+// stop() 单飞：重入汇入同一 Promise，收尾回调里再调不另起一次停机。
 // 已静置时先冻 shuttingDown 再 await idle，避免微任务窗口里 bounce 抢跑留下 pending 幽灵。
 // 停机中 unload 在 disposed-join 之前立即拒绝，不与已有计划互等。
 
@@ -56,12 +55,11 @@ interface Box {
 }
 
 describe('App.stop() 单飞与停机窗口', () => {
-  it('并发两次 stop()：都落定、drain/close 只跑一遍，app:stopping 只发一次', async () => {
+  it('并发两次 stop()：都落定、drain/close 只跑一遍', async () => {
     const { app, lines } = capturingApp();
     apps.push(app);
     let drains = 0;
     let closes = 0;
-    let stoppingEmits = 0;
     await app.plugin(
       definePlugin({
         name: 'p',
@@ -79,61 +77,46 @@ describe('App.stop() 单飞与停机窗口', () => {
     );
     await app.plugins.idle();
     expect(app.plugins.getPlugin('p')?.state).toBe('active');
-    app.bind({ events }).events.use.on('app:stopping', () => {
-      stoppingEmits++;
-    });
     const [a, b] = await Promise.all([stopWithin(app, 4000), stopWithin(app, 4000)]);
-    expect({ a, b, drains, closes, stoppingEmits }, lines.join(' | ')).toEqual({
-      a: 'ok',
-      b: 'ok',
-      drains: 1,
-      closes: 1,
-      stoppingEmits: 1,
-    });
+    expect({ a, b, drains, closes }, lines.join(' | ')).toEqual({ a: 'ok', b: 'ok', drains: 1, closes: 1 });
   });
 
-  it('app:stopping 里再次请求 stop()：共享完成对象且不重复发事件', async () => {
+  it('收尾回调里再次请求 stop()：共享完成对象，不重复启动停机', async () => {
     const { app, lines } = capturingApp();
     apps.push(app);
     const log: string[] = [];
-    let stoppingDepth = 0;
     let nested: Promise<void> | undefined;
     await app.plugin(
       definePlugin({
         name: 'p',
         uses: { lifecycle },
         apply({ lifecycle }) {
-          lifecycle.use.onDrain(() => void log.push('drain'));
+          lifecycle.use.onDrain(() => {
+            log.push('drain');
+            // 不能 await 或返回这个 Promise：停机本身还要等当前回调返回
+            nested = app.stop();
+          });
           lifecycle.use.onDispose(() => void log.push('dispose'));
         },
       }),
     );
     await app.plugins.idle();
     expect(app.plugins.getPlugin('p')?.state).toBe('active');
-    app.bind({ events }).events.use.on('app:stopping', () => {
-      stoppingDepth++;
-      log.push(`stopping#${stoppingDepth}`);
-      // 深度护栏：未修时无界重入会把 worker 打到 OOM；有护栏才能把「深度≠1」写成红断言
-      if (stoppingDepth > 8) return;
-      // 不能 await 或返回这个 Promise：停机本身还要等待当前监听器返回。
-      nested = app.stop();
-    });
     const stopping = app.stop();
     const outcome = await stopWithin(app, 3000);
-    expect(
-      { outcome, stoppingDepth, disposed: app.plugins.getPlugin('p')?.state },
-      `无界重入会把进程打到 OOM；log=${log.join('>')} lines=${lines.join('|')}`,
-    ).toEqual(expect.objectContaining({ outcome: 'ok', stoppingDepth: 1, disposed: 'disposed' }));
-    expect(log).toContain('drain');
-    expect(log).toContain('dispose');
+    expect({ outcome, disposed: app.plugins.getPlugin('p')?.state }, lines.join(' | ')).toEqual({
+      outcome: 'ok',
+      disposed: 'disposed',
+    });
+    expect(log).toEqual(['drain', 'dispose']);
     expect(nested).toBe(stopping);
   });
 
-  it('屏障期间的外部 stop() 不提前完成，继续等监听器与异步清理真正落定', async () => {
+  it('收尾期间的外部 stop() 不提前完成，继续等收尾与异步清理真正落定', async () => {
     const { app } = capturingApp();
     apps.push(app);
-    const eventEntered = deferred();
-    const eventGate = deferred();
+    const drainEntered = deferred();
+    const drainGate = deferred();
     const cleanupEntered = deferred();
     const cleanupGate = deferred();
     const saved: string[] = [];
@@ -142,6 +125,10 @@ describe('App.stop() 单飞与停机窗口', () => {
         name: 'writer',
         uses: { lifecycle },
         apply({ lifecycle }) {
+          lifecycle.use.onDrain(async () => {
+            drainEntered.resolve();
+            await drainGate.promise;
+          });
           lifecycle.use.onDispose(async () => {
             cleanupEntered.resolve();
             await cleanupGate.promise;
@@ -150,14 +137,10 @@ describe('App.stop() 单飞与停机窗口', () => {
         },
       }),
     );
-    app.bind({ events }).events.use.on('app:stopping', async () => {
-      eventEntered.resolve();
-      await eventGate.promise;
-    });
     const first = app.stop();
     let secondDone = false;
     try {
-      await eventEntered.promise;
+      await drainEntered.promise;
       const second = app.stop();
       second.then(() => {
         secondDone = true;
@@ -167,7 +150,7 @@ describe('App.stop() 单飞与停机窗口', () => {
       expect(second).toBe(first);
       expect(saved).toEqual([]);
 
-      eventGate.resolve();
+      drainGate.resolve();
       await cleanupEntered.promise;
       expect(secondDone).toBe(false);
       expect(saved).toEqual([]);
@@ -179,7 +162,7 @@ describe('App.stop() 单飞与停机窗口', () => {
       expect(saved).toEqual(['last-message']);
       expect(app.plugins.getPlugin('writer')?.state).toBe('disposed');
     } finally {
-      eventGate.resolve();
+      drainGate.resolve();
       cleanupGate.resolve();
       await first;
     }
@@ -198,15 +181,10 @@ describe('App.stop() 单飞与停机窗口', () => {
     };
     app = new App({ name: 'T', logLevel: 'error', logger });
     apps.push(app);
-    let stoppingEmits = 0;
-    app.bind({ events }).events.use.on('app:stopping', () => {
-      stoppingEmits++;
-    });
     const stopping = app.stop();
     await stopping;
     expect(nested).toBe(stopping);
     expect(calls).toBe(1);
-    expect(stoppingEmits).toBe(1);
   });
 
   it('stop 完成后再次 stop()：立即落定', async () => {

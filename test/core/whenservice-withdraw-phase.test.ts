@@ -150,7 +150,7 @@ describe('follow cleanup 走撤回段', () => {
     expect(order).toEqual(['withdraw', 'late', 'cleanup:early']);
   });
 
-  it('拆卸窗口内的服务事件不引爆 cleanup：子插件关闭摘掉提供者时，根的 cleanup 仍等到自己的撤回段', async () => {
+  it('拆卸窗口内的服务变更不引爆 cleanup：子插件关闭摘掉提供者时，根的 cleanup 仍等到自己的撤回段', async () => {
     const { app, host } = makeApp();
     host.provide.use(ownDesc, {});
     await app.plugin(
@@ -173,7 +173,7 @@ describe('follow cleanup 走撤回段', () => {
     });
     // 根用子插件的服务：根收尾 → 子关闭（摘掉提供者）→ 根撤回
     await app.stop();
-    expect(ownVisibleAtCleanup, 'cleanup 若在子插件关闭期间被 service:changed 引爆，原语登记尚未切断').toBe(false);
+    expect(ownVisibleAtCleanup, 'cleanup 若在子插件关闭期间被服务变更通知引爆，原语登记尚未切断').toBe(false);
   });
 
   it('拆卸窗口内提供者重新上线：关闭中的激活不再挂新实例', async () => {

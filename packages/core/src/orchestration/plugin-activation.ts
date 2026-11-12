@@ -5,7 +5,7 @@
 //   - retireBatch：拆卸的唯一形状
 //   - activatePlugin：建激活 → 挂载定义 → 校验 provides → 标记 active/error
 //
-// 需要的 PluginManager 状态经 deps 传入，PluginManager 自身只负责事件路由与重算编排。
+// 需要的 PluginManager 状态经 deps 传入，PluginManager 自身只负责服务变更的路由与重算编排。
 // ============================================================
 
 import { coreFailure } from '../types/failure.js';
@@ -49,10 +49,9 @@ export interface ActivationDeps {
 }
 
 /**
- * 拆卸方的唯一形状：先写终态 → 带超时拆激活 → 清引用 → 发 plugin:unloaded（只给拆前已激活、发过 plugin:loaded
- * 的）。单条也走这里。
+ * 拆卸方的唯一形状：先写终态 → 带超时拆激活 → 清引用。单条也走这里。
  *
- * 这四步的**顺序**是并发正确性的承重墙：漏一步或抄错顺序就是覆写竞态。约定只有一条：
+ * 这三步的**顺序**是并发正确性的承重墙：漏一步或抄错顺序就是覆写竞态。约定只有一条：
  * 「拆卸不许手写，调本函数」——由 test/architecture/state-write-sites.test.ts 的写入点定格测试机器守。
  *
  * - 先写终态：拆卸 await 期间并发管理操作的写入必须是后写者（管理意图胜）；
@@ -72,20 +71,18 @@ export interface ActivationDeps {
  * @param targetState 整批的目标态，或按条目给（管理动作的主体另有终态，同批下游转 pending）
  * @param planRoot 停机时传根激活：宿主的根绑定（app.bind）与全部插件进同一张计划，
  *   宿主的收尾因此排在它用到的插件关闭之前。
- * @param settle 已冻的计划（`App.stop` 在 `app:stopping` 之前 freeze）；缺省由 closeActivations 现冻。
+ * @param settle 已冻的计划（`App.stop` 一开始就 freeze）；缺省由 closeActivations 现冻。
  */
 export async function retireBatch(
   entries: PluginRecord[],
   targetState: PluginState | ((entry: PluginRecord) => PluginState),
   deps: ActivationDeps,
-  opts?: { emitUnloaded?: boolean; planRoot?: Activation; settle?: Map<Activation, () => void> },
+  opts?: { planRoot?: Activation; settle?: Map<Activation, () => void> },
 ): Promise<void> {
-  const closing: Array<{ entry: PluginRecord; activation: Activation; loaded: boolean }> = [];
+  const closing: Array<{ entry: PluginRecord; activation: Activation }> = [];
   for (const entry of entries) {
-    // 'active' 与 plugin:loaded 在同一同步段里写下；仍在初始化的、另一管理动作已改走终态的都不算
-    const loaded = entry.state === 'active';
     entry.state = typeof targetState === 'function' ? targetState(entry) : targetState;
-    if (entry.activation) closing.push({ entry, activation: entry.activation, loaded });
+    if (entry.activation) closing.push({ entry, activation: entry.activation });
   }
   try {
     // 给定次序就是无依赖时的关闭次序；停机时根排在最后（它名下其余的激活随根补进计划）
@@ -95,11 +92,10 @@ export async function retireBatch(
   } catch (err) {
     deps.logger.error('拆卸抛错:', err);
   }
-  for (const { entry, activation, loaded } of closing) {
+  for (const { entry, activation } of closing) {
     const rest = activation.resources.lingering();
     if (rest) deps.linger(entry.instanceId, rest);
     if (entry.activation === activation) entry.activation = undefined;
-    if (loaded && opts?.emitUnloaded !== false) deps.host.runtime.notify('plugin:unloaded', entry.instanceId);
   }
 }
 
@@ -133,8 +129,8 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     activation.resources.trackInitialization(applying);
     await applying;
 
-    // 接管检查：本次激活已冻进某张关闭计划，拆卸与终态归那张计划，本次激活的收尾（置 active / 报 error / 发
-    // plugin:loaded）全部让位，也不转入 retireBatch 再 join 计划（停机时 App 正等当前 recompute 落定才执行计划，再 join
+    // 接管检查：本次激活已冻进某张关闭计划，拆卸与终态归那张计划，本次激活的收尾（置 active / 报 error / 跑就绪回调）
+    // 全部让位，也不转入 retireBatch 再 join 计划（停机时 App 正等当前 recompute 落定才执行计划，再 join
     // 就会与 stop 互等）。两种接手都表现为本激活已开始关闭：管理动作（retireBatch）改走 state 与冻结计划在同一同步段
     // （closeActivations 的第一句），停机冻结根激活时名下全部激活一并冻上。检查与下方各写入之间无 await，不存在二次窗口
     if (activation.resources.disposed) {
@@ -194,10 +190,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     return;
   }
 
-  // 激活成败只由 apply/provides 校验决定，旁观者的监听器不参与归因。不等监听器：本函数在
-  // recompute flight 内逐个 entry 调用，等会让一个旁观者的慢 handler 挡住下一个插件的激活，
-  // 监听器里 `await plugins.idle()` 更是互等死锁（idle 等 flight 排干，flight 等它返回）。
-  host.runtime.notify('plugin:loaded', entry.instanceId);
-  // 就绪回调同样不参与归因、flight 不等它：回调里 `await plugins.idle()` 才不会互等
+  // 激活成败只由 apply/provides 校验决定，就绪回调不参与归因。flight 不等它：本函数在 recompute flight 内逐个 entry 调用，
+  // 等会让一个慢回调挡住下一个插件的激活，回调里 `await plugins.idle()` 更是互等（idle 等 flight 排干，flight 等它返回）
   deps.activated(activation);
 }

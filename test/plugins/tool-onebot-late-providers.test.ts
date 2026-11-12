@@ -19,7 +19,7 @@ afterEach(async () => {
   for (const app of booted.splice(0)) await app.stop();
 });
 
-/** 让 service:changed 等异步通知落地 */
+/** 让服务变更的 watch 等异步通知落地 */
 const flush = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0));
 
 function adapter(name: string): PlatformAdapter {

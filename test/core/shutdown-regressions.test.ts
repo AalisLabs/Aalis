@@ -1,13 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  App,
-  definePlugin,
-  defineService,
-  events,
-  type Logger,
-  lifecycle,
-  provide,
-} from '../../packages/core/src/index.js';
+import { App, definePlugin, defineService, type Logger, lifecycle, provide } from '../../packages/core/src/index.js';
 import { deferred } from '../helpers/deferred.js';
 
 function quietApp(): App {
@@ -176,11 +168,11 @@ describe('停机回归', () => {
     expect.soft(app.plugins.getPlugin(`new-${phase}`)).toBeUndefined();
   }
 
-  it('app:stopping 屏障内，各管理动作拒绝且不改变现有条目', async () => {
+  it('停机进行中（宿主根卡在收尾里），各管理动作拒绝且不改变现有条目', async () => {
     const { app, effects } = await setupAdminStates();
     const entered = deferred();
     const release = deferred();
-    app.bind({ events }).events.use.on('app:stopping', async () => {
+    app.bind({ lifecycle }).lifecycle.use.onDrain(async () => {
       entered.resolve();
       await release.promise;
     });

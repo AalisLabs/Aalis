@@ -381,7 +381,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
     });
   });
 
-  // 重启应用。发起之后的停机是异步的（core 先广播 app:restarting，何时停机由重启策略决定），这条回复来得及发出；
+  // 重启应用。发起之后的停机是异步的（何时停机由重启策略决定），这条回复来得及发出；
   // 宿主没注入重启策略时 restart() 同步抛错，回 500，界面据此不去等待重连
   route(expressApp, 'POST /api/restart', gate(), (_req, res) => {
     const app = caps.app.present ? caps.app.use : undefined;

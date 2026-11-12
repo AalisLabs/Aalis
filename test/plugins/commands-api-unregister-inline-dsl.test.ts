@@ -46,7 +46,7 @@ async function namesAfterProviderDown(declaration: string): Promise<string[]> {
   ).toContain('memo.clear');
 
   handle();
-  // 服务下线经事件广播到达跟随者：等宏任务把微任务队列排空，再等状态机静置
+  // 服务下线经服务变更通知到达跟随者：等宏任务把微任务队列排空，再等状态机静置
   await new Promise(r => setTimeout(r, 0));
   await app.plugins.idle();
 

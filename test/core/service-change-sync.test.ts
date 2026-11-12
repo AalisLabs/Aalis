@@ -1,4 +1,4 @@
-// 服务变更时 core 自己的跟随（follow、registrar）在变更那次调用里收敛，不排在公开 service:changed 的监听器后面。
+// 服务变更时 core 自己的跟随（follow、registrar）在变更那次调用里收敛；选择层的 watch 回调在那之后的下一个微任务才到。
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   App,
@@ -83,11 +83,8 @@ function consumer(item: string) {
 }
 
 describe('服务变更时 core 的跟随就地收敛', () => {
-  it('自供自用的服务：前面挂着异步的公开监听器，idle() 放行时补登记已落定', async () => {
-    const { app, host } = await world();
-    for (let i = 0; i < 3; i++) {
-      host.events.use.on('service:changed', () => new Promise<void>(resolve => setTimeout(resolve, 5)));
-    }
+  it('自供自用的服务：idle() 放行时补登记已落定', async () => {
+    const { app } = await world();
     const table = hub();
     await app.plugin(selfServing(table));
     await app.plugins.idle();
@@ -95,13 +92,11 @@ describe('服务变更时 core 的跟随就地收敛', () => {
     expect(table.items).toEqual(['builtin']);
   });
 
-  it('公开 service:changed 照旧发出，监听器收到时跟随已经收敛', async () => {
-    const { app, host } = await world();
+  it('选择层的 watch 回调收到时跟随已经收敛', async () => {
+    const { app } = await world();
     const table = hub();
     const seen: string[][] = [];
-    host.events.use.on('service:changed', name => {
-      if (name === registry.name) seen.push([...table.items]);
-    });
+    app.bind({ book: optional(registry) }).book.watch(() => void seen.push([...table.items]));
     await app.plugin(selfServing(table));
     await app.plugins.idle();
     expect(seen[0]).toEqual(['builtin']);
@@ -191,8 +186,8 @@ describe('服务变更时 core 的跟随就地收敛', () => {
     expect(order).toEqual(['drain', 'cleanup']);
   });
 
-  // 原语与归属表条目同一拍撤掉，不等下游交接：下游跟随收敛、公开监听器收到通知时，拆卸中提供者的条目都已不在
-  it('提供者拆卸：本激活的归属表条目先撤，下游跟随与公开监听器之后才收到', async () => {
+  // 原语与归属表条目同一拍撤掉，不等下游交接：下游跟随收敛、watch 回调收到通知时，拆卸中提供者的条目都已不在
+  it('提供者拆卸：本激活的归属表条目先撤，下游跟随与 watch 回调之后才收到', async () => {
     const { app, host } = await world();
     const table = hub();
     host.provide.use(registry, table);
@@ -203,9 +198,7 @@ describe('服务变更时 core 的跟随就地收敛', () => {
       }),
     );
     const heard: string[][] = [];
-    host.events.use.on('service:changed', name => {
-      if (name === feature.name) heard.push([...table.items]);
-    });
+    app.bind({ feature: optional(feature) }).feature.watch(() => void heard.push([...table.items]));
     const atCleanup: string[][] = [];
     await app.pluginAll([
       {

@@ -153,19 +153,19 @@ describe('事件监听器抛错的告警', () => {
         name: 'bad-listener',
         uses: { events },
         apply({ events }) {
-          events.use.on('app:started', () => {
+          events.use.on('zz:plain', () => {
             throw boom;
           });
-          events.use.on('app:started', () => void reached.push('after'));
+          events.use.on('zz:plain', () => void reached.push('after'));
         },
       }),
     );
     await app.plugins.idle();
 
-    await app.start();
+    await app.bind({ events }).events.use.emit('zz:plain');
 
     const warns = log.records.filter(r => r.level === 'warn');
-    expect(warns.map(r => r.message)).toEqual(['事件 "app:started" 的监听器抛错（已隔离，来自 bad-listener）:']);
+    expect(warns.map(r => r.message)).toEqual(['事件 "zz:plain" 的监听器抛错（已隔离，来自 bad-listener）:']);
     expect(warns[0].args).toEqual([boom]);
     expect(reached).toEqual(['after']);
   });
@@ -175,35 +175,31 @@ describe('事件监听器抛错的告警', () => {
     const app = track(createInspectableApp({ ...base(), logger: log }));
     const boom = new Error('ownerless');
     // 公开面拿不到总线；core 内部确有不带 owner 的订阅（binding 的提供者跟随），这里白盒复现同一形状
-    activationHost(app).runtime.events.on('app:started', () => {
+    activationHost(app).runtime.events.on('zz:plain', () => {
       throw boom;
     });
 
-    await app.start();
+    await app.bind({ events }).events.use.emit('zz:plain');
 
     const warns = log.records.filter(r => r.level === 'warn');
-    expect(warns.map(r => r.message)).toEqual(['事件 "app:started" 的监听器抛错（已隔离）:']);
+    expect(warns.map(r => r.message)).toEqual(['事件 "zz:plain" 的监听器抛错（已隔离）:']);
     expect(warns[0].args).toEqual([boom]);
   });
 });
 
 describe('App.restart', () => {
-  it('未注入 restartStrategy：同步抛「不可用」，不发 app:restarting、不停机', async () => {
+  it('未注入 restartStrategy：同步抛「不可用」，不停机', async () => {
     const log = recordingLogger();
     const app = track(new App({ ...base(), logger: log }));
-    const { events: bus } = app.bind({ events });
-    const seen: string[] = [];
-    bus.use.on('app:restarting', () => void seen.push('restarting'));
-    bus.use.on('app:stopping', () => void seen.push('stopping'));
 
     expect(() => app.restart()).toThrow('App.restart() 不可用：未注入 restartStrategy。');
 
     await new Promise<void>(r => setTimeout(r, 0));
-    expect(seen).toEqual([]);
+    expect(app.stopping).toBe(false);
     expect(log.messages('info')).not.toContain('正在停止...');
   });
 
-  it('注入策略：先发 app:restarting 再交控制；core 自己不停机，交给策略的 stop 停的是本应用，rollback 原样透传', async () => {
+  it('注入策略：下一个微任务里交控制，不在调用方的栈上；core 自己不停机，交给策略的 stop 停的是本应用，rollback 原样透传', async () => {
     const log = recordingLogger();
     const order: string[] = [];
     let received: { stop: () => Promise<void>; rollback?: unknown } | undefined;
@@ -224,9 +220,6 @@ describe('App.restart', () => {
         },
       }),
     );
-    const { events: bus } = app.bind({ events });
-    bus.use.on('app:restarting', () => void order.push('restarting'));
-    bus.use.on('app:stopping', () => void order.push('stopping'));
     await app.plugin(
       definePlugin({
         name: 'p',
@@ -240,18 +233,19 @@ describe('App.restart', () => {
 
     const token = { snapshot: 'placeholder' };
     app.restart({ rollback: token });
+    expect(order, 'restart() 返回时策略还没被调').toEqual([]);
     await handedOver;
 
     expect(received?.rollback).toBe(token);
     // 何时停由策略决定：交出控制时应用仍在运行
-    expect(order).toEqual(['restarting', 'strategy']);
+    expect(order).toEqual(['strategy']);
     expect(app.plugins.getPlugin('p')?.state).toBe('active');
 
     const stopping = received!.stop();
     // 交出的 stop 就是本应用的单飞停机：与直接调 app.stop() 是同一个 Promise
     expect(app.stop()).toBe(stopping);
     await stopping;
-    expect(order).toEqual(['restarting', 'strategy', 'stopping', 'disposed']);
+    expect(order).toEqual(['strategy', 'disposed']);
     expect(log.messages('info')).toContain('已停止');
   });
 
@@ -276,10 +270,10 @@ describe('App.restart', () => {
 describe('启动与停机、重启互斥', () => {
   const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
-  it('重复调用 start 返回同一个 Promise，启动事件只发一次', async () => {
+  it('重复调用 start 返回同一个 Promise，就绪回调只跑一次', async () => {
     const app = track(new App(base()));
     let ready = 0;
-    app.bind({ events }).events.use.on('app:ready', () => void ready++);
+    app.bind({ lifecycle }).lifecycle.use.onReady(() => void ready++);
     const first = app.start();
     expect(app.start()).toBe(first);
     await first;
@@ -295,31 +289,7 @@ describe('启动与停机、重启互斥', () => {
     expect(log.messages('info')).not.toContain('正在启动...');
   });
 
-  it('启动途中被 stop：进行中的 start 照常落定，不再发 app:started', async () => {
-    const app = track(new App(base()));
-    const seen: string[] = [];
-    await app.plugin(
-      definePlugin({
-        name: 'p',
-        uses: { events, lifecycle },
-        apply({ events, lifecycle }) {
-          events.use.on('app:started', () => void seen.push('started'));
-          // 收尾期间监听还在：停机没走完时发出的 app:started 会打到它
-          lifecycle.use.onDrain(() => sleep(30));
-        },
-      }),
-    );
-    await app.plugins.idle();
-    let stopping: Promise<void> | undefined;
-    app.bind({ events }).events.use.on('app:ready', () => {
-      stopping = app.stop();
-    });
-    await app.start();
-    await stopping;
-    expect(seen).toEqual([]);
-  });
-
-  it('重启已受理后再调 restart 记 debug 后返回，停机开始后也是：只发一次 app:restarting、只调一次策略', async () => {
+  it('重启已受理后再调 restart 记 debug 后返回，停机开始后也是：只调一次策略', async () => {
     let calls = 0;
     let received: { stop: () => Promise<void> } | undefined;
     const log = recordingLogger();
@@ -335,15 +305,13 @@ describe('启动与停机、重启互斥', () => {
         },
       }),
     );
-    let restarting = 0;
-    app.bind({ events }).events.use.on('app:restarting', () => void restarting++);
     app.restart();
     app.restart();
     await sleep(5);
     const stopping = received!.stop();
     expect(() => app.restart()).not.toThrow();
     await stopping;
-    expect({ calls, restarting }).toEqual({ calls: 1, restarting: 1 });
+    expect(calls).toBe(1);
     expect(log.messages('debug').filter(m => m.startsWith('restart'))).toEqual([
       'restart: 已受理过一次，本次忽略',
       'restart: 已受理过一次，本次忽略',

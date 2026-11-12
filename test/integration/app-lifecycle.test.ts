@@ -1,15 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { hostConfig } from '../../packages/api-host-config/src/index.js';
-import {
-  App,
-  appService,
-  defineService,
-  events,
-  lifecycle,
-  pluginsService,
-  provide,
-} from '../../packages/core/src/index.js';
+import { App, appService, defineService, lifecycle, pluginsService, provide } from '../../packages/core/src/index.js';
 import { hostedApp, tempConfig } from '../fixtures/app.js';
 
 /**
@@ -34,18 +26,18 @@ describe('App 生命周期', () => {
     expect(host.hostConfig.use.get('logLevel')).toBe('warn');
   });
 
-  it('app.stop 触发 app:stopping 事件并关闭根激活（onDispose 随之触发）', async () => {
+  it('app.stop 关闭根激活：先收尾（此刻 App.stopping 已是 true）、再清理', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
-    const host = app.bind({ events, lifecycle });
+    const host = app.bind({ lifecycle });
     const seen: string[] = [];
-    host.events.use.on('app:stopping', () => {
-      seen.push('stopping');
+    host.lifecycle.use.onDrain(() => {
+      seen.push(`drain:${app.stopping}`);
     });
     host.lifecycle.use.onDispose(() => {
       seen.push('dispose');
     });
     await app.stop();
-    expect(seen).toEqual(['stopping', 'dispose']);
+    expect(seen).toEqual(['drain:true', 'dispose']);
     expect(host.lifecycle.use.signal.aborted).toBe(true);
   });
 

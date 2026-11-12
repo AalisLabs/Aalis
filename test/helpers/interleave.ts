@@ -1,8 +1,6 @@
 import {
-  App,
   definePlugin,
   defineService,
-  events,
   type Logger,
   lifecycle,
   optional,
@@ -13,6 +11,7 @@ import {
   services,
   type Uses,
 } from '../../packages/core/src/index.js';
+import { activationHost, createInspectableApp } from './inspectable-app.js';
 
 /** 带种子的伪随机数（mulberry32）：同一种子同一序列 */
 function mulberry32(seed: number): () => number {
@@ -98,10 +97,15 @@ export function createWorld(seed: number, profile: Profile) {
     };
     return { debug() {}, info() {}, warn, error: warn, child: capture };
   };
-  const app = new App({ name: 'fuzz', logger: capture('app'), disposeTimeoutMs: TIMEOUT, slowThresholdMs: 60 });
-  const host = app.bind({ services, events });
-  // 有不在退场的提供者才算找回：撤回自己发的变更通知到达时，退场中的提供者可能还没摘掉
-  host.events.use.on('service:changed', name => {
+  const app = createInspectableApp({
+    name: 'fuzz',
+    logger: capture('app'),
+    disposeTimeoutMs: TIMEOUT,
+    slowThresholdMs: 60,
+  });
+  const host = app.bind({ services });
+  // 有不在退场的提供者才算找回：撤回自己报的变更到达时，退场中的提供者可能还没摘掉
+  activationHost(app).runtime.watchServices(name => {
     if (host.services.use.all(name).some(v => running(v.contextId))) lost.delete(name);
   });
 
@@ -177,7 +181,7 @@ export function createWorld(seed: number, profile: Profile) {
     return definePlugin({
       name: id,
       provides: [own],
-      uses: { lifecycle, events, provide, plugins: pluginsService, ...deps },
+      uses: { lifecycle, provide, plugins: pluginsService, ...deps },
       apply(caps) {
         const refs = caps as unknown as Record<string, ServiceSelection<Impl>>;
         const inst = new Instance(id, ++gen, () => {
@@ -190,8 +194,8 @@ export function createWorld(seed: number, profile: Profile) {
         instances.push(inst);
         latest.set(id, inst);
         let heard = 0;
-        caps.events.use.on('app:ready', () => {
-          if (++heard === 2) flag('I5', `${tag} 两次收到 app:ready`);
+        caps.lifecycle.use.onReady(() => {
+          if (++heard === 2) flag('I5', `${tag} 的就绪回调跑了两次`);
         });
         caps.lifecycle.use.onDrain(() => {
           note(`drain ${tag}`);

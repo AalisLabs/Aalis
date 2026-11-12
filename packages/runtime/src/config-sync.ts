@@ -140,7 +140,7 @@ export async function handleConfigChanged(
     const synced = syncPluginDefaults(app, store, opts, previous);
     for (const id of synced) app.logger.debug(`热重载配置同步: ${id}`);
 
-    // 启用中的插件由 updateConfig 收尾的重算发 plugins:changed；禁用插件只换配置、状态不变，这里都不必再补发。
+    // 启用中的插件由 updateConfig 收尾的重算通知 plugins.watch 的订阅；禁用插件只换配置、状态不变，这里都不必再补发。
     // 密钥文件的变更也走这里，只有解析结果变了的实例才重载
     for (const status of app.plugins.getStatus()) {
       const next = configToReload(app, store, status.instanceId, '配置已变更');

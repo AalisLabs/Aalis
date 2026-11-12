@@ -95,7 +95,7 @@ function makeCommandService(): { svc: CommandService; cmds: Map<string, Register
 const newApp = () => new App({ name: 'T', logLevel: 'error' });
 
 /**
- * 提供者上下线经事件广播到达跟随者，并可能触发插件重算：先等宏任务把微任务队列排空，
+ * 提供者上下线经服务变更通知到达跟随者，并可能触发插件重算：先等宏任务把微任务队列排空，
  * 再等状态机静置。
  */
 async function settle(app: App): Promise<void> {

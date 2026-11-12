@@ -155,7 +155,7 @@ declare module '@aalis/core' {
   interface AalisEvents {
     /**
      * 宿主配置文档在内存里确实被改了，由宿主发，别的插件不发：host-config 的写方法改完、且改前改后确实不同时（写入相同的值
-     * 不发；读法交出的是复制品，就地改了再写回照常发；setPluginEnabled 不发，启停另有 plugins:changed），applyPluginConfig
+     * 不发；读法交出的是复制品，就地改了再写回照常发；setPluginEnabled 不发，启停由插件管理面的 watch 通知），applyPluginConfig
      * 受理且文档变了时（落盘失败也发，refused 不发），加载插件时补写了它的配置段之后（默认值、裁剪），配置热重载换下文档之后
      * （解析失败、文档没换不发）。不表示已落盘，也不保证恰好一次：一次写入可能连带几次。订阅方按 change 决定要不要重读
      */

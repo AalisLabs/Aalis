@@ -277,7 +277,7 @@ function createTarget<P, B>(
     for (const follower of [...followers]) pump(follower);
   };
 
-  // 选择可能变化时让全部跟随者收敛（pump 自己去重）。拆卸窗口内的服务事件不引爆清理，由撤回段统一收
+  // 选择可能变化时让全部跟随者收敛（pump 自己去重）。拆卸窗口内的服务变更不引爆清理，由撤回段统一收
   const subscribe = (): void => {
     const off = scope.watchServices(service => {
       if (service === name && !scope.resources.disposed) pumpAll();

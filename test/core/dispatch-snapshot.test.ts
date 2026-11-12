@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DefaultLogger, LogHub } from '../../packages/core/src/index.js';
 import { EventBus } from '../../packages/core/src/primitives/events.js';
 
-// 一次派发只送达它开始时已登记的：派发途中新登记的不收这一次（sticky 事件另经补发收到一次），派发途中退订的不再收到。
+// 一次派发只送达它开始时已登记的：派发途中新登记的不收这一次，派发途中退订的不再收到。
 // 事件总线与日志分发同一规则，登记也同一规则：每次登记一条，同一函数登记两次各算各的、各自退订。
 
 declare module '../../packages/core/src/index.js' {
@@ -45,34 +45,17 @@ describe('事件总线：派发只送达开始时已登记的', () => {
     expect(got).toEqual(['first']);
   });
 
-  it('sticky 事件嵌套 emit 之后，外层派发途中登记的监听器只收到一次', async () => {
-    const bus = new EventBus({ sticky: ['app:ready'] });
-    let nested = false;
-    let secondCalls = 0;
-    let late = 0;
-    bus.on('app:ready', async () => {
-      if (nested) return;
-      nested = true;
-      await bus.emit('app:ready');
-    });
-    bus.on('app:ready', () => {
-      if (++secondCalls === 2) bus.on('app:ready', () => void late++);
-    });
-    await bus.emit('app:ready');
-    await tick();
-    expect(late).toBe(1);
-  });
-  it('sticky 事件外层派发途中登记、随后嵌套再发一次：登记的监听器经嵌套那次收到，不再补发', async () => {
-    const bus = new EventBus({ sticky: ['app:ready'] });
+  it('外层派发途中登记、随后嵌套再发一次：登记的监听器只经嵌套那次收到', async () => {
+    const bus = new EventBus();
     let registered = false;
     let calls = 0;
-    bus.on('app:ready', async () => {
+    bus.on('zz-dispatch:tick', async n => {
       if (registered) return;
       registered = true;
-      bus.on('app:ready', () => void calls++);
-      await bus.emit('app:ready');
+      bus.on('zz-dispatch:tick', () => void calls++);
+      await bus.emit('zz-dispatch:tick', n + 1);
     });
-    await bus.emit('app:ready');
+    await bus.emit('zz-dispatch:tick', 0);
     await tick();
     expect(calls).toBe(1);
   });

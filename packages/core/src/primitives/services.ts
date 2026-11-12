@@ -284,7 +284,7 @@ export class ServiceContainer {
   /**
    * 设置偏好（按 contextId）：给 consumer 是该消费者实例的本插件偏好，否则是全局偏好。
    * 一律记下：指向的那家不在场（含独占条目存续期间）就按下一级挑，它登记后生效。管理面经 `services.prefer()` 调用
-   * （值变了才另发 service:changed）；直接调用容器不会通知绑定层。返回值是否变了
+   * （值变了才另发服务变更）；直接调用容器不会通知绑定层。返回值是否变了
    * @internal
    */
   prefer(name: string, contextId: string, consumer?: string): boolean {

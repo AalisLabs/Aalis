@@ -4,10 +4,10 @@ import {
   config,
   definePlugin,
   defineService,
-  events,
   lifecycle,
   optional,
   type PluginDefinition,
+  pluginsService,
   provide,
   type ServiceSelection,
 } from '../../packages/core/src/index.js';
@@ -301,7 +301,7 @@ describe('App plugin lifecycle', () => {
     expect(await app.plugins.bounce('svc-A'), '停机后拒绝重建').toBe(false);
   });
 
-  it('停机：关机标志屏蔽 service:changed 反应式重算', async () => {
+  it('停机：关机标志屏蔽服务变更引起的重算', async () => {
     const { app } = makeApp();
     const log: string[] = [];
     await app.plugin(
@@ -340,15 +340,15 @@ describe('App plugin lifecycle', () => {
 });
 
 describe('激活归因与级联', () => {
-  it('旁观插件的 plugin:loaded 监听器抛错，不把刚激活成功的插件打成 error', async () => {
+  it('旁观插件的 plugins.watch 回调抛错，不把刚激活成功的插件打成 error', async () => {
     const { app, state } = makeApp();
     await app.plugin(
       definePlugin({
         name: 'observer',
-        uses: { events },
-        apply({ events }) {
-          events.use.on('plugin:loaded', name => {
-            if (name === 'victim') throw new Error('旁观者爆炸');
+        uses: { plugins: pluginsService },
+        apply({ plugins }) {
+          plugins.use.watch(() => {
+            throw new Error('旁观者爆炸');
           });
         },
       }),

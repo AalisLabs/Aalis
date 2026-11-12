@@ -204,8 +204,7 @@ async function run(caps: Caps): Promise<void> {
     return () => svc.setExecutionGuard(undefined);
   });
 
-  // 落盘走拆卸而非 app:stopping：后者只在全局停机触发一次，覆盖不了
-  // bounce / unload / disable / 依赖降级级联这些拆卸路径，热重载即丢等级数据。
+  // 落盘走拆卸：停机之外，bounce / unload / disable / 依赖降级级联这些拆卸路径也要落盘，否则热重载即丢等级数据。
   // 写盘是交给 storage 的依赖交接，在收尾里等完：storage 的提供者经 optional 依赖又用到本插件时两者成环，
   // 关停先放行环内的收尾，本插件清理时 storage 可能已撤下。收尾之后、撤回之前指令与权限页动作照常可用，
   // 这时排上的写在清理里再等一次。

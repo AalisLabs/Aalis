@@ -412,8 +412,8 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
     }
   });
 
-  it('core 只剩 AalisEvents 一张扩展点且登记了内置事件；钩子与贡献点的扩展点在各自契约包里保持为空', () => {
-    // 事件的载荷是字符串，core 自持的内置事件全部登记（AalisEvents 从不为空）。服务类型随描述符走；
+  it('core 只剩 AalisEvents 一张扩展点，在 core 里是空的；钩子与贡献点的扩展点在各自契约包里保持为空', () => {
+    // core 自己不发事件，AalisEvents 的条目全由契约包与插件增广注入。服务类型随描述符走；
     // 钩子与贡献点的扩展点随契约包（@aalis/api-hooks / @aalis/api-contributions）走，契约包只声明空接口，
     // 条目由领域 -api 包增广注入。
     const MOVED_OUT = /\binterface\s+(ServiceTypeMap|HookContextMap|ContributionPointMap)\b/;
@@ -434,7 +434,7 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
       if (parse(file).nonEmptyInterfaces.has(name)) offenders.push(`${pkg} → ${name} 有条目或继承了别的接口`);
     }
     expect(offenders, '钩子与贡献点的扩展点只在契约包里声明为空接口，条目由 -api 包增广注入').toEqual([]);
-    expect(eventsRegistered, 'AalisEvents 必须登记 core 自持的内置事件').toBe(true);
+    expect(eventsRegistered, 'core 自己不发事件：AalisEvents 在 core 里不登记条目').toBe(false);
   });
 });
 
@@ -518,95 +518,52 @@ describe('core 环境无关：只用 ES 标准库与登记的宿主全局', () =
 });
 
 /**
- * 内置屏障由 App 等待；通知经 ActivationHost 的 notify 转发，调用方不等待。
- * 两个动态 emit 转发只在确切函数/箭头形状上放行，文件或目录本身不豁免。
+ * core 自己不发事件：源码里唯一的 emit 调用是内置 events 能力对总线的直转（确切的箭头形状，文件或目录本身不豁免），
+ * 没有通知出口。
  */
-const BARRIER_FILE = 'orchestration/app.ts';
-const NOTIFICATION_FILE = 'orchestration/activation-host.ts';
 const BUILTIN_EVENTS = 'composition/core-services.ts';
-const isBarrier = (event: string): boolean => event.startsWith('app:');
 
 function eventViolations(rel: string, calls: EmitCall[]): string[] {
   const offenders: string[] = [];
   for (const { method, event, sequenced, forwarding, line } of calls) {
-    const at = `${rel}:${line}`;
-    if (method === 'emitQuietly') {
-      offenders.push(`${at} 旧 emitQuietly 已删除；通知须用 runtime.notify`);
-    } else if (method === 'notify') {
-      if (event === null) offenders.push(`${at} notify 的事件名须是字面量`);
-      else if (isBarrier(event)) offenders.push(`${at} notify 不得发屏障事件 '${event}'`);
-      if (sequenced) offenders.push(`${at} 通知不得 await 或 then 接续`);
-    } else if (event === null) {
-      const allowed =
-        (rel === BUILTIN_EVENTS && forwarding === 'builtin') ||
-        (rel === NOTIFICATION_FILE && forwarding === 'notification');
-      if (!allowed || sequenced) offenders.push(`${at} 动态 emit 须是内置 events 直转总线或 notify 内接住拒绝的转发`);
-    } else if (!isBarrier(event)) {
-      offenders.push(`${at} 通知事件 '${event}' 须走 runtime.notify`);
-    } else if (rel !== BARRIER_FILE) {
-      offenders.push(`${at} 屏障事件 '${event}' 只由 App 的生命周期方法发`);
-    } else if (!sequenced) {
-      offenders.push(`${at} 屏障事件 '${event}' 必须 await 或 then 接续`);
-    }
+    const direct = rel === BUILTIN_EVENTS && method === 'emit' && event === null && forwarding === 'builtin';
+    if (!direct || sequenced)
+      offenders.push(`${rel}:${line} core 不发事件：只有内置 events 能力可以把 emit 直转给总线`);
   }
   return offenders;
 }
 
-describe('内置事件出口：App 等待屏障，通知不阻塞状态机', () => {
-  it('每个发射点遵循事件相位，两个动态转发唯一，app:* 声明与实际发出集合一致', () => {
+describe('core 自己不发事件', () => {
+  it('源码里的 emit 只有内置 events 能力对总线的那一处直转', () => {
     const offenders: string[] = [];
-    const declaredBarriers = new Set<string>();
-    const emittedBarriers = new Set<string>();
-    const forwards = { builtin: 0, notification: 0 };
+    let forwards = 0;
     for (const file of walk(SRC_DIR)) {
-      const rel = relToSrc(file);
-      const { emits, eventKeys } = parse(file);
-      for (const key of eventKeys) if (isBarrier(key)) declaredBarriers.add(key);
-      offenders.push(...eventViolations(rel, emits));
-      for (const call of emits) {
-        if (call.method !== 'emit') continue;
-        if (call.event && isBarrier(call.event)) emittedBarriers.add(call.event);
-        if (call.forwarding) forwards[call.forwarding]++;
-      }
+      const { emits } = parse(file);
+      offenders.push(...eventViolations(relToSrc(file), emits));
+      forwards += emits.filter(call => call.forwarding === 'builtin').length;
     }
-    expect(offenders, '事件归节见 types/events.ts；换节是行为契约变更').toEqual([]);
-    expect(forwards).toEqual({ builtin: 1, notification: 1 });
-    expect(declaredBarriers.size, '未登记屏障事件——守卫在空转').toBeGreaterThan(0);
-    expect(emittedBarriers).toEqual(declaredBarriers);
+    expect(offenders).toEqual([]);
+    expect(forwards, '没找到那一处直转——守卫在空转').toBe(1);
   });
 
   it.each([
-    [BARRIER_FILE, "await host.runtime.notify('plugin:loaded', 'p')"],
-    [BARRIER_FILE, "host.runtime.notify('app:stopping')"],
-    [BARRIER_FILE, "this.events.emit('app:stopping')"],
-    [NOTIFICATION_FILE, "void runtime.events.emit('plugin:loaded', 'p')"],
-    [NOTIFICATION_FILE, 'function other() { return runtime.events.emit(event, ...args).catch(() => {}); }'],
-    [NOTIFICATION_FILE, 'function notify() { return runtime.events.emit(event, ...args); }'],
-    [NOTIFICATION_FILE, 'function notify() { Promise.resolve(runtime.events.emit(event, ...args)); }'],
-    [NOTIFICATION_FILE, 'function other() { Promise.resolve(runtime.events.emit(event, ...args)).catch(report); }'],
+    ['orchestration/app.ts', "await this.events.emit('zz:stopping')"],
+    ['orchestration/app.ts', "void this.events.emit('zz:stopping')"],
+    ['orchestration/plugin.ts', "host.runtime.notify('zz:changed')"],
     [
-      NOTIFICATION_FILE,
-      'async function notify() { await Promise.resolve(runtime.events.emit(event, ...args)).catch(report); }',
+      'orchestration/activation-host.ts',
+      'function notify() { return runtime.events.emit(event, ...args).catch(report); }',
     ],
     [BUILTIN_EVENTS, 'const extra = { emit: async (event, ...args) => await bus.emit(event, ...args) };'],
     ['composition/binding.ts', 'const extra = { emit: (event, ...args) => bus.emit(event, ...args) };'],
-    [NOTIFICATION_FILE, "async function stop() { await (runtime['notify']('plugin:loaded', 'p')); }"],
   ])('变异被拒绝：%s — %s', (rel, source) => {
     expect(eventViolations(rel, parseSource(rel, source).emits).length).toBeGreaterThan(0);
   });
 
-  it('合法动态转发可格式化为多行，守卫按语法结构识别', () => {
+  it('合法的直转可格式化为多行，守卫按语法结构识别', () => {
     const builtin = `const cap = { emit: (event, ...args) =>
       bus.emit(event, ...args) };`;
-    const notify = `function notify(runtime, logger) { return (event, ...args) => {
-      runtime.events.emit(event, ...args).catch(error => logger.warn(error));
-    }; }`;
     expect(eventViolations(BUILTIN_EVENTS, parseSource(BUILTIN_EVENTS, builtin).emits)).toEqual([]);
-    expect(eventViolations(NOTIFICATION_FILE, parseSource(NOTIFICATION_FILE, notify).emits)).toEqual([]);
-    const wrapped = `function notify(runtime, logger) { return (event, ...args) => {
-      try { Promise.resolve(runtime.events.emit(event, ...args)).catch(report); } catch (error) { report(error); }
-    }; }`;
-    expect(eventViolations(NOTIFICATION_FILE, parseSource(NOTIFICATION_FILE, wrapped).emits)).toEqual([]);
   });
 
   it('下层绕经内部激活导入仍被拒绝（含 type-only 与动态 import）', () => {
@@ -638,7 +595,7 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 //
 // 去掉注释与空行后的代码行数。上限按改动后的实测值设定，不留余量；抬高上限的提交要写明理由，不能随别的改动一并抬高。
 // 计数方法：逐字符状态机去注释（识别字符串、模板串含嵌套 ${}），再数非空行。
-const CORE_CODE_LINE_CEILING = 2757;
+const CORE_CODE_LINE_CEILING = 2696;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

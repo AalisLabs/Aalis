@@ -186,7 +186,7 @@ export function createPluginDiscovery(
       const known = new Map(loaded.map(item => [item.definition.name, item.definition]));
       warnOrphanedConfig(discovered);
       await app.pluginAll([...loaded, ...configuredInstances(known)]);
-      // app:ready / app:started 的发出时机依赖「返回即全部收敛」；引导路径不在任何 apply 内，无自等死锁面。
+      // 就绪回调的时机依赖「返回即全部收敛」；引导路径不在任何 apply 内，无自等死锁面。
       await app.plugins.idle();
     },
 

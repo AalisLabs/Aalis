@@ -4,7 +4,6 @@ import {
   config,
   definePlugin,
   defineService,
-  events,
   lifecycle,
   type PluginDefinition,
   provide,
@@ -40,13 +39,7 @@ function makeWorld() {
   apps.push(app);
   // 测试枢纽由根提供：插件在 apply 里登记，拆卸后登记表里不得留下幽灵条目
   app.bind({ provide }).provide.use(hub, new HubRegistry());
-  const host = app.bind({ events, services, hub });
-  host.events.use.on('plugin:loaded', (id: string) => {
-    trace.push(`loaded:${id}`);
-  });
-  host.events.use.on('plugin:unloaded', (id: string) => {
-    trace.push(`unloaded:${id}`);
-  });
+  const host = app.bind({ services, hub });
   return { app, host, trace };
 }
 
@@ -83,7 +76,7 @@ function makeGatedPlugin(
 }
 
 describe('unload 撞上 activating 窗口', () => {
-  it('在飞 ctx 被完整拆卸：无服务残留、无幽灵登记；从未激活完成，loaded 与 unloaded 都不发', async () => {
+  it('在飞 ctx 被完整拆卸：无服务残留、无幽灵登记', async () => {
     const { app, host, trace } = makeWorld();
     const { definition, entered, release } = makeGatedPlugin(trace);
     const registering = app.plugin(definition);
@@ -99,8 +92,6 @@ describe('unload 撞上 activating 窗口', () => {
     expect(app.plugins.getPlugin('gated')).toBeUndefined();
     expect(host.services.use.get(gatedSvc)).toBeUndefined();
     expect(trace).toContain('disposed');
-    expect(trace).not.toContain('unloaded:gated');
-    expect(trace).not.toContain('loaded:gated');
     expect(host.hub.use.list()).toEqual([]);
   });
 
@@ -399,7 +390,7 @@ describe('unload 拆卸未完成时同 id 重装', () => {
 });
 
 describe('并发双 unload', () => {
-  it('第二个 unload join 首个的拆卸：单次 unloaded 事件，且不盲删重装的新 entry', async () => {
+  it('第二个 unload join 首个的拆卸：清理只跑一次，且不盲删重装的新 entry', async () => {
     const { app, host, trace } = makeWorld();
     let releaseDispose!: () => void;
     let disposeEntered!: () => void;
@@ -418,6 +409,7 @@ describe('并发双 unload', () => {
           trace.push('apply');
           provide.use(gatedSvc, { alive: true });
           lifecycle.use.onDispose(async () => {
+            trace.push('dispose');
             disposeEntered();
             await disposeGate;
           }, 'gated:res');
@@ -433,7 +425,7 @@ describe('并发双 unload', () => {
     await Promise.all([u1, u2]);
     await new Promise(r => setTimeout(r, 0));
 
-    expect(trace.filter(t => t === 'unloaded:gated')).toHaveLength(1);
+    expect(trace.filter(t => t === 'dispose')).toHaveLength(1);
     expect(app.plugins.getPlugin('gated')).toBeUndefined();
 
     await app.plugin(make());

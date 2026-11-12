@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 // 承重面（先写终态、CAS 接管、activation 闸全部以它们为判据），写入点每多
 // 一处就多一个可能漏抄约定的竞态源。
 //
-// 拆卸一律走 retireBatch（plugin-activation.ts），不许手写四步。
+// 拆卸一律走 retireBatch（plugin-activation.ts），不许手写三步。
 // plugin.ts 对 entry.activation 零直接写入——清引用只走 retireBatch。
 // enable 把 disabled/error 拉回 pending 是点名的例外。新增写入点必须：
 //   1. 先单独评估这项 core 改动；
@@ -44,7 +44,7 @@ describe('插件状态机写入点定格', () => {
       expect(
         counts,
         `${file} 的 entry.state/entry.activation 写入点数变了。若是新增拆卸路径：改用 retireBatch，` +
-          `别手写「写终态→拆→清→发事件」四步（顺序约定见其 JSDoc）；确属必要的新写入点，单独评估后更新本定格。`,
+          `别手写「写终态→拆→清」三步（顺序约定见其 JSDoc）；确属必要的新写入点，单独评估后更新本定格。`,
       ).toEqual(expected);
     });
   }

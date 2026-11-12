@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { definePlugin, defineService, events, type Logger, provide } from '../../packages/core/src/index.js';
+import { definePlugin, defineService, type Logger, optional, provide } from '../../packages/core/src/index.js';
 import { createActivationFixture } from '../helpers/activation.js';
 import { createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
@@ -95,7 +95,7 @@ describe('binding cleanup boundaries', () => {
   it.each([
     'sync',
     'async',
-  ] as const)('%s listener failure on service:changed does not strand a closed plugin identity', async failure => {
+  ] as const)('%s watch callback failure does not strand a closed plugin identity', async failure => {
     const warnings: unknown[][] = [];
     const logger: Logger = {
       debug() {},
@@ -115,7 +115,7 @@ describe('binding cleanup boundaries', () => {
       },
     });
     let fail = false;
-    app.bind({ events }).events.use.on('service:changed', () => {
+    app.bind({ worker: optional(service) }).worker.watch(() => {
       if (!fail) return;
       const error = new Error(`${failure} notification failure`);
       if (failure === 'sync') throw error;

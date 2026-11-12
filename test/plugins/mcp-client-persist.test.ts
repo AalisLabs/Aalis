@@ -2,7 +2,7 @@ import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type AalisConfig, ConfigSaveRefusedError } from '../../packages/api-host-config/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { App, events, provide } from '../../packages/core/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import mcpClient from '../../packages/plugin-mcp-client/src/index.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { toolRequest } from '../fixtures/tool-call.js';
@@ -161,17 +161,17 @@ describe('mcp-client 自服务开关落盘', () => {
     // 不经 hostedApp：宿主不装配置文档，插件的 host-config 可选依赖为空；plugins 服务照常在场
     const app = new App({ name: 'T', logLevel: 'error', logger: silent });
     apps.push(app);
-    const host = app.bind({ events, provide });
+    const host = app.bind({ provide });
     const registry = makeToolRegistry(silent);
     registry.setExecutionGuard(async () => ({ ok: true }));
     host.provide.use(tools, registry);
-    const unloaded: string[] = [];
-    host.events.use.on('plugin:unloaded', id => {
-      unloaded.push(id);
-    });
     await app.plugin(mcpClient, { servers: [{ id: 'a', command: 'aalis-test-missing-mcp-command', enabled: false }] });
     await app.plugins.idle();
     expect(app.plugins.getPlugin(NAME)?.state).toBe('active');
+    // bounce 会拆掉重建、引起一轮重算：这之后不该再有重算收敛
+    let recomputed = 0;
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    app.plugins.watch(() => void recomputed++);
 
     const out = await registry.execute(
       'mcp_set_server_enabled',
@@ -183,6 +183,7 @@ describe('mcp-client 自服务开关落盘', () => {
 
     // 改了却存不下，重启后会悄悄回退：运行态必须原样不动
     expect((app.plugins.getPlugin(NAME)?.config as Servers).servers[0].enabled).toBe(false);
-    expect(unloaded, 'updateConfig 会 bounce 本插件，拆卸即发 plugin:unloaded').toEqual([]);
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(recomputed, 'updateConfig 会 bounce 本插件，随之有一轮重算').toBe(0);
   });
 });

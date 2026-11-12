@@ -16,10 +16,8 @@ export class ActivationHost {
     const watchers = new Set<(name: string) => void>();
     this.runtime = {
       ...base,
-      notify: notify(base, logger),
       serviceChanged: name => {
         for (const watcher of watchers) watcher(name);
-        this.runtime.notify('service:changed', name);
       },
       watchServices: watcher => {
         watchers.add(watcher);
@@ -100,12 +98,4 @@ export class ActivationHost {
   closing(owner: symbol): boolean {
     return this.#owners.get(owner)!.resources.disposed;
   }
-}
-
-/** Core 的通知型事件单一出口；屏障仍由 App 显式 await。 */
-function notify(runtime: Pick<ServiceRuntime, 'events'>, logger: Logger): ServiceRuntime['notify'] {
-  // EventBus.emit 逐个接住监听器错误、上报也不外抛，既不同步抛出也不拒绝；.catch 是通知出口的统一形状（架构守卫要求），不等待。
-  return (event, ...args) => {
-    runtime.events.emit(event, ...args).catch(error => logger.warn(`emit ${event} 失败:`, error));
-  };
 }

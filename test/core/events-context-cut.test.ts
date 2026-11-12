@@ -23,7 +23,7 @@ describe('events 按 ctx 切断', () => {
     const peer = make('peer');
 
     let hits = 0;
-    dying.caps.events.use.on('plugin:loaded', () => {
+    dying.caps.events.use.on('zz:named', () => {
       hits++;
     });
     let release!: () => void;
@@ -41,12 +41,12 @@ describe('events 按 ctx 切断', () => {
 
     const teardown = dying.activation.disposeAsync(5000);
     await drainEnteredP; // 已过注销段、正卡在链排空里
-    await peer.caps.events.use.emit('plugin:loaded', 'x');
+    await peer.caps.events.use.emit('zz:named', 'x');
     expect(hits).toBe(0);
 
     release();
     await teardown;
-    await peer.caps.events.use.emit('plugin:loaded', 'y');
+    await peer.caps.events.use.emit('zz:named', 'y');
     expect(hits).toBe(0);
     await peer.activation.disposeAsync();
   });
@@ -56,7 +56,7 @@ describe('events 按 ctx 切断', () => {
     const a = make('a');
     const b = make('b');
 
-    a.caps.events.use.on('plugin:loaded', () => {});
+    a.caps.events.use.on('zz:named', () => {});
     let release!: () => void;
     let drainEntered!: () => void;
     const gate = new Promise<void>(r => {
@@ -75,13 +75,13 @@ describe('events 按 ctx 切断', () => {
     await drainEnteredP;
     // 窗口内 b 重建同名事件表
     let bHits = 0;
-    b.caps.events.use.on('plugin:loaded', () => {
+    b.caps.events.use.on('zz:named', () => {
       bHits++;
     });
     release();
     await teardown; // a 的迟到 off 在此执行——身份卫必须放过 b 的新表
 
-    await b.caps.events.use.emit('plugin:loaded', 'x');
+    await b.caps.events.use.emit('zz:named', 'x');
     expect(bHits).toBe(1);
     await b.activation.disposeAsync();
   });
@@ -91,16 +91,16 @@ describe('events 按 ctx 切断', () => {
     const ctx = make('p');
     let raw = 0;
     events.on(
-      'plugin:loaded' as never,
+      'zz:named' as never,
       (() => {
         raw++;
       }) as never,
     );
-    ctx.caps.events.use.on('plugin:loaded', () => {});
+    ctx.caps.events.use.on('zz:named', () => {});
     await ctx.activation.disposeAsync();
 
     const peer = make('peer');
-    await peer.caps.events.use.emit('plugin:loaded', 'x');
+    await peer.caps.events.use.emit('zz:named', 'x');
     expect(raw).toBe(1);
     await peer.activation.disposeAsync();
   });

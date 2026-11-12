@@ -41,8 +41,8 @@ export interface AppOptions {
   disposeTimeoutMs?: number;
   /**
    * 慢操作阈值（毫秒），默认 60000。插件激活超过它仍未完成：记一条 warn 点名，转入后台继续（它提供的服务在激活
-   * 完成前不对依赖方开放），重算接着处理后面的插件，此后不再提醒（后台状态看 `getStatus()` 的 `slow`）；`app:*`
-   * 屏障事件的单个监听器超过它仍未返回：记 warn 点名，不再等它。传 0 表示不设限；超过 2³¹−1 按 2³¹−1 计。
+   * 完成前不对依赖方开放），重算接着处理后面的插件，此后不再提醒（后台状态看 `getStatus()` 的 `slow`）；就绪回调
+   * （`lifecycle.onReady`）单个超过它仍未返回：记 warn 点名，不再等它。传 0 表示不设限；超过 2³¹−1 按 2³¹−1 计。
    */
   slowThresholdMs?: number;
   /**
@@ -118,8 +118,6 @@ export class App {
   readonly plugins: PluginManagerService;
   readonly #plugins: PluginManager;
   readonly logger: Logger;
-  /** 屏障事件（app:*）由 App 自己发；原语注册表不外露，插件与宿主都经描述符取用 */
-  readonly #events: EventBus;
 
   readonly #restartStrategy?: RestartStrategy;
   /** 启动单飞：重入返回同一 Promise */
@@ -138,23 +136,17 @@ export class App {
     const cap = (ms: number): number => Math.min(ms, 2 ** 31 - 1);
     const disposeTimeoutMs = cap(options.disposeTimeoutMs ?? 5000);
     const slowMs = cap(options.slowThresholdMs ?? 60_000);
-    this.#events = new EventBus({
-      // 'app:ready' / 'app:started' 只在 start() 发一次，但热重载 bounce 出来的新实例在 apply 里登记的监听器也要拿到，
-      // 否则 adapter、CLI 终端界面等「启动后才建立」的逻辑在 bounce 后不再执行
-      sticky: ['app:ready', 'app:started'],
-      onHandlerError: (event, err, contextId) => {
-        this.logger.warn(`事件 "${event}" 的监听器抛错（已隔离${contextId ? `，来自 ${contextId}` : ''}）:`, err);
-      },
-      // 屏障（app:*，与 types/events.ts 的分节同一判据）的单个监听器至多等 slowMs
-      handlerLimit: event => (event.startsWith('app:') ? slowMs : undefined),
-      onHandlerSlow: (event, limit, contextId) => {
-        this.logger.warn(`事件 "${event}" 的监听器超过 ${limit}ms 未返回（来自 ${contextId}），不再等待，继续后续步骤`);
-      },
-    });
-
-    // 1. 根激活
+    // 1. 根激活。原语注册表不外露，插件与宿主都经描述符取用
     this.#host = new ActivationHost(
-      { events: this.#events, services: new ServiceContainer(), devMode: options.devMode ?? true },
+      {
+        events: new EventBus({
+          onHandlerError: (event, err, contextId) => {
+            this.logger.warn(`事件 "${event}" 的监听器抛错（已隔离${contextId ? `，来自 ${contextId}` : ''}）:`, err);
+          },
+        }),
+        services: new ServiceContainer(),
+        devMode: options.devMode ?? true,
+      },
       this.logger,
     );
     const caps = this.#host.bind(this.#host.root, { provide });
@@ -234,8 +226,8 @@ export class App {
   }
 
   /**
-   * 启动应用：依次发 `app:ready`、`app:started`。单飞：重入返回同一 Promise。停机开始后（含停机完成后）调用记 warn
-   * 后直接返回；启动途中停机开始，进行中的 start 照常落定，不再发后续事件。
+   * 启动应用：等插件状态机静置，再跑就绪回调（`lifecycle.onReady`，见 LifecycleCap）。单飞：重入返回同一 Promise。
+   * 停机开始后（含停机完成后）调用记 warn 后直接返回；启动途中停机开始，进行中的 start 照常落定，还没轮到的回调不再跑。
    *
    * 配置外部变更的热重载编排（diff + bounce）属宿主政策，由宿主自行接管。
    */
@@ -252,16 +244,13 @@ export class App {
     // 整体装好才算就绪：先等在飞的重算静置（转入后台的激活不等，它落定后自己跑就绪回调）
     await this.#plugins.idle();
     await this.#plugins.ready();
-    await this.#events.emit('app:ready');
-    if (this.#stopping) return;
-    this.logger.info('启动完成');
-    await this.#events.emit('app:started');
+    if (!this.#stopping) this.logger.info('启动完成');
   }
 
   /**
    * 重启应用——委托给 `restartStrategy`。
    *
-   * core 只负责发出 `app:restarting` 事件并把 `stop` 回调交给策略；
+   * core 只负责把 `stop` 回调交给策略（下一个微任务里调它，不在调用方的栈上）；
    * **任何"等响应返回"的延迟、stop 与 restart 的顺序都由策略决定**。
    *
    * 只受理一次：已受理过的再调记 debug 后返回（策略交出的 stop 已开始也是）；未受理过而停机已开始时抛错。
@@ -278,8 +267,7 @@ export class App {
     if (this.#stopping) throw new Error('App.restart() 不可用：应用已开始停机。');
     this.#restartAccepted = true;
     const strategy = this.#restartStrategy;
-    this.#events
-      .emit('app:restarting')
+    Promise.resolve()
       .then(() => strategy.restart({ stop: () => this.stop(), rollback: opts?.rollback }))
       .catch(err => this.logger.error('restart 失败:', err));
   }
@@ -287,13 +275,11 @@ export class App {
   /**
    * 停止应用。单飞：重入返回同一 Promise。
    *
-   * 先让插件管理进入停机终态（之后管理动作一律拒绝），再 `idle()` 排干在飞者，
-   * 然后发 `app:stopping`，最后 stopAll。已静置时 `idle()` 仍让出一轮微任务——必须先冻闸，
-   * 否则同轮排队的 bounce 会在置位前过闸、停机后留下 pending 幽灵。
+   * 先让插件管理进入停机终态（之后管理动作一律拒绝），再 `idle()` 排干在飞者，最后 stopAll。已静置时 `idle()` 仍让出
+   * 一轮微任务——必须先冻闸，否则同轮排队的 bounce 会在置位前过闸、停机后留下 pending 幽灵。
    *
-   * 每次调用都返回完整停机的同一 Promise，包括屏障监听器与清理期间的调用。
-   * `app:stopping` 监听器、onReady 回调与清理回调不得 await 或返回该 Promise，否则会等待自身（监听器至多等到
-   * `slowThresholdMs`、其余至多等到 `disposeTimeoutMs` 后被放弃，为 0 时一直等）。
+   * 每次调用都返回完整停机的同一 Promise，包括清理期间的调用。清理回调与 onReady 回调不得 await 或返回该 Promise，否则
+   * 会等待自身（至多等到 `disposeTimeoutMs` 后被放弃，为 0 时一直等）。
    * 仍在初始化的插件在 `beginShutdown()` 冻结时即 abort，flight 不再等它；两个上限都非 0 时停机总能结束。
    */
   stop(): Promise<void> {
@@ -310,7 +296,6 @@ export class App {
     this.logger.info('正在停止...');
     this.#plugins.beginShutdown();
     await this.#plugins.idle();
-    await this.#events.emit('app:stopping');
     // 全部插件激活与根激活进 beginShutdown 冻好的同一张关停计划，这里执行 drain/close，返回时都已关完
     await this.#plugins.stopAll();
     this.logger.info('已停止');

@@ -132,7 +132,7 @@ describe('目标接口：声明描述符，拿按激活绑定的接口', () => {
         uses: { hub, events, logger, lifecycle, config },
         apply({ hub, events, logger, lifecycle, config }) {
           hub.use.register({ name: 'echo' });
-          events.use.on('app:ready', () => {
+          events.use.on('zz:plain', () => {
             ready++;
           });
           logger.use.info(`config=${JSON.stringify(config.use)}`);
@@ -143,12 +143,12 @@ describe('目标接口：声明描述符，拿按激活绑定的接口', () => {
     await app.plugins.idle();
     expect(state(app, 'consumer')).toBe('active');
     expect(instance.list()).toEqual(['echo']);
-    await app.bind({ events }).events.use.emit('app:ready');
+    await app.bind({ events }).events.use.emit('zz:plain');
     expect(ready).toBe(1);
 
     await app.plugins.unload('consumer');
     expect(instance.list(), '注册型登记随激活撤回，不靠按名字清扫').toEqual([]);
-    await app.bind({ events }).events.use.emit('app:ready');
+    await app.bind({ events }).events.use.emit('zz:plain');
     expect(ready, '事件监听同样撤回').toBe(1);
   });
 });

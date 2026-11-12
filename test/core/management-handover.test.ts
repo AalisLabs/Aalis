@@ -13,7 +13,7 @@ import {
 
 // 关停顺序覆盖管理动作：unload / disable / bounce 提供者时，正在用它的 required 依赖方先收尾再关，
 // 提供者之后；判据是依赖方此刻解析到的胜者属于要走的激活，所以空档里不切到后备。
-// 提供者清理之前，挂在它上面、尚未进关闭计划的跟随者就地交接，落定后提供者才关；交接不经事件投递。
+// 提供者清理之前，挂在它上面、尚未进关闭计划的跟随者就地交接，落定后提供者才关。
 
 const apps: App[] = [];
 afterEach(async () => {
@@ -387,7 +387,7 @@ describe('提供者清理之前，跟随者交接落定', () => {
   });
 });
 
-describe('交接不经事件投递：慢跟随者不阻塞别人，通知不等监听器', () => {
+describe('交接逐个驱动跟随者：慢跟随者不阻塞别人，变更通知不等 watch 的回调', () => {
   const S = defineService<{ name: string; alive: boolean }>('t:handover:shared');
   const never = () => new Promise<void>(() => {});
 
@@ -426,7 +426,7 @@ describe('交接不经事件投递：慢跟随者不阻塞别人，通知不等�
   it.each([
     'unload',
     'disable',
-  ] as const)('%s 提供者：前一个跟随者的清理一直阻塞，后一个仍在提供者 onDispose 之前清理，后登记的变更监听照常收到', async action => {
+  ] as const)('%s 提供者：前一个跟随者的清理一直阻塞，后一个仍在提供者 onDispose 之前清理，watch 的订阅照常收到', async action => {
     const app = world(50);
     const log: string[] = [];
     await app.plugin(provider(log, 'p'));
@@ -435,11 +435,9 @@ describe('交接不经事件投递：慢跟随者不阻塞别人，通知不等�
     await app.plugin(
       definePlugin({
         name: 'listener',
-        uses: { events },
-        apply({ events }) {
-          events.use.on('service:changed', name => {
-            if (name === S.name) log.push('listener got changed');
-          });
+        uses: { s: optional(S) },
+        apply({ s }) {
+          s.watch(() => void log.push('listener got changed'));
         },
       }),
     );
@@ -480,16 +478,16 @@ describe('交接不经事件投递：慢跟随者不阻塞别人，通知不等�
     expect(log.indexOf('f cleanup end')).toBeLessThan(log.indexOf('p1 dispose'));
   });
 
-  it('变更监听里 await plugins.idle() 不与撤回互等', async () => {
+  it('watch 回调里 await plugins.idle() 不与撤回互等', async () => {
     const app = world(0);
     const log: string[] = [];
     await app.plugin(provider(log, 'p'));
     await app.plugin(
       definePlugin({
         name: 'waiter',
-        uses: { events },
-        apply({ events }) {
-          events.use.on('service:changed', async () => {
+        uses: { s: optional(S) },
+        apply({ s }) {
+          s.watch(async () => {
             await app.plugins.idle();
             log.push('waiter settled');
           });
@@ -624,7 +622,7 @@ describe('归属表条目与原语同一拍撤掉，不等下游交接', () => {
         apply({ h, events, provide }) {
           provide.use(Q, {});
           h.use.register('tool-p');
-          events.use.on('service:changed', () => void heard++);
+          events.use.on('zz:named', () => void heard++);
         },
       }),
     );
@@ -642,7 +640,7 @@ describe('归属表条目与原语同一拍撤掉，不等下游交接', () => {
     const unloading = app.plugins.unload('p');
     await new Promise(r => setTimeout(r, 5));
     heard = 0;
-    app.bind({ provide }).provide.use(defineService<object>('t:handover:probe'), {});
+    await app.bind({ events }).events.use.emit('zz:named', 'probe');
     const during = { hubEntry: names.has('tool-p'), heard };
     releaseFollower();
     await unloading;

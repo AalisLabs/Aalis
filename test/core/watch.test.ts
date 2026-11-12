@@ -358,6 +358,23 @@ describe('plugins.watch', () => {
     expect(calls).toBe(0);
   });
 
+  it('停机打断在飞的重算：那一轮也不通知', async () => {
+    const { app } = await world({ slowThresholdMs: 0 });
+    const seen: string[] = [];
+    let stopping = false;
+    app.plugins.watch(() => void seen.push(stopping ? '停机之后' : '停机之前'));
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => (release = resolve));
+    void app.plugin(definePlugin({ name: 'slow', apply: () => gate }));
+    await tick();
+    stopping = true;
+    const stopped = app.stop();
+    release();
+    await stopped;
+    await tick();
+    expect(seen).not.toContain('停机之后');
+  });
+
   it('退订之后不调', async () => {
     const { app } = await world();
     let calls = 0;

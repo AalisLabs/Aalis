@@ -64,7 +64,7 @@ export class PluginManager implements PluginManagerService {
    */
   #queued = false;
   /**
-   * 停机终态（beginShutdown 置位，之后不再复位）：六个管理动作一律拒绝；重算不再启动新实例、不发 plugins:changed。
+   * 停机终态（beginShutdown 置位，之后不再复位）：六个管理动作一律拒绝；重算不再启动新实例。
    * 停机计划拆卸各插件引起的服务变更因此不会把谁重新激活
    */
   #shuttingDown = false;
@@ -176,7 +176,7 @@ export class PluginManager implements PluginManagerService {
     // 服务可能变了就路由到统一 recompute()。
     // 单飞/挂起/关机的取舍都在 recompute 内部处理（在飞期间排队，关机后跳过）。须是第一个服务观察者：重算的同步段
     // 先把要退场的消费者标成关闭，它们的跟随随后跳过，交给撤回段统一收（拆卸路径上的下游由关闭计划先冻结）。
-    host.runtime.watchServices(name => this.#kick(`service:changed:${name}`));
+    host.runtime.watchServices(name => this.#kick(`服务 ${name} 变更`));
   }
 
   /** 不等结果地发起一次重算（反应式触发、后台激活落定）；报错点名触发原因，不外泄成未处理拒绝 */
@@ -281,7 +281,7 @@ export class PluginManager implements PluginManagerService {
     if (!entry) return false;
 
     // 'disposed' 单向化的 unload 侧：已有卸载在途时不再二次
-    // retire/emit——join 其拆卸（disposeAsync 幂等）后只确保注册表摘除。删除必须
+    // retire——join 其拆卸（disposeAsync 幂等）后只确保注册表摘除。删除必须
     // 带恒等卫：并发首个 unload 完成后同 id 可能已重新注册，按名盲删会把无辜的
     // 新 entry 扫出注册表，留下注册表外的活实例。
     if (entry.state === 'disposed') {
@@ -503,7 +503,6 @@ export class PluginManager implements PluginManagerService {
   async stopAll(): Promise<void> {
     const live = [...this.#plugins.values()].filter(entry => entry.activation !== undefined).reverse();
     await retireBatch(live, 'disposed', this.#deps, {
-      emitUnloaded: false,
       planRoot: this.#host.root,
       settle: this.#shutdownSettle,
     });
@@ -518,7 +517,7 @@ export class PluginManager implements PluginManagerService {
    * 1. 按 required 依赖正序（提供者→消费者）拓扑排序。
    * 2. Phase A：把目标不再是 active 的成批关闭，它们之间的次序由关停编排按实际依赖定。
    * 3. Phase B：正向遍历，激活目标 active 且依赖满足的 pending entry（提供者先激活、消费者后激活）。
-   * 4. 本轮有变动则继续下一轮，直到稳定；最后发 plugins:changed。
+   * 4. 本轮有变动则继续下一轮，直到稳定；最后通知 watch 的订阅。
    *
    * 判据只有一条：服务此刻在不在容器里（别的计划正关着的提供者不算在）。
    */
@@ -568,7 +567,7 @@ export class PluginManager implements PluginManagerService {
     return 'error';
   }
 
-  /** 单次完整重算：fixed-point 状态转移 + plugins:changed 通知 */
+  /** 单次完整重算：fixed-point 状态转移，收敛后通知 watch 的订阅 */
   async #recomputeOnce(): Promise<void> {
     let changed = true;
 
@@ -614,16 +613,14 @@ export class PluginManager implements PluginManagerService {
       }
     }
 
-    // 关机轮不发：停机打断的这一轮没有收敛，之后的状态归停机计划
-    // 停机之后订阅方都已开始关闭，轮到时自己跳过
+    // 停机打断的这一轮没有收敛，但订阅方都已开始关闭，轮到时自己跳过
     for (const poke of this.#watchers) poke();
-    if (!this.#shuttingDown) this.#host.runtime.notify('plugins:changed');
   }
 
   /**
    * 激活一个条目，flight 至多等到阈值：超过仍未完成就转入后台，flight 接着处理后面的插件；停机或管理动作
    * 接手（signal 已断）时也不再等，拆卸方按宽限处理。flight 不再等的激活落定后补一次重算（成功、失败转 error、
-   * 回到 pending 都未必有服务事件触发重算）。
+   * 回到 pending 都未必有服务变更触发重算）。
    *
    * 一个 abort 监听器、一个只触发一次的阈值定时器看到落定或 abort 为止：到点转入后台、记一条 warn，此后不再提醒，
    * 后台状态经 getStatus 的 slow 查看。不留周期定时器，没调 stop 的嵌入式宿主至多被它拖到阈值到点才退出。

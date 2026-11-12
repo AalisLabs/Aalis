@@ -1,13 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  App,
-  config,
-  definePlugin,
-  events,
-  LogHub,
-  lifecycle,
-  type PluginDefinition,
-} from '../../packages/core/src/index.js';
+import { App, config, definePlugin, LogHub, lifecycle, type PluginDefinition } from '../../packages/core/src/index.js';
 
 // 管理动作返回值的统一口径（PluginManagerService 的 JSDoc）：
 //   false = 主体不在注册表，或本次动作被状态 / 政策规则挡下；true = 其余，含幂等。
@@ -214,11 +206,9 @@ describe('enable / disable / bounce 的 false 分支（口径句里点名的「�
   it('停机进行中：disabled 态的 updateConfig 同样为 false，不换配置', async () => {
     const app = silentApp();
     await app.plugins.register(plugin('p'), { v: 1 }, undefined, { disabled: true });
-    let bounced: boolean | undefined;
-    app.bind({ events }).events.use.on('app:stopping', async () => {
-      bounced = await app.plugins.updateConfig('p', { v: 2 });
-    });
-    await app.stop();
+    const stopping = app.stop();
+    const bounced = await app.plugins.updateConfig('p', { v: 2 });
+    await stopping;
     expect(bounced).toBe(false);
     expect(app.plugins.getPlugin('p')).toMatchObject({ state: 'disabled', config: { v: 1 } });
   });

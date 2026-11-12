@@ -9,7 +9,7 @@ const SOURCE = {
   logLevelDescription: '日志输出等级',
   slowThresholdLabel: '慢操作阈值（毫秒）',
   slowThresholdDescription:
-    '插件激活超过这个时长仍未完成时告警，转入后台继续；启动与停机时单个事件监听器超时也告警，不再等它。0 表示不设限，重启生效',
+    '插件激活超过这个时长仍未完成时告警，转入后台继续；单个就绪回调超时也告警，不再等它。0 表示不设限，重启生效',
   missing: '必填字段缺失',
   expectedGroup: '期望对象（分组），得到 {got}',
   expectedArray: '期望数组，得到 {got}',

@@ -296,14 +296,14 @@ describe('follow 多 provider', () => {
     await new Promise(r => setTimeout(r, 0));
     expect(attached).toEqual(['winner']); // 新败者上线同样不打扰
 
-    // 撤掉胜者 entry（provide 的退订自带 service:changed 通知）
+    // 撤掉胜者 entry（provide 的退订自带服务变更通知）
     disposeWinner();
     await new Promise(r => setTimeout(r, 0));
     expect(cleaned).toEqual(['winner']);
     expect(attached).toEqual(['winner', 'loser']);
   });
 
-  it('preferService 切偏好触发重挂（service:changed）', async () => {
+  it('preferService 切偏好触发重挂（服务变更通知）', async () => {
     const ctx = makeFixture();
     const attached: string[] = [];
     const cleaned: string[] = [];
@@ -329,7 +329,7 @@ describe('follow 多 provider', () => {
     expect(attached).toEqual(['default', 'alt', 'default']);
   });
 
-  it('新败者注册（service:changed 但胜者不变）不触发重挂', async () => {
+  it('新败者注册（有服务变更通知但胜者不变）不触发重挂', async () => {
     const ctx = makeFixture();
     let calls = 0;
     ctx.caps.provide.use(defineService('__hub'), { id: 'top' }, { priority: 100 });
@@ -390,7 +390,7 @@ describe('disposable 闭包自移除', () => {
     const ctx = makeFixture();
     let cleanupRan = 0;
     let dispose: () => void = () => {};
-    // provider 后到：让 sync 由 service:changed 事件触发，此时 dispose 已就绪
+    // provider 后到：让 sync 由服务变更通知触发，此时 dispose 已就绪
     dispose = ctx.host.bind(ctx.activation, { ref: defineService('svc') }).ref.follow(() => {
       dispose(); // cb 内同步触发自身 dispose（链式卸载场景）
       return () => {
@@ -424,10 +424,10 @@ describe('Activation.disposeAsync 不变量', () => {
     await expect(ctx.activation.disposeAsync()).resolves.toBeUndefined();
   });
 
-  it('provide、偏好切换、退订与拆卸都发 service:changed(name)', async () => {
+  it('provide、偏好切换、退订与拆卸都报一次服务变更', async () => {
     const root = makeFixture();
     const seen: string[] = [];
-    root.caps.events.use.on('service:changed', name => void seen.push(name));
+    root.host.runtime.watchServices(name => void seen.push(name));
     const child = bindActivationFixture(root.host, root.host.create('plugin-a'));
     const off = child.caps.provide.use(defineService('__t:svc'), { v: 1 });
     root.caps.services.use.prefer('__t:svc', 'plugin-a');

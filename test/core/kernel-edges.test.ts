@@ -4,16 +4,15 @@ import {
   DefaultLogger,
   definePlugin,
   defineService,
-  events,
   type Logger,
   LogHub,
   lifecycle,
+  optional,
   parseInstanceId,
   provide,
   services,
 } from '../../packages/core/src/index.js';
 import { Resources } from '../../packages/core/src/infrastructure/resources.js';
-import { EventBus } from '../../packages/core/src/primitives/events.js';
 import { HubRegistry, hub } from '../helpers/hub.js';
 import { createInspectableApp } from '../helpers/inspectable-app.js';
 
@@ -87,21 +86,6 @@ describe('Resources 段收口等在飞撤回', () => {
   });
 });
 
-describe('EventBus sticky 补发', () => {
-  it('补发微任务执行前已退订的监听不再收到补发，仍在的监听照常收到', async () => {
-    const bus = new EventBus({ sticky: ['app:ready'] });
-    await bus.emit('app:ready');
-
-    const fired: string[] = [];
-    const off = bus.on('app:ready', () => void fired.push('cancelled'));
-    bus.on('app:ready', () => void fired.push('kept'));
-    off();
-    await tick();
-
-    expect(fired).toEqual(['kept']);
-  });
-});
-
 describe('归属表登记的旧退订句柄', () => {
   it('插件在 onDispose 里自行退订归属表登记：拆卸时条目已同栈撤回，旧句柄无害返回、不产生告警', async () => {
     const { app, warnings } = world();
@@ -130,17 +114,17 @@ describe('ServiceContainer 偏好与独占登记', () => {
   it('独占服务的偏好照常记下、发通知：独占期间指向别家不生效，独占者撤走、那一家登记后生效', async () => {
     const { app } = world();
     const Solo = defineService<{ v: number }>('__t:kernel-edges:solo');
-    const host = app.bind({ provide, services, events });
+    const host = app.bind({ provide, services, solo: optional(Solo) });
     const off = host.provide.use(Solo, { v: 1 }, { exclusive: true });
     await tick();
-    const changed: string[] = [];
-    host.events.use.on('service:changed', name => void changed.push(name));
+    let changed = 0;
+    host.solo.watch(() => void changed++);
 
     host.services.use.prefer(Solo, 'someone-else');
     expect(host.services.use.preferred(Solo)).toBe('someone-else');
     expect(host.services.use.get(Solo)?.v).toBe(1);
     await tick();
-    expect(changed).toEqual([Solo.name]);
+    expect(changed).toBe(1);
 
     off();
     host.provide.use(Solo, { v: 2 }, { entryId: 'someone-else' });

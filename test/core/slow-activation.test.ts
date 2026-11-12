@@ -1,11 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  App,
+  type App,
   type AppOptions,
   config,
   definePlugin,
   defineService,
-  events,
   type LifecycleCap,
   type Logger,
   lifecycle,
@@ -14,6 +13,7 @@ import {
   provide,
   services,
 } from '../../packages/core/src/index.js';
+import { Resources } from '../../packages/core/src/infrastructure/resources.js';
 import { deferred } from '../helpers/deferred.js';
 import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
 
@@ -85,14 +85,13 @@ function world(options: Partial<AppOptions> = {}) {
     error: record('error'),
     child: () => logger,
   };
-  const app = new App({ name: 'T', logger, slowThresholdMs: 30, disposeTimeoutMs: 30, ...options });
+  const app = createInspectableApp({ name: 'T', logger, slowThresholdMs: 30, disposeTimeoutMs: 30, ...options });
   apps.push(app);
-  const host = app.bind({ events, services, provide });
+  const host = app.bind({ lifecycle, services, provide });
+  /** 每次服务变更记 `~服务名`（core 内部的同步观察口，逐次都记），每轮重算收敛记 `changed` */
   const trace: string[] = [];
-  host.events.use.on('service:changed', name => void trace.push(`~${name}`));
-  host.events.use.on('plugin:loaded', id => void trace.push(`loaded:${id}`));
-  host.events.use.on('plugin:unloaded', id => void trace.push(`unloaded:${id}`));
-  host.events.use.on('plugins:changed', () => void trace.push('changed'));
+  activationHost(app).runtime.watchServices(name => void trace.push(`~${name}`));
+  app.plugins.watch(() => void trace.push('changed'));
   const at = (level: string) => lines.filter(line => line.level === level).map(line => line.text);
   const status = (id: string): PluginStatusEntry | undefined =>
     app.plugins.getStatus().find(entry => entry.instanceId === id);
@@ -217,11 +216,9 @@ describe('慢激活转入后台', () => {
     expect(got).toEqual([true]);
     expect(w.host.services.use.get(store)).toEqual({ ready: true });
     expect(w.trace.filter(t => t.endsWith(store.name))).toEqual([`~${store.name}`, `~${store.name}`, `~${store.name}`]);
-    expect(w.trace).toContain('loaded:slow-store');
-    expect(w.trace).toContain('loaded:dependent');
   });
 
-  it('后台期间登记 N 条：每条都发 service:changed，触发的重算合并成至多两轮；上线前解析不到', async () => {
+  it('后台期间登记 N 条：每条都报一次服务变更，触发的重算合并成至多两轮；上线前解析不到', async () => {
     const w = world();
     const late = Array.from({ length: 20 }, (_, n) => defineService<{ n: number }>(`zz-slow-late-${n}`));
     const gate = deferred();
@@ -299,7 +296,7 @@ describe('慢激活转入后台', () => {
     expect(w.at('warn').filter(text => text.includes('fails-fast'))).toEqual([]);
   });
 
-  it('flight 不再等的激活落定后补一次重算：没有服务事件的成功落定也发 plugins:changed', async () => {
+  it('flight 不再等的激活落定后补一次重算：没有服务变更的成功落定也通知插件状态变了', async () => {
     const w = world();
     const gate = deferred();
     releases.push(gate.resolve);
@@ -311,7 +308,7 @@ describe('慢激活转入后台', () => {
     expect(w.status('quiet')?.state).toBe('active');
   });
 
-  it('落定收尾抛错（通知出口抛出）：记 error 点名，不外泄成未处理拒绝，落定后照常补一次重算', async () => {
+  it('落定收尾抛错（就绪回调的启动意外抛出）：记 error 点名，不外泄成未处理拒绝，落定后照常补一次重算', async () => {
     const escaped: unknown[] = [];
     const onEscape = (reason: unknown) => void escaped.push(reason);
     process.on('unhandledRejection', onEscape);
@@ -326,24 +323,22 @@ describe('慢激活转入后台', () => {
       };
       const app = createInspectableApp({ name: 'T', logger, slowThresholdMs: 20, disposeTimeoutMs: 20 });
       apps.push(app);
-      const runtime = activationHost(app).runtime;
-      const notify = runtime.notify;
       const changed: string[] = [];
-      app.bind({ events }).events.use.on('plugins:changed', () => void changed.push('changed'));
+      app.plugins.watch(() => void changed.push('changed'));
       const gate = deferred();
       releases.push(gate.resolve);
       await app.plugin(definePlugin({ name: 'noisy', apply: () => gate.promise }));
-      await app.plugins.idle();
+      // 已启动：之后落定的激活要跑就绪回调，在那一步注入故障
+      await app.start();
       const before = changed.length;
-      runtime.notify = (event, ...args) => {
-        if (event === 'plugin:loaded') throw new Error('注入的通知故障');
-        notify(event, ...args);
-      };
+      const broken = vi.spyOn(Resources.prototype, 'ready').mockImplementation(() => {
+        throw new Error('注入的故障');
+      });
       gate.resolve();
       await until(() => changed.length > before, '落定后的重算');
-      runtime.notify = notify;
+      broken.mockRestore();
       expect({ errors, escaped }).toEqual({
-        errors: ['插件 "noisy" 激活收尾报错: Error: 注入的通知故障'],
+        errors: ['插件 "noisy" 激活收尾报错: Error: 注入的故障'],
         escaped: [],
       });
     } finally {
@@ -653,7 +648,7 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
     const w = world({ slowThresholdMs: 5000, disposeTimeoutMs: 30 });
     const entered = deferred();
     const stopping: string[] = [];
-    w.host.events.use.on('app:stopping', () => void stopping.push('stopping'));
+    w.host.lifecycle.use.onDrain(() => void stopping.push('根收尾'));
     const registering = w.app.plugin(
       definePlugin({
         name: 'deaf',
@@ -667,7 +662,7 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
     const started = Date.now();
     await within(w.app.stop(), 1000, 'stop');
     expect(Date.now() - started).toBeLessThan(1000);
-    expect(stopping).toEqual(['stopping']);
+    expect(stopping).toEqual(['根收尾']);
     await within(registering, 1000, 'register');
   });
 
@@ -729,10 +724,6 @@ describe('停用 / 卸载 / 重启 / 停机撞上仍在初始化的插件', () =
     expect(order, '下游还在用旧实例初始化，提供者不能先走').toEqual(['cons 被 abort', 'prov#1 清理']);
     expect(seen).toEqual([1, 2]);
     expect(w.status('cons')?.state).toBe('active');
-    expect(
-      w.trace.filter(t => t.startsWith('unloaded:')),
-      '下游那一轮从未 loaded，不发 unloaded',
-    ).toEqual(['unloaded:prov']);
   });
 
   it.each([

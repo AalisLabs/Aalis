@@ -1,6 +1,6 @@
-import type { AalisEvents } from '../types/events.js';
+import type { AalisEvents, EventArgs } from '../types/events.js';
 
-import { awaitWithTimeout, isThenable, reportQuietly } from '../kernel/disposable-chain.js';
+import { reportQuietly } from '../kernel/disposable-chain.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
@@ -11,35 +11,20 @@ interface EventEntry {
   owner?: symbol;
 }
 
-/** 宿主（App）在构造时注入的 sticky 名单与回调；EventBus 自身不持有 Logger（保持环境无关） */
+/** 宿主（App）在构造时注入的回调；EventBus 自身不持有 Logger（保持环境无关） */
 interface EventBusOptions {
   /**
-   * 一次性事件（sticky）：emit 后保留最近一次参数；后续 on 监听该事件时在下一个微任务里用缓存参数补发回调（异步，
-   * 与 emit 的投递语义一致）。派发进行中登记的监听器不在本轮派发里，同样经补发收到；补发之前又开始了一次 emit 的，
-   * 由那次送达、不再补发。每个监听器只收到一次。
-   * 缓存在总线存续期间一直有效：被热重载的插件重新激活后仍能拿到启动通知。App 标记 'app:ready'、'app:started'。
-   */
-  sticky?: readonly string[];
-  /**
-   * handler 抛错时的上报回调（含 sticky 补发路径的同步/异步抛错）。未设置时错误被静默丢弃——但无论是否设置，
-   * 单个 handler 抛错都**不会**中断同事件的其余 handler，也不会使 emit reject。第三参点名注册者的逻辑身份
-   * （owner symbol 的 description，events 能力注册时即激活 id；不经门面、无 owner 的登记为 undefined）。
+   * handler 抛错时的上报回调。未设置时错误被静默丢弃——但无论是否设置，单个 handler 抛错都**不会**中断同事件的其余
+   * handler，也不会使 emit reject。第三参点名注册者的逻辑身份（owner symbol 的 description，events 能力注册时即激活 id；
+   * 不经门面、无 owner 的登记为 undefined）。
    */
   onHandlerError?: (event: string, error: unknown, contextId?: string) => void;
-  /**
-   * 单个监听器的等待上限（毫秒），按事件给出；未设置、undefined 或非正数 = 不设限。超过上限仍未返回的监听器经
-   * onHandlerSlow 上报后不再等它，转向下一个；它之后的拒绝照常经 onHandlerError 上报。App 用它给 `app:*` 屏障事件设上限。
-   */
-  handlerLimit?: (event: string) => number | undefined;
-  /** 监听器超过 handlerLimit 仍未返回时的上报回调；第三参同 onHandlerError */
-  onHandlerSlow?: (event: string, limitMs: number, contextId?: string) => void;
 }
 
 /**
  * 类型安全的事件总线
  *
- * 内置事件使用 AalisEvents 接口提供类型推导。
- * 第三方插件的事件名须先经 TS declaration merging 并入 AalisEvents（未声明的事件名编译报错）；
+ * 事件名须先经 TS declaration merging 并入 AalisEvents（未声明的事件名编译报错）；
  * 运行时动态生成的事件名在自己的命名空间内合并模板字面量签名（见 docs/core/events.md）。
  */
 export class EventBus {
@@ -50,14 +35,9 @@ export class EventBus {
   // handler（owner=undefined）不受切断影响，由调用方自管。
   #handlers = new Map<string, Set<EventEntry>>();
   readonly #options: EventBusOptions;
-  readonly #sticky: ReadonlySet<string>;
-  /** sticky 事件最近一次的参数 */
-  // biome-ignore lint/suspicious/noExplicitAny: 同上
-  readonly #stickyArgs = new Map<string, any[]>();
 
   constructor(options: EventBusOptions = {}) {
     this.#options = options;
-    this.#sticky = new Set(options.sticky);
   }
 
   #reportHandlerError(event: string, error: unknown, owner?: symbol): void {
@@ -65,14 +45,10 @@ export class EventBus {
   }
 
   /**
-   * 监听事件，返回 dispose 函数；sticky 事件的补发见 {@link EventBusOptions.sticky}。
+   * 监听事件，返回 dispose 函数。
    * @param owner 清理归属（events 能力传入）；省略则不被拆卸自动清理，用返回的 dispose 自管。
    */
-  on<E extends string & keyof AalisEvents>(
-    event: E,
-    handler: EventHandler<AalisEvents[E]>,
-    owner?: symbol,
-  ): () => void {
+  on<E extends string & keyof AalisEvents>(event: E, handler: EventHandler<EventArgs<E>>, owner?: symbol): () => void {
     let set = this.#handlers.get(event);
     if (!set) {
       set = new Set();
@@ -80,22 +56,6 @@ export class EventBus {
     }
     const entry: EventEntry = { handler, owner };
     set.add(entry);
-
-    if (this.#stickyArgs.has(event)) {
-      const args = this.#stickyArgs.get(event) as AalisEvents[E];
-      queueMicrotask(() => {
-        // 微任务执行前已退订，或登记之后又开始了一次 emit（参数已换新：它的快照含这条登记、会送达），都不补发
-        if (!set!.has(entry) || this.#stickyArgs.get(event) !== args) return;
-        // 补发没有 emit 调用方兜底——handler 同步抛错会直达 uncaughtException
-        // 崩进程，异步抛错变 unhandledRejection，必须就地捕获。
-        try {
-          const ret = handler(...args);
-          if (isThenable(ret)) ret.then(undefined, err => this.#reportHandlerError(event, err, owner));
-        } catch (err) {
-          this.#reportHandlerError(event, err, owner);
-        }
-      });
-    }
 
     return () => {
       set!.delete(entry);
@@ -127,32 +87,18 @@ export class EventBus {
    *
    * Per-handler 隔离：单个 handler 抛错（同步或异步）只影响它自己——
    * 错误经 onHandlerError 上报，其余 handler 照常执行，emit 始终 resolve。
-   * 事件是"通知多方"语义，一个旁观者失败不该连坐其他订阅者，更不该
-   * 反向把失败传染给发射方（如 plugin:loaded 的 emit 不能把刚激活成功的
-   * 插件打成 error 终态）。有等待上限（handlerLimit）时单个 handler 至多等该时长。
+   * 事件是"通知多方"语义，一个旁观者失败不该连坐其他订阅者，更不该反向把失败传染给发射方。
    */
-  async emit<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): Promise<void> {
-    if (this.#sticky.has(event)) this.#stickyArgs.set(event, args);
+  async emit<E extends string & keyof AalisEvents>(event: E, ...args: EventArgs<E>): Promise<void> {
     const set = this.#handlers.get(event);
     if (!set) return;
-    const limit = this.#options.handlerLimit?.(event);
-    // 只送达派发开始时已登记的：途中新登记的不收这一次（sticky 另经补发），处理时退订又重登的不会被这次 emit 一直再调；
-    // 途中退订的跳过
+    // 只送达派发开始时已登记的：途中新登记的不收这一次，处理时退订又重登的不会被这次 emit 一直再调；途中退订的跳过
     for (const entry of [...set]) {
       if (!set.has(entry)) continue;
-      const { handler, owner } = entry;
       try {
-        if (!limit) {
-          await handler(...args);
-          continue;
-        }
-        // 先接住拒绝再限时：超时后才到的拒绝也要上报，不能被放弃等待吞掉
-        const settled = Promise.resolve(handler(...args)).catch(err => this.#reportHandlerError(event, err, owner));
-        await awaitWithTimeout(settled, limit, ms =>
-          reportQuietly(() => this.#options.onHandlerSlow?.(event, ms, owner?.description)),
-        );
+        await entry.handler(...args);
       } catch (err) {
-        this.#reportHandlerError(event, err, owner);
+        this.#reportHandlerError(event, err, entry.owner);
       }
     }
   }

@@ -129,7 +129,7 @@ export class DisposableChain {
       try {
         const ret = items[i].fn();
         if (!isThenable(ret)) continue;
-        // 先接住拒绝再限时（与事件总线同一写法）：超时后才到的拒绝也要上报，不能被放弃等待吞掉
+        // 先接住拒绝再限时：超时后才到的拒绝也要上报，不能被放弃等待吞掉
         const work = Promise.resolve(ret).then(() => undefined, fail);
         await awaitWithTimeout(work, timeoutMs, () => {
           this.#report(`DisposableChain: 异步清理${who} 超过 ${timeoutMs}ms，放弃等待，继续后续清理`);
@@ -148,7 +148,7 @@ export class DisposableChain {
  * `setTimeout`/`clearTimeout` 是各 JS 运行时共有的宿主全局，登记在 core 的宿主全局白名单里
  * （test/core/architecture.test.ts 守卫）。
  *
- * 仅供 core 内部（DisposableChain 逐项等待、Resources 等初始化与交接、事件总线限时等待监听器）复用，
+ * 仅供 core 内部（DisposableChain 逐项等待、Resources 等初始化、交接与就绪回调）复用，
  *   不从包根导出。
  * @internal
  */

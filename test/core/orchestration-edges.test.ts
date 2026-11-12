@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   type App,
   definePlugin,
@@ -9,7 +9,8 @@ import {
   type PluginDefinition,
   provide,
 } from '../../packages/core/src/index.js';
-import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
+import { Resources } from '../../packages/core/src/infrastructure/resources.js';
+import { createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
 // 编排层的边缘路径：required 真环的兜底排序、关停计划里的混合依赖环、
@@ -339,22 +340,20 @@ describe('保留的安全网：故障注入', () => {
     expect(app.plugins.getPlugin('solo')).toBeUndefined();
   });
 
-  it('服务下线触发的反应式重算抛错（通知出口抛出）：记 error 点名触发事件，不外泄成未处理拒绝', async () => {
+  it('服务上线触发的反应式重算抛错（激活收尾意外抛出）：记 error 点名触发原因，不外泄成未处理拒绝', async () => {
     const { app, at } = world();
-    const runtime = activationHost(app).runtime;
-    const notify = runtime.notify;
     const dep = defineService<object>('t:edges:reactive-dep');
-    const withdraw = app.bind({ provide }).provide.use(dep, {});
     await app.plugin(definePlugin({ name: 'consumer', uses: { dep }, apply() {} }));
     await app.plugins.idle();
-    expect(stateOf(app, 'consumer')).toBe('active');
-    runtime.notify = (event, ...args) => {
-      if (event === 'plugins:changed') throw new Error('注入的通知故障');
-      notify(event, ...args);
-    };
-    withdraw();
+    expect(stateOf(app, 'consumer')).toBe('pending');
+    // 已启动：之后落定的激活要跑就绪回调，在那一步注入故障
+    await app.start();
+    const broken = vi.spyOn(Resources.prototype, 'ready').mockImplementation(() => {
+      throw new Error('注入的故障');
+    });
+    app.bind({ provide }).provide.use(dep, {});
     await new Promise<void>(resolve => setImmediate(resolve));
-    runtime.notify = notify;
-    expect(at('error')).toEqual([`recompute(service:changed:${dep.name}) 报错: Error: 注入的通知故障`]);
+    broken.mockRestore();
+    expect(at('error')).toEqual([`recompute(服务 ${dep.name} 变更) 报错: Error: 注入的故障`]);
   });
 });

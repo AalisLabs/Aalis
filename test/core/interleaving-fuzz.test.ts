@@ -5,7 +5,7 @@ import { ACTIONS, createWorld, type Profile, TIMEOUT, type Violation } from '../
 // ════════════════════════════════════════════════════════════
 // 管理动作、服务撤回、偏好（全局与按插件）切换与停机的随机交错（带种子，全程假时钟）。不变量：
 // I1 同一 id 至多一个未落定的实例；I2 stop 之后不再开始 apply；I3 stop、idle 与管理调用在时限内落定；
-// I4 停机后没有 active / activating；I5 sticky 事件每个监听器至多一次；I6 收尾时 required 依赖仍有提供者
+// I4 停机后没有 active / activating；I5 每个就绪回调至多跑一次；I6 收尾时 required 依赖仍有提供者
 // （依赖本身被撤下的除外）；I7 停机完成前跑过 apply 的实例都执行过 onDispose；I8 stop 之后管理动作返回 false；
 // I9 同一个跟随者的清理落定之前不重挂。
 // 两档见 Profile：strict 的清理都在宽限内、没有非管理撤回；overrun-withdraw 两者都允许。任何违例都让用例失败，

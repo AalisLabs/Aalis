@@ -8,23 +8,15 @@ import { compilerOptions, ROOT, sourceFiles } from '../helpers/package-program.j
 // ════════════════════════════════════════════════════════════
 // 编排的 event 触发器按定义者的身份运行，事件参数作为运行变量插值进 tool 节点的参数、agent 节点的指令与 send-message 的正文：
 // 负载带会话内容（会话 id、平台、正文等）的事件不能当触发源，内容里不可信的部分会以定义者的身份下达，转发到别的会话又是跨会话
-// 外泄，单是会话 id 也让订阅者看出别人的私聊在活动。第一方声明的每个事件（packages/*/src 里 AalisEvents 的条目，core 自持的与
-// declaration merging 的都算）都要表态：不可作触发源的在 plugin-workflow 的 BLOCKED_EVENT_TRIGGERS 里，可作触发源的在下面的
+// 外泄，单是会话 id 也让订阅者看出别人的私聊在活动。第一方声明的每个事件（packages/*/src 里经 declaration merging 并入
+// AalisEvents 的条目）都要表态：不可作触发源的在 plugin-workflow 的 BLOCKED_EVENT_TRIGGERS 里，可作触发源的在下面的
 // TRIGGERABLE 里、写明负载里有什么。新事件不表态、两张表都列、表里的事件不再声明，都红；按名字表态不了的条目（动态事件族的
 // 索引签名、计算属性名、继承来的成员）也红。可作触发源的事件，参数名或参数类型的顶层属性（含可选的）里有会话 id 或平台的
 // 也红；放在 content、message 一类字段里的正文按类型查不出，要靠表态时照实写负载。
 // ════════════════════════════════════════════════════════════
 
 const TRIGGERABLE = new Map<string, string>([
-  ['service:changed', '服务名'],
-  ['plugin:loaded', '插件实例 id'],
-  ['plugin:unloaded', '插件实例 id'],
-  ['plugins:changed', '没有负载'],
   ['host-config:changed', '改了哪个实例的配置段（实例 id），或整份文档变了'],
-  ['app:ready', '没有负载'],
-  ['app:started', '没有负载'],
-  ['app:restarting', '没有负载'],
-  ['app:stopping', '没有负载'],
   ['doctor:updated', '诊断时刻与各级计数'],
   ['session-settings:changed', '没有负载'],
   ['terminal:claimed', '占用终端的插件名'],

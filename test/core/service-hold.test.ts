@@ -4,7 +4,7 @@ import { ServiceContainer } from '../../packages/core/src/primitives/services.js
 // ════════════════════════════════════════════════════════════
 // 容器的「暂不对外」（hold）：编排层对转入后台的激活使用。解析类读口（get / getAll / inspect / ownerOf）
 // 一律看不见被暂扣归属的条目；登记事实类读口（namesOf / hasEntry / getServiceNames / 独占冲突）照常看得见。
-// 暂扣时返回撤下的名字，恢复时返回上线的名字，编排层据此发 service:changed。
+// 暂扣时返回撤下的名字，恢复时返回上线的名字，编排层据此发服务变更通知。
 // ════════════════════════════════════════════════════════════
 
 const HELD = Symbol('held');

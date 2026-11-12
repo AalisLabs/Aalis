@@ -4,7 +4,6 @@ import {
   appService,
   definePlugin,
   defineService,
-  events,
   LogHub,
   lifecycle,
   optional,
@@ -71,11 +70,11 @@ describe('取消信号的监听器里调 stop()', () => {
 });
 
 describe('停机冻结时取消信号的监听器里调 stop()', () => {
-  it('仍在初始化的插件被 abort，监听器里经 app 服务调 stop()：拿到同一次停机，app:stopping 只发一次', async () => {
+  it('仍在初始化的插件被 abort，监听器里经 app 服务调 stop()：拿到同一次停机，宿主根只收尾一次', async () => {
     const app = new App({ name: 'T', logHub: new LogHub(), disposeTimeoutMs: 50 });
     apps.push(app);
     let stopping = 0;
-    app.bind({ events }).events.use.on('app:stopping', () => void stopping++);
+    app.bind({ lifecycle }).lifecycle.use.onDrain(() => void stopping++);
     let again: Promise<void> | undefined;
     let entered!: () => void;
     const inApply = new Promise<void>(resolve => (entered = resolve));

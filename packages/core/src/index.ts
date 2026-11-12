@@ -10,6 +10,7 @@ export {
   type AalisEvents,
   type AppService,
   type CoreFailureCode,
+  type EventArgs,
   type PluginEntry,
   type PluginManagerService,
   type PluginState,

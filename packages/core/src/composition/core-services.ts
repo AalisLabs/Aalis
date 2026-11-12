@@ -8,7 +8,7 @@
 // 原语登记按身份归属，由拆卸的同栈切断统一撤回；手动退订直接撤原语登记，不另记清理链。
 // ============================================================
 
-import type { AalisEvents } from '../types/events.js';
+import type { AalisEvents, EventArgs } from '../types/events.js';
 
 import type { ServiceInfo, ServiceView } from '../primitives/services.js';
 
@@ -51,8 +51,8 @@ function builtin<B>(name: string): ServiceDescriptor<(identity: symbol) => B, B>
 // ----- events -----
 
 export interface Events {
-  on<E extends string & keyof AalisEvents>(event: E, handler: EventHandler<AalisEvents[E]>): () => void;
-  emit<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): Promise<void>;
+  on<E extends string & keyof AalisEvents>(event: E, handler: EventHandler<EventArgs<E>>): () => void;
+  emit<E extends string & keyof AalisEvents>(event: E, ...args: EventArgs<E>): Promise<void>;
 }
 export const events = builtin<Events>('events');
 
@@ -64,7 +64,7 @@ export interface LifecycleCap {
   /**
    * 这次激活的取消信号，用于中止 apply 里发起的长任务（`fetch(url, { signal })`、循环里查 `signal.aborted`）。
    * 停用、卸载、重启接手，或后台激活的 required 依赖下线被拆时，apply 尚未完成的激活在关闭计划排定后立即 abort，
-   * 停机时在开始停机、冻结计划时即 abort（早于 `app:stopping`）；其余激活在各自的收尾段开始时 abort（`onDrain` 回调执行时已断）——依赖方先关时，提供者的信号
+   * 停机时在开始停机、冻结计划时即 abort；其余激活在各自的收尾段开始时 abort（`onDrain` 回调执行时已断）——依赖方先关时，提供者的信号
    * 仍未断。reason 为 name 是 `'AbortError'` 的 `DOMException`。监听器同步执行，不得抛错：宿主会把监听器的异常
    * 当成未捕获异常（runtime 因此退出进程）。
    */

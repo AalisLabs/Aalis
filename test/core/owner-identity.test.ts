@@ -47,10 +47,10 @@ describe('清理身份与逻辑身份分离', () => {
     const rightHub = root.host.bind(right.activation, { hub }).hub;
     const seen: string[] = [];
     // 事件用真名（同 events-context-cut 的先例）：自造名会让 emit 的 rest 参数推成 never
-    left.caps.events.use.on('plugin:loaded', () => {
+    left.caps.events.use.on('zz:named', () => {
       seen.push('L-evt');
     });
-    right.caps.events.use.on('plugin:loaded', () => {
+    right.caps.events.use.on('zz:named', () => {
       seen.push('R-evt');
     });
     leftHub.use.add('x', 'L');
@@ -61,7 +61,7 @@ describe('清理身份与逻辑身份分离', () => {
 
     await left.activation.disposeAsync();
 
-    await root.caps.events.use.emit('plugin:loaded', 'x');
+    await root.caps.events.use.emit('zz:named', 'x');
     expect(seen).toEqual(['R-evt']);
     expect(registry.list()).toEqual(['dup/y=R', 'dup/shared=R']);
   });
@@ -109,20 +109,20 @@ describe('监听登记按次计身份：同一函数对象不因共享而互相�
     }
     const left = bindActivationFixture(root.host, root.host.create('l'));
     const right = bindActivationFixture(root.host, root.host.create('r'));
-    const offLeft = left.caps.events.use.on('plugin:loaded', shared);
-    left.caps.events.use.on('plugin:loaded', shared); // 左的第二条只随拆卸清，让下面的拆卸断言有鉴别力
-    right.caps.events.use.on('plugin:loaded', shared);
+    const offLeft = left.caps.events.use.on('zz:named', shared);
+    left.caps.events.use.on('zz:named', shared); // 左的第二条只随拆卸清，让下面的拆卸断言有鉴别力
+    right.caps.events.use.on('zz:named', shared);
 
     offLeft();
-    await root.caps.events.use.emit('plugin:loaded', 'p');
+    await root.caps.events.use.emit('zz:named', 'p');
     expect(calls, '退订只移除自己那条').toEqual(['hit', 'hit']);
 
     await left.activation.disposeAsync();
-    await root.caps.events.use.emit('plugin:loaded', 'p');
+    await root.caps.events.use.emit('zz:named', 'p');
     expect(calls, '左拆卸后右的登记仍在').toEqual(['hit', 'hit', 'hit']);
 
     await right.activation.disposeAsync();
-    await root.caps.events.use.emit('plugin:loaded', 'p');
+    await root.caps.events.use.emit('zz:named', 'p');
     expect(calls, '右拆卸后才真正没人听').toEqual(['hit', 'hit', 'hit']);
   });
 });

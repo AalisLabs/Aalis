@@ -7,32 +7,32 @@ describe('EventBus', () => {
   it('on/emit 按注册顺序串行调用', async () => {
     const bus = new EventBus();
     const order: number[] = [];
-    bus.on('plugin:loaded', () => {
+    bus.on('zz:named', () => {
       order.push(1);
     });
-    bus.on('plugin:loaded', async () => {
+    bus.on('zz:named', async () => {
       await Promise.resolve();
       order.push(2);
     });
-    bus.on('plugin:loaded', () => {
+    bus.on('zz:named', () => {
       order.push(3);
     });
-    await bus.emit('plugin:loaded', 'p');
+    await bus.emit('zz:named', 'p');
     expect(order).toEqual([1, 2, 3]);
   });
 
   it('dispose 函数移除监听器', async () => {
     const bus = new EventBus();
     const fn = vi.fn();
-    const off = bus.on('plugin:loaded', fn);
+    const off = bus.on('zz:named', fn);
     off();
-    await bus.emit('plugin:loaded', 'p');
+    await bus.emit('zz:named', 'p');
     expect(fn).not.toHaveBeenCalled();
   });
 
   it('emit 无监听器时安全 noop', async () => {
     const bus = new EventBus();
-    await expect(bus.emit('plugin:loaded', 'x')).resolves.toBeUndefined();
+    await expect(bus.emit('zz:named', 'x')).resolves.toBeUndefined();
   });
 });
 
@@ -42,21 +42,21 @@ describe('EventBus per-handler 隔离', () => {
     const bus = new EventBus({ onHandlerError: (event, err) => reported.push([event, err]) });
 
     const order: string[] = [];
-    bus.on('plugin:loaded', () => {
+    bus.on('zz:named', () => {
       order.push('a');
       throw new Error('boom-a');
     });
-    bus.on('plugin:loaded', async () => {
+    bus.on('zz:named', async () => {
       order.push('b');
       return Promise.reject(new Error('boom-b'));
     });
-    bus.on('plugin:loaded', () => {
+    bus.on('zz:named', () => {
       order.push('c');
     });
 
-    await expect(bus.emit('plugin:loaded', 'p')).resolves.toBeUndefined();
+    await expect(bus.emit('zz:named', 'p')).resolves.toBeUndefined();
     expect(order).toEqual(['a', 'b', 'c']);
-    expect(reported.map(([e]) => e)).toEqual(['plugin:loaded', 'plugin:loaded']);
+    expect(reported.map(([e]) => e)).toEqual(['zz:named', 'zz:named']);
     expect((reported[0][1] as Error).message).toBe('boom-a');
     expect((reported[1][1] as Error).message).toBe('boom-b');
   });
@@ -73,10 +73,10 @@ describe('EventBus per-handler 隔离', () => {
     const app = createInspectableApp({ name: 'T', logLevel: 'error', logger });
     const host = activationHost(app);
     const child = host.create('plugin-x');
-    host.bind(child, { events }).events.use.on('plugin:loaded', () => {
+    host.bind(child, { events }).events.use.on('zz:named', () => {
       throw new Error('x');
     });
-    await app.bind({ events }).events.use.emit('plugin:loaded', 'p');
+    await app.bind({ events }).events.use.emit('zz:named', 'p');
     expect(warnings.filter(w => w.includes('来自 plugin-x'))).toHaveLength(1);
     await app.stop();
   });
@@ -85,25 +85,25 @@ describe('EventBus per-handler 隔离', () => {
     const who: Array<string | undefined> = [];
     const bus = new EventBus({ onHandlerError: (_event, _err, contextId) => who.push(contextId) });
     bus.on(
-      'plugin:loaded',
+      'zz:named',
       () => {
         throw new Error('x');
       },
       Symbol('plugin-a'),
     );
-    bus.on('plugin:loaded', () => {
+    bus.on('zz:named', () => {
       throw new Error('y');
     });
-    await bus.emit('plugin:loaded', 'p');
+    await bus.emit('zz:named', 'p');
     expect(who).toEqual(['plugin-a', undefined]);
   });
 
   it('未设置 onHandlerError 时 handler 抛错也不致 emit reject', async () => {
     const bus = new EventBus();
-    bus.on('plugin:loaded', () => {
+    bus.on('zz:named', () => {
       throw new Error('silent');
     });
-    await expect(bus.emit('plugin:loaded', 'p')).resolves.toBeUndefined();
+    await expect(bus.emit('zz:named', 'p')).resolves.toBeUndefined();
   });
 
   it('onHandlerError 自身抛错不向外传播', async () => {
@@ -112,37 +112,10 @@ describe('EventBus per-handler 隔离', () => {
         throw new Error('reporter-boom');
       },
     });
-    bus.on('plugin:loaded', () => {
+    bus.on('zz:named', () => {
       throw new Error('inner');
     });
-    await expect(bus.emit('plugin:loaded', 'p')).resolves.toBeUndefined();
-  });
-});
-
-describe('EventBus sticky 补发护栏', () => {
-  it('sticky 补发时 handler 同步抛错被捕获并上报（不直达 uncaughtException）', async () => {
-    const reported: string[] = [];
-    const bus = new EventBus({ sticky: ['app:ready'], onHandlerError: event => reported.push(event) });
-    await bus.emit('app:ready');
-
-    bus.on('app:ready', () => {
-      throw new Error('sync-boom');
-    });
-    // 补发在微任务里执行
-    await new Promise(r => setTimeout(r, 0));
-    expect(reported).toEqual(['app:ready']);
-  });
-
-  it('sticky 补发时 handler 异步抛错同样被捕获（不变 unhandledRejection）', async () => {
-    const reported: string[] = [];
-    const bus = new EventBus({ sticky: ['app:ready'], onHandlerError: event => reported.push(event) });
-    await bus.emit('app:ready');
-
-    bus.on('app:ready', async () => {
-      throw new Error('async-boom');
-    });
-    await new Promise(r => setTimeout(r, 0));
-    expect(reported).toEqual(['app:ready']);
+    await expect(bus.emit('zz:named', 'p')).resolves.toBeUndefined();
   });
 });
 
@@ -150,12 +123,12 @@ describe('EventBus 登记身份', () => {
   it('同一 handler 登记两次：触发两次，各自退订互不影响', async () => {
     const bus = new EventBus();
     const fn = vi.fn();
-    const off1 = bus.on('plugin:loaded', fn);
-    bus.on('plugin:loaded', fn);
-    await bus.emit('plugin:loaded', 'p');
+    const off1 = bus.on('zz:named', fn);
+    bus.on('zz:named', fn);
+    await bus.emit('zz:named', 'p');
     expect(fn).toHaveBeenCalledTimes(2);
     off1();
-    await bus.emit('plugin:loaded', 'p');
+    await bus.emit('zz:named', 'p');
     expect(fn).toHaveBeenCalledTimes(3);
   });
 });
