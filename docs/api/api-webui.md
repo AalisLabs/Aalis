@@ -10,7 +10,7 @@
 
 页面默认声明式，需要自绘时用插件前端（见下文「插件前端」）。声明式页面只交声明：插件在 `apply` 里经 `webuiServer` 的 `definePage` 一次交出组件、数据源与动作的处理函数，经 `notify` 发提示；样式、窄屏变形、确认框与输入表单都由宿主统一画。登记归属这次激活，插件停用时同一拍撤回。
 
-`GET /api/plugins` 的 `requiredServices` / `optionalServices` 是插件 `uses` 声明按是否包 `optional()` 拆出的服务名，包含 core 内置服务（`events` / `lifecycle` / `logger` / `config` / `provide` / `services`）。这些内置服务和宿主服务（`app` / `plugins` / `host-config` 等）由根激活登记，与第三方服务一样是普通提供者：`/api/services` 里以「宿主」为提供者列出；插件声明了它们同样要经过激活闸，只是这些服务在加载插件前已就绪。经 `services` 动态查询获得的服务不在声明列表中。
+`GET /api/plugins` 的 `requiredServices` / `optionalServices` 是插件 `uses` 声明按是否包 `optional()` 拆出的服务名，包含 core 内置服务（`lifecycle` / `logger` / `config` / `provide` / `services`）。这些内置服务和宿主服务（`app` / `plugins` / `host-config` 等）由根激活登记，与第三方服务一样是普通提供者：`/api/services` 里以「宿主」为提供者列出；插件声明了它们同样要经过激活闸，只是这些服务在加载插件前已就绪。经 `services` 动态查询获得的服务不在声明列表中。
 
 ## 服务接口
 

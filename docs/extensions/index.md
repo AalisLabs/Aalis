@@ -4,14 +4,14 @@
 便于在一方代码里查定义、查谁扩了什么。
 
 > **这不是注册门禁。** 第三方插件扩展任一扩展点，只需在你自己的包里对扩展点所在的模块写
-> `declare module`（事件表 `'@aalis/core'`、钩子表 `'@aalis/api-hooks'`、贡献点表 `'@aalis/api-contributions'`、
+> `declare module`（事件表 `'@aalis/api-events'`、钩子表 `'@aalis/api-hooks'`、贡献点表 `'@aalis/api-contributions'`、
 > 配置字段 `'@aalis/api-host-config'`，见 [plugin-author-guide](../plugin-author-guide.md)），
 > 编译期即生效——**无需在本表登记**，也不会（无法）出现在本表里。扩展点的**权威定义**在各
 > `-api` 包的 `declare module` 声明；本表只收录本仓库的一方包，作发现与查阅之用，并非全集。
 查找一个事件/钩子/贡献点的真实定义，按本表「扩展者」列的包名去 `packages/<包目录>/src/index.ts` 查（一方实现；例外路径在行内标注）。
 
-> **核心原则**：core 只保留事件表 `AalisEvents`，它自持基础设施事件，从来不空。钩子表与贡献点表是
-> `@aalis/api-hooks` / `@aalis/api-contributions` 里的空接口，键值由各 `-api` 包通过 declaration merging 注入。
+> **核心原则**：core 不持有事件、钩子与贡献点的类型表。事件表、钩子表与贡献点表是
+> `@aalis/api-events` / `@aalis/api-hooks` / `@aalis/api-contributions` 里的空接口，键值由各 `-api` 包通过 declaration merging 注入。
 > 服务类型随描述符走，不经一张核心服务名表。
 > 这是「忒修斯之船」原则——业务概念可以全部换掉，core 永远不感知它们。
 
@@ -25,7 +25,7 @@
 > 它们挂在服务**实例 / model-handle 元数据**上，由各领域 `*-api` 的 helper（如 `resolveLLMModel`）按需筛选。
 
 一方契约包各导出一条描述符，服务名即包名去掉 `api-` 前缀（`agent` / `asr` / `authority` / `checkpoint` / `code-sandbox` / `commands` /
-`contributions` / `cron-engine` / `doctor` / `embedding` / `flow-control` / `gateway` / `hooks` / `host-config` / `host-logs` / `host-paths` / `llm` / `media` /
+`contributions` / `cron-engine` / `doctor` / `embedding` / `events` / `flow-control` / `gateway` / `hooks` / `host-config` / `host-logs` / `host-paths` / `llm` / `media` /
 `memory` / `message-archive` / `package-manager` / `persona` / `platform` / `plugin-source` / `process` /
 `session-history` / `session-manager` / `session-protocol` / `storage` / `todo-list` / `tools` / `trigger` / `user-relation` / `vectorstore` / `workflow`），两个例外：
 `@aalis/api-webui` 导出 `webui-server` 与 `webui-client` 两条；`@aalis/api-approval` 的服务名是 `approvals`。
@@ -47,9 +47,9 @@
 
 ## 2. `AalisEvents`
 
-EventBus 事件签名表。`events.use.on(name, handler)` 在编译期靠它做事件名 + payload 约束。
+事件签名表。`events.use.on(name, handler)` 在编译期靠它做事件名 + payload 约束。
 
-**位置**：`packages/core/src/types/events.ts`。core 内置八项，目录与时序说明以 [core/events.md](../core/events.md) 为准
+**位置**：`packages/api-events/src/index.ts`（空 interface；增广写 `declare module '@aalis/api-events'`）。契约与派发规则见 [api-events](../api/api-events.md)
 （没有 `dispose` 事件——清理副作用用 `lifecycle.use.onDispose`，见 [context](../core/context.md)）
 
 **扩展者**：
@@ -210,7 +210,7 @@ declare module '@aalis/api-llm' {
 
 ## 速查：我想……
 
-- 加一个**新事件** → 在自己的 `*-api` 包内 `declare module '@aalis/core' { interface AalisEvents { ... } }`
+- 加一个**新事件** → 在自己的 `*-api` 包内 `declare module '@aalis/api-events' { interface AalisEvents { ... } }`
 - 加一个**新钩子** → 在自己的 `*-api` 包内 `declare module '@aalis/api-hooks' { interface HookContextMap { ... } }`
 - 加一个**新贡献点** → 在自己的 `*-api` 包内 `declare module '@aalis/api-contributions' { interface ContributionPointMap { ... } }`（spec 须含 `id: string`）
 - 加一个**新服务** → 在 `-api` 包 `export const mySvc = defineService<MyIface>('my-svc')`（登记型再给 `bind`）。领域能力放到实例 / model-handle 元数据上，用 helper 筛选（可选 `XxxCapabilityRegistry` 见第 8 节）

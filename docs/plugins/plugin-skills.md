@@ -22,7 +22,7 @@ export default definePlugin({
     document: optional(ownHostConfig),
     contributions,
     hooks,
-    events,
+    lifecycle,
     logger,
     config,
     provide,

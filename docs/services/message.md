@@ -85,7 +85,7 @@
 | `forwardPlaceholder(id)` | `incoming-content.ts` | 正文里一段转发所在位置的占位（`<forward id="…">[合并转发消息]</forward>`），适配器写进 `content` |
 | `withForwards(content, forwards)` | `incoming-content.ts` | 正文里的转发占位换成对应的展开；没有对应展开的占位原样留着 |
 
-### 事件（declaration merging 注入 `@aalis/core` 的 `AalisEvents`）— `src/index.ts`
+### 事件（declaration merging 注入 `@aalis/api-events` 的 `AalisEvents`）— `src/index.ts`
 
 | 事件名 | payload | 说明 |
 | --- | --- | --- |

@@ -104,7 +104,7 @@ interface SessionInfo {
 
 ### 2.3 事件 augmentation（`index.ts`）
 
-本 `-api` 包通过 `declare module '@aalis/core'` 增量声明了会话生命周期的事件到 `AalisEvents`：
+本 `-api` 包通过 `declare module '@aalis/api-events'` 增量声明了会话生命周期的事件到 `AalisEvents`：
 
 ```ts
 'session:created':   [session: SessionInfo];
@@ -190,7 +190,7 @@ interface SessionInfo {
 
 ## 3. 谁提供 / 谁消费
 
-**提供方（唯一参考实现）**：`@aalis/plugin-session-manager`，在 `apply()` 里 `provide.use(sessionManager, manager, { label: '会话管理' })`（`plugin-session-manager/src/index.ts`）。它 `uses required = ['memory']`（另有内置的 `config`、`events`、`hooks`、`lifecycle` 等）、`optional = ['agent','authority','host-config','i18n','llm','platform','session-settings']`（`index.ts`）：会话设置与宿主配置用来按会话读取别的会话的范围与开关。plugin-session-settings 以 required 用会话管理，两边一边 required、一边 optional：会话管理先激活，读取器的登记随会话设置上线补上，会话设置不在时只取插件配置里的值。没有 `memory` 时直接拒绝启动（`index.ts`）。
+**提供方（唯一参考实现）**：`@aalis/plugin-session-manager`，在 `apply()` 里 `provide.use(sessionManager, manager, { label: '会话管理' })`（`plugin-session-manager/src/index.ts`）。它 `uses required = ['memory']`（另有 `config`、`events`、`hooks`、`lifecycle` 等）、`optional = ['agent','authority','host-config','i18n','llm','platform','session-settings']`（`index.ts`）：会话设置与宿主配置用来按会话读取别的会话的范围与开关。plugin-session-settings 以 required 用会话管理，两边一边 required、一边 optional：会话管理先激活，读取器的登记随会话设置上线补上，会话设置不在时只取插件配置里的值。没有 `memory` 时直接拒绝启动（`index.ts`）。
 
 **典型消费点**：
 
@@ -226,6 +226,7 @@ interface SessionInfo {
 下面的骨架只有会话表，没有来源字段的收录、项目工作区（只有默认工作区）、owner 的 IM 私聊判定、清空时连带删除子会话与持久化，删除也不交给 agent 的 `clearing`（删子会话期间这个会话的回合照常运行，到它自己的 `session:deleted` 才停）；取别的会话只放行同一棵会话树：
 
 ```ts
+import { type Events, events } from '@aalis/api-events';
 import { windowKey } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { memory } from '@aalis/api-memory';
@@ -243,7 +244,7 @@ import {
   TAKE_UNKNOWN,
   type TakeVerdict,
 } from '@aalis/api-session-manager';
-import { type Events, definePlugin, events, logger, provide } from '@aalis/core';
+import { definePlugin, logger, provide } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 
 const DEFAULT_PLACE: PlaceInfo = { kind: 'workspace', key: 'workspace:default' };
@@ -558,7 +559,7 @@ onebot 等平台派生的房间会话在首条真人入站到达时由 §6.6 的
 
 ### 7.3 持久化是延迟刷盘 + 拆卸落盘
 
-写操作走 `markDirty()` → 1s 防抖刷盘。`App.stop()` / bounce / unload 时：`lifecycle.use.onDrain` 调用 `settleActiveOnDrain()`，把仍为 `active` 的会话收口为 `completed` 并立刻落盘（`waiting` / 已终态不动；不依赖 agent 钩子）。随后 `lifecycle.use.onDispose(() => manager.shutdown())` 再刷一次（`shutdown()` 幂等：清定时器 + 置 dirty + `persist()`）（`plugin-session-manager/src/index.ts`）。session-manager 对 memory 是普通依赖：关停以激活为单位分 drain / close，消费者整个 close 完提供者才 drain，因此 drain / `onDispose` 落盘期间 memory 仍在。单独卸载 / 禁用 / 重载 memory 时，本插件作为正在用它的 required 下游并入同一批先关，落盘同样成立。会话表跟随本插件选中的 memory 后端（`memory.follow`）：运行中换成另一个后端时，先把未落盘的变更写回旧后端，再从新后端读取会话表整体替换，不跨后端合并；新表加载完成前的改动仍写回旧后端，旧后端已卸载或停用时写回失败，只记 warn。读取会话表失败时按 1、3、10 秒的间隔重试三次（每次重试前记一条 warn），其间仍用原来的会话表与落盘目标。本插件激活时（启动时，或随选中的 memory 后端卸载、停用、重载而重新激活时）等读表（含重试）结束才对外提供服务：后端持续不可用时，这次重算约多等 14 秒，拓扑序排在本插件之后的插件随之推迟激活，启动时 `app:ready` 也随之推迟。14 秒是三次重试间隔之和，各次读取本身的耗时另计：如 memory-mongodb 连不上库时，每次读取要等到服务器选择超时（`connectTimeoutMs`，默认 5 秒）。换后端、停用或停机会中止重试等待。重试用尽或被中止时会话列表为空，在这个后端上的会话改动不落盘，以免空表覆盖后端原有记录；重试用尽记 error，被中止（停用、停机或换后端）只记一行 info。崩溃（非正常退出）可能丢失最后 ~1s 的会话元数据变更。重写 provider 时若要更强一致性，请在关键写操作后同步落盘。
+写操作走 `markDirty()` → 1s 防抖刷盘。`App.stop()` / bounce / unload 时：`lifecycle.use.onDrain` 调用 `settleActiveOnDrain()`，把仍为 `active` 的会话收口为 `completed` 并立刻落盘（`waiting` / 已终态不动；不依赖 agent 钩子）。随后 `lifecycle.use.onDispose(() => manager.shutdown())` 再刷一次（`shutdown()` 幂等：清定时器 + 置 dirty + `persist()`）（`plugin-session-manager/src/index.ts`）。session-manager 对 memory 是普通依赖：关停以激活为单位分 drain / close，消费者整个 close 完提供者才 drain，因此 drain / `onDispose` 落盘期间 memory 仍在。单独卸载 / 禁用 / 重载 memory 时，本插件作为正在用它的 required 下游并入同一批先关，落盘同样成立。会话表跟随本插件选中的 memory 后端（`memory.follow`）：运行中换成另一个后端时，先把未落盘的变更写回旧后端，再从新后端读取会话表整体替换，不跨后端合并；新表加载完成前的改动仍写回旧后端，旧后端已卸载或停用时写回失败，只记 warn。读取会话表失败时按 1、3、10 秒的间隔重试三次（每次重试前记一条 warn），其间仍用原来的会话表与落盘目标。本插件激活时（启动时，或随选中的 memory 后端卸载、停用、重载而重新激活时）等读表（含重试）结束才对外提供服务：后端持续不可用时，这次重算约多等 14 秒，拓扑序排在本插件之后的插件随之推迟激活，启动时的就绪回调（`lifecycle.onReady`）也随之推迟。14 秒是三次重试间隔之和，各次读取本身的耗时另计：如 memory-mongodb 连不上库时，每次读取要等到服务器选择超时（`connectTimeoutMs`，默认 5 秒）。换后端、停用或停机会中止重试等待。重试用尽或被中止时会话列表为空，在这个后端上的会话改动不落盘，以免空表覆盖后端原有记录；重试用尽记 error，被中止（停用、停机或换后端）只记一行 info。崩溃（非正常退出）可能丢失最后 ~1s 的会话元数据变更。重写 provider 时若要更强一致性，请在关键写操作后同步落盘。
 
 ### 7.4 按会话累加 token
 

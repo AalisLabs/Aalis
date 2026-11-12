@@ -339,5 +339,5 @@ await events.use.emit('trigger:fired', {
 ## 8. 交叉链接
 
 - 概念：[service-model](../concepts/service-model.md)（DI 按名解析 / 同名竞争）、[lazy-service-access](../concepts/lazy-service-access.md)（业务句柄是活的）、[manifest-metadata](../concepts/manifest-metadata.md)（aalis.service 与 definePlugin provides/uses 双源）、[storage-uri-grammar](../concepts/storage-uri-grammar.md)（定义/历史存储）、[security-model](../concepts/security-model.md)、[message-llm-pipeline](../concepts/message-llm-pipeline.md)（agent 节点经网关的 `ingressMessage` 接入主链路）。
-- 核心：[core/service](../core/service.md)、[core/context](../core/context.md)、[core/plugin](../core/plugin.md)、[core/events](../core/events.md)、[plugins/plugin-authority](../plugins/plugin-authority.md)、[plugins/plugin-tools](../plugins/plugin-tools.md)。
+- 核心：[core/service](../core/service.md)、[core/context](../core/context.md)、[core/plugin](../core/plugin.md)、[api/api-events](../api/api-events.md)、[plugins/plugin-authority](../plugins/plugin-authority.md)、[plugins/plugin-tools](../plugins/plugin-tools.md)。
 - 相关服务：[services/tools](./tools.md)（`tool` 节点的执行面 + `workflow_*` 工具）、[services/agent](./agent.md)（`agent` 节点的回复 join）、[services/storage](./storage.md)（定义/历史落盘）。相关插件：`@aalis/plugin-scheduler`（`trigger:fired` 触发源）、`@aalis/plugin-cron-engine`（cron/interval 调度底座）。

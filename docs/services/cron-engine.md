@@ -200,5 +200,5 @@ export default definePlugin({
 ## 8. 交叉链接
 
 - 概念：[service-model](../concepts/service-model.md)（DI 按名选择 / priority / entryId）、[lazy-service-access](../concepts/lazy-service-access.md)（业务句柄是活的）、[manifest-metadata](../concepts/manifest-metadata.md)（`provides` 双源）、[security-model](../concepts/security-model.md)（触发身份与 authority）。
-- 核心：[core/service](../core/service.md)、[core/context](../core/context.md)、[plugins/plugin-authority](../plugins/plugin-authority.md)、[core/events](../core/events.md)（workflow 经 `trigger:fired` / `events.use.on` 串联事件触发）。
+- 核心：[core/service](../core/service.md)、[core/context](../core/context.md)、[plugins/plugin-authority](../plugins/plugin-authority.md)、[api/api-events](../api/api-events.md)（workflow 经 `trigger:fired` / `events.use.on` 串联事件触发）。
 - 服务：[services/tools](./tools.md)（被触发的执行单元）、上层的 scheduler / workflow 插件即本服务的两个标准消费方。

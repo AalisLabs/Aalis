@@ -98,11 +98,12 @@ manifest 双源必须同步写（`package.json` `aalis.service` 与源码 `expor
 可编译最小骨架：
 
 ```ts
+import { events } from '@aalis/api-events';
 import { memory } from '@aalis/api-memory';
 import { messageArchive, outboundAddress } from '@aalis/api-message-archive';
 import type { MessageArchiveService } from '@aalis/api-message-archive';
 import { sessionManager } from '@aalis/api-session-manager';
-import { definePlugin, events, logger, optional, provide } from '@aalis/core';
+import { definePlugin, logger, optional, provide } from '@aalis/core';
 import {
   type IncomingMessage,
   type Message,
@@ -217,5 +218,5 @@ await messageArchive.use.archiveIncoming(message);
 ## 8. 交叉链接
 
 - 概念：[服务模型](../concepts/service-model.md)、[懒服务访问](../concepts/lazy-service-access.md)、[manifest 元数据](../concepts/manifest-metadata.md)、[消息-LLM 管线](../concepts/message-llm-pipeline.md)、[安全模型](../concepts/security-model.md)、[storage URI 文法](../concepts/storage-uri-grammar.md)
-- 核心：[service](../core/service.md)、[context](../core/context.md)、[events](../core/events.md)、[types](../core/types.md)
+- 核心：[service](../core/service.md)、[context](../core/context.md)、[events](../api/api-events.md)、[types](../core/types.md)
 - 相关服务/契约：`@aalis/api-memory`（落库后端与 `memory:messages-rewritten` 改写通知）、`@aalis/api-media`（附件识别与补描述）、`@aalis/schema-message`（`Message` / `IncomingMessage` / `OutgoingMessage` / `WellKnownKinds` / `outboundMediaMessage` / `inbound:message:archived` 与 `outbound:delivered` 事件）

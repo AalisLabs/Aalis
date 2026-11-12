@@ -107,7 +107,7 @@ type HostConfigChange = { readonly instanceId: string } | { readonly document: t
 'host-config:changed': [change: HostConfigChange];
 ```
 
-宿主配置文档在内存里确实被改了时由宿主发，别的插件不发：写方法改完、且改前改后确实不同时（写入相同的值不发；`setPluginEnabled` 不发，启停另有 `plugins:changed`），`applyPluginConfig` 受理且文档变了时（落盘失败也发），加载插件时补写了它的配置段之后，配置热重载换下文档之后。只改了一个实例的配置段时带它的 `instanceId`，其余带 `document`。不表示已落盘，也不保证恰好一次。会话设置、会话服务与 WebUI 据此重取。
+宿主配置文档在内存里确实被改了时由宿主发，别的插件不发：写方法改完、且改前改后确实不同时（写入相同的值不发；`setPluginEnabled` 不发，启停另有 `plugins` 服务的 `watch`），`applyPluginConfig` 受理且文档变了时（落盘失败也发），加载插件时补写了它的配置段之后，配置热重载换下文档之后。只改了一个实例的配置段时带它的 `instanceId`，其余带 `document`。不表示已落盘，也不保证恰好一次。会话设置、会话服务与 WebUI 据此重取。
 
 ## 只读窄面 `ownHostConfig`
 

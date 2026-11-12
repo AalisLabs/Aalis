@@ -63,7 +63,7 @@ export interface DoctorService {
 
 ### 事件增强
 
-`-api` 用 declaration merging 给 `@aalis/core` 的 `AalisEvents` 增加了一条事件类型：
+`-api` 用 declaration merging 给 `@aalis/api-events` 的 `AalisEvents` 增加了一条事件类型：
 
 ```ts
 'doctor:updated': [info: { generatedAt: string; summary: { ok: number; warn: number; error: number } }];
@@ -202,7 +202,8 @@ provider 必须实现完整的 `DoctorService` 四个方法。最小骨架：
 ```ts
 import { doctor } from '@aalis/api-doctor';
 import type { CheckResult, CheckSpec, DoctorReport, DoctorService } from '@aalis/api-doctor';
-import { definePlugin, events, provide } from '@aalis/core';
+import { events } from '@aalis/api-events';
+import { definePlugin, provide } from '@aalis/core';
 
 class CustomDoctor implements DoctorService {
   private last?: DoctorReport;

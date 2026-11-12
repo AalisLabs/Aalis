@@ -109,9 +109,10 @@ helper 返回的条目是 core 的 `ProviderEntry<PlatformAdapter>`：`use`（�
 ### 注册（`provide`）
 
 ```ts
+import { events } from '@aalis/api-events';
 import { platform } from '@aalis/api-platform';
 import type { PlatformAdapter, PlatformConnection } from '@aalis/api-platform';
-import { definePlugin, events, provide } from '@aalis/core';
+import { definePlugin, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@your-scope/plugin-adapter-foo',
@@ -177,5 +178,5 @@ export default definePlugin({
 ## 8. 交叉链接
 
 - 概念：[service-model](../concepts/service-model.md)（DI 按名、多 entry、per-entry provide）、[lazy-service-access](../concepts/lazy-service-access.md)（业务句柄是活的、provider bounce）、[manifest-metadata](../concepts/manifest-metadata.md)（`provides`/`uses` 双源 + `subsystem`）、[message-llm-pipeline](../concepts/message-llm-pipeline.md)（`inbound:message`/`outbound:message` 与 agent 路由）、[security-model](../concepts/security-model.md)、[storage-uri-grammar](../concepts/storage-uri-grammar.md)。
-- 核心：`docs/core/service.md`、`docs/plugins/plugin-authority.md`、`docs/core/context.md`、`docs/core/events.md`。
+- 核心：`docs/core/service.md`、`docs/plugins/plugin-authority.md`、`docs/core/context.md`、`docs/api/api-events.md`。
 - 相关契约包：`@aalis/schema-message`（`IncomingMessage`/`OutgoingMessage`）、`plugin-gateway`（入站路由）、`plugin-flow-control`（限速闸门后端）。

@@ -30,8 +30,9 @@ runtime 的发现驱动（`createPluginDiscovery`）拿到定义后整批交给 
 典型入口（以 `@aalis/plugin-tools` 为准）：
 
 ```ts
+import { events } from '@aalis/api-events';
 import { backgroundTasks, tools } from '@aalis/api-tools';
-import { config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
+import { config, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@aalis/plugin-tools',
@@ -59,7 +60,7 @@ export default definePlugin({
 
 ### `uses`：激活闸 + 关停边
 
-未包 `optional()` 的服务参与激活闸：必须都已注册才会激活，且建成关停依赖边。包了 `optional()` 的不参与激活闸，缺席不拦激活，到场后自动接上（缺席时 `present` 为 false，访问 `use` 的成员抛错）。内置能力与 `app` / `plugins` 由根激活提供、始终在场，激活闸恒满足，也不加关停排序边；`hooks` / `contributions` / `hostConfig` 由插件或宿主提供，与其他外部服务一样受闸约束。
+未包 `optional()` 的服务参与激活闸：必须都已注册才会激活，且建成关停依赖边。包了 `optional()` 的不参与激活闸，缺席不拦激活，到场后自动接上（缺席时 `present` 为 false，访问 `use` 的成员抛错）。内置能力与 `app` / `plugins` 由根激活提供、始终在场，激活闸恒满足，也不加关停排序边；`events` / `hooks` / `contributions` / `hostConfig` 由插件或宿主提供，与其他外部服务一样受闸约束。
 
 ### `provides`：激活后校验
 

@@ -17,7 +17,7 @@ export default definePlugin({
     provide,
     config,
     logger,
-    events,
+    lifecycle,
     hooks,
     platform: optional(platform),
     storage: optional(storage),

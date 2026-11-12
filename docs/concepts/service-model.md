@@ -14,7 +14,7 @@
 
 服务身份是描述符的 `name`。契约包装了两份也指向同一服务；binder 随消费方 import 的那份契约包走，类型与绑定实现同版本。
 
-`caps.xxx` 分两层。选择层 `ServiceSelection` 由 core 定义、每个服务都一样（`list()` / `use` / `of(id)` / `present` / `follow()`）；业务层由契约定义：普通调用型不给自定义 `bind`，业务层就是按提供者形状 `P` 转发的活句柄；注册型能力给 `bind`，用资源口的 `registrar` / `follow` / `track` 造自动归属的登记方法（如 `caps.tools.use.register`）。
+`caps.xxx` 分两层。选择层 `ServiceSelection` 由 core 定义、每个服务都一样（`list()` / `use` / `of(id)` / `present` / `follow()` / `watch()`）；业务层由契约定义：普通调用型不给自定义 `bind`，业务层就是按提供者形状 `P` 转发的活句柄；注册型能力给 `bind`，用资源口的 `registrar` / `follow` / `track` 造自动归属的登记方法（如 `caps.tools.use.register`）。
 
 容器内部每个服务名对应一个 entry 列表。`llm`、`storage`、`memory` 可以同时被多个插件 `provide`——OpenAI 与 DeepSeek 并存在同一列表里。
 
@@ -42,7 +42,7 @@ interface ServiceView<T = unknown> {
 
 `priority` 是普通数字：越大越优先。没有预设档位，数值含义由 provider 自行记载；部署可调的场景习惯把它开进自己的 `configSchema`。默认 `0`；要盖过参考实现，取一个更高的值（如 `50`）。
 
-`services.prefer` / `unprefer` 会 emit `service:changed`，业务句柄随之打到新选中的那一家，`follow` 随选中的变化重挂。偏好只由用户经管理面写：WebUI 设置「系统」的服务偏好与配置项 `servicePreferences` 设全局偏好，插件详情的服务偏好与配置项 `pluginServicePreferences` 设本插件偏好；普通插件不调 `prefer` / `unprefer`，选择层也没有写偏好的入口。不需要让某个插件改用别家、也不需要它固定用某一家的，就别设本插件偏好：「谁生效」由选中者决定的服务（trigger）与几个插件共用数据的服务（memory、storage、vectorstore、embedding）按插件分开选会出错，见 [运行态与配置文档](../core/config.md#服务偏好)。插件一定要某一家提供时，在插件文档里写明，由用户设本插件偏好。
+`services.prefer` / `unprefer` 改了偏好时触发服务变更，业务句柄随之打到新选中的那一家，`follow` 随选中的变化重挂，选择层的 `watch` 随之调用。偏好只由用户经管理面写：WebUI 设置「系统」的服务偏好与配置项 `servicePreferences` 设全局偏好，插件详情的服务偏好与配置项 `pluginServicePreferences` 设本插件偏好；普通插件不调 `prefer` / `unprefer`，选择层也没有写偏好的入口。不需要让某个插件改用别家、也不需要它固定用某一家的，就别设本插件偏好：「谁生效」由选中者决定的服务（trigger）与几个插件共用数据的服务（memory、storage、vectorstore、embedding）按插件分开选会出错，见 [运行态与配置文档](../core/config.md#服务偏好)。插件一定要某一家提供时，在插件文档里写明，由用户设本插件偏好。
 
 ---
 
@@ -72,7 +72,7 @@ export default definePlugin({
 - `label?: unknown` —— 展示值（字符串或文字对象），core 原样转交，供管控视图展示
 - `entryId?: string` —— 条目的逻辑身份（偏好、展示与 `of(id)` 认它），缺省为本激活 id。一个激活登记同一服务的多条时各给一个，`list()` 与 `of(id)` 才分得清；托管自己不运行代码的包（如 WebUI 服务端替扫描到的前端包登记）时取被托管包的 id。格式由服务契约约定，core 不检查；清理与 `provides` 核对仍归本激活
 
-内置能力（`events` / `logger` / `config` / `lifecycle` / `provide` / `services`）由根激活独占提供、始终在场，绑的是这次激活自身，不可被普通 `provide` 替换。`app` / `plugins` 是 core 提供的宿主服务；`hostConfig`（`@aalis/api-host-config`）由宿主提供；`hooks` / `contributions`（`@aalis/api-hooks` / `@aalis/api-contributions`）由插件提供，默认提供者是 `@aalis/plugin-hooks` / `@aalis/plugin-contributions`。它们都须显式写进 `uses`。
+内置能力（`logger` / `config` / `lifecycle` / `provide` / `services`）由根激活独占提供、始终在场，绑的是这次激活自身，不可被普通 `provide` 替换。`app` / `plugins` 是 core 提供的宿主服务；`hostConfig`（`@aalis/api-host-config`）由宿主提供；`events` / `hooks` / `contributions`（`@aalis/api-events` / `@aalis/api-hooks` / `@aalis/api-contributions`）由插件提供，默认提供者是 `@aalis/plugin-events` / `@aalis/plugin-hooks` / `@aalis/plugin-contributions`。它们都须显式写进 `uses`。
 
 ### 2.2 同一激活默认只 provide 一次同名服务
 
@@ -101,7 +101,7 @@ caps.provide.use(llm, handle, {
 
 ## 4. 消费方
 
-### 4.1 选择层：`list()` / `use` / `of(id)` / `present` / `follow()`
+### 4.1 选择层：`list()` / `use` / `of(id)` / `present` / `follow()` / `watch()`
 
 写进 `uses` 之后，apply 里拿到的是选择层。required 与 optional 拿到的是**同一接口**——两者只差激活闸：required 缺席会让顶层插件 pending；optional 缺席不拦激活，到场后自动接上。
 
@@ -109,6 +109,7 @@ caps.provide.use(llm, handle, {
 - `list()`：全部对外可见的提供者（`ProviderEntry`），本插件选中的那一条在前，条目的 `use` 钉在那一条登记上。
 - `of(id)`：按 id 固定某一家的业务句柄。
 - `follow(attach)`：跟随选中的那一家建立有状态资源。
+- `watch(fn)`：提供者或选择可能变了时调用 `fn`，回调里重读 `list()`、`present`。
 
 挑选规则、缺席时的行为与三种句柄各打到哪一家见 [选择层与业务层](../core/context.md#选择层与业务层)，`follow` 的交接见 [follow](../core/context.md#follow)。
 
@@ -130,7 +131,7 @@ caps.provide.use(llm, handle, {
 
 关停以激活为单位，分收尾（drain）与关闭（close）两阶段。插件用别的插件的服务（声明的 required 与 optional，对外的全部提供者）：消费者整个 close 完，提供者才 drain。宿主根激活使用插件服务：根 drain 先于该插件 close。插件使用根激活登记的服务：不加排序边，归属保证插件 close 先于根 close。依赖成环时的处理见 [插件定义与能力](../core/context.md)。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。
 
-`App.stop()` 先排干在飞重算，冻结新增绑定并进入停机态，再发 `app:stopping`（知会，不是清理通道），等监听器完成后执行停机计划。从 `beginShutdown()` 起，新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 一律立即返回 false，不改变状态或配置；拆卸由停机计划负责，停机是否完成看 `app.stop()`。单独 unload / disable / bounce 提供者时，正在用它的 required 消费者并入同批先收尾再关，收尾时提供者仍在；空档里不切到后备提供者。动态 `services.use.get` 不产生依赖边，关停期间可能取到空；它拿到的原始实例不受关停边保护。
+`App.stop()` 先冻结新增绑定并进入停机态，再排干在飞重算，然后执行停机计划。从 `beginShutdown()` 起，新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 一律立即返回 false，不改变状态或配置；拆卸由停机计划负责，停机是否完成看 `app.stop()`。单独 unload / disable / bounce 提供者时，正在用它的 required 消费者并入同批先收尾再关，收尾时提供者仍在；空档里不切到后备提供者。动态 `services.use.get` 不产生依赖边，关停期间可能取到空；它拿到的原始实例不受关停边保护。
 
 插件 dispose 时，容器按清理归属撤回本激活登记的全部服务。登记型 hub（工具 / 命令）由描述符的 registrar 在提供者侧按激活身份退订。
 
@@ -148,7 +149,7 @@ caps.provide.use(llm, handle, {
 
 ## 7. 隔离：键控解析或新 App
 
-按会话 / 租户做差异化配置，用键控解析（会话设置的读取器 `fields.get(sessionId)`，见 [api-session-settings](../api/api-session-settings.md)）。需要真正隔离的事件总线 / 日志通道 / 服务容器，用独立的 `App` 实例（`createApp(options)`：每个 `App` 自有事件总线与服务容器，日志通道另传独立的 `logHub`）。同租户内多用户偏好不要写进容器的 `prefer`——那是进程级 default，见 [插件作者指南](../plugin-author-guide.md) 第 13 节。
+按会话 / 租户做差异化配置，用键控解析（会话设置的读取器 `fields.get(sessionId)`，见 [api-session-settings](../api/api-session-settings.md)）。需要真正隔离的事件总线 / 日志通道 / 服务容器，用独立的 `App` 实例（`createApp(options)`：每个 `App` 自有服务容器，事件总线随各自登记的提供者插件，日志通道另传独立的 `logHub`）。同租户内多用户偏好不要写进容器的 `prefer`——那是进程级 default，见 [插件作者指南](../plugin-author-guide.md) 第 13 节。
 
 ---
 

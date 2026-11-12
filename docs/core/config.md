@@ -120,7 +120,7 @@ WebUI 的启停路由按这种方式持久化；WebUI 的改配置与新建实�
 - `installHostConfig(app, store, opts)`：把文档以 `host-config` 服务独占登记在根激活上，并经 `services.use.prefer` 应用文档里的服务偏好（全局偏好与本插件偏好）。`opts` 与交给 `withPluginConfigSync` 的是同一份，`host-config` 的 `trimUnknownFields` 据此声明宿主是否裁剪 schema 外字段，WebUI 保存插件配置时按它行事。须在登记任何插件之前调用，偏好才先于全部提供者生效。
 - 插件发现驱动 `createPluginDiscovery(app, loader, store)` 登记插件时，按实例 id 从文档取配置（解析密钥引用后）与禁用标记，交给 `app.pluginAll`（见 [App](app.md)）。冷启动时，`plugins` 下找不到对应插件的配置段（多为直接 `npm uninstall` 后的残留）逐段告警一次，提示已卸载的可删除该段（其中可能含密钥）；文档本身不改。
 - `withPluginConfigSync(app, store, opts)`：经 `createPluginDiscovery` 的 `prepare`，在发现驱动每批定下要登记的定义后、登记前，把 `configSchema` 派生的默认值深合并进文档（密钥字段的默认值不写进文档），按 schema 裁剪未知字段（`configSync.trimUnknownFields=false` 可保留），并把密钥字段上的明文移进密钥存储，这一批有改动就落盘一次。首次 apply 拿到的就是规范化后的配置。
-- `installConfigHotReload(app, store, discovery, opts)`：文档或 `secrets.yaml` 被外部修改后，先按改动前后的文档核对服务偏好（改了的与新加的经 `services.use.prefer` 应用，删掉的 `unprefer`，没变的不动），再卸载文件里已没有配置段的 `name:suffix` 实例（冷启动同样不会登记它们），再按同一政策同步，对解析后的配置与运行态有差异的实例调用 `updateConfig`，最后经发现驱动的 `registerConfiguredInstances()` 登记文件里新出现的后缀实例，判据与冷启动、`rescan()` 相同。在 `app:stopping` 时停止监听。
+- `installConfigHotReload(app, store, discovery, opts)`：文档或 `secrets.yaml` 被外部修改后，先按改动前后的文档核对服务偏好（改了的与新加的经 `services.use.prefer` 应用，删掉的 `unprefer`，没变的不动），再卸载文件里已没有配置段的 `name:suffix` 实例（冷启动同样不会登记它们），再按同一政策同步，对解析后的配置与运行态有差异的实例调用 `updateConfig`，最后经发现驱动的 `registerConfiguredInstances()` 登记文件里新出现的后缀实例，判据与冷启动、`rescan()` 相同。应用开始停机之后（`app.stopping`）到来的变更不再重载；监听在宿主根收尾时摘掉。
 
 `startAalis` 的装配序为：数据目录 → 实例锁（守护模式）→ 文档与密钥存储 → App → host-paths 与 host-logs → host-config → 加载政策 → 发现 → 热重载。实例锁只有 `startAalis` 取，自组装宿主不经过这一步。
 
@@ -209,8 +209,8 @@ plugins:
 |---|---|---|---|
 | `name` | string | 'Aalis' | 机器人名称 |
 | `logLevel` | select | 'info' | 日志等级 |
-| `slowThresholdMs` | number（≥0） | 60000 | 慢操作阈值（毫秒）：插件激活超过这个时长仍未完成时告警，转入后台继续；启动与停机时单个事件监听器超时也告警，不再等它。0 表示不设限，重启生效（见 [App](app.md) 的 `AppOptions.slowThresholdMs`） |
+| `slowThresholdMs` | number（≥0） | 60000 | 慢操作阈值（毫秒）：插件激活超过这个时长仍未完成时告警，转入后台继续；单个就绪回调超时也告警，不再等它。0 表示不设限，重启生效（见 [App](app.md) 的 `AppOptions.slowThresholdMs`） |
 
-`logLevel` 与 `slowThresholdMs` 只在启动时读取，改了要重启；`startAalis` 按 `CORE_CONFIG_SCHEMA` 逐个判定，与 WebUI 设置页同一套规则：留空（YAML 空键）当作未配置，不合法的写法（`logLevel` 不是可选值、`slowThresholdMs` 不是非负有限数）记一条告警，同样按默认值处理。runtime 的重启策略等新实例报就绪（默认 30 秒）才判定接管成功，`slowThresholdMs` 低于它时，新实例会带着仍在后台激活的插件报就绪，更新失败的回滚不再兜住卡住的激活。转入后台的插件，它提供的服务在激活完成前不对依赖方开放（见 [插件管理](plugin.md#慢激活转入后台)）；启动与停机时的事件监听器指 `app:*` 屏障事件的监听器。
+`logLevel` 与 `slowThresholdMs` 只在启动时读取，改了要重启；`startAalis` 按 `CORE_CONFIG_SCHEMA` 逐个判定，与 WebUI 设置页同一套规则：留空（YAML 空键）当作未配置，不合法的写法（`logLevel` 不是可选值、`slowThresholdMs` 不是非负有限数）记一条告警，同样按默认值处理。runtime 的重启策略等新实例报就绪（默认 30 秒）才判定接管成功，`slowThresholdMs` 低于它时，新实例会带着仍在后台激活的插件报就绪，更新失败的回滚不再兜住卡住的激活。转入后台的插件，它提供的服务在激活完成前不对依赖方开放（见 [插件管理](plugin.md#慢激活转入后台)）；就绪回调指 `lifecycle.onReady` 登记的回调。
 
 指令前缀不是顶层字段，写在 `plugins["@aalis/plugin-commands"].commandPrefix`（默认 `/`）；写到顶层不会生效。WebUI 的 `PUT /api/config` 只收上表三个键，请求体里有别的顶层键时回 400 并点名，什么都不写。

@@ -20,7 +20,7 @@ export default definePlugin({
     media: optional(media),
     sessionHistory: optional(sessionHistory),
     sessionManager: optional(sessionManager),
-    events,
+    lifecycle,
     logger,
     config,
   },
@@ -29,7 +29,7 @@ export default definePlugin({
 ```
 
 
-> 工具经 `withToolGroups(tools, …)` 登记到 `tools` 服务，分为三个工具组：`onebot-daily`（只读查询与戳一戳、好友赞）、`onebot-group`（群务管理、群打卡、审批加群申请）、`onebot-personal`（退群、删好友、处理好友申请与入群邀请）。工具在 `app:ready` 与每次 `platform` 提供者上线时检测，出现 OneBot 平台即注册一次，平台离场不反注册；没有 OneBot 平台时不注册。
+> 工具经 `withToolGroups(tools, …)` 登记到 `tools` 服务，分为三个工具组：`onebot-daily`（只读查询与戳一戳、好友赞）、`onebot-group`（群务管理、群打卡、审批加群申请）、`onebot-personal`（退群、删好友、处理好友申请与入群邀请）。工具在就绪回调（`lifecycle.onReady`）里与 `platform` 服务可能变了时（选择层的 `watch`）检测，出现 OneBot 平台即注册一次，平台离场不反注册；没有 OneBot 平台时不注册。
 
 ## 跨会话调用
 

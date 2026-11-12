@@ -10,7 +10,7 @@
 - 契约包：`@aalis/api-agent`（`packages/api-agent/src/index.ts`）
 - 默认实现：`@aalis/plugin-agent`（`packages/plugin-agent/src/index.ts`，类 `DefaultAgent`）
 
-`agent` 是「编排者」而非「能力」：它本身不持有 LLM/记忆/工具，而是经 `uses` 组合 `llm` / `memory` / `persona` / `tools` / `message-archive` / `session-manager` / `gateway`，全部 optional（缺哪个就降级，见 §6/§7）。钩子与贡献点是 required 服务 `hooks` / `contributions`，由 `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 提供，缺少时默认实现停在 pending。
+`agent` 是「编排者」而非「能力」：它本身不持有 LLM/记忆/工具，而是经 `uses` 组合 `llm` / `memory` / `persona` / `tools` / `message-archive` / `session-manager` / `gateway`，全部 optional（缺哪个就降级，见 §6/§7）。事件、钩子与贡献点是 required 服务 `events` / `hooks` / `contributions`，由 `@aalis/plugin-events` / `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 提供，缺少时默认实现停在 pending。
 
 ## 2. 契约
 
@@ -180,5 +180,5 @@ export default definePlugin({
 - [concepts/manifest-metadata](../concepts/manifest-metadata.md)
 - [concepts/security-model](../concepts/security-model.md)
 - [plugins/plugin-authority](../plugins/plugin-authority.md) / [plugins/plugin-tools](../plugins/plugin-tools.md)
-- [core/events](../core/events.md)、[api/api-hooks](../api/api-hooks.md)、[api/api-contributions](../api/api-contributions.md)
+- [api/api-events](../api/api-events.md)、[api/api-hooks](../api/api-hooks.md)、[api/api-contributions](../api/api-contributions.md)
 - [services/llm](./llm.md)、[services/memory](./memory.md)、[services/message-archive](./message-archive.md)、[services/gateway](./gateway.md)

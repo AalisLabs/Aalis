@@ -16,7 +16,7 @@ export default definePlugin({
   name: '@aalis/plugin-webui-server',
   provides: [webuiServer, platform],
   uses: {
-    events,
+    events: optional(events),
     logger,
     lifecycle,
     config,

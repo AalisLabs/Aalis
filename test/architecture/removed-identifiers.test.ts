@@ -391,6 +391,24 @@ const REMOVED: Array<[string, string]> = [
 ];
 
 /**
+ * [事件名, 删掉的是什么]：core 自带的事件。core 契约文档按版本记历史的表格行里写着这些名字，那些行不查
+ * （HISTORY_ROW）；别处不论引号、反引号都不能再出现
+ */
+const REMOVED_EVENTS: Array<[string, string]> = [
+  ['app:ready', '启动就绪，由 lifecycle.onReady 取代'],
+  ['app:started', '启动完成，由 lifecycle.onReady 取代'],
+  ['app:stopping', '停机：插件用自己的收尾，宿主读 App.stopping'],
+  ['app:restarting', '重启，没有替代'],
+  ['service:changed', '服务变更，由选择层的 watch 取代'],
+  ['plugins:changed', '插件状态变更，由 plugins 服务的 watch 取代'],
+  ['plugin:loaded', '插件激活，没有替代'],
+  ['plugin:unloaded', '插件卸载，没有替代'],
+];
+const HISTORY_FILE = 'docs/design/core-contract.md';
+/** 历史表格的一行：以版本号开头 */
+const HISTORY_ROW = /^\| \d+\.\d+\.\d+ \|.*$/gm;
+
+/**
  * [标识, 删掉的是什么]：页面契约第一版的写法。界面客户端的菜单项也有 danger、表格也有自己的搜索框，
  * 质量门槛的测试要写出这些旧写法来验证它们被拒收，这几处不查（PAGE_SYNTAX_EXEMPT）
  */
@@ -494,6 +512,13 @@ describe('已删除的机制不留痕迹', () => {
   const files = scannedFiles().map(file => [file, readFileSync(join(ROOT, file), 'utf-8')] as const);
   it.each(REMOVED)('%s（%s）', identifier => {
     const hits = files.filter(([, text]) => text.includes(identifier)).map(([file]) => file);
+    expect(hits).toEqual([]);
+  });
+
+  it.each(REMOVED_EVENTS)('事件 %s（%s）', name => {
+    const hits = files
+      .filter(([file, text]) => (file === HISTORY_FILE ? text.replace(HISTORY_ROW, '') : text).includes(name))
+      .map(([file]) => file);
     expect(hits).toEqual([]);
   });
 

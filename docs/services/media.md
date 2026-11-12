@@ -368,7 +368,7 @@ media 经 `storage` 写临时/缓存文件，但 storage 只是命名根加权�
 ## 7. 边界与注意事项
 
 - **runtime 单例依赖**：media 内部的 ffmpeg 与远程下载逻辑经模块级 `setMediaRuntime({proc,storage})` 注入依赖，在 `apply()` 时设置。若 `process`/`storage` 未启用，`getMediaRuntime()` 会抛错——因此 `uses required:['process','storage']`。第三方 backend 若要自己拿依赖，请在 `uses` 里声明 `process` / `storage`，不要依赖 media 的内部 runtime。
-- **audio.prefer 下拉是 live mutate 的**：`media` 监听 `service:changed`（asr/llm），动态刷新 `configSchema.audio.fields.prefer.options`。新装 asr 或 audio-LLM 后，选项会自动出现。这意味着 `configSchema` 对象在运行时被改写，前端配置页读的是这个 live 对象。
+- **audio.prefer 下拉是 live mutate 的**：`media` 经 asr 与 llm 选择层的 `watch` 在它们的提供者可能变了时动态刷新 `configSchema.audio.fields.prefer.options`。新装 asr 或 audio-LLM 后，选项会自动出现。这意味着 `configSchema` 对象在运行时被改写，前端配置页读的是这个 live 对象。
 - **空音频描述不等于「非语音」**：模型的空响应统一标为 `[音频] 识别失败（…详见日志）`，为什么空看日志里的结束原因（`finish=`）与输出用量。不要据此判断「这段音频没人声」。
 - **输出上限只防失控**：LLM processor 的识图（`vision.maxTokens`）与转写（`audio.maxTokens`，思考与正文共用）默认都是 2048，明显高于提示词要的长度，提示词里的字数要求是软的。模型在上限处停下（模型插件报的结束原因 `finishReason` 是 `length`）时，描述与转写末尾带「（已在长度上限处截断）」，不重试、不按字数再截，写进正文与描述缓存的都是带标记的这一句。标记目前按原文语言，与识图提示词一致。
 - **图片是「识别模型 + 两个正交开关」**：`vision.prefer` 是识别模型；`vision.recognizeOnArrival`（默认开）决定图片到达是否立即识别落描述——描述进档案与向量库、可被召回，被吞掉的消息也留记忆；关掉则档案只留指针 `[图片 | ref:…]`，主模型需要时经 `analyze_image` 按需看，代价是图片内容不可被检索召回。`vision.delivery` 决定主模型需要看图（当轮附件、`analyze_image`）时怎么给：`auto`（默认）按 agent 交来的 `acceptsImages`（`agent:llm:before` 与工具上下文的，agent 按这一轮的模型在模型服务登记的能力填）——能看图则直通原图，不能看则由识别模型转文字，media 自己不查模型能力。端点没报告视觉能力的模型（如经中转站接入的）要直接看图，在模型服务的「单模型能力覆盖」（`modelCapabilities`）里给它写上 `vision`。也可显式钉死 `passthrough`/`describe`：钉死 `passthrough` 时当轮附件照样交给不能看图的模型，`analyze_image` 在不能看图的会话里仍走识别模型（结果里的图交不到模型）。`audio.mode='passthrough'` 仍是音频直通：不转写，保留原始 attachment 让主模型直接接收（需主模型 audio 能力）。

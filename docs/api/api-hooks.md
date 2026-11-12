@@ -6,7 +6,7 @@
 
 ## 概述
 
-钩子是有序的中间件管道：同一钩子键上的中间件按登记顺序串行执行，可以修改传入的 data，也可以不调用 `next()` 截停整条链（包括默认动作）。事件则是广播通知，不可拦截（见 [core/events](../core/events.md)）。
+钩子是有序的中间件管道：同一钩子键上的中间件按登记顺序串行执行，可以修改传入的 data，也可以不调用 `next()` 截停整条链（包括默认动作）。事件则是广播通知，不可拦截（见 [api-events](./api-events.md)）。
 
 本包定义 `hooks` 描述符（服务名 `hooks`）、绑定接口 `Hooks`、中间件签名 `MiddlewareFn` / `MiddlewareNext`、提供者契约 `HookRegistry` 与扩展点 `HookContextMap`，不含实现。core 不内置钩子，默认提供者是 [`@aalis/plugin-hooks`](../plugins/plugin-hooks.md)，提供者不独占。使用钩子的插件在 `uses` 里声明 `hooks`，并把 `@aalis/api-hooks` 加进 `dependencies`；部署时须装上提供者插件。
 
@@ -63,7 +63,7 @@ defaultAction() ← 所有中间件都调用 next() 后执行
 
 登记序是门面在登记时分配的序号（进程内全部 api-hooks 副本共用一个计数器，单调递增），随登记一起交给提供者，提供者按它排链：
 
-- **提供者重启**：依赖它的插件先关闭，再按拓扑序重新激活并重新登记，链序即重新激活的次序，与冷启动相同。
+- **提供者重启**：必选依赖它的插件先关闭，再按拓扑序重新激活并重新登记，拿到新的序号；可选依赖它的插件与宿主根不重启，原来的登记带着原序号重挂到新的提供者上。所以重启之后，不重启的登记排在重新激活的之前，链序与冷启动可能不同。
 - **换提供者**：以更高优先级换上另一个提供者时，消费者不重启，各插件的登记在换人那次调用里重挂到新提供者，提供者按登记序还原原来的交错次序，链序不变。已知现状：换人瞬间正在执行的链会跳过已移走的中间件，截停者可能因此缺席、默认动作照样执行；只发生在运行中换提供者的那一刻，只装 `@aalis/plugin-hooks` 一个提供者的部署不会遇到。
 
 ## 提供者契约
@@ -94,7 +94,7 @@ declare module '@aalis/api-hooks' {
 }
 ```
 
-注入后 `hooks.use.middleware()` 与 `hooks.use.run()` 按键获得精确类型。同一文件里若还要增广 `AalisEvents`，另写一个 `declare module '@aalis/core'` 块。要让 TS 看到某个包注入的键，需把该包加进依赖（值导入或 side-effect import）。
+注入后 `hooks.use.middleware()` 与 `hooks.use.run()` 按键获得精确类型。同一文件里若还要增广 `AalisEvents`，另写一个 `declare module '@aalis/api-events'` 块。要让 TS 看到某个包注入的键，需把该包加进依赖（值导入或 side-effect import）。
 
 ## 第一方钩子键
 

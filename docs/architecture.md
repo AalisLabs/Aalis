@@ -4,14 +4,14 @@
 
 ## 设计哲学
 
-Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设施（事件、服务容器、插件生命周期），所有功能——LLM 调用、消息存储、对话编排、平台接入——由可插拔插件提供，中间件钩子与贡献点也是插件提供的服务。可替换的是服务提供者；内置能力（`events` / `logger` / `config` / `lifecycle` / `provide` / `services`）不可经 `provide` 替换。
+Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设施（服务容器、插件生命周期），所有功能——LLM 调用、消息存储、对话编排、平台接入——由可插拔插件提供，事件、中间件钩子与贡献点也是插件提供的服务。可替换的是服务提供者；内置能力（`logger` / `config` / `lifecycle` / `provide` / `services`）不可经 `provide` 替换。
 
 插件的交界面是 `definePlugin({ name, uses, provides, apply(caps) })`：能力经描述符显式声明，按激活绑定。没有默认注入。业务服务接口由对应的 `@aalis/api-*` 包以描述符导出，core 不持有任何业务接口。详见 [api 包架构](design/api-packages.md)。
 
 `@aalis/core` 对外暴露：
 
-- 运行时基础设施：`App` / `definePlugin` / `defineService` / `Logger`，以及内置能力描述符（`events` / `lifecycle` / `logger` / `config` / `provide` / `services`）
-- 扩展点 `AalisEvents`（由 `@aalis/api-*` 经 declaration merging 注入业务事件）。钩子与贡献点的扩展点 `HookContextMap` / `ContributionPointMap` 在各自的契约包 `@aalis/api-hooks` / `@aalis/api-contributions`。服务类型随描述符走，没有服务名类型表
+- 运行时基础设施：`App` / `definePlugin` / `defineService` / `Logger`，以及内置能力描述符（`lifecycle` / `logger` / `config` / `provide` / `services`）
+- 扩展点 `PluginMeta`（插件定义的元数据，契约包经 declaration merging 挂字段）。事件、钩子与贡献点的扩展点 `AalisEvents` / `HookContextMap` / `ContributionPointMap` 在各自的契约包 `@aalis/api-events` / `@aalis/api-hooks` / `@aalis/api-contributions`。服务类型随描述符走，没有服务名类型表
 - 宿主入口：`app.plugin` / `app.pluginAll` / `app.bind` / `app.plugins`
 - 运行态：各实例的配置、禁用态与服务偏好。登记时交来的配置原样生效，core 不合并默认值、不读配置文档；管理动作（`plugins.enable` / `disable` / `updateConfig` / `bounce`）只改运行态，不写文档
 
@@ -63,15 +63,15 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 │                    服务层 (Service Layer)                      │
 │   LLM · Memory · Embedding · VectorStore · Persona · Tools   │
 │   Skills · ImageRecognition · WebSearch · Office              │
-│   Hooks · Contributions（钩子与贡献点）                       │
+│   Events · Hooks · Contributions（事件、钩子与贡献点）        │
 │        接口由 api-* 提供，实现可多提供者并存                  │
 ├──────────────────────────────────────────────────────────────┤
 │                    核心框架层 (Core Layer)                     │
 │   App · definePlugin / defineService · PluginManager          │
-│   EventBus · ServiceContainer                                  │
+│   ServiceContainer                                             │
 │   Logger · 内置能力描述符                                      │
 │   DisposableChain（资源内核，不导出）                         │
-│   扩展点：AalisEvents                                          │
+│   扩展点：PluginMeta                                           │
 │   （业务接口均在 api-*，类型随描述符走）                       │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -164,13 +164,15 @@ provide.use(agent, myAgent, { priority: 20 });
 
 详见 [service.md — 服务](core/service.md)
 
-### 3. 事件监听 (EventBus)
+### 3. 事件监听 (Events)
 
-松耦合的发布/订阅模式，用于响应系统事件而不干预流程：
+松耦合的发布/订阅模式，用于响应系统事件而不干预流程。`events` 描述符来自 `@aalis/api-events`，默认提供者是 `@aalis/plugin-events`。
 
 ```typescript
 events.use.on('outbound:message', async (msg) => { /* 记录日志、统计等 */ });
 ```
+
+详见 [api-events](api/api-events.md)
 
 ### 4. 贡献点 (Contribution Points)
 
@@ -188,10 +190,10 @@ for (const { key, spec } of contributions.use.collect('my-plugin:panel')) { /* .
 
 ### 5. Declaration Merging
 
-第三方插件可通过 TypeScript 声明合并扩展事件、钩子与贡献点的类型表。事件表 `AalisEvents` 在 core，钩子表与贡献点表在各自的契约包，增广的模块要分开写。服务类型随描述符走，不往扩展点表里登记服务名。
+第三方插件可通过 TypeScript 声明合并扩展事件、钩子与贡献点的类型表。事件表、钩子表与贡献点表在各自的契约包，增广的模块要分开写。服务类型随描述符走，不往扩展点表里登记服务名。
 
 ```typescript
-declare module '@aalis/core' {
+declare module '@aalis/api-events' {
   interface AalisEvents {
     'scheduler:tick': [jobId: string];
   }
@@ -243,8 +245,8 @@ llm 服务:
 
 用户可通过配置（全局的 `servicePreferences`，只对一个插件的 `pluginServicePreferences`）或 WebUI（设置「系统」的服务偏好、插件详情的服务偏好）切换首选提供者
 （管理面代码为 `services.use.prefer(key, contextId)`，给 `{ for: 实例 id }` 是只对那个插件生效的本插件偏好）。什么时候不该设本插件偏好见 [运行态与配置文档](core/config.md#服务偏好)。
-偏好指向的那家在场时就是选中的那一家，即使其 priority 低于其他 entry；切换偏好会发出 `service:changed`，
-业务句柄随之打到新选中的那一家，`follow` 订阅者随之重挂。普通插件不写偏好。
+偏好指向的那家在场时就是选中的那一家，即使其 priority 低于其他 entry；切换偏好触发服务变更，
+业务句柄随之打到新选中的那一家，`follow` 订阅者随之重挂，选择层的 `watch` 随之调用。普通插件不写偏好。
 
 ## 插件生命周期
 
@@ -277,11 +279,11 @@ optional 上下线与选中的那一家换人不改变目标态，不级联 boun
 
 如本轮有变动则进入下一轮，直到稳定。
 
-整体停机（`app.stop()`）单飞：先冻闸并进入停机态（`apply` 尚未完成的激活此刻收到 `lifecycle.use.signal` 的 abort），再 `idle()`，再发 `app:stopping`，等监听器完成（单个至多等 `slowThresholdMs`）后执行停机计划；仍在初始化的激活在收尾段至多再等 `disposeTimeoutMs`，到期不再等待、继续。每次调用都返回完整停机的同一 Promise；监听器与清理回调不能 await 或返回它，以免等待自身。全部 active 插件与根激活进同一张计划：每个激活 drain 后 close。边规则与依赖成环时的处理见 [插件定义与能力](core/context.md)。单插件 unload / disable / bounce 同样先关正在用它的 required 下游（传递闭包），下游收尾时提供者仍在。动态 `services.use.get` 不产生依赖边，关停期间可能取到空。
+整体停机（`app.stop()`）单飞：先冻闸并进入停机态（`apply` 尚未完成的激活此刻收到 `lifecycle.use.signal` 的 abort），再 `idle()`，然后执行停机计划；仍在初始化的激活在收尾段至多再等 `disposeTimeoutMs`，到期不再等待、继续。每次调用都返回完整停机的同一 Promise；清理回调与就绪回调（`lifecycle.onReady`）不能 await 或返回它，以免等待自身。全部 active 插件与根激活进同一张计划：每个激活 drain 后 close。边规则与依赖成环时的处理见 [插件定义与能力](core/context.md)。单插件 unload / disable / bounce 同样先关正在用它的 required 下游（传递闭包），下游收尾时提供者仍在。动态 `services.use.get` 不产生依赖边，关停期间可能取到空。
 
 ### 隔离粒度
 
-- **完全隔离** — 需要独立事件总线、独立日志通道时，应直接 `createApp(options)` 创建新的 `App` 实例（每个 `App` 自有事件总线与服务容器）。`Logger` 可注入独立 `LogHub` 隔离日志缓冲。
+- **完全隔离** — 需要独立事件总线、独立日志通道时，应直接 `createApp(options)` 创建新的 `App` 实例（每个 `App` 自有服务容器，事件总线随各自登记的提供者插件）。`Logger` 可注入独立 `LogHub` 隔离日志缓冲。
 - 按会话/租户**差异化配置**不需要激活隔离——用键控解析（参考会话设置的读取器 `fields.get(sessionId)`）。
 - 选择层的 `follow(attach)`：选得到即以选中那一家的业务句柄调 attach，换人时先跑上次返回的清理再以新选中那一家的句柄调，选不到、下线与关闭时清理。attach 必须同步返回函数 cleanup（或不需要清理时不返回）；thenable 会被接住并 warn。这是消费枢纽型服务、建立有状态资源的入口（参见 [docs/core/context.md](core/context.md)）。
 
@@ -453,8 +455,8 @@ WebUI authority 页（仅 owner）+ 指令 `/level`（设某用户等级）与 `
 
 ## 事件列表
 
-core 自持的八个基础设施事件（`app:*` 四个屏障、`service:changed` / `plugin:*` / `plugins:changed` 四个通知）及其时序见
-[core/events.md](core/events.md)；业务事件由各 `-api` 包注入，按包查见[扩展点索引 §2](extensions/index.md)。
+事件由各 `-api` 包与插件注入，按包查见[扩展点索引 §2](extensions/index.md)，契约与派发规则见 [api-events](api/api-events.md)。
+core 自己不发事件，整体装好之后开始对外干活用 `lifecycle.use.onReady`。
 总线上没有 `dispose` 事件，清理副作用用 `lifecycle.use.onDrain` / `lifecycle.use.onDispose`；`memory:clear` 是钩子不是事件，见 [api-hooks](api/api-hooks.md)。
 
 ## 向量语义记忆

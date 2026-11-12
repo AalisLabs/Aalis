@@ -43,7 +43,7 @@ await plugins.use.bounce(lifecycle.use.id);
 | 服务消失时必须停下（顶层插件转 pending） | 服务消失时可以保留主功能 |
 | 选择层与业务层与 optional **相同**（业务层是提供者形状的活句柄或契约自定义的绑定） | 只差激活闸，不差 API；用前先看 `present` |
 
-没有默认注入：`apply` 只收到 `uses` 里声明的各项，内置能力（`events` / `logger` / `config` / `lifecycle` / `provide` / `services`）也一样；不声明 `lifecycle` / `logger` 不影响框架对这次激活的管理。`uses` 说明插件依赖什么，不是授权边界：插件是同进程的可信代码（见 [安全模型](concepts/security-model.md)）。
+没有默认注入：`apply` 只收到 `uses` 里声明的各项，内置能力（`logger` / `config` / `lifecycle` / `provide` / `services`）也一样；不声明 `lifecycle` / `logger` 不影响框架对这次激活的管理。`uses` 说明插件依赖什么，不是授权边界：插件是同进程的可信代码（见 [安全模型](concepts/security-model.md)）。
 
 以下是普通服务，同样须显式 uses：
 
@@ -51,7 +51,7 @@ await plugins.use.bounce(lifecycle.use.id);
 - `hostConfig`（配置文档，`@aalis/api-host-config`）：由宿主提供。Node 宿主 `@aalis/runtime` 会提供，别的宿主不一定；缺席时要降级的插件写 `optional(hostConfig)`。
 - `hostPaths`（数据目录与安装集的绝对路径，`@aalis/api-host-paths`）：由宿主提供，Node 宿主同样会提供。插件要定位这些目录时声明它，不读 `process.cwd()`。
 - `hostLogs`（读日志流，`@aalis/api-host-logs`）：由宿主提供，Node 宿主同样会提供。写日志用 `logger`；要读整个日志流（日志页一类）时声明它，不直接订阅 core 的日志中枢 `LogHub`（有 architecture 守卫）。
-- `hooks` / `contributions`（`@aalis/api-hooks` / `@aalis/api-contributions`）：由插件提供，默认提供者是 `@aalis/plugin-hooks` / `@aalis/plugin-contributions`。部署里缺了它们，依赖它们的插件停在 pending。
+- `events` / `hooks` / `contributions`（`@aalis/api-events` / `@aalis/api-hooks` / `@aalis/api-contributions`）：由插件提供，默认提供者是 `@aalis/plugin-events` / `@aalis/plugin-hooks` / `@aalis/plugin-contributions`。部署里缺了它们，依赖它们的插件停在 pending。
 
 `uses` 的值是描述符（或 `optional()` 包着的描述符），不是字符串。领域能力（LLM 的 tool-calling / vision）不是 core DI 的一维：用各域 `*-api` helper 按实例 / 句柄元数据过滤（见第 10 节）。
 
@@ -176,7 +176,7 @@ lifecycle.use.onDispose(() => {
 
 依赖交接放 `lifecycle.use.onDrain`（依赖仍可用）。`onDispose` 只释放自己的资源，**不能**假定 `x.present` 还为真：选不到就跳过，不要把只能在 dispose 时落盘的数据攒到最后（每次写点后就保存）。单独 unload / disable / bounce 提供者时，正在用它的 required 消费者先收尾再关，收尾时提供者仍在；随后消费者转 pending（bounce 后重新激活）。动态 `services.use.get` 不产生依赖边，关停期间可能取到空。
 
-`App.stop()` 先冻结新增绑定并进入停机态，再发 `app:stopping`（知会，不是清理通道），等监听器完成（单个至多等 `slowThresholdMs`）后执行停机计划。从 `beginShutdown()` 起，新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 一律立即返回 false，不改变状态或配置；拆卸由停机计划负责，停机是否完成看 `app.stop()`。
+`App.stop()` 先冻结新增绑定并进入停机态，然后执行停机计划。从 `beginShutdown()` 起，新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 一律立即返回 false，不改变状态或配置；拆卸由停机计划负责，停机是否完成看 `app.stop()`。
 
 ---
 
@@ -209,13 +209,14 @@ lifecycle.use.onDispose(() => {
 ```typescript
 import { createApp } from '@aalis/core';
 import contributionsPlugin from '@aalis/plugin-contributions';
+import eventsPlugin from '@aalis/plugin-events';
 import hooksPlugin from '@aalis/plugin-hooks';
 import myPlugin from './src/index.js';
 
 it('required 依赖到场后激活', async () => {
   const app = createApp({ name: 'test', logLevel: 'error' });
-  // 钩子与贡献点由插件提供：插件用到它们时，测试里要一并登记两个默认提供者（部署里由宿主随其他插件整批发现登记）
-  await app.pluginAll([{ definition: hooksPlugin }, { definition: contributionsPlugin }]);
+  // 事件、钩子与贡献点由插件提供：插件用到它们时，测试里要一并登记三个默认提供者（部署里由宿主随其他插件整批发现登记）
+  await app.pluginAll([{ definition: eventsPlugin }, { definition: hooksPlugin }, { definition: contributionsPlugin }]);
   await app.plugin(fakeDepProvider);
   await app.plugin(myPlugin, { /* config */ });
   await app.plugins.idle();
@@ -224,7 +225,7 @@ it('required 依赖到场后激活', async () => {
 });
 ```
 
-`createApp` 是同步的。配置经 `app.plugin(definition, config)` 传入，core 不合并 schema 默认值；插件的 parseConfig 负责解析与默认值。测试里登记的 `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 放进 devDependencies。`plugin()` 的 true 只说明请求已受理；需要「激活已落定」必须 `await app.plugins.idle()`。`idle()` 不等超过 `slowThresholdMs`（默认 60 秒）转入后台的激活，测试里要等这类激活，按 `getStatus()` 的状态轮询，或把 `slowThresholdMs` 设为 0。不得在插件 `apply` / `onDispose` 内调用 `idle()`（互等死锁）。不要用 `setTimeout` 代替 `idle()`。
+`createApp` 是同步的。配置经 `app.plugin(definition, config)` 传入，core 不合并 schema 默认值；插件的 parseConfig 负责解析与默认值。测试里登记的 `@aalis/plugin-events` / `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 放进 devDependencies。`plugin()` 的 true 只说明请求已受理；需要「激活已落定」必须 `await app.plugins.idle()`。`idle()` 不等超过 `slowThresholdMs`（默认 60 秒）转入后台的激活，测试里要等这类激活，按 `getStatus()` 的状态轮询，或把 `slowThresholdMs` 设为 0。不得在插件 `apply` / `onDispose` 内调用 `idle()`（互等死锁）。不要用 `setTimeout` 代替 `idle()`。
 
 用假定时器（`vi.useFakeTimers()`）时注意：激活在落定或转入后台之前留有一个未清除的阈值定时器，`vi.getTimerCount()` 会把它算进去，`vi.runAllTimers()` 会让仍未落定的激活到点转入后台。先 `await app.plugins.idle()` 让激活落定再装假定时器。
 
@@ -269,7 +270,7 @@ it('required 依赖到场后激活', async () => {
 - 用 `lifecycle.use.signal` 取消：`fetch(url, { signal: lifecycle.use.signal })`、`lifecycle.use.signal.addEventListener('abort', …)`、循环里查 `lifecycle.use.signal.aborted`。定时器、重连等回调里判断「本激活是否已开始关闭」也查它。
 - abort 的两个时机：apply 尚未完成时被停机或停用、卸载、重启接手，或后台激活因 required 依赖下线被拆，关闭计划冻结后立即 abort；其余情形在本激活的收尾段开始时 abort（`onDrain` 执行时已断，依赖你的插件先关闭时你的 signal 仍未断）。reason 是 `AbortError`。
 - abort 监听器同步执行，不得抛错：Node 宿主把监听器的异常当成未捕获异常，runtime 会因此退出进程。
-- 转入后台期间，你经 `provide.use` 登记的服务不对外，经 `events.use.on` 挂的监听与经业务层登记方法（工具、指令、页面等）登记的条目照常生效：`app:ready` / `app:started` 监听器可能在 apply 完成之前被调用。需要自身就绪的逻辑放在 apply 末尾再挂（两者都是 sticky，晚挂照样收到），或在回调里自查就绪。
+- 转入后台期间，你经 `provide.use` 登记的服务不对外，经 `events.use.on` 挂的监听与经业务层登记方法（工具、指令、页面等）登记的条目照常生效，可能在 apply 完成之前就被调用：需要自身就绪的逻辑放在 apply 末尾再登记，或在回调里自查就绪。就绪回调（`lifecycle.use.onReady`）等你激活成功后才跑。
 
 工具调用的长任务（构建、下载、转换、渲染、远端调用）不要自己做后台进程表与轮询工具，在工具定义上声明 `background`，交给执行器转后台（见 [api-tools](./api/api-tools.md#可转后台)）：
 
@@ -317,7 +318,7 @@ tools.use.register({
 
 ## 10. 领域能力——写在实例 / 句柄上，不进 core
 
-declaration-merging 扩展点：core 的 `AalisEvents`（自持基础设施事件），`@aalis/api-hooks` 的 `HookContextMap` 与 `@aalis/api-contributions` 的 `ContributionPointMap`（空接口，由各 `-api` 填）。服务类型随描述符走，没有「服务名 → 实例」的核心类型表可 augment。
+declaration-merging 扩展点：`@aalis/api-events` 的 `AalisEvents`、`@aalis/api-hooks` 的 `HookContextMap` 与 `@aalis/api-contributions` 的 `ContributionPointMap`（空接口，由各 `-api` 填）。服务类型随描述符走，没有「服务名 → 实例」的核心类型表可 augment。
 
 领域能力（LLM 的 tool-calling / vision）落在**服务实例 / model-handle 的元数据**上，由各 `-api` 包导出能力枚举 + 过滤 helper：
 
@@ -339,7 +340,7 @@ export interface LLMCapabilityRegistry {
 `AalisEvents` / `HookContextMap` **没有** `[key: string]` 兜底：没声明过的事件名会在 `events.use.on` / `events.use.emit` 处直接编译报错。固定事件逐条 declare；事件名需要运行时动态生成时，在自己命名空间内合并一条模板字面量签名：
 
 ```typescript
-declare module '@aalis/core' {
+declare module '@aalis/api-events' {
   interface AalisEvents {
     'myplugin:ready': [];
     [k: `myplugin:channel:${string}`]: [msg: ChannelMessage];
@@ -365,7 +366,7 @@ declare module '@aalis/core' {
 
 反模式：没写进 `uses`，又去 `services.use.get` 当依赖用——无激活闸、无关停边。`get` / `all` / `inspect` 各自的用途见 [动态查询](core/context.md#动态查询-services)。
 
-`follow` 比自己监听 `service:changed` 轻量：已就绪立刻同步触发、反复上下线重接、关闭自动清理。
+`follow` 比自己经 `watch` 跟随轻量：已就绪立刻同步触发、反复上下线重接、关闭自动清理。
 
 ---
 

@@ -21,7 +21,8 @@
 | `app` | `@aalis/core` | App 实例 | n/a | n/a | 由 host 注入，永不 bounce |
 | `plugins` | `@aalis/core` | PluginManager | n/a | n/a | 由 host 注入，永不 bounce |
 | `host-config` | `@aalis/runtime`（宿主） | 配置文档与密钥存储 | `aalis.config.yaml`、`secrets.yaml` | n/a | 由宿主在根上提供，永不 bounce；改插件配置用 `applyPluginConfig`（运行态、文档、密钥与落盘一步完成）；启停等管理动作不写文档，要跨重启保留由调用方写文档后 `save()` |
-| `hooks` | `@aalis/plugin-hooks` | 钩子链 | n/a | 否（由登记方重建） | bounce 时依赖它的插件先关闭，再按拓扑序重新激活并重新登记，链序与冷启动相同 |
+| `events` | `@aalis/plugin-events` | 监听器表 | n/a | 否（由登记方重建） | bounce 时必选依赖它的插件先关闭，再按拓扑序重新激活并重新登记，排在不重启的登记（可选依赖方与宿主根）之后 |
+| `hooks` | `@aalis/plugin-hooks` | 钩子链 | n/a | 否（由登记方重建） | bounce 时必选依赖它的插件先关闭，再按拓扑序重新激活并重新登记，排在不重启的登记（可选依赖方与宿主根）之后 |
 | `contributions` | `@aalis/plugin-contributions` | 贡献登记表 | n/a | 否（由登记方重建） | 同上；`collect` 顺序只由全局键决定，重建后不变 |
 | `commands` | `@aalis/plugin-commands` | 命令注册表（Map） | n/a | 否 | bounce 后由各插件 apply 时重新 `register` |
 | `agent` | `@aalis/plugin-agent` | preprocessor / processor 列表 | n/a | 否 | 同上，依赖下游插件 apply 时回注 |
@@ -58,7 +59,7 @@ provider bounce 时，此刻 required 选中它的 active 下游（传递闭包�
    他实例不受影响，需各自调用 `bounce(instanceId)`。
 
 5. **integration / e2e 推荐在 bounce 后等 `plugins.idle()`**：直接调用 bounce
-   之后立即 assert 服务可用会读到拆卸中间态。`plugins:changed` 在 recompute 收敛时发出，同样可用。
+   之后立即 assert 服务可用会读到拆卸中间态。`plugins.watch` 的回调在 recompute 收敛后调用，同样可用。
 
 ## 整份快照的加载失败
 

@@ -193,7 +193,7 @@ apply({ lifecycle }) {
 }
 ```
 
-需要在对外登记仍在、声明的依赖仍可调用时交接数据，用 `lifecycle.use.onDrain`；`onDispose` 主要释放自己的资源。插件用别的插件的服务时消费者 close 完提供者才 drain（边对声明服务的全部提供者建），所以 `onDispose` 时声明的依赖一般还在，但依赖成环时不保证这个次序，optional 依赖也可能早已下线；根激活用插件的服务时根 drain 先于插件 close。`App.stop()` 先冻结并进入停机态，再发 `app:stopping`（知会，不是清理通道），然后执行停机计划。单独 unload / disable / bounce 提供者时，正在用它的 required 消费者先收尾再关，收尾时提供者仍在。
+需要在对外登记仍在、声明的依赖仍可调用时交接数据，用 `lifecycle.use.onDrain`；`onDispose` 主要释放自己的资源。插件用别的插件的服务时消费者 close 完提供者才 drain（边对声明服务的全部提供者建），所以 `onDispose` 时声明的依赖一般还在，但依赖成环时不保证这个次序，optional 依赖也可能早已下线；根激活用插件的服务时根 drain 先于插件 close。`App.stop()` 先冻结并进入停机态，然后执行停机计划。单独 unload / disable / bounce 提供者时，正在用它的 required 消费者先收尾再关，收尾时提供者仍在。
 
 ## 5. 工具 / 命令 / WebUI 扩展点
 
@@ -203,14 +203,14 @@ apply({ lifecycle }) {
 | 注册斜杠命令 | `uses: { commands }`，`commands.use.command(...)`（`@aalis/api-commands`） |
 | 自定义 WebUI 页面与提示 | `uses: { webui: optional(webuiServer) }`，`webui.use.definePage` / `notify`（`@aalis/api-webui`）。页面默认声明式，需要自绘时用插件前端；能放在哪见 [插件作者指南](../plugin-author-guide.md#ui-placement) |
 | 注册 agent 输入预处理器 | `uses: { agent }`，`agent.use.registerPreprocessor(...)`（`@aalis/api-agent`） |
-| 监听核心事件 | `uses: { events }`，`events.use.on('service:changed', …)` |
+| 监听事件 | `uses: { events }`，`events.use.on(…)`（`@aalis/api-events` 的描述符） |
 | 给人看的文字按读者语言显示 | 写 `src/texts.ts`（`@aalis/schema-i18n` 的 `defineTexts`），声明里用 `t()`，见 [多语言：给人看的文字](./i18n.md) |
 
 这些登记方法内部已处理「服务晚上线或换人时重挂」，登记不用先看 `present`。插件加载采用单遍式，无需关心依赖顺序；若还要在方法里 **读** hub（如 `tools.use.execute`），或希望激活闸清晰，把对应描述符写成 required（不要 `optional()`）；optional 依赖调读方法前先看 `present`。
 
 ## 5.1 类型从哪里 import；依赖怎么归类
 
-`@aalis/core` 导出通用 IoC 类型与内置描述符（`definePlugin` / `ServiceSelection` / `events` / `logger` / …）。所有 **LLM / agent / 工具** 领域类型与描述符都在 `@aalis/api-*` 里；钩子与贡献点也不在 core，`hooks` / `contributions` 分别从 `@aalis/api-hooks` / `@aalis/api-contributions` 导入。
+`@aalis/core` 导出通用 IoC 类型与内置描述符（`definePlugin` / `ServiceSelection` / `lifecycle` / `logger` / …）。所有 **LLM / agent / 工具** 领域类型与描述符都在 `@aalis/api-*` 里；事件、钩子与贡献点也不在 core，`events` / `hooks` / `contributions` 分别从 `@aalis/api-events` / `@aalis/api-hooks` / `@aalis/api-contributions` 导入。
 
 判定规则：**运行时值导入进 `dependencies`，纯类型导入进 `devDependencies`**。描述符是值——`import { tools } from '@aalis/api-tools'` 必须进 `dependencies`，不能只放 devDep。`@aalis/core` 恒为 peerDependency（区间 `>=x <1.0.0`，禁 caret），并同时列入 devDependencies 供本地编译；进程里只能有一份 core，插件解析到另一份即被拒载，见 [第 7 节](#two-cores)。`dependencies` 里的 `@aalis` 包版本同写 `>=当前版本 <1.0.0` 区间，不写 caret、精确版本或 `latest`：区间可被包管理器去重到与宿主同一份安装；caret 在 0.x 下只匹配同一个次版本，跨次版本就断，两个依赖各锁不同次版本时会装进两份同一契约包（两份 `declare module` 相撞成 TS2717，被 skipLibCheck 静默吞掉）；精确版本同样锁死；`latest` 发布出去等于不设上限。
 

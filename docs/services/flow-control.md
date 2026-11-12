@@ -64,10 +64,11 @@ export interface FlowControlService {
 最小骨架（省略禁言持久化、生效范围与按会话的参数）：
 
 ```ts
+import { events } from '@aalis/api-events';
 import { type FlowControlService, flowControl } from '@aalis/api-flow-control';
 import { INBOUND_PHASE } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
-import { definePlugin, events, provide } from '@aalis/core';
+import { definePlugin, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@aalis/plugin-my-flow-control',

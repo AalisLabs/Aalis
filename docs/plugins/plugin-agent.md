@@ -42,7 +42,7 @@ definePlugin({
 })
 ```
 
-`hooks` 与 `contributions` 是 required 服务，分别由 [`@aalis/plugin-hooks`](./plugin-hooks.md) 与 [`@aalis/plugin-contributions`](./plugin-contributions.md) 提供；缺少任一时本插件停在 pending。
+`events`、`hooks` 与 `contributions` 是 required 服务，分别由 [`@aalis/plugin-events`](./plugin-events.md)、[`@aalis/plugin-hooks`](./plugin-hooks.md) 与 [`@aalis/plugin-contributions`](./plugin-contributions.md) 提供；缺少任一时本插件停在 pending。
 
 ## 配置
 

@@ -37,7 +37,7 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 | `createConfigStore(initial, provider?, secrets?)` | 配置文档：内存态加危险键闸，读写方法与 `HostConfig` 相同；落盘委托给 `provider.save`（不提供表示宿主不持久化，保存立即兑现、不写盘），外部变更经 `provider.watch` 接入。`secrets`（`{ values, provider? }`）是密钥存储：给了才把密钥字段拆进它、文档里只留引用，`resolvePluginConfig(id, schema)` 把文档形态解析成交给 core 的配置；落盘时先写密钥再写文档。密钥文件拒写之后，下一次密钥文件变更按文件核对。不给时密钥照旧以明文留在文档里。本身不碰文件。 |
 | `installHostConfig(app, store, opts?)` | 把文档作为 `host-config` 服务独占登记在根激活上，并应用文档里的服务偏好。`opts` 传交给配置同步的同一份，`host-config` 的 `trimUnknownFields` 据此声明宿主的裁剪政策（缺省为裁剪）。插件拿到的 `save()` 兑现即已落盘（宿主不持久化时立即兑现、不写盘），失败以拒绝传出并已记一笔日志（拒写记告警，其它记 error）；`applyPluginConfig` 在这里实现，插件拿到的 `setPluginConfig` 拒收密钥字段上的明文。须在登记任何插件之前调用。 |
 | `withPluginConfigSync(app, store, opts?)` | 加载政策：返回交给 `createPluginDiscovery` 的 `options`（`{ prepare }`）。发现驱动每批定下要登记的定义后、登记前，把 `configSchema` 派生的默认值深合并进文档，默认裁剪 schema 外字段，并把密钥字段上的明文移进密钥存储；这一批有改动就落盘一次（冷启动整批一次）。某个定义同步时抛错只记该条、不登记它。 |
-| `syncPluginDefaults` / `handleConfigChanged` / `installConfigHotReload` | 同一政策的其余入口，参数为 `(app, store, opts?)`，后两者在 `store` 之后另收发现驱动 `discovery`；`syncPluginDefaults` 与 `handleConfigChanged` 另收可选的尾参数 `previous`（变更前的文档，热重载时作拆密钥的基线，`installConfigHotReload` 自动传）。三者依次：为已登记实例补默认值并裁剪；处理外部变更（文件里已没有配置段的后缀实例卸载，其余实例解析后的配置与运行态有差异的经 `updateConfig` 重建（禁用插件只换配置、保持禁用），新出现的后缀实例经 `discovery.registerConfiguredInstances()` 登记）；接管变更监听，在 `app:stopping` 时停止。 |
+| `syncPluginDefaults` / `handleConfigChanged` / `installConfigHotReload` | 同一政策的其余入口，参数为 `(app, store, opts?)`，后两者在 `store` 之后另收发现驱动 `discovery`；`syncPluginDefaults` 与 `handleConfigChanged` 另收可选的尾参数 `previous`（变更前的文档，热重载时作拆密钥的基线，`installConfigHotReload` 自动传）。三者依次：为已登记实例补默认值并裁剪；处理外部变更（文件里已没有配置段的后缀实例卸载，其余实例解析后的配置与运行态有差异的经 `updateConfig` 重建（禁用插件只换配置、保持禁用），新出现的后缀实例经 `discovery.registerConfiguredInstances()` 登记）；接管变更监听：应用开始停机之后（`app.stopping`）到来的变更不再重载，监听在宿主根收尾时摘掉。 |
 | `createProcessRespawnStrategy({ appDir })` | 进程级重启策略（`app.restart()` → 子进程重生；开发模式在安装集里找本地 tsx）。 |
 | `createServiceRestartStrategy()` / `SERVICE_RESTART_EXIT_CODE` | 服务形态的重启策略：停掉 App 后以 75 退出，由服务管理器重新启动进程（见「实例锁」的服务形态重启）。 |
 
@@ -136,7 +136,7 @@ profile 只由 `--profile` 与 `AALIS_PROFILE` 给出：经 `--data` 或 `AALIS_
   （如 `level` 的等级表、`session.*` 的会话覆盖）在守护进程运行期间不会对其生效，且可能被守护进程下次落盘
   覆盖。管理运行中的实例请用聊天指令 / TUI / WebUI。
 
-它仍会完整跑一遍插件 `apply`，因此守护进程运行期间执行子命令会有两处可见副作用：在 `apply` 里绑定端口的插件（如 mcp-server）因端口被占而激活失败，记一条 error；config-sync 可能按 schema 回填 / 裁剪配置文件、把明文密钥移进 `secrets.yaml`，守护进程会因此触发一次热重载。webui-server 在 `app:ready` 时才监听，子命令在 `app.start()` 之前就已退出，不绑定它的端口。
+它仍会完整跑一遍插件 `apply`，因此守护进程运行期间执行子命令会有两处可见副作用：在 `apply` 里绑定端口的插件（如 mcp-server）因端口被占而激活失败，记一条 error；config-sync 可能按 schema 回填 / 裁剪配置文件、把明文密钥移进 `secrets.yaml`，守护进程会因此触发一次热重载。webui-server 在就绪回调（`lifecycle.onReady`）里才监听，子命令在 `app.start()` 之前就已退出，不绑定它的端口。
 
 ## startAalis 的装配顺序
 
@@ -147,7 +147,7 @@ profile 只由 `--profile` 与 `AALIS_PROFILE` 给出：经 `--data` 或 `AALIS_
 4. **host-paths、host-logs 与 host-config**：在根上独占提供 `host-paths` 与 `host-logs`（`createHostLogs`：历史读本轮的 `logs/latest.log`，实时接默认日志中枢；子命令模式不写文件日志，没有历史），再 `installHostConfig(app, store, opts.configSync)`。文档里的服务偏好在全部提供者上线之前生效。
 5. **加载政策**：`withPluginConfigSync(app, store, opts.configSync)` 建配置同步。
 6. **发现**：`createPluginDiscovery(app, loader, store, <配置同步>)` 建发现驱动（加载器缺省 `createNodeModulesPluginLoader(<安装集>)`，配置同步经 `prepare` 挂上），`startAalis` 以它的 `rescan` 与 `loaded` 在根上独占提供 `plugin-source`；`loadAll()` 整批登记全部插件，首批规范化结果在登记前落盘一次。子命令模式在此分发并退出，否则 `app.start()`。
-7. **热重载**：`installConfigHotReload(app, store, discovery, opts.configSync)`，文件里新出现的后缀实例经发现驱动登记；`app:stopping` 时停止监听。
+7. **热重载**：`installConfigHotReload(app, store, discovery, opts.configSync)`，文件里新出现的后缀实例经发现驱动登记；应用开始停机之后到来的变更不再重载，宿主根收尾时摘掉监听。
 
 ## 两种部署模型（同一套契约，两个加载器）
 
@@ -169,7 +169,7 @@ core 的 `App` 构造只接收环境无关的选项（`name` / `logLevel` / `res
 
 - **插件发现驱动**：取得插件定义（例：Deno 用 import map、无 node_modules；浏览器打包成静态插件表），
   连同各实例的配置与禁用标记整批交给 `app.pluginAll([{ definition, config?, instanceId?, disabled? }, …])`。
-  整批登记只重算一次，依赖方排在它 required 服务的全部提供者之后激活。`@aalis/plugin-hooks` 与
+  整批登记只重算一次，依赖方排在它 required 服务的全部提供者之后激活。`@aalis/plugin-events`、`@aalis/plugin-hooks` 与
   `@aalis/plugin-contributions` 放进同一批。
 - **配置文档**：core 只持运行态（各实例的配置、禁用态、服务偏好），文档的读写与落盘由宿主负责
   （例：浏览器配置走 fetch / IndexedDB）。交给 core 的配置原样生效，schema 默认值要由宿主先深合并进去

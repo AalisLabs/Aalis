@@ -9,23 +9,23 @@
 
 `@aalis/core` 零依赖、环境无关（不 import 任何 `node:*`），只做两件事。
 
-第一，把插件之间的协作方式收成两个原语。插件在 `definePlugin` 的 `uses` 里声明描述符，`apply` 拿到按本次激活绑定的能力；没有默认注入。
+第一，把插件之间的协作方式收成服务这一个原语。插件在 `definePlugin` 的 `uses` 里声明描述符，`apply` 拿到按本次激活绑定的能力；没有默认注入。
 
 | 原语 | 描述符 / 绑定 | 语义 |
 |---|---|---|
-| 事件 | `events`：`on` / `emit` | 广播通知：无返回、错误隔离、不可拦截 |
-| 服务 | `provide(desc, impl)`；`uses` 后的选择层（`list()` / `use` / `of(id)` / `present` / `follow()`），业务调用经活的句柄 `use`；动态查询 `services` | IoC：同名多提供者并存，按「本插件偏好 > 全局偏好 > 优先级 > 注册顺序」选胜者 |
+| 服务 | `provide(desc, impl)`；`uses` 后的选择层（`list()` / `use` / `of(id)` / `present` / `follow()` / `watch()`），业务调用经活的句柄 `use`；动态查询 `services` | IoC：同名多提供者并存，按「本插件偏好 > 全局偏好 > 优先级 > 注册顺序」选胜者 |
 
-中间件钩子与贡献点建在服务之上，由插件提供：
+事件、中间件钩子与贡献点建在服务之上，由插件提供：
 
 | 能力 | 描述符 / 绑定（契约包 → 默认提供者） | 语义 |
 |---|---|---|
+| 事件 | `events`：`on` / `emit`（`@aalis/api-events` → `@aalis/plugin-events`） | 广播通知：无返回、错误隔离、不可拦截 |
 | 中间件钩子 | `hooks`：`middleware` / `run`（`@aalis/api-hooks` → `@aalis/plugin-hooks`） | 有序管道：可改数据、可短路 |
 | 贡献点 | `contributions`：`contribute` / `collect`（`@aalis/api-contributions` → `@aalis/plugin-contributions`） | 往共享产物交一块料，排布权归收集方 |
 
 第二，把它们编排成反应式插件生命周期（`App` / `PluginManager`）：依赖的服务就绪即激活，required 服务下线即降级，配置变更经 `bounce` 热重载。登记随本次激活撤回。
 
-消息、会话、LLM、工具、存储、权限……全部是插件。各 `@aalis/api-*` 契约包导出运行时描述符（值导入），并用 declaration merging 把事件键注入 core 的扩展点 `AalisEvents`，把钩子键、贡献点注入 `@aalis/api-hooks` 的 `HookContextMap` 与 `@aalis/api-contributions` 的 `ContributionPointMap`。服务类型随描述符走，core 不认识任何业务类型。宿主 `@aalis/runtime` 负责 core 刻意不做的事：读配置文件、发现并加载插件、重启进程。
+消息、会话、LLM、工具、存储、权限……全部是插件。各 `@aalis/api-*` 契约包导出运行时描述符（值导入），并用 declaration merging 把事件键、钩子键、贡献点分别注入 `@aalis/api-events` 的 `AalisEvents`、`@aalis/api-hooks` 的 `HookContextMap` 与 `@aalis/api-contributions` 的 `ContributionPointMap`。服务类型随描述符走，core 不认识任何业务类型。宿主 `@aalis/runtime` 负责 core 刻意不做的事：读配置文件、发现并加载插件、重启进程。
 
 内核 API 见 [docs/core/](docs/core/README.md)，语义契约与稳定性条款见 [core 语义契约](docs/design/core-contract.md)。
 
@@ -64,12 +64,12 @@ cd my-bot && npm start
 
 ```typescript
 import { tools } from '@aalis/api-tools';
-import { definePlugin, events, lifecycle, logger } from '@aalis/core';
+import { definePlugin, lifecycle, logger } from '@aalis/core';
 
 export default definePlugin({
   name: 'my-plugin',
-  uses: { tools, logger, events, lifecycle },
-  apply({ tools, logger, events, lifecycle }) {
+  uses: { tools, logger, lifecycle },
+  apply({ tools, logger, lifecycle }) {
     tools.use.register({
       definition: {
         type: 'function',
@@ -82,7 +82,7 @@ export default definePlugin({
       handler: async args => String((args as { text: string }).text),
     });
 
-    events.use.on('app:ready', () => logger.use.info('就绪'));
+    lifecycle.use.onReady(() => logger.use.info('就绪'));
     lifecycle.use.onDispose(() => {
       // 关连接、停计时器：bounce / unload / 停机全部路径都会走到这里
     });

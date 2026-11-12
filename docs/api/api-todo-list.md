@@ -37,8 +37,9 @@ interface TodoItem {
 ## 使用
 
 ```ts
+import { events } from '@aalis/api-events';
 import { todoList } from '@aalis/api-todo-list';
-import { definePlugin, events, optional } from '@aalis/core';
+import { definePlugin, optional } from '@aalis/core';
 
 export default definePlugin({
   name: '@acme/plugin-example-plan-view',

@@ -76,7 +76,7 @@ deleteMessagesByTimestamps?(sessionId, timestamps): Promise<number>; // 按时�
 
 ### 2.4 配套的钩子与事件契约（同包声明）
 
-`api-memory` 还通过 declaration merging 注入以下钩子、贡献点与事件（钩子注入 `@aalis/api-hooks` 的 `HookContextMap`，贡献点注入 `@aalis/api-contributions` 的 `ContributionPointMap`，事件注入 `@aalis/core` 的 `AalisEvents`）：
+`api-memory` 还通过 declaration merging 注入以下钩子、贡献点与事件（钩子注入 `@aalis/api-hooks` 的 `HookContextMap`，贡献点注入 `@aalis/api-contributions` 的 `ContributionPointMap`，事件注入 `@aalis/api-events` 的 `AalisEvents`）：
 
 - Hook `'memory:clear'`：统一编排各子系统的记忆清除，`scope: 'session'|'all'`，中间件把各子系统结果填进 `results[]`。persona 等插件靠监听此钩子参与清除，**不是**直接调 memory 服务。结果行的可选字段 `type` 是这一行所属的清理类型：处理某个清理类型的插件登记它（见下一条），并在各行标注它，成败都标。`/clear` 据此判断显式指定的类型有没有处理者，不标注会被回执误报为「没有已启用的插件处理」。只在清理全部会话时清的数据（跨会话的，如用户档案），由处理它的插件在会话级清理、`types` 显式含它时自己推一行未清理的结果。
 - 贡献点 `'memory:clear-type'`：清理类型的登记表，spec 是 `{ id, label }`（`ClearTypeContribution`）。`id` 是类型名（`/clear -t` 的写法、结果行的 `type`），`label` 是显示名，可以是文字对象。`/clear` 只认登记了的类型，帮助按登记表列出；同一类型可由几家登记，显示名取收集次序里第一家的。
@@ -254,4 +254,4 @@ export default definePlugin({
 ## 8. 交叉链接
 
 - 概念：[`docs/concepts/service-model.md`](../concepts/service-model.md)（DI 挑选规则）、[`docs/concepts/lazy-service-access.md`](../concepts/lazy-service-access.md)（业务句柄为什么是活的）、[`docs/concepts/manifest-metadata.md`](../concepts/manifest-metadata.md)（aalis.service 与 definePlugin provides/uses 双源）、[`docs/concepts/message-llm-pipeline.md`](../concepts/message-llm-pipeline.md)（消息如何被 archive→memory→agent 流转）、[`docs/concepts/storage-uri-grammar.md`](../concepts/storage-uri-grammar.md)（持久化路径）、[`docs/concepts/security-model.md`](../concepts/security-model.md)。
-- 核心：[`docs/core/service.md`](../core/service.md)、[`docs/plugins/plugin-authority.md`](../plugins/plugin-authority.md)、[`docs/core/events.md`](../core/events.md)、[`docs/core/context.md`](../core/context.md)。
+- 核心：[`docs/core/service.md`](../core/service.md)、[`docs/plugins/plugin-authority.md`](../plugins/plugin-authority.md)、[`docs/api/api-events.md`](../api/api-events.md)、[`docs/core/context.md`](../core/context.md)。

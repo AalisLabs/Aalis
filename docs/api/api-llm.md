@@ -221,8 +221,9 @@ export function estimateMsgTokens(msg: Message): number;
 ## 提供方骨架
 
 ```ts
+import { events } from '@aalis/api-events';
 import { llm, type LLMModel, metered } from '@aalis/api-llm';
-import { definePlugin, events, lifecycle, logger, provide } from '@aalis/core';
+import { definePlugin, lifecycle, logger, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@acme/plugin-example-llm',

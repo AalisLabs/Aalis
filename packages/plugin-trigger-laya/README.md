@@ -64,7 +64,7 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 
 配置了 `sidecarDir`（侧车目录的绝对路径）时，侧车由本插件托管，不用另装系统服务：
 
-- 应用就绪（`app:ready`）后、本插件是生效的触发插件时，才由本插件经 process 服务启动侧车进程：`<sidecarDir>/.venv-run/bin/python -I -u <sidecarDir>/laya_listener.py --model-dir <sidecarDir>/models/current --port <端口> --parent-pid <Aalis 的进程号>`，工作目录是侧车目录（`-I` 让侧车不读 `PYTHON*` 环境变量与用户目录的包）。激活期间胜者还没定、CLI 子命令进程不启动应用，都不启动侧车。端口取 `endpoint` 的，所以 `endpoint` 须为 `http://127.0.0.1:<端口>`（不带路径）；`sidecarDir` 不是绝对路径或 `endpoint` 不合要求时记一条 error，不托管，照常按 `endpoint` 连接。
+- 启动就绪（`lifecycle.onReady`）后、本插件是生效的触发插件时，才由本插件经 process 服务启动侧车进程：`<sidecarDir>/.venv-run/bin/python -I -u <sidecarDir>/laya_listener.py --model-dir <sidecarDir>/models/current --port <端口> --parent-pid <Aalis 的进程号>`，工作目录是侧车目录（`-I` 让侧车不读 `PYTHON*` 环境变量与用户目录的包）。激活期间胜者还没定、CLI 子命令进程不启动应用，都不启动侧车。端口取 `endpoint` 的，所以 `endpoint` 须为 `http://127.0.0.1:<端口>`（不带路径）；`sidecarDir` 不是绝对路径或 `endpoint` 不合要求时记一条 error，不托管，照常按 `endpoint` 连接。
 - 不再生效（偏好切走），或本插件停用、卸载、重启与 Aalis 停机时关掉侧车：启动侧车进程时把中止信号交给了 process 服务，停时发出中止，由 process 服务先发 SIGTERM，2 秒内（plugin-process-local 的中止宽限）没退出再发 SIGKILL，等它退出后才算停完。停机时 process 服务在本插件关完之后才收掉还剩下的子进程。
 - 首次启动侧车前先探一次 `GET /health`（停掉侧车时随之中止）：地址上已有侧车在答（系统服务、手动启动的），就不启动、直接用它，记一条 warn，这时不需要 process 服务。要改由本插件托管，先停掉它（系统服务要卸载，直接结束进程会被系统重新启动），再重启 Aalis，或把 `trigger` 的偏好切走再切回。重启时不再探：端口若被别的进程占着，侧车以绑定端口失败退出，照常退避重试。
 - 启动（加载模型、金样自检与预热，约 11 秒）期间按后备判定只回点名、不发请求，不算判定不可用。侧车往标准输出打出就绪行后照常判定，记一条 info。120 秒内没有就绪，按启动超时杀掉重启。

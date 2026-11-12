@@ -21,7 +21,8 @@ export default definePlugin({
   provides: [i18n],
   uses: {
     provide,
-    events,                                   // 语言诊断随会话设置、宿主配置与插件的变化重算
+    events: optional(events),                 // 语言诊断随会话设置、宿主配置的变化重算；缺席时只随插件的变化重算
+    plugins: optional(pluginsService),        // 语言诊断随插件的变化重算（语言包与字典随插件交付与撤回）
     config,                                   // 没有宿主配置文档时 language 的全局层取这里
     contributions: optional(contributions),   // 语言包的来源，交可选项来源；缺席时没有语言包
     sessionManager: optional(sessionManager), // 子会话的读者按根会话；诊断写场所的显示名

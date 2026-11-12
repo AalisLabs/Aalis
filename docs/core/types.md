@@ -1,6 +1,6 @@
 # 核心类型定义
 
-`@aalis/core` 导出的是运行时基础设施与事件扩展点 `AalisEvents`。业务服务接口、消息、工具、命令等一律在 `@aalis/api-*` / `@aalis/schema-*`，类型随服务描述符走，core 不持有领域词汇。
+`@aalis/core` 导出的是运行时基础设施。业务服务接口、消息、工具、命令等一律在 `@aalis/api-*` / `@aalis/schema-*`，类型随服务描述符走，core 不持有领域词汇。
 
 **源码**: `packages/core/src/index.ts`（值导出定格见 `test/core/purity.test.ts`）；类型按分层散在 `types/`、`composition/`、`infrastructure/`、`orchestration/`。
 
@@ -93,6 +93,7 @@ interface ServiceSelection<B> {
   of(id: string): B;
   readonly present: boolean;
   follow(attach: (handle: B) => FollowCleanup): () => void;
+  watch(fn: () => void | Promise<void>): () => void;
 }
 
 interface ProviderEntry<B> {
@@ -133,14 +134,15 @@ function optional<P, B>(descriptor: ServiceDescriptor<P, B>): OptionalUse<P, B>;
 
 ## 基础服务与宿主服务
 
-值导出（插件放进 `uses`）：`events`、`lifecycle`、`logger`、`config`、`provide`、`services`。`hooks` / `contributions` 不在 core，从 `@aalis/api-hooks` / `@aalis/api-contributions` 导入。
+值导出（插件放进 `uses`）：`lifecycle`、`logger`、`config`、`provide`、`services`。`events` / `hooks` / `contributions` 不在 core，从 `@aalis/api-events` / `@aalis/api-hooks` / `@aalis/api-contributions` 导入。
 
-宿主服务：`appService`、`pluginsService`。两类都由根激活经 `provide` 独占登记，共用同一套服务协议，都须显式 `uses`；上面六项的提供者按调用方激活交出接口，见 [内置服务的登记](service.md#内置服务的登记)。配置文档的 `hostConfig` 在 `@aalis/api-host-config`，由宿主提供。
+宿主服务：`appService`、`pluginsService`。两类都由根激活经 `provide` 独占登记，共用同一套服务协议，都须显式 `uses`；上面五项的提供者按调用方激活交出接口，见 [内置服务的登记](service.md#内置服务的登记)。配置文档的 `hostConfig` 在 `@aalis/api-host-config`，由宿主提供。
 
 ```typescript
 interface LifecycleCap {
   readonly id: string;
   readonly signal: AbortSignal;   // 取消信号：时机见 context.md 的 lifecycle 一节
+  onReady(fn: () => void | Promise<void>): () => void; // 就绪回调：时机见同一节
   onDrain(fn: () => void | Promise<void>, label?: string): () => void;
   onDispose(fn: () => void | Promise<void>, label?: string): () => void;
 }
@@ -165,30 +167,15 @@ type Provide = <D extends ServiceDescriptor<any, any>>(
 
 ## 扩展点
 
-core 的扩展点只有 `AalisEvents`（core 自持基础设施事件，从来不空）。服务没有类型表——类型随描述符走。钩子与贡献点的扩展点随各自的契约包，增广目标分别是 `declare module '@aalis/api-hooks'` 与 `declare module '@aalis/api-contributions'`。
+core 的扩展点只有 `PluginMeta`（见上文）。服务没有类型表——类型随描述符走。事件、钩子与贡献点的扩展点随各自的契约包，增广目标分别是 `declare module '@aalis/api-events'`、`declare module '@aalis/api-hooks'` 与 `declare module '@aalis/api-contributions'`。
 
 | 扩展点 | 所在包 | 含义 | 谁注入 |
 |---|---|---|---|
-| `AalisEvents` | `@aalis/core` | 事件名 → 参数元组 | core 自持 `service:*` / `plugin:*` / `app:*`；业务事件由 `-api` 注入 |
+| `AalisEvents` | `@aalis/api-events` | 事件名 → 参数元组 | 契约包内字面为空；`schema-message` / `api-session-manager` / `api-tools` 等注入 |
 | `HookContextMap` | `@aalis/api-hooks` | 钩子名 → 中间件上下文 | 契约包内字面为空；`api-agent` / `api-gateway` / `api-memory` 等注入 |
 | `ContributionPointMap` | `@aalis/api-contributions` | 贡献点名 → spec（须含 `id: string`） | 如 `api-agent` 的 `agent:prompt` |
 
-事件目录以 [events.md](events.md) 为准。谁注入了哪一族业务事件 / 钩子 / 贡献点，见 [扩展点索引](../extensions/index.md)。
-
-```typescript
-interface AalisEvents {
-  'service:changed': [name: string];
-  'plugin:loaded': [instanceId: string];
-  'plugin:unloaded': [instanceId: string];
-  'plugins:changed': [];
-  'app:ready': [];
-  'app:started': [];
-  'app:restarting': [];
-  'app:stopping': [];
-}
-```
-
-`AalisEvents` 类型封闭（没有 `[key: string]` 兜底）。动态事件名走模板字面量签名，见 events.md。
+事件的派发规则与声明写法见 [api-events](../api/api-events.md)。谁注入了哪一族事件 / 钩子 / 贡献点，见 [扩展点索引](../extensions/index.md)。
 
 ---
 
@@ -206,4 +193,4 @@ core 不持配置文档，也不导出配置类型；插件自己的配置视图
 
 `App` / `AppOptions` / `createApp`；`PluginEntry` / `PluginState` / `parseInstanceId`；`PluginRegistration`（`app.pluginAll` 的条目）；`RestartStrategy`。插件加载器 `PluginLoader` / `PluginDescriptor` 在 `@aalis/runtime`，插件包入口判定 `pluginDefinitionOf` 在 `@aalis/api-plugin-source`。
 
-钩子的 `Hooks` / `MiddlewareFn` / `MiddlewareNext` 与贡献点的 `Contributions` / `ContributionSpec` / `ContributionHandle` 见 [api-hooks](../api/api-hooks.md)、[api-contributions](../api/api-contributions.md)。
+事件的 `Events` / `EventHandler` / `EventBus`、钩子的 `Hooks` / `MiddlewareFn` / `MiddlewareNext` 与贡献点的 `Contributions` / `ContributionSpec` / `ContributionHandle` 见 [api-events](../api/api-events.md)、[api-hooks](../api/api-hooks.md)、[api-contributions](../api/api-contributions.md)。

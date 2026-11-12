@@ -154,7 +154,7 @@ export default definePlugin({
 
 **结构化输出的逻辑在 reply 钩子里，不在契约方法里。** 角色卡的格式声明与会话的两个结构化输出开关只在参考实现内部读；解析、对 `data.content` 的回填、状态持久化与重试，全在 `agent:reply:before` 中间件里完成。
 
-**角色卡加载是 cache-only + 跟随 storage 预扫 + watch。** `loadCard` 只查缓存。`app:ready` 起插件跟随 storage 提供者（`storage.follow`）：提供者在场即挂监听并用 `scanAll` 全量预填，提供者重启、改配置或晚于启动上线时先关旧监听再重挂、重扫；之后由 storage 的 `watch` 做热更新。新增的卡文件在扫描或 watch 触发前不可见；目录所在根不支持 `watch` 时（调用抛错，记一条 warn），只有 storage 换代或重启才会刷新。目录列不出（不是不存在）时本次扫描失败并记 warn，已载入的卡不剔除。
+**角色卡加载是 cache-only + 跟随 storage 预扫 + watch。** `loadCard` 只查缓存。就绪回调（`lifecycle.onReady`）起插件跟随 storage 提供者（`storage.follow`）：提供者在场即挂监听并用 `scanAll` 全量预填，提供者重启、改配置或晚于启动上线时先关旧监听再重挂、重扫；之后由 storage 的 `watch` 做热更新。新增的卡文件在扫描或 watch 触发前不可见；目录所在根不支持 `watch` 时（调用抛错，记一条 warn），只有 storage 换代或重启才会刷新。目录列不出（不是不存在）时本次扫描失败并记 warn，已载入的卡不剔除。
 
 **YAML 解析失败会点名告警，但不会阻止启动。** `tryLoadCardFromUri` 把「读不到文件」与「读到了但解析不出对象」分开：前者是候选路径探测的正常结果（静默），后者 warn 出 uri 与原因后跳过该卡。顶层不是对象（标量/数组）的卡按解析失败处理，不再被当成全空卡加载。启动时主角色卡解析失败则回退内置 default，日志说的是「存在但解析失败」而非「未找到」。运行中主角色卡被删或写坏时不回退：已载入的那份继续生效，直到它重新解析成功或重启。
 

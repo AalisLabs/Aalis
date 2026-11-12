@@ -14,7 +14,7 @@
 
 | 形状 | 所在 | 类别 | 语义 |
 |---|---|---|---|
-| events | core 原语 | 执行 | 广播通知——无返回、错误隔离、不可拦截 |
+| events | `@aalis/api-events` | 执行 | 广播通知——无返回、错误隔离、不可拦截 |
 | hooks | `@aalis/api-hooks` | 执行 | 中间件管道——可变 data、可短路、错误上溯 |
 | services | core 原语 | 数据 | 按名选出**一家**提供者（本插件偏好 > 全局偏好 > 优先级 > 注册顺序） |
 | contributions | `@aalis/api-contributions` | 数据 | 确定性枚举**全量**（按全局键码元序） |
@@ -129,7 +129,7 @@ const sections = contributions.use.collect('my-plugin:panel').map(({ key, spec }
 });
 ```
 
-同一文件里若还要增广 `AalisEvents`，另写一个 `declare module '@aalis/core'` 块。
+同一文件里若还要增广 `AalisEvents`，另写一个 `declare module '@aalis/api-events'` 块。
 
 同槽多贡献的顺序是全局键码元序——**确定但无语义**；两块内容有顺序依赖时，
 应合并为同一个贡献（如 `agent:prompt` 的 build 返回数组，块间保序）。

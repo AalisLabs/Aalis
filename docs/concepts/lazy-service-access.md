@@ -60,7 +60,7 @@ export default definePlugin({
 
 一次 `bounce` 的流程是：拆掉当前激活 → 转入 pending → 重算后重新 `apply`，配置不变；`updateConfig` 先换上新的运行配置，再走同一流程。销毁会把该插件登记的服务一并注销，重新激活时新实例重新 `provide`。服务名没变，实例却是全新的：业务句柄随之打到新实例，经动态查询取出的原始实例则还指着旧对象。
 
-改变「选中哪一家」的信号都发同一个事件 `service:changed(name)`，含义是「可能变了，请重读」：
+改变「选中哪一家」的信号都经同一个出口通知：选择层的 `watch(fn)`，含义是「可能变了，请重读」：
 
 | 信号 | 触发 |
 | --- | --- |
@@ -130,7 +130,7 @@ export default definePlugin({
 ## 注意事项
 
 - 经 `services.use.get` / `all` 取出的原始实例进类字段或闭包，就是失效引用，关停边也不保护它：提供者自己有失效逻辑则调用会抛，没有则可能静默成功（例如工具表按名覆盖、旧对象仍能 `add`）。要长期持有，存业务句柄（`caps.x.use`）。
-- **不要用 `events.use.on('app:stopping', …)` 清理资源。** 它只在整个应用停机时触发一次，插件热重载并不会触发它。清理副作用走 `lifecycle.use.onDispose`；需要在对外登记仍在、依赖仍可调用时交接数据，走 `lifecycle.use.onDrain`。
+- 清理副作用走 `lifecycle.use.onDispose`，热重载、卸载与停机都会走到；需要在对外登记仍在、依赖仍可调用时交接数据，走 `lifecycle.use.onDrain`。
 - `follow` 的 `attach` 执行期间退订或换人：刚拿到的清理器不会丢，会立刻按新目标收敛。
 - 要枚举所有并存的 provider（管控或展示），用 `x.list()`（本插件口径，条目带业务句柄）或 `services.use.all(desc)`（全局口径，原始实例），同样每次重新枚举。
 
@@ -146,7 +146,7 @@ export default definePlugin({
 
 依赖成环时的处理见 [插件定义与能力](../core/context.md)。
 
-`App.stop()` 先排干在飞重算，冻结新增绑定并进入停机态，再发屏障事件 `app:stopping`（知会，不是清理通道），等监听器完成后执行停机计划。从 `beginShutdown()` 起，新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 一律立即返回 false，不改变状态或配置；拆卸由停机计划负责，停机是否完成看 `app.stop()`。
+`App.stop()` 先冻结新增绑定并进入停机态，再排干在飞重算，然后执行停机计划。从 `beginShutdown()` 起，新发起的 `register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig` 一律立即返回 false，不改变状态或配置；拆卸由停机计划负责，停机是否完成看 `app.stop()`。
 
 单独 unload / disable / bounce 提供者时上述交接同样成立：正在用它的 required 下游并入同批，先收尾、先关，提供者之后。
 
@@ -157,8 +157,8 @@ export default definePlugin({
 | 调用某服务此刻选中的那一家 | `x.use.method(...)`，句柄可以存起来 | 可选依赖不先看 `x.present` 就调 |
 | 可选依赖选不到就当没有 | `x.present ? x.use : undefined` | 不要接住 `ServiceUnavailableError` 当判空 |
 | 一段操作固定同一家 | `x.list().find(p => p.selected)?.use`（钉在那一条登记上） | 不要用 `x.of(id)` 固定：同一个 id 换了新实例它会跟过去 |
-| 把有状态资源挂到会换人的提供者上 | `x.follow(attach)`，attach 同步返回 cleanup | 不要 `async` attach；不要手写监听 `service:changed` |
+| 把有状态资源挂到会换人的提供者上 | `x.follow(attach)`，attach 同步返回 cleanup | 不要 `async` attach；不要拿 `watch` 自己跟随 |
 | 往 hub 登记工具 / 命令 / 页面 | 业务层的登记方法（`tools.use.register` / `commands.use.command` / `webui.use.definePage`） | 不要拿 `services.use.get` 查到的原始实例直接登记（会丢掉换人重挂） |
 | 按模型或条目调度 | `x.of(id)`、`*-api` 的 `resolveXxx` helper | 不要自己重抄聚合逻辑 |
-| 清理资源（连接、定时器、外部句柄） | `lifecycle.use.onDispose`；交接在手数据用 `onDrain` | 不要用 `app:stopping` 当清理通道 |
+| 清理资源（连接、定时器、外部句柄） | `lifecycle.use.onDispose`；交接在手数据用 `onDrain` | 不要在这些回调里 await `app.stop()` |
 | 动态按名查找（无依赖边） | `services.use.get` / `services.use.all` | 不要指望关停期一定还能拿到 |

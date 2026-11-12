@@ -31,7 +31,7 @@ runtime 不加载它；打包产物由 `@aalis/plugin-webui-server` 托管。
    （api-webui 的 `CLIENT_TEXTS_FILE`）：随前端打包的字典（外壳的与打进包里的库的）的目录条目，webui-server 挂载这个前端时
    登记进服务进程的目录。这些字典由 `vite.config.ts` 顶部的导入登记：打进包里的库多了带字典的，要在那里补一行导入
    （`test/plugins/webui-client-texts.test.ts` 核文件与产物一致）
-2. webui-server 在 `app:ready` 时由 `client-discovery.ts` 扫描：`package.json` 标了
+2. webui-server 在就绪回调（`lifecycle.onReady`）里由 `client-discovery.ts` 扫描：`package.json` 标了
    `aalis.client: true` 且存在 `dist/index.html` 的包即为前端候选（不认任何具体包名）
 3. webui-server 把每个候选注册成一条 `webui-client` 服务 provider（`getClientDir()`）
 4. 活跃前端 = `webui-client` 的服务解析结果（`servicePreferences['webui-client']` 偏好 >

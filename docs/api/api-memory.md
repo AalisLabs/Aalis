@@ -152,7 +152,7 @@ function compressionDue(usage: CompressionUsage, lines: CompressionLines): boole
 
 ## 记忆变更事件
 
-落库之后动了已有消息的一方发通知，事件经 declaration merging 注入 `@aalis/core` 的 `AalisEvents`：
+落库之后动了已有消息的一方发通知，事件经 declaration merging 注入 `@aalis/api-events` 的 `AalisEvents`：
 
 ```ts
 'memory:messages-deleted':   [payload: { sessionId: string; timestamps: number[] }]

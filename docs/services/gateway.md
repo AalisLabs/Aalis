@@ -89,7 +89,7 @@ gateway 不持有消息类型，只搬运。`IncomingMessage` / `OutgoingMessage
 
 ## 3. 谁提供 / 谁消费
 
-**提供方（唯一）**：`@aalis/plugin-gateway`（`packages/plugin-gateway/src/index.ts`，`provide.use(gateway, service)`）。required `hooks`（由 `@aalis/plugin-hooks` 提供，缺少时本插件停在 pending）；`uses optional = ['agent', 'session-manager', 'authority']` —— 没有 agent 时仍可处理出站、运行钩子链，dispatch 兜底给一条系统提示；会话管理用来在相位之前收录入站、交给 agent 之前比代号（见 §4），也与 authority 一起判房间类别做结构性放行；会话管理不在时全部照常走，authority 不在时没有人是 owner。
+**提供方（唯一）**：`@aalis/plugin-gateway`（`packages/plugin-gateway/src/index.ts`，`provide.use(gateway, service)`）。required `events` 与 `hooks`（由 `@aalis/plugin-events` 与 `@aalis/plugin-hooks` 提供，缺少时本插件停在 pending）；`uses optional = ['agent', 'session-manager', 'authority']` —— 没有 agent 时仍可处理出站、运行钩子链，dispatch 兜底给一条系统提示；会话管理用来在相位之前收录入站、交给 agent 之前比代号（见 §4），也与 authority 一起判房间类别做结构性放行；会话管理不在时全部照常走，authority 不在时没有人是 owner。
 
 **消费方分两类：**
 
@@ -135,11 +135,12 @@ gateway 不持有消息类型，只搬运。`IncomingMessage` / `OutgoingMessage
 ```ts
 import { agent } from '@aalis/api-agent';
 import type { AgentService } from '@aalis/api-agent';
+import { events } from '@aalis/api-events';
 import { gateway, INBOUND_PHASE, INBOUND_PHASE_ORDER } from '@aalis/api-gateway';
 import type { GatewayService, InboundPhaseData } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { sessionManager } from '@aalis/api-session-manager';
-import { definePlugin, events, optional, provide } from '@aalis/core';
+import { definePlugin, optional, provide } from '@aalis/core';
 import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
 
 export default definePlugin({
@@ -195,8 +196,9 @@ export default definePlugin({
 - **出站**：`events.use.on('outbound:message', msg)`，按 `msg.sessionId` 前缀（如 `'onebot:'`）认领属于自己平台的消息再发送（`packages/plugin-adapter-onebot/src/index.ts`）。
 
 ```ts
+import { events } from '@aalis/api-events';
 import { platform } from '@aalis/api-platform';
-import { definePlugin, events, provide } from '@aalis/core';
+import { definePlugin, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@acme/plugin-example',

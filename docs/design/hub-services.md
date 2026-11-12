@@ -1,10 +1,10 @@
 # 枢纽服务：第三方能力的登记契约
 
-core 只有两种原语：事件与服务。钩子、贡献点、工具、命令、页面、诊断检查这类"登记进某个服务、由它派活"的能力都不是 core 原语，
+core 只有一种原语：服务。事件、钩子、贡献点、工具、命令、页面、诊断检查这类"登记进某个服务、由它派活"的能力都不是 core 原语，
 它们由三件套组成：契约包导出描述符与登记项类型，枢纽服务持有登记本并派活，描述符的 `bind` 用 `BindingPort` 把登记绑到调用方这次激活的生命周期上。
 插件经 `uses` 拿到选择层，登记方法在业务层上（`caps.xxx.use.register(...)`），core 不认识"工具""命令"是什么。
 
-这页给出三件套的范本，然后逐条列出这类登记与两种原语共享哪些保证、允许哪些差异、各由哪个测试钉住。
+这页给出三件套的范本，然后逐条列出这类登记与服务原语共享哪些保证、允许哪些差异、各由哪个测试钉住。
 消费侧的 `follow` / `registrar` 语义见 [插件定义与能力](../core/context.md)；拆卸顺序见同页生命周期节。
 
 ## 三件套范本
@@ -104,13 +104,13 @@ export default definePlugin({
 
 ## 共同契约与允许的差异
 
-| 项 | 原语（`events.use.on` / `provide.use`） | 枢纽登记（经 `BindingPort.registrar`，含 `hooks.use.middleware` / `contributions.use.contribute`） | 钉住的测试 |
+| 项 | 原语（`provide.use`） | 枢纽登记（经 `BindingPort.registrar`，含 `events.use.on` / `hooks.use.middleware` / `contributions.use.contribute`） | 钉住的测试 |
 |---|---|---|---|
 | 撤回时机 | 用户清理开始前，由 core 按归属整体摘除 | 原语切断后同一拍发起，不等下游交接；异步部分由撤回段收口等待，先于全部 `onDispose` | `test/core/whenservice-withdraw-phase.test.ts`、`test/core/binding-hardening.test.ts`、`test/core/management-handover.test.ts` |
 | 撤回钥匙 | 这次激活的资源身份：core 发、经资源口的 `identity` 交给 binder、拆卸时自己收；同 id 的两次激活互不误清 | 条目引用（退订闭包）；逻辑 id 只给枢纽自己的展示 / `pluginName` | `test/core/owner-identity.test.ts`、`test/plugins/hub-registration-identity.test.ts` |
 | 异步撤回 | 无，同步摘除 | cleanup 可返回 promise；关闭等它落地（含手动退订、换人启动的在飞项），拒绝记 warn | `test/core/whenservice-async-cleanup.test.ts` |
 | 关闭后登记 | warn + no-op | `registrar.add` / `follow` 同口径 | `test/core/post-dispose-policy.test.ts`、`test/plugins/hub-registration-identity.test.ts` |
-| 同键重复 | `on` 并存；`provide` 同名多提供者并存 | 由能力自定并写进契约包：贡献点同局部 id 替换；钩子中间件并存；工具与分组替换（helper 与枢纽两层）；命令同一激活同名替换、不同激活分层；页面并存 | `test/plugins/plugin-contributions.test.ts`、`test/plugins/hooks-lifecycle.test.ts`、`test/plugins/hub-registration-identity.test.ts` |
+| 同键重复 | `provide` 同名多提供者并存 | 由能力自定并写进契约包：贡献点同局部 id 替换；事件监听与钩子中间件并存；工具与分组替换（helper 与枢纽两层）；命令同一激活同名替换、不同激活分层；页面并存 | `test/plugins/plugin-contributions.test.ts`、`test/plugins/hooks-lifecycle.test.ts`、`test/plugins/hub-registration-identity.test.ts` |
 | 提供者换人 | 不适用 | `registrar`：立即在新提供者重挂，旧撤回可重叠（钩子登记带登记序，重挂后链序不变）；`follow`：先跑上次 cleanup、等落定再挂新选中的那一家 | `test/core/binding-hardening.test.ts`、`test/plugins/hooks-provider-switch.test.ts` |
 | 退订闭包幂等 | 是 | 是 | 同上 |
 

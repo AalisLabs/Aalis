@@ -65,7 +65,7 @@ export interface WebuiClientProvider {
 **提供方**
 
 - `@aalis/plugin-webui-server` —— 参考实现。`provides: [webuiServer, platform]`（`packages/plugin-webui-server/src/index.ts`），`provide.use(webuiServer, impl)`。它同时以 `webui` 平台名登记一个 `platform` adapter：平台名标明说话的是从 WebUI 来的 owner，连接状态数的是打开着的 `/session` 连接；WebUI 的会话不经它收发。`sessionProtocol`、`approvals` 等为 optional。
-- `@aalis/plugin-webui-client` —— 默认前端（React SPA）。**不是被加载的插件**，而是带 `aalis.client: true` 标记 + `dist/index.html` 的纯静态包，被 webui-server 在 `app:ready` 时自动发现并登记成 `webui-client` 的一个 provider（`entryId` 取前端包名，偏好认它；条目归 webui-server 这次激活）。
+- `@aalis/plugin-webui-client` —— 默认前端（React SPA）。**不是被加载的插件**，而是带 `aalis.client: true` 标记 + `dist/index.html` 的纯静态包，被 webui-server 在就绪回调（`lifecycle.onReady`）里自动发现并登记成 `webui-client` 的一个 provider（`entryId` 取前端包名，偏好认它；条目归 webui-server 这次激活）。
 
 **消费方**（经 `webui.use.definePage` / `notify`）：
 

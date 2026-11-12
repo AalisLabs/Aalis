@@ -125,9 +125,10 @@ provider 既要在源码导出 `provides`，又要在 `package.json` 写 `aalis.
 参考 `packages/plugin-llm-deepseek/src/index.ts`：
 
 ```ts
+import { events } from '@aalis/api-events';
 import { llm, metered } from '@aalis/api-llm';
 import type { ChatModelRequest, ChatResponse, LLMCapability, LLMModel } from '@aalis/api-llm';
-import { config, definePlugin, events, lifecycle, logger, provide } from '@aalis/core';
+import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
 import { prepareLLMMessages } from '@aalis/schema-message';
 
 class MyModelHandle implements LLMModel {
