@@ -340,9 +340,9 @@ export function createServiceRestartStrategy(
  * 停下、不再等它。两种情形都就此返回，见 `RespawnOptions.signal`。
  *
  * **单飞**：重启期间的第二次调用直接忽略。窗口是 500ms + stop 耗时 + 等 ready 的全程
- * （最长 30s），期间 HTTP/指令入口仍可能再次触发；不设防会 spawn 出两个 detached
- * 子进程——非独占端口的部署（如 onebot 反向 WS）两个都能活，每条消息回两遍，而它们
- * 自成进程组，Ctrl+C 打不到。
+ * （最长 30s）。经 host-restart 服务来的请求在 {@link createHostRestart} 已经只受理一次；策略也可以
+ * 不经它单独使用，所以这里自己再挡：不设防会 spawn 出两个 detached 子进程——非独占端口的部署
+ * （如 onebot 反向 WS）两个都能活，每条消息回两遍，而它们自成进程组，Ctrl+C 打不到。
  *
  * 对 .ts 入口（开发模式）会优先使用本地 `tsx` 二进制。
  */

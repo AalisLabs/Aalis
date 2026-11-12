@@ -248,6 +248,22 @@ describe('createProcessRespawnStrategy', () => {
     expect(readFileSync(file, 'utf-8')).toBe('NEW');
     expect(errors.join('\n')).toContain('not rolled back automatically (marketplace-update:@aalis/x)');
   });
+
+  it('重启还在进行时再调一次：忽略并说明一句，只停一次、只启动一个新进程', async () => {
+    const strategy = createProcessRespawnStrategy({
+      appDir: '/nonexistent-app',
+      cwd: '/launch-dir',
+      readyTimeoutMs: 10,
+    });
+    let stops = 0;
+    const opts = { stop: async () => void stops++ };
+    const first = Promise.resolve(strategy.restart(opts));
+    await strategy.restart(opts);
+    await expect(first).rejects.toMatchObject({ code: 0 });
+    expect(stops).toBe(1);
+    expect(spawned.calls).toBe(1);
+    expect(errors.filter(line => line.includes('already in progress'))).toHaveLength(1);
+  });
 });
 
 describe('createServiceRestartStrategy', () => {
@@ -266,6 +282,17 @@ describe('createServiceRestartStrategy', () => {
     expect(stopped).toBe(true);
     expect(spawned.calls).toBe(0);
     expect(errors.join('\n')).toContain('not rolled back automatically (marketplace-update:@aalis/x)');
+  });
+
+  it('重启还在进行时再调一次：忽略并说明一句，只停一次', async () => {
+    const strategy = createServiceRestartStrategy();
+    let stops = 0;
+    const opts = { stop: async () => void stops++ };
+    const first = Promise.resolve(strategy.restart(opts));
+    await strategy.restart(opts);
+    await expect(first).rejects.toMatchObject({ code: SERVICE_RESTART_EXIT_CODE });
+    expect(stops).toBe(1);
+    expect(errors.filter(line => line.includes('already in progress'))).toHaveLength(1);
   });
 
   it('退出前等宿主的收尾落定（文件日志写完），再以服务重启的退出码结束', async () => {
