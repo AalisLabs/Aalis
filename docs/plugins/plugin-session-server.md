@@ -8,7 +8,7 @@
 
 owner 的客户端经传输层（WebUI 的 WebSocket 端点 `/session`，见 [plugin-webui-server](./plugin-webui-server.md#session-会话协议)）接到 `sessionProtocol.connect`，本插件处理这条连接上的帧：握手、按方法表校验参数并分派、写错误帧、推送增量。会话本身都在 [session-manager](./plugin-session-manager.md) 里，本插件只做投影与转发，只认宿主契约、不认具体插件（守卫见 [plugin-webui-server](./plugin-webui-server.md#概述)）：
 
-- **功能位**：握手回发送、回滚、压缩、设置四项，分别看对话（`agent`）、检查点（`checkpoint`）、压缩（`compression`）、会话设置（`session-settings`）服务在不在。这几个服务可能变了（核心的 `service:changed` 通知）、功能位变了时给每条连接推 `features/changed`；握手时现取，不用推过的那份。
+- **功能位**：握手回发送、回滚、压缩、设置四项，分别看对话（`agent`）、检查点（`checkpoint`）、压缩（`compression`）、会话设置（`session-settings`）服务在不在。这几个服务可能变了（各自选择层的 `watch`）、功能位变了时给每条连接推 `features/changed`；握手时现取，不用推过的那份。
 - **应用名**：握手另回宿主配置文档里的 `name`（`host-config` 服务），每次握手现读，改名之后新的连接就拿到新名字；没有宿主配置时是 `Aalis`。
 - **握手时协议版本不兼容**：回 `unsupported` 的说明按读者的语言写，随后断开，断开的原因取它的原文。
 - **出帧的文字**：读者与原样数据见 [api-session-protocol 的「文字与语言」](../api/api-session-protocol.md#握手)。全部出帧（回应、错误、推送与等快照时暂存的）经同一个渲染函数：一次推送只渲染一次，各连接共用这一份；每次推送现按全局层的语言渲染，全局语言改了之后的推送就是新的语言。i18n 渲染抛错时这一帧按原文发出，每个实例只告警一次。

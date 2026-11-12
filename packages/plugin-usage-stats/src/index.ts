@@ -360,12 +360,12 @@ async function run(caps: Caps): Promise<void> {
   const anyBalance = () => caps.llm.list().some(({ use: instance }) => instance.balance !== undefined);
   let hasBalance = anyBalance();
   let page = definePage(hasBalance);
-  const recheck = (name: string) => {
-    if (name !== llm.name || anyBalance() === hasBalance) return;
+  const recheck = () => {
+    if (anyBalance() === hasBalance) return;
     hasBalance = !hasBalance;
     page = definePage(hasBalance);
   };
-  events.use.on('service:changed', recheck);
+  caps.llm.watch(recheck);
 
   events.use.on('llm:usage', usage => {
     const line: LedgerLine = { at: Date.now(), ...usage };

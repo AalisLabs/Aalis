@@ -434,9 +434,8 @@ function run(caps: Caps): void {
     }
   };
   refreshAudioPrefer();
-  caps.events.use.on('service:changed', name => {
-    if (name === 'asr' || name === 'llm') refreshAudioPrefer();
-  });
+  caps.asr.watch(refreshAudioPrefer);
+  caps.llm.watch(refreshAudioPrefer);
 
   // 注册 analyze_image / update_image_description 工具
   registerMediaTools(caps, svc);

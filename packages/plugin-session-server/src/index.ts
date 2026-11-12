@@ -206,9 +206,7 @@ async function run(caps: Caps): Promise<void> {
   );
   // 功能位所看的服务上线或下线（通知在变化之后送达）：与上次推的不同才推给每条连接
   let features = currentFeatures();
-  const featureServices = new Set([agent.name, checkpoint.name, compression.name, sessionSettings.name]);
-  const refreshFeatures = (service: string) => {
-    if (!featureServices.has(service)) return;
+  const refreshFeatures = () => {
     const next = currentFeatures();
     if ((Object.keys(next) as Array<keyof Features>).every(key => next[key] === features[key])) return;
     features = next;
@@ -218,7 +216,8 @@ async function run(caps: Caps): Promise<void> {
       () => true,
     );
   };
-  events.use.on('service:changed', refreshFeatures);
+  for (const selection of [caps.agent, caps.checkpoint, caps.compression, caps.sessionSettings])
+    selection.watch(refreshFeatures);
 
   /**
    * 把这些会话连同各级父会话的最新摘要与删掉的 id 推给 watch 的连接，附最新的分组：父会话的摘要里有按子树算的字段

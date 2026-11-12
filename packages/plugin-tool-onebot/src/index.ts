@@ -11,7 +11,7 @@ import { type SessionHistoryReadResult, sessionHistory } from '@aalis/api-sessio
 import { sessionManager, TAKE_UNKNOWN, takeFrom } from '@aalis/api-session-manager';
 import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
 import { tools, withToolGroups } from '@aalis/api-tools';
-import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
+import { type BoundOf, config, definePlugin, lifecycle, logger, optional } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { toSource } from '@aalis/schema-i18n';
 import { t } from './texts.js';
@@ -100,7 +100,6 @@ const uses = {
    * 规则判（takeFrom）；不在时只能取当前会话里的
    */
   sessionManager: optional(sessionManager),
-  events,
   lifecycle,
   logger,
   config,
@@ -563,7 +562,7 @@ export default definePlugin({
   configSchema,
   uses,
   apply(caps) {
-    const { tools, events, lifecycle, logger, platform } = caps;
+    const { tools, lifecycle, logger, platform } = caps;
     const cfg = parseConfig(configSchema, caps.config.use, logger.use);
     const bundle: OneBotToolBundle = {
       daily: withToolGroups(tools.use, ['onebot-daily']),
@@ -617,9 +616,7 @@ export default definePlugin({
       registerToolsOnce();
       if (!toolsRegistered) logger.use.info('未检测到 OneBot 平台，暂不注册 OneBot 工具（平台上线后自动补注册）');
     });
-    events.use.on('service:changed', name => {
-      if (name === platformService.name) registerToolsOnce();
-    });
+    platform.watch(registerToolsOnce);
   },
 });
 
