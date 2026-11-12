@@ -165,19 +165,23 @@ export class App {
 
     // 3. 宿主服务：与内置六项同一登记规则（根激活、独占），只交出契约列出的方法
     caps.provide.use(appService, narrow(this, ['stop', 'restart']), { exclusive: true });
+    const managing = narrow(this.plugins, [
+      'getStatus',
+      'getPlugin',
+      'bounce',
+      'updateConfig',
+      'enable',
+      'disable',
+      'unload',
+      'register',
+      'idle',
+    ]);
     caps.provide.use(
       pluginsService,
-      narrow(this.plugins, [
-        'getStatus',
-        'getPlugin',
-        'bounce',
-        'updateConfig',
-        'enable',
-        'disable',
-        'unload',
-        'register',
-        'idle',
-      ]),
+      identity => {
+        const by = this.#host.caller(identity, pluginsService.name);
+        return { ...managing, watch: fn => this.#plugins.watch(fn, by) };
+      },
       { exclusive: true },
     );
 

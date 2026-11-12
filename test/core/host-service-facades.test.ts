@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { App, appService, definePlugin, pluginsService, services } from '../../packages/core/src/index.js';
 
-// App 的两项宿主服务由提供方控制暴露面：只交出契约列出的方法，App / PluginManager 本体不进容器（看的是提供者本身）。
+// App 的两项宿主服务由提供方控制暴露面：只交出契约列出的方法，App / PluginManager 本体不进容器（app 看提供者本身，
+// plugins 的提供者是「身份 → 门面」，看它交出的门面）。
 // 配置文档（host-config）不在 core：由宿主登记，见 test/runtime/config-store.test.ts。
 
 const apps: App[] = [];
@@ -27,9 +28,21 @@ describe('宿主服务只交出契约方法', () => {
 
   it('plugins：契约方法齐全、无停机开关', () => {
     const app = world();
-    const raw = app.bind({ services }).services.use.get(pluginsService);
+    expect(typeof app.bind({ services }).services.use.get(pluginsService), '容器里是「身份 → 门面」').toBe('function');
+    const raw = app.bind({ plugins: pluginsService }).plugins.use;
     expect(keysOf(raw)).toEqual(
-      ['bounce', 'disable', 'enable', 'getPlugin', 'getStatus', 'idle', 'register', 'unload', 'updateConfig'].sort(),
+      [
+        'bounce',
+        'disable',
+        'enable',
+        'getPlugin',
+        'getStatus',
+        'idle',
+        'register',
+        'unload',
+        'updateConfig',
+        'watch',
+      ].sort(),
     );
     expect((raw as unknown as Record<string, unknown>).beginShutdown).toBeUndefined();
   });

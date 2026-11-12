@@ -33,6 +33,7 @@ export function ref<P>(
     of: id => entries.find(e => e.contextId === id)?.instance ?? absent<P>(),
     present: entries.length > 0,
     follow: () => () => {},
+    watch: () => () => {},
   };
 }
 

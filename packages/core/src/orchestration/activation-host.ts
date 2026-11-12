@@ -27,15 +27,18 @@ export class ActivationHost {
       },
     };
     this.root = this.#make('root', {}, logger);
-    const providers = coreProviders(this.runtime, (identity, name) => {
-      const activation = this.#owners.get(identity);
-      if (!activation) throw new Error(`内置服务 "${name}" 收到的身份不属于任何在册的激活`);
-      return activation;
-    });
+    const providers = coreProviders(this.runtime, (identity, name) => this.caller(identity, name));
     // 自举：provide 的提供者须先在容器里，根才能经 uses 取到 provide；其余五项与第三方服务同走 provide
     this.runtime.services.register(provide.name, providers.provide, 'root', this.root.owner, { exclusive: true });
     const root = this.bind(this.root, { provide });
     for (const [descriptor, provider] of providers.rest) root.provide.use(descriptor, provider, { exclusive: true });
+  }
+
+  /** 按身份认出调用方的激活；认不出就抛错 */
+  caller(identity: symbol, name: string): Activation {
+    const activation = this.#owners.get(identity);
+    if (!activation) throw new Error(`内置服务 "${name}" 收到的身份不属于任何在册的激活`);
+    return activation;
   }
 
   /** 插件激活：一律挂在根激活名下 */

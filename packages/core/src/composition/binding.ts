@@ -153,6 +153,12 @@ export function createSelection<P, B>(
       return selected.current() !== undefined;
     },
     follow: attach => selected.follow(entry => pin(entry, attach), false),
+    watch: fn =>
+      scope.resources.watch(
+        descriptor.name,
+        poke => scope.watchServices(service => void (service === descriptor.name && poke())),
+        fn,
+      ),
   };
 }
 

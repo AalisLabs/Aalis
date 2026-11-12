@@ -98,6 +98,31 @@ export class Resources {
     return this.holdInflight(run, 'onReady 回调');
   }
 
+  /**
+   * 订阅「可能变了，请重读」：source 把 poke 接到变更来源上、交回摘除。每次 poke 在下一个微任务里调一次 fn，期间的多次
+   * 合并成一次；已退订、已开始关闭的不调，抛错与拒绝记 warn。订阅随撤回段摘除；返回退订。what 是被看的东西，诊断用。
+   */
+  watch(what: string, source: (poke: () => void) => () => unknown, fn: () => unknown): () => void {
+    if (this.refuses(`${what} 的 watch`)) return () => {};
+    let queued = false;
+    let live = true;
+    const unhook = source(() => {
+      if (queued) return;
+      queued = true;
+      void Promise.resolve()
+        .then(() => {
+          queued = false;
+          return live && !this.#closing ? fn() : undefined;
+        })
+        .catch(error => this.#logger.warn(`Resources "${this.#id}": ${what} 的 watch 回调抛错，已忽略:`, error));
+    });
+    const off = this.trackWithdrawal(() => {
+      live = false;
+      unhook();
+    }, `watch:${what}`);
+    return () => void off();
+  }
+
   /** 跟踪中的初始化尚未落定 */
   get initializing(): boolean {
     return this.#initialization !== undefined;

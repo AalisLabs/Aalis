@@ -176,6 +176,7 @@ describe('QQ 转发摘要', () => {
         return models.length > 0;
       },
       follow: () => () => {},
+      watch: () => () => {},
     };
     const expander = createForwardExpander<null>({
       logger: logger as Logger,

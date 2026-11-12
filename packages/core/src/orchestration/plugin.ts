@@ -72,6 +72,8 @@ export class PluginManager implements PluginManagerService {
   #shutdownSettle?: Map<Activation, () => void>;
   /** 激活序缓存：只随注册表增删失效（依赖声明与 provides 每条不变） */
   #order?: PluginRecord[];
+  /** watch 的订阅：每轮重算收敛后、只登记了禁用条目时逐个 poke */
+  readonly #watchers = new Set<() => void>();
   /** 就绪相位已开始（{@link ready} 置位，不复位）：此后激活落定的插件各自跑就绪回调 */
   #ready = false;
 
@@ -103,6 +105,15 @@ export class PluginManager implements PluginManagerService {
     this.#queued = false;
     this.#shutdownSettle = freezeActivations([this.#host.root]);
     abortInitializing(this.#shutdownSettle);
+  }
+
+  /** 见 {@link PluginManagerService.watch}。by 是订阅方的激活，宿主经 app.plugins 登记的归根激活 */
+  watch(fn: () => unknown, by: Activation = this.#host.root): () => void {
+    const hook = (poke: () => void) => {
+      this.#watchers.add(poke);
+      return () => this.#watchers.delete(poke);
+    };
+    return by.resources.watch('plugins', hook, fn);
   }
 
   /** idle() 的等待者——在 recompute flight 排干（无在飞、无排队、无挂起段）时统一放行 */
@@ -199,8 +210,9 @@ export class PluginManager implements PluginManagerService {
    */
   async registerAll(items: ReadonlyArray<PluginRegistration>): Promise<boolean[]> {
     const admitted = items.map(item => this.#admit(item));
-    // 走统一 recompute：依赖满足则被拓扑正序激活，否则保持 pending。只登记了禁用条目时不必重算
+    // 走统一 recompute：依赖满足则被拓扑正序激活，否则保持 pending。只登记了禁用条目时不必重算，名单多了照样通知订阅
     if (admitted.includes('pending')) await this.recompute();
+    else if (admitted.includes('disabled')) for (const poke of this.#watchers) poke();
     return admitted.map(state => state !== false);
   }
 
@@ -603,6 +615,8 @@ export class PluginManager implements PluginManagerService {
     }
 
     // 关机轮不发：停机打断的这一轮没有收敛，之后的状态归停机计划
+    // 停机之后订阅方都已开始关闭，轮到时自己跳过
+    for (const poke of this.#watchers) poke();
     if (!this.#shuttingDown) this.#host.runtime.notify('plugins:changed');
   }
 

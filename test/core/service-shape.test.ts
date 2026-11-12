@@ -102,7 +102,7 @@ describe('两层形状', () => {
       custom,
     });
     for (const [key, selection] of Object.entries(caps))
-      expect(Object.keys(selection).sort(), key).toEqual(['follow', 'list', 'of', 'present', 'use']);
+      expect(Object.keys(selection).sort(), key).toEqual(['follow', 'list', 'of', 'present', 'use', 'watch']);
   });
 });
 

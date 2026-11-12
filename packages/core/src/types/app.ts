@@ -111,4 +111,11 @@ export interface PluginManagerService {
    * 开始关闭时，关闭等这个回调落定、回调等静置、静置等这次关闭，互等到宽限超时（`disposeTimeoutMs` 为 0 时一直等）。
    */
   idle(): Promise<void>;
+  /**
+   * 插件状态可能变了时调用 fn：每轮重算收敛后一次（停机那一轮不通知），只登记了禁用条目、不必重算时也调一次；回调里重读
+   * getStatus，可以 await idle()。
+   * 规则同选择层的 watch：登记时不调；下一个微任务调，期间的多次合并成一次；已退订的、订阅方已开始关闭的不调；
+   * 抛错与拒绝只记在订阅方名下。返回退订，随订阅方的激活撤回
+   */
+  watch(fn: () => void | Promise<void>): () => void;
 }
