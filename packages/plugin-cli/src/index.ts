@@ -285,7 +285,7 @@ function startCli(caps: Caps): void {
   let onLog: (entry: LogEntry) => void = entry => earlyLogs.push(entry);
   const stopLogs = caps.logs.use.subscribe(entry => onLog(entry), { history: 2000 });
 
-  events.use.on('app:started', () => {
+  caps.lifecycle.use.onReady(() => {
     // 非交互终端（日志重定向 / 容器 / systemd）：不接管终端、不画界面，控制台日志照常走 stdout；
     // 服务仍在线（平台枚举、子命令分发不受影响），出站消息退化为日志（见 sendMessage）。
     if (!output.isTTY || !input.isTTY) {
