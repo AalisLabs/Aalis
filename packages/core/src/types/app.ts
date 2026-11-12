@@ -74,7 +74,9 @@ export interface PluginManagerService {
    * 插件要重启自己就调它。不换代码——要换代码走 `unload` + `register`。disabled 态被政策挡下（warn，返回 false）。
    * 不得在插件 apply / onReady 回调 / onDrain / onDispose 内 await 针对自身或自身用到的任何提供者（required、optional 或
    * follow 跟随）的本动作：拆卸可能要等这些回调返回，两边至多互等到宽限超时（`disposeTimeoutMs` 为 0 时一直等），旧实例
-   * 超过宽限仍未停下（`lingering`）。
+   * 超过宽限仍未停下（`lingering`）。对别的插件发起本动作，在本激活关闭期间等它同样会互等：动作的对象、或用到它的插件，
+   * 与本插件在同一批关闭里且排在本插件之后时，那份计划要等它们关完。一批里有谁、谁排在后面，回调里看不出来：
+   * onDrain / onDispose 里要发起本动作就不要等它；apply / onReady 里等它要与本激活的 `signal` 赛跑。
    */
   bounce(instanceId: string): Promise<boolean>;
   /**

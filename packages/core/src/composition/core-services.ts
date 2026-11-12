@@ -66,7 +66,7 @@ export interface LifecycleCap {
    * 单个回调至多等 `slowThresholdMs`，超过记 warn、不再等它；抛错与拒绝只记在本激活名下，不影响别的回调与
    * `start()`。退订的、本激活已开始关闭的不跑。在跑的回调算这次激活的在飞工作：关闭在收尾段之后等它落定，至多等
    * `disposeTimeoutMs`；要它随关闭尽早停下，在回调里看 `signal`。所以回调不得 await 会关掉本激活的管理动作与 `stop()`，
-   * 等 `plugins.idle()` 要与 `signal` 赛跑（见 PluginManagerService 的 bounce 与 idle）。
+   * 等 `plugins.idle()`、等对别的插件的管理动作都要与 `signal` 赛跑（见 PluginManagerService 的 bounce 与 idle）。
    */
   onReady(fn: () => void | Promise<void>): () => void;
   /**
@@ -75,12 +75,13 @@ export interface LifecycleCap {
    * 不保护动态查询、缓存裸引用或提供者主动提前释放的资源。
    * 回调不得 await 或返回要等本激活关完才落定的 Promise，否则两边互等到宽限（`disposeTimeoutMs`，为 0 时一直等）：
    * 同一关闭计划中后续阶段的完成，以及对本插件所依赖的提供者（uses 里声明的服务，optional 也算）的管理动作——那份计划
-   * 要等本激活关完才让提供者收尾（调用约束见 PluginManagerService.bounce）。
+   * 要等本激活关完才让提供者收尾。对别的插件的管理动作在这里等也可能互等，要发起就不要等它（调用约束见
+   * PluginManagerService.bounce）。
    */
   onDrain(fn: () => void | Promise<void>, label?: string): () => void;
   /**
    * 登记清理（清理段）：本激活的对外登记已撤回；依赖可能已不可用，交接应放在 onDrain。
-   * 与 onDrain 一样，不得 await 对本插件所依赖的提供者的管理动作（会互等到宽限）
+   * 与 onDrain 一样，要发起管理动作就不要等它（可能互等到宽限）
    */
   onDispose(fn: () => void | Promise<void>, label?: string): () => void;
 }

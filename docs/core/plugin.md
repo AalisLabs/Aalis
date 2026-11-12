@@ -115,7 +115,7 @@ PluginManager 只有一个状态变更入口：服务上下线、注册、启停
 
 `watch(fn)` 在插件状态可能变了时调用 `fn`：每轮重算收敛后一次（停机那一轮不通知），只登记了禁用条目、不必重算时也调一次；回调里重读 `getStatus()`，可以 `await idle()`。规则同选择层的 `watch`：登记时不调；下一个微任务调，期间的多次合并成一次；已退订的、订阅方已开始关闭的不调；抛错与拒绝只记在订阅方名下。返回退订，随订阅方的激活撤回；宿主经 `app.plugins.watch` 登记的归根激活。
 
-插件的 `apply`、就绪回调（`onReady`）与关闭回调（`onDrain` / `onDispose`）不能等待针对自身或自身用到的任何提供者（required、optional 或经 `follow` 跟随）的 `bounce` / `updateConfig` / `disable` / `unload`：这些动作的拆卸可能要等本插件的这些回调返回，回调又在等动作完成。例如在 `apply` 中 `await` 对 required 提供者的 `bounce`：这个动作要把正在用该服务的本插件并入同一批拆掉，拆卸要等 `apply` 返回；在 `onDrain` 里 `await` 卸载 optional 提供者也一样，那份计划要等本插件关完。两者至多互等到宽限（`disposeTimeoutMs`）到期（为 0 时一直等下去），本插件的旧实例停下之前不会重新激活（见上文）。
+插件的 `apply`、就绪回调（`onReady`）与关闭回调（`onDrain` / `onDispose`）不能等待针对自身或自身用到的任何提供者（required、optional 或经 `follow` 跟随）的 `bounce` / `updateConfig` / `disable` / `unload`：这些动作的拆卸可能要等本插件的这些回调返回，回调又在等动作完成。例如在 `apply` 中 `await` 对 required 提供者的 `bounce`：这个动作要把正在用该服务的本插件并入同一批拆掉，拆卸要等 `apply` 返回；在 `onDrain` 里 `await` 卸载 optional 提供者也一样，那份计划要等本插件关完。动作的对象与本插件无关时，在本插件关闭期间等它也可能互等：对象本身、或用到它的插件，与本插件在同一批关闭里且排在本插件之后，那份计划要等它们关完，而它们又排在本插件之后。一批里有谁、谁排在后面，回调里看不出来，所以关闭回调（`onDrain` / `onDispose`）里要发起管理动作就不要等它；`apply` 与就绪回调里等它要与本激活的 `signal` 赛跑（它何时断见 [插件定义与能力](context.md) 的 `signal`）。这几种情形至多互等到宽限（`disposeTimeoutMs`）到期（为 0 时一直等下去），本插件的旧实例停下之前不会重新激活（见上文）。
 
 ### `register(definition, config?, instanceId?, options?)`
 
