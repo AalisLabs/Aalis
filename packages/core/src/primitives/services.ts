@@ -23,7 +23,7 @@ export interface ServiceInfo {
   basis?: SelectionBasis;
 }
 
-/** 选中依据：本插件偏好、全局偏好，或优先级与登记顺序（排名） */
+/** 选中依据：本插件偏好、全局偏好，或优先级与位次（排名） */
 export type SelectionBasis = 'plugin' | 'global' | 'rank';
 
 /**
@@ -34,11 +34,15 @@ export interface ServiceEntry {
   instance: unknown;
   exclusive?: boolean;
   /**
-   * 数字越大越优先；同值先注册者胜（稳定降序）。解析序恒为
-   * 「偏好 > 优先级 > 注册顺序」——优先级是静态默认序，偏好是用户显式覆盖。
-   * 数值含义由 provider 自行记载（部署可调，如 asr 插件把它开进 config）。
+   * 数字越大越优先；同值按位次（{@link seat}）。解析序恒为「偏好 > 优先级 > 位次」——优先级是静态默认序，
+   * 偏好是用户显式覆盖。数值含义由 provider 自行记载（部署可调，如 asr 插件把它开进 config）。
    */
   priority: number;
+  /**
+   * 登记方的位次：宿主的根是空串，插件激活是它的实例 id。同优先级按它的码元序排（根最前），同一登记方的几条按登记先后。
+   * 不看条目登记的时刻：激活快慢、插件重启、插件加进应用的先后都改变不了次序
+   */
+  seat: string;
   contextId: string;
   /**
    * 清理归属：注册方本次激活的身份。与 `contextId`（逻辑身份，供
@@ -58,7 +62,7 @@ const NO_ENTRIES: readonly ServiceEntry[] = [];
  * 服务容器 —— 支持同名多实现
  *
  * 设计要点：
- * - 同一个服务名可以有多个提供者，挑选只有一条规则（{@link #select}）：本插件偏好 > 全局偏好 > 优先级 > 注册顺序；
+ * - 同一个服务名可以有多个提供者，挑选只有一条规则（{@link #select}）：本插件偏好 > 全局偏好 > 优先级 > 位次；
  *   偏好指向的那家不在场就按下一级挑，回来后自动切回
  * - 经 provide 能力注册的条目带清理归属 owner，插件卸载时按它批量清理（unregisterByOwner）；
  *   contextId 只是逻辑身份（路由 / 显示 / 偏好），不参与清理，core 不规定它的格式
@@ -77,6 +81,7 @@ export class ServiceContainer {
    * `provide(descriptor, impl)` 处约束。
    *
    * @param owner 清理归属（注册方这次激活的身份），拆卸时按它整体摘除。
+   * @param options.seat 登记方的位次（见 {@link ServiceEntry.seat}），缺省为空串（宿主的根）
    * @returns 退订闭包，返回这次是否摘掉了条目；条目已不在（退订过、已被 unregisterByOwner 清走）时无动作、返回 false
    */
   register(
@@ -84,9 +89,9 @@ export class ServiceContainer {
     instance: unknown,
     contextId: string,
     owner: symbol,
-    options?: { priority?: number; label?: unknown; exclusive?: boolean; descriptor?: object },
+    options?: { priority?: number; label?: unknown; exclusive?: boolean; descriptor?: object; seat?: string },
   ): () => boolean {
-    // 空实现会骗过缺席判断；非有限 priority 让 sort 比较器返回 NaN，先登记者盖过后来的有限值
+    // 空实现会骗过缺席判断；非有限 priority 相减得 NaN，比较器退到只比位次，排序失去全序
     if (instance === null || instance === undefined) {
       throw new Error('provide 的实现不能为空');
     }
@@ -105,14 +110,16 @@ export class ServiceContainer {
       instance,
       exclusive: options?.exclusive,
       priority: options?.priority ?? 0,
+      seat: options?.seat ?? '',
       contextId,
       owner,
       label: options?.label,
       descriptor: options?.descriptor,
     };
     list.push(entry);
-    // 按优先级降序排列（稳定排序：同优先级先注册者在前）
-    list.sort((a, b) => b.priority - a.priority);
+    // 按优先级降序，同优先级按位次的码元序（不看语言环境）。位次也相同时比较结果是 0，稳定排序保住登记先后：
+    // 同一登记方名下的几条、不带位次直接用容器时的几条都按登记先后
+    list.sort((a, b) => b.priority - a.priority || (a.seat < b.seat ? -1 : a.seat > b.seat ? 1 : 0));
 
     return () => {
       // 查 registry 当前数组而非闭包捕获的 list：服务名空掉时表项会被删，再注册会新建数组
@@ -174,7 +181,7 @@ export class ServiceContainer {
   }
 
   /**
-   * 唯一的挑选规则：本插件偏好 > 全局偏好 > 优先级 > 注册顺序（register 已按 priority 稳定降序排好）。
+   * 唯一的挑选规则：本插件偏好 > 全局偏好 > 优先级 > 位次（register 已按优先级与位次排好）。
    * 偏好指向的那家不在场就按下一级挑。不给 consumer 即全局口径
    */
   #select(list: readonly ServiceEntry[], name: string, consumer?: string): [ServiceEntry, SelectionBasis] | undefined {
@@ -190,7 +197,7 @@ export class ServiceContainer {
   }
 
   /**
-   * 按该消费者的解析顺序排列的对外条目：选中的那一条在前（basis 是它的选中依据），其余保持优先级与登记顺序
+   * 按该消费者的解析顺序排列的对外条目：选中的那一条在前（basis 是它的选中依据），其余保持优先级与位次
    * @internal
    */
   ranked(name: string, consumer?: string): { entries: readonly ServiceEntry[]; basis?: SelectionBasis } {
@@ -200,7 +207,7 @@ export class ServiceContainer {
     return { entries: [selected, ...list.filter(entry => entry !== selected)], basis };
   }
 
-  /** 获取全局胜者实例（全局偏好 > 优先级 > 注册顺序） */
+  /** 获取全局胜者实例（全局偏好 > 优先级 > 位次） */
   get<T = unknown>(name: string): T | undefined {
     return this.ranked(name).entries[0]?.instance as T | undefined;
   }
@@ -270,7 +277,7 @@ export class ServiceContainer {
   /**
    * 获取某个服务的所有实例（带提供者信息与优先级）
    *
-   * 返回顺序遵循「全局偏好 > 优先级 > 注册顺序」。
+   * 返回顺序遵循「全局偏好 > 优先级 > 位次」。
    */
   getAll<T = unknown>(name: string): ServiceView<T>[] {
     return this.ranked(name).entries.map(entry => ({

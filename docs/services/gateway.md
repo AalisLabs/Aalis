@@ -186,7 +186,7 @@ export default definePlugin({
 });
 ```
 
-> `provide.use` 无需传 priority —— gateway 一般是单提供方。同名竞争时消费方选中哪一家按 `本插件偏好 > 全局偏好 > priority > 注册顺序`（无能力匹配，0.5.0 已移除）；细节见 `concepts/service-model.md`。
+> `provide.use` 无需传 priority —— gateway 一般是单提供方。同名竞争时消费方选中哪一家按 `本插件偏好 > 全局偏好 > priority > 位次`（无能力匹配，0.5.0 已移除）；细节见 `concepts/service-model.md`。
 
 ## 5. 写一个平台适配器（最常见）
 

@@ -571,7 +571,7 @@ type WebuiAdminEvent =
 | `layout.changed` | 无 | 全部连接 | 布局记录变了：重取 `GET /api/layout` |
 | `attention.changed` | 无 | 全部连接 | 「需要处理」变了（审批推出或结算、插件的故障有变、提示登记或撤回）：重取 `GET /api/attention` |
 | `server.closing` | 无 | 全部连接 | 提供管理面的插件正在关闭（应用停机、重启，或它单独停用、重启），连接随后断开：重连上以后整页重新加载 |
-| `client.reload` | 无 | 全部连接 | 前端偏好改了，或有前端包被卸载，活跃前端可能换了：整页重新加载 |
+| `client.reload` | 无 | 全部连接 | 前端偏好改了、有前端包被卸载，或提供前端的插件上线、下线，活跃前端可能换了：整页重新加载 |
 
 - **断线重连**：事件只是「变了」的信号，断线期间丢的不补发。重连后重取插件与页面、「需要处理」、布局记录和当前打开的页面；日志页开着时重新订阅。
 - **日志**：日志页打开时发 `{ type: 'log.subscribe', filter }`，离开时发 `{ type: 'log.unsubscribe' }`；订阅与退订不回执，筛选变了再订阅一次就换掉，不带 `filter` 推全部。先发订阅、再带同一份筛选取 `GET /api/logs/tail`，两边按 `seq` 去重；更早的日志用 `GET /api/logs/range` 带同一份筛选往前翻。按插件筛时怎样认作用域见 [plugin-webui-server](../plugins/plugin-webui-server.md) 的「日志的筛选」。

@@ -125,7 +125,7 @@ export default definePlugin({
 
 ### 4c. 替换整个后端（`webui-server`）
 
-罕见。实现全部 `WebUIService` 必须方法（`addPage`、`addNotice` 要真正维护登记表，`invalidate` 要推给界面），用更高的 priority 压过默认实现，或由用户在 WebUI 设置「系统」的服务偏好 / 配置 `servicePreferences` 选中它。`definePlugin({ provides: [webuiServer], uses: { provide }, apply({ provide }) { provide.use(webuiServer, impl); } })`。同名时选中哪一家的规则见 `docs/concepts/service-model.md`：本插件偏好 > 全局偏好 > priority > 注册顺序。
+罕见。实现全部 `WebUIService` 必须方法（`addPage`、`addNotice` 要真正维护登记表，`invalidate` 要推给界面），用更高的 priority 压过默认实现，或由用户在 WebUI 设置「系统」的服务偏好 / 配置 `servicePreferences` 选中它。`definePlugin({ provides: [webuiServer], uses: { provide }, apply({ provide }) { provide.use(webuiServer, impl); } })`。同名时选中哪一家的规则见 `docs/concepts/service-model.md`：本插件偏好 > 全局偏好 > priority > 位次。
 
 ## 5. 标准消费方式
 

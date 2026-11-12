@@ -264,8 +264,9 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
         ]),
       ),
     ).toEqual([
-      ['WebUI', '在线', null],
+      // 平台按提供它的插件 id 排
       ['CLI', '没有连接', null],
+      ['WebUI', '在线', null],
     ]);
 
     await page.goto(`${stack.origin}/plugins`);

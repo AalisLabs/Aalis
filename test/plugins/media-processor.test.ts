@@ -204,7 +204,7 @@ describe('MediaService 音频统一池（asr 桥 + 音频 LLM 一个池）', () 
 
 // ════════════════════════════════════════════════════════════
 // LLM processor 缓存跟随偏好切换：LLM processor 的 priority 恒为 0，vision.prefer 留空时
-// pickProcessor 靠稳定排序取 llm.list() 的先后（偏好 > 优先级 > 注册顺序）。缓存签名曾把条目
+// pickProcessor 靠稳定排序取 llm.list() 的先后（偏好 > 优先级 > 位次）。缓存签名曾把条目
 // 排序后拼接，偏好一换签名不变、缓存不重建，自动选择停在旧模型上。
 // llm.list() 取自真 App 容器 + services.prefer，不手搓顺序。
 // ════════════════════════════════════════════════════════════
@@ -234,7 +234,7 @@ describe('MediaService LLM processor 缓存跟随 llm 偏好切换', () => {
       await app.plugins.idle();
       const host = app.bind({ llm, services });
       const s = new MediaServiceImpl(caps({ llm: host.llm }), cfg);
-      // 注册顺序 A 在前；这一次调用同时建起缓存
+      // 同优先级按位次，A 在前；这一次调用同时建起缓存
       expect(s.pickProcessor('vision')?.name).toBe('llm:zz-llm-a#vision');
       host.services.use.prefer(llm, 'zz-llm-b');
       expect(host.llm.list()[0]?.id, '前提：容器已按偏好把 B 排到最前').toBe('zz-llm-b');

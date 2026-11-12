@@ -1,6 +1,6 @@
 # 服务：描述符、按名解析、偏好
 
-插件通过**服务描述符**声明与发布服务；容器按名保存多个提供者，每个消费方按「本插件偏好 > 全局偏好 > 优先级 > 注册顺序」选中其中一家。
+插件通过**服务描述符**声明与发布服务；容器按名保存多个提供者，每个消费方按「本插件偏好 > 全局偏好 > 优先级 > 位次」选中其中一家。
 
 **源码**: `packages/core/src/composition/descriptors.ts`、`packages/core/src/composition/binding.ts`、`packages/core/src/primitives/services.ts`、`packages/core/src/composition/core-services.ts`
 
@@ -94,7 +94,7 @@ interface ServiceView<T = unknown> {
 }
 ```
 
-`services.use.all(key)` 返回该投影的数组快照，顺序遵循「全局偏好 > 优先级 > 注册顺序」。选择层的 `list()` 给的是 `ProviderEntry`（`id` / `label` / `priority` / `selected` / `basis` / `use`），按本插件的口径排序，不含原始实例。
+`services.use.all(key)` 返回该投影的数组快照，顺序遵循「全局偏好 > 优先级 > 位次」。选择层的 `list()` 给的是 `ProviderEntry`（`id` / `label` / `priority` / `selected` / `basis` / `use`），按本插件的口径排序，不含原始实例。
 
 `instance` 是登记进容器的对象本身，直接序列化会连同提供者的内部状态一起带出去。展示与对外输出用 `services.inspect(key, { for? })`（`get` / `all` 的用途见 [动态查询](context.md#动态查询-services)）：返回 `contextId` / `priority` / `label` / `exclusive`，选中的那一条另带 `selected` 与 `basis`，不含实例；给 `for`（插件实例 id）按那个插件的解析顺序排列，不给按全局口径。WebUI 的服务列表与插件详情里各插件此刻的选择都用这一元数据入口。
 

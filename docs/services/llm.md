@@ -164,7 +164,7 @@ export default definePlugin({
 
 要点：
 - **`entryId` 必须是 `${lifecycle.use.id}/${modelId}`**——`resolveLLMModel` 用条目 `id === \`${provider}/${model}\`` 精确命中，`llm.of(...)` 也按它找（`packages/api-llm/src/index.ts`）；不按此约定会导致 `llm-ref` 选择失效。
-- 不要传 `priority`，默认 `0` 即可；用户通过 preference 选默认 model（见 §5）。同名多 provider 并存时，消费方选中哪一家按本插件偏好 > 全局偏好 > priority > 注册顺序（[服务模型](../concepts/service-model.md)）。
+- 不要传 `priority`，默认 `0` 即可；用户通过 preference 选默认 model（见 §5）。同名多 provider 并存时，消费方选中哪一家按本插件偏好 > 全局偏好 > priority > 位次（[服务模型](../concepts/service-model.md)）。
 - `capabilities` 要**如实**反映该 model 实际能力——它驱动 media 的多模态处理器注册与前端过滤（§6）。
 - `provide.use` 返回 dispose 函数；实现 `refresh()` 时缓存它以便增删 entry（`packages/plugin-llm-ollama/src/index.ts`）。
 - 登记时套上 `metered(handle, events.use)`：拿到用量的调用发 `llm:usage`，自己的 `chat` 与 `chatStream` 不用管记账（[api-llm 的记账](../api/api-llm.md#记账)）。
@@ -233,11 +233,11 @@ provider 在**序列化前**（流式与非流式两条路径都要）必须先�
 
 6. **`think` 的语义**：`request.think === undefined` 表示「按模型的默认档」，带了就必须是模型声明的档位之一，提供者经 `requestedThinking` 拒绝别的值。各提供者按自己的协议翻译：DeepSeek 总是明说 `thinking.type`（v4 系列不发会保持开启），Ollama 对能思考的模型总是明说 `think`（原生思考模型省略字段会默认思考，content 可能为空），OpenAI 只在请求带了档位时发字段（`packages/plugin-llm-*/src/index.ts`）。
 
-7. **per-model entry 注册顺序 = 优先级稳定性**：Ollama 并行探测能力时保留顺序以保证注册顺序稳定（`packages/plugin-llm-ollama/src/index.ts`），因为相同 priority 下注册顺序是挑选规则的最后一道裁决（[服务模型](../concepts/service-model.md)）。
+7. **per-model entry 的登记先后要稳定**：Ollama 并行探测能力时保留顺序（`packages/plugin-llm-ollama/src/index.ts`），因为同一个插件登记的几条在相同 priority 下按登记先后排（[服务模型](../concepts/service-model.md)）。
 
 ## 8. 交叉链接
 
-- [服务模型](../concepts/service-model.md)——按名 DI、同名多实现、本插件偏好 > 全局偏好 > priority > 注册顺序、`provide`。
+- [服务模型](../concepts/service-model.md)——按名 DI、同名多实现、本插件偏好 > 全局偏好 > priority > 位次、`provide`。
 - [惰性服务访问](../concepts/lazy-service-access.md)——业务句柄为什么是活的、provider bounce。
 - [manifest 元数据](../concepts/manifest-metadata.md)——`provides`/`uses` 双源同步。
 - [消息→LLM 管线](../concepts/message-llm-pipeline.md)——`prepareLLMMessages` / role 转译 / kind 前缀。

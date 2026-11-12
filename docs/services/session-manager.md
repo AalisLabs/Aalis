@@ -453,7 +453,7 @@ export default definePlugin({
 }
 ```
 
-双源校验细节见 [清单元数据](../concepts/manifest-metadata.md)。同名时消费方选中哪一家的规则（本插件偏好 > 全局偏好 > priority > 注册顺序）见 [服务模型](../concepts/service-model.md)。
+双源校验细节见 [清单元数据](../concepts/manifest-metadata.md)。同名时消费方选中哪一家的规则（本插件偏好 > 全局偏好 > priority > 位次）见 [服务模型](../concepts/service-model.md)。
 
 ## 5. 标准消费方式
 
@@ -567,7 +567,7 @@ onebot 等平台派生的房间会话在首条真人入站到达时由 §6.6 的
 
 ## 8. 交叉链接
 
-- [服务模型](../concepts/service-model.md) —— DI 按名解析、同名竞争（本插件偏好 > 全局偏好 > priority > 注册顺序）。
+- [服务模型](../concepts/service-model.md) —— DI 按名解析、同名竞争（本插件偏好 > 全局偏好 > priority > 位次）。
 - [惰性服务访问](../concepts/lazy-service-access.md) —— 业务句柄为什么是活的。
 - [清单元数据](../concepts/manifest-metadata.md) —— `provides`/`uses` 与 `package.json aalis.service` 双源同步与校验。
 - [消息-LLM 流水线](../concepts/message-llm-pipeline.md) —— 会话设置的生效值如何进入 `agent:turn:before` / `agent:llm:before` / `agent:turn:after`。

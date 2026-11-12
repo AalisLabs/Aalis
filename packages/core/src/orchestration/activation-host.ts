@@ -26,7 +26,7 @@ export class ActivationHost {
         return () => watchers.delete(watcher);
       },
     };
-    this.root = this.#make('root', {}, logger);
+    this.root = this.#make('root', {}, logger, '');
     const providers = coreProviders(this.runtime, (identity, name) => this.caller(identity, name));
     // 自举：provide 的提供者须先在容器里，根才能经 uses 取到 provide；其余四项与第三方服务同走 provide
     this.runtime.services.register(provide.name, providers.provide, 'root', this.root.owner, { exclusive: true });
@@ -49,7 +49,7 @@ export class ActivationHost {
     return activation;
   }
 
-  #make(id: string, config: Record<string, unknown>, logger: Logger): Activation {
+  #make(id: string, config: Record<string, unknown>, logger: Logger, seat = id): Activation {
     const owner = Symbol(id);
     const runtime = this.runtime;
     let removed: string[] = [];
@@ -71,7 +71,7 @@ export class ActivationHost {
     resources.onCut(() => {
       removed = runtime.services.unregisterByOwner(owner);
     });
-    const activation = new Activation(id, owner, logger, config, resources, runtime.services, this.#owners);
+    const activation = new Activation(id, owner, logger, config, resources, runtime.services, this.#owners, seat);
     this.#owners.set(owner, activation);
     return activation;
   }

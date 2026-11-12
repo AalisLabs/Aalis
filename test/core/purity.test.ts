@@ -247,6 +247,7 @@ function activationViolations(source: string): string[] {
   const allowedFields = new Set([
     'id',
     'owner',
+    'seat',
     'logger',
     'config',
     'resources',

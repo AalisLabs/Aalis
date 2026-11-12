@@ -80,7 +80,7 @@ describe('ServiceContainer', () => {
     expect(c.get('__t:late')).toEqual({ v: 'late' });
   });
 
-  it('多提供者按 priority + 注册顺序解析（偏好之外）', () => {
+  it('多提供者按 priority 解析（偏好之外）', () => {
     const c = new ServiceContainer();
     c.register('__t:llm', { name: 'low' }, 'p1', OWNER);
     c.register('__t:llm', { name: 'high' }, 'p2', OWNER, { priority: 50 });

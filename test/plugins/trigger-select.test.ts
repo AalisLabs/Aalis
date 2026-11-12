@@ -19,7 +19,7 @@ import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
 // 触发插件二选一：trigger-policy（规则）与 trigger-laya（模型）各自是完整的触发插件，
-// trigger 服务的胜者（偏好 > 优先级 > 注册顺序）即生效者，另一个对每条消息直接放行、什么都不做。
+// trigger 服务的胜者（偏好 > 优先级 > 位次）即生效者，另一个对每条消息直接放行、什么都不做。
 // 都启用、没有偏好时规则生效（Laya 的优先级 -10 低于规则的 0，两者都是插件里的常量）；配置文件的 servicePreferences 指向 Laya
 // 时 Laya 生效；偏好切到规则即时生效；停用 Laya 后规则在下一条消息接手；两个都不在时 inbound:trigger
 // 不做判定。侧车是本地假服务，memory 是内存替身。
@@ -153,7 +153,7 @@ const EVERY_TWO = { intervalMode: 'fixed', fixedInterval: 2 };
 
 describe('触发插件二选一', () => {
   it('都启用、没有偏好：规则生效（Laya 的优先级 -10 低于规则的 0），Laya 不请求侧车', async () => {
-    // Laya 先登记，与从源码发现的次序一致（readdir 下 trigger-laya 排在 trigger-policy 前）：优先级相等时按登记次序决胜
+    // Laya 先登记，与从源码发现的次序一致（readdir 下 trigger-laya 排在 trigger-policy 前），插件 id 也排在规则插件前面：优先级相等时 Laya 会胜出，靠 -10 让给规则
     const h = await setup({ policy: EVERY_MESSAGE, layaFirst: true });
     expect(h.host.services.use.all(trigger).map(v => toSource(v.label))).toEqual([RULE_LABEL, 'Laya 模型']);
     const r = await h.send(groupMsg('随便聊聊'));

@@ -13,7 +13,7 @@
 
 | 原语 | 描述符 / 绑定 | 语义 |
 |---|---|---|
-| 服务 | `provide(desc, impl)`；`uses` 后的选择层（`list()` / `use` / `of(id)` / `present` / `follow()` / `watch()`），业务调用经活的句柄 `use`；动态查询 `services` | IoC：同名多提供者并存，按「本插件偏好 > 全局偏好 > 优先级 > 注册顺序」选胜者 |
+| 服务 | `provide(desc, impl)`；`uses` 后的选择层（`list()` / `use` / `of(id)` / `present` / `follow()` / `watch()`），业务调用经活的句柄 `use`；动态查询 `services` | IoC：同名多提供者并存，按「本插件偏好 > 全局偏好 > 优先级 > 位次」选胜者 |
 
 事件、中间件钩子与贡献点建在服务之上，由插件提供：
 

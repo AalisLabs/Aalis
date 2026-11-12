@@ -388,7 +388,7 @@ declare module '@aalis/api-events' {
 - preferences 只有全局与插件实例两级，没有 user 维度
 - per-user 偏好语义是**请求维度的 hint**，不是容器维度的 default
 
-把用户偏好的 LLM/embedding 存在用户 profile 里，每次请求显式传入。优先级链：**req 显式 ref > user 偏好 ref > `services.prefer` > 优先级与注册顺序**——最后两级由 `resolveLLMModel(caps.llm, undefined)` 回落到 `list()[0]`（本插件选中的那一家）。
+把用户偏好的 LLM/embedding 存在用户 profile 里，每次请求显式传入。优先级链：**req 显式 ref > user 偏好 ref > `services.prefer` > 优先级与位次**——最后两级由 `resolveLLMModel(caps.llm, undefined)` 回落到 `list()[0]`（本插件选中的那一家）。
 
 多租户：
 

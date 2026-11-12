@@ -29,14 +29,14 @@ interface ServiceView<T = unknown> {
 }
 ```
 
-### 1.2 挑选规则：本插件偏好 > 全局偏好 > 优先级 > 注册顺序
+### 1.2 挑选规则：本插件偏好 > 全局偏好 > 优先级 > 位次
 
 业务句柄 `use` 打到本插件按这条规则选中的那一家。四层严格依此优先级：
 
 1. **本插件偏好**：给这个消费插件单独指定的 provider（`services.prefer(key, contextId, { for: 实例 id })`）。
 2. **全局偏好**：`services.prefer(key, contextId)` 指定的 provider，即使它的 `priority` 更低也排在前面。偏好可以在目标 entry 注册之前就设置。
 3. **优先级**：没有偏好、或偏好目标当前不存在时，按 `priority` 降序。偏好指向的那家回来后切回。
-4. **注册顺序**：`priority` 相同时，先注册者胜出。
+4. **位次**：`priority` 相同时按登记方排——宿主自己登记的最前，插件按实例 id 的码元序（逐个码元比较，不看语言环境），同一个插件登记的几条按登记先后。位次不看登记发生的时刻：插件重启、激活快慢、插件加进应用的先后都不改变默认是哪一家。
 
 `services.get` / `all` / `inspect` 按全局口径排序（不看本插件偏好）。
 
@@ -139,7 +139,7 @@ caps.provide.use(llm, handle, {
 
 ## 6. 能力选择在 `*-api` 层
 
-`provide.use` / `list()` / `services.get` 只认名字，没有能力参数。容器选择只走「本插件偏好 > 全局偏好 > 优先级 > 注册顺序」。
+`provide.use` / `list()` / `services.get` 只认名字，没有能力参数。容器选择只走「本插件偏好 > 全局偏好 > 优先级 > 位次」。
 
 能力是实例 / handle 上的元数据，由各领域 `*-api` helper 自行过滤。以 api-llm 为例：先 `caps.llm.list()` 取全集，再按条目的 `use.capabilities` 过滤；`resolveLLMModel(caps.llm, ref, requiredCaps)` 把 `{ provider, model }` 拼成条目 id `'${provider}/${model}'` 命中那条 per-entry，按模型直接取也可以写 `caps.llm.of('<provider>/<model>')`。
 

@@ -8,9 +8,9 @@ import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 import { provideEvents } from '../fixtures/hubs.js';
 
-// webui-server 在就绪时把扫描到的前端包登记成 webui-client 的条目。bounce 出来的新实例在自己激活落定后跑就绪回调，
+// webui-server 在就绪时把扫描到的前端包登记成 webui-client 的条目（优先级 -1）。bounce 出来的新实例在自己激活落定后跑就绪回调，
 // 登记要等插件状态机静置之后，落在这次激活的 provides 核对之后，与冷启动一样；
-// 主动 provide webui-client 的插件仍先于扫描到的包登记，默认胜出。
+// 主动 provide webui-client 的插件优先级更高，默认胜出。
 
 const apps: App[] = [];
 const dirs: string[] = [];

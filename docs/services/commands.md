@@ -77,7 +77,7 @@ export default definePlugin({
 });
 ```
 
-同名 provider 中，消费方选中哪一家按本插件偏好 > 全局偏好 > priority > 注册顺序。
+同名 provider 中，消费方选中哪一家按本插件偏好 > 全局偏好 > priority > 位次。
 
 ---
 

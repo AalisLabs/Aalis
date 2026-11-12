@@ -311,10 +311,11 @@ describe('plugin-usage-stats', () => {
     await stack.app.plugin(broken, {});
     await stack.app.plugins.idle();
     expect(toSource(stack.tabs().map(tab => tab.title))).toEqual(['按天', '按周', '按模型', '余额']);
+    // 各服务商按插件 id 排，不看谁先登记
     expect(toSource(await stack.pages.data<InfoItem[]>(PAGE, 'balance'))).toEqual([
+      { label: '显示名 broken-llm', value: { text: '查不到：认证失败', state: 'error' }, kind: 'status' },
       { label: '显示名 rich-llm（CNY）', value: 12.5 },
       { label: '显示名 rich-llm（USD）', value: 3 },
-      { label: '显示名 broken-llm', value: { text: '查不到：认证失败', state: 'error' }, kind: 'status' },
     ]);
 
     await stack.app.plugins.unload(rich.name);

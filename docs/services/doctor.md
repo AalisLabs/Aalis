@@ -268,7 +268,7 @@ export default definePlugin({
 关于注册，有几点需要注意：
 
 - `provide.use(doctor, instance, options?)` 的 `options.priority` 默认为 0。要抢占官方 doctor，设更高的 priority（数字越大越优先）。
-- 同名时消费方选中哪一家按本插件偏好 > 全局偏好 > priority > 注册顺序，不再有能力匹配（0.5.0 已移除）。详见 [service-model](../concepts/service-model.md) 与 [docs/core/service.md](../core/service.md)。
+- 同名时消费方选中哪一家按本插件偏好 > 全局偏好 > priority > 位次，不再有能力匹配（0.5.0 已移除）。详见 [service-model](../concepts/service-model.md) 与 [docs/core/service.md](../core/service.md)。
 - `provides` / `uses` 与 `package.json` 的 `aalis.service.provides` 双源都要写上 `'doctor'`。
 - 实现里务必对每条 check 做 try/catch（官方 doctor 就是这么做的），并在每次 `runChecks` 之后发出 `'doctor:updated'`，订阅结果的 consumer 靠它得知报告换了。
 

@@ -78,7 +78,7 @@ export const persona = defineService<PersonaService>('persona');
 
 ### 4.2 注册（priority / entryId / label）与双源同步
 
-`provide.use` 的 options 参数可以携带优先级与标签。persona 是单例服务，参考实现用最简形式 `provide.use(persona, service)`，默认优先级为 `0`。同名竞争时消费方选中哪一家按「本插件偏好 > 全局偏好 > priority > 注册顺序」决定（见 `docs/concepts/service-model.md`）。如果你想覆盖默认 persona，可以用更高优先级，或让用户经 ServicePreference 选中：
+`provide.use` 的 options 参数可以携带优先级与标签。persona 是单例服务，参考实现用最简形式 `provide.use(persona, service)`，默认优先级为 `0`。同名竞争时消费方选中哪一家按「本插件偏好 > 全局偏好 > priority > 位次」决定（见 `docs/concepts/service-model.md`）。如果你想覆盖默认 persona，可以用更高优先级，或让用户经 ServicePreference 选中：
 
 ```ts
 provide.use(persona, myService, { priority: 50, label: '我的人设引擎' });

@@ -178,7 +178,7 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 | `/api/themes` | GET | 插件经贡献点 `webui:theme` 提供的主题（[api-webui](../api/api-webui.md) 的「主题」一节）：`{ themes: [{ id, instance, theme }] }`，`id` 是贡献点的全局键，`theme` 是过了 `parseTheme` 的主题（缺的令牌按同种类的偏中性补齐）。不合格式的不列出，每份记一条告警；插件停用时它的贡献随之撤回，界面收到 `plugins.changed` 后重取。贡献点服务不在时为空 |
 | `/api/system-components` | GET | 系统组件：本地已装的内核、宿主、契约、规范与工具库，带安装源上的最新版与能否更新 |
 | `/api/platforms` | GET | 平台连接状态。`webui` 平台的连接数是打开着的 `/session` 连接数 |
-| `/api/models/:service` | GET | 按服务取可选项：`llm` 回 `{ providers }`，每项是一个模型（`model`、显示名 `provider`、`contextId`、`capabilities`），`contextId` 是提供它的插件实例 id（`llm-ref` 的取值 `{ provider, model }` 认的就是它）；`llm-thinking` 是深度思考的档位，按查询参数 `dependency`（模型引用 `{ provider, model }` 的 JSON，没带时按服务偏好，与对话时同一种解析）取那个模型声明的档位，回 `{ models, details: [{ value, label, default? }], labels }`，默认档带 `default: true`（会话没设这一项时界面据它写生效的档位，名字后的「（默认）」由界面加），`labels` 是全部模型声明过的档位 id → 名字（同一个 id 取先登记的，换了模型以后存着的档位不在可选项里，界面按它写名字），模型不能调时 `models` 与 `details` 为空，`dependency` 不是模型引用时回 400；工具分组（`toolGroups`）回 `{ models, details }`：已登记的分组与工具上出现过的分组的并集，`'*'` 在最前、标 `all`、说明写「包括以后新装插件的分组」，有工具的分组带组内工具的名字（`members`，按名字排），不属于任何分组的工具另交 `others`（这一行的名字「不属于任何分组的工具」与工具名，没有时不交）；其余服务合并各提供者的 `listModels()`，回 `{ models }`；某个提供者取不到时跳过它、记一条 warn 写明是哪个提供者与原因 |
+| `/api/models/:service` | GET | 按服务取可选项：`llm` 回 `{ providers }`，每项是一个模型（`model`、显示名 `provider`、`contextId`、`capabilities`），`contextId` 是提供它的插件实例 id（`llm-ref` 的取值 `{ provider, model }` 认的就是它）；`llm-thinking` 是深度思考的档位，按查询参数 `dependency`（模型引用 `{ provider, model }` 的 JSON，没带时按服务偏好，与对话时同一种解析）取那个模型声明的档位，回 `{ models, details: [{ value, label, default? }], labels }`，默认档带 `default: true`（会话没设这一项时界面据它写生效的档位，名字后的「（默认）」由界面加），`labels` 是全部模型声明过的档位 id → 名字（同一个 id 取提供者列表里排在前面的那一家的，换了模型以后存着的档位不在可选项里，界面按它写名字），模型不能调时 `models` 与 `details` 为空，`dependency` 不是模型引用时回 400；工具分组（`toolGroups`）回 `{ models, details }`：已登记的分组与工具上出现过的分组的并集，`'*'` 在最前、标 `all`、说明写「包括以后新装插件的分组」，有工具的分组带组内工具的名字（`members`，按名字排），不属于任何分组的工具另交 `others`（这一行的名字「不属于任何分组的工具」与工具名，没有时不交）；其余服务合并各提供者的 `listModels()`，回 `{ models }`；某个提供者取不到时跳过它、记一条 warn 写明是哪个提供者与原因 |
 | `/api/llm-providers/:contextId/refresh` | POST | 触发该 provider 重新探测模型列表（仅对支持运行时刷新的 provider 有效）。`:contextId` 是提供者的插件实例 id，与 `/api/models/llm` 给的 `contextId` 相同。名下的模型都不提供运行时刷新（如关闭了 `discoverModels`）、或名下没有已注册的模型时返回 404，分别说明 |
 | `/api/marketplace` · `/api/marketplace/depgraph` | GET | 市场搜索（`?q=`）/ 依赖图。检索走 `marketplaceRegistry`，结果再按搜索词在包名、描述、关键词与提供的服务上过滤（不区分大小写，空格分隔的每个词都要命中）。检索源不可达时只列本地已装的包，同样按搜索词过滤，响应带 `warning` 说明。卡片的最新版（`version`）、`updatable` 与没装的包提供的服务（`provides`）、`/api/system-components` 的 `latest`、依赖图里未安装包的依赖与服务，都按包名向安装实际使用的源（`package-manager` 报告的 npm registry）查，卡片与系统组件每包取一次 `/{包}/latest`；`package-manager` 缺席时退回检索源；安装源查不到时不给最新版与可更新，响应带 `warning` 说明原因。已装的包提供的服务取本地 package.json 的 `aalis.service.provides`，与卡片上的本地版本对得上。到检索源与安装源的请求各有 8 秒时限，客户端断开（换页、刷新）时随之中止 |
 | `/api/marketplace/install` · `/api/marketplace/uninstall` | POST | 体为 `{ name }`，卸载另收 `removeConfig`（布尔值，不给为 `false`，别的类型回 400）；需 `package-manager` 服务（缺失时 503）。安装后热加载，卸载后热卸载；卸载默认留着配置段与密钥，`removeConfig` 为 `true` 时一并删掉配置段与只有它用的密钥，停用标记都清掉；插件装上但激活失败、转为 `error` 态时仍返回 `{ ok: true }`，`message` 说明激活失败及原因；慢激活转入后台仍在进行、或在等 required 依赖时同样返回 `{ ok: true }`，`message` 说明尚未激活。装卸只接受插件与前端界面包；若有其它插件依赖该包正在提供的服务，且没有别的插件正在提供该服务，卸载被拒绝（该包自己激活失败、待配置或已停用时没在提供，卸掉它断不了谁，不拦）；正在提供这个界面（WebUI 服务端、前端、包管理）的包也不能卸。这些拒绝来自 `package-manager` 服务层，以 HTTP 200 返回 `{ ok: false, message }`。装上的是插件且已登记时，回执另带 `plugin`（它的主实例 id），界面据此打开它的详情 |
@@ -255,7 +255,7 @@ socket.onmessage = event => {
 | `layout.changed` | `POST /api/layout` 改动了记录（没有变化的操作不推） | 全部 `/admin` 连接 |
 | `attention.changed` | 审批推出或结算（`approval:created`、`approval:settled`）；提示的登记、替换与撤回（撤回已被替换的那次登记不算）；core 重算插件状态之后，插件故障与上一次推送时不同（别的插件启停这类与故障无关的重算不推） | 全部 `/admin` 连接 |
 | `server.closing` | 本插件收尾时（应用停机、重启，或本插件单独停用、重启） | 全部 `/admin` 连接 |
-| `client.reload` | 改或清除 `webui-client` 的服务偏好之后；装卸包后重新发现前端、摘掉了已不在的前端包之后 | 全部 `/admin` 连接 |
+| `client.reload` | 改或清除 `webui-client` 的服务偏好之后；装卸包后重新发现前端、摘掉了已不在的前端包之后；主动提供前端的插件上线或下线、活跃前端换了目录之后 | 全部 `/admin` 连接 |
 
 前端发来的只有 `log.subscribe`（可带 `filter`，再订阅一次换掉筛选）与 `log.unsubscribe`；认不出的消息（含写法不对的筛选）记一行告警「WebUI /admin 收到认不出的消息，已忽略」，连接与之前的订阅照常。连接关闭时它的日志订阅随之撤掉。本插件只在卸载时主动关闭连接（1001），客户端稍后重连。
 
@@ -320,7 +320,7 @@ socket.onmessage = event => {
 
 扫描的目录是安装集（`host-paths` 的 `app`）下的 `packages/` 与 `node_modules/@aalis`，另按安装集 `package.json` 的依赖解析前端包。宿主不提供 `host-paths` 时没有可扫的目录，发现不到任何前端，整个 WebUI 前端不可用，页面路径回 404「前端未就绪」，只剩 HTTP 接口；同时市场列表（`/api/marketplace`）与系统组件（`/api/system-components`）判断不了已装的包，返回 503。Node 宿主 `@aalis/runtime` 总会提供 `host-paths`。
 
-**挂载哪个**：`servicePreferences['webui-client']` > provider 优先级 > 注册顺序。改偏好（`POST /api/services/webui-client/prefer` `{contextId}`，owner 闸；默认前端在设置「系统」的服务偏好里改）后**实时重挂静态目录，向 `/admin` 推 `client.reload`**，无需重启进程。
+**挂载哪个**：`servicePreferences['webui-client']` > provider 优先级 > 位次。扫描到的前端由本插件以优先级 -1 代登记，插件主动提供的（缺省 0）默认胜出。改偏好（`POST /api/services/webui-client/prefer` `{contextId}`，owner 闸；默认前端在设置「系统」的服务偏好里改）后**实时重挂静态目录，向 `/admin` 推 `client.reload`**，无需重启进程；主动提供前端的插件运行中上线或下线、胜者换了目录时同样重挂。
 
 **前端的字典**：挂载一个前端时，读它静态目录下的 `aalis-texts.json`（api-webui 的 `CLIENT_TEXTS_FILE`，随前端打包的字典的目录条目），逐条登记进服务进程的目录（schema-i18n 的 `registerCatalogEntry`），「翻译」页因此列得出外壳的字典。没有这个文件照常挂载；读不出、不是数组时不登记，有条目不合格时合格的照登，都记告警。目录没有删除，换掉的前端的字典留着。
 

@@ -181,7 +181,7 @@ interface LocalFileDeps {
 
 有三条前提对使用 `media` 是必要的：
 
-- DI 按**名字**解析，每个消费方只选中一家 `media`：本插件偏好 > 全局偏好 > priority > 注册顺序。0.5.0 起**没有** capability-based 的服务选择——capability 概念活在 `MediaProcessor.capabilities`（实例内部池）里，不是 DI 的选择维度。见 [docs/concepts/service-model.md](../concepts/service-model.md)。
+- DI 按**名字**解析，每个消费方只选中一家 `media`：本插件偏好 > 全局偏好 > priority > 位次。0.5.0 起**没有** capability-based 的服务选择——capability 概念活在 `MediaProcessor.capabilities`（实例内部池）里，不是 DI 的选择维度。见 [docs/concepts/service-model.md](../concepts/service-model.md)。
 - 业务句柄 **`media.use` 是活的**，选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。
 - manifest 的双源（`package.json` 里的 `aalis.service` 与模块导出的 `provides`/`uses`）需要保持一致。见 [docs/concepts/manifest-metadata.md](../concepts/manifest-metadata.md)。
 

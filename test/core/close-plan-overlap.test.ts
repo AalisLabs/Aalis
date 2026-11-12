@@ -41,7 +41,7 @@ describe('交叠的关闭计划', () => {
     const sn = defineService<{ from: string }>('cpo-r-sn');
     const sm = defineService<{ from: string }>('cpo-r-sm');
     const sk = defineService<{ from: string }>('cpo-r-sk');
-    // alt 与 c 都提供 sm，p 选中先登记的 alt；c 只是没被选中的后备，但它对外提供 sm 让 p 的计划里多出一条连到 c 的边
+    // alt 与 c 都提供 sm，p 选中位次在前的 alt（cpo-alt 排在 cpo-c 前面）；c 只是没被选中的后备，但它对外提供 sm 让 p 的计划里多出一条连到 c 的边
     const alt = definePlugin({
       name: 'cpo-alt',
       provides: [sm],

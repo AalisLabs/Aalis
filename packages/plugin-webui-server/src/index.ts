@@ -103,6 +103,9 @@ const browserOpenedFor = new WeakSet<object>();
  */
 const FIXED_TOKEN_MIN_LENGTH = 32;
 
+/** 扫描发现、由本插件代登记的前端的优先级：低于插件主动提供的（缺省 0），主动覆盖默认胜出 */
+const DISCOVERED_CLIENT_PRIORITY = -1;
+
 /** 文档级 CSP */
 const DOCUMENT_CSP = [
   "default-src 'self'",
@@ -431,9 +434,11 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
   // 前端静态文件托管：前端包不是插件（无 apply，纯静态资源），托管权在本插件——
   // 就绪时由 client-discovery 按 `aalis.client` 标记发现候选，本插件把每个候选注册成
-  // 一条 webui-client 服务 provider，再由服务解析（偏好 > 优先级 > 注册顺序）定出活跃前端。
+  // 一条 webui-client 服务 provider，再由服务解析（偏好 > 优先级 > 位次）定出活跃前端。
   let clientDist = '';
   let staticMiddleware: express.RequestHandler | null = null;
+  /** 就绪时登记过扫描到的前端、挂过活跃前端；之后才跟着插件的上线与下线重挂 */
+  let clientsReady = false;
 
   function mountStaticDir(dir: string): void {
     if (existsSync(dir)) {
@@ -478,13 +483,13 @@ async function startWebuiServer(caps: Caps): Promise<void> {
    * 服务池里那条 provider 还在，仍可能被解析到一个已删除的目录。
    */
   const clientProviderDisposers = new Map<string, () => void>();
-  /** 当前活跃前端目录 = 解析后的 webui-client 服务（servicePreferences 偏好 > 优先级 > 注册顺序）。 */
+  /** 当前活跃前端目录 = 解析后的 webui-client 服务（servicePreferences 偏好 > 优先级 > 位次）。 */
   function currentClientDir(): string | undefined {
     // 动态查而不写进 uses：条目多由本插件代前端包登记，声明它会让本插件的按插件偏好也改到选择，静态目录的重挂只跟全局偏好
     return services.use.get(webuiClient)?.getClientDir?.();
   }
   /**
-   * 活跃前端可能变了时调用（改或清除 webui-client 的服务偏好、摘掉已不在的前端包）：重挂当前活跃前端，
+   * 活跃前端可能变了时调用（改或清除 webui-client 的服务偏好、摘掉已不在的前端包、插件上线或下线换了胜者）：重挂当前活跃前端，
    * 经 /admin 推 client.reload 让页面整页重载，换前端不重启进程。
    */
   function remountActiveClient(): void {
@@ -659,7 +664,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     const detail: ServiceListResponse['services'] = {};
 
     for (const svcName of serviceNames) {
-      // 枚举已按「偏好 > 优先级 > 注册顺序」排序，附带 priority 字段；只取登记元数据，不取实例
+      // 枚举已按「偏好 > 优先级 > 位次」排序，附带 priority 字段；只取登记元数据，不取实例
       const entries = services.use.inspect(svcName);
       detail[svcName] = {
         providers: entries.map(e => ({
@@ -678,7 +683,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
   /**
    * 改服务偏好，contextId 为 null 即清除：scope 不给 `for` 是全局偏好，给了是只对那个插件实例的本插件偏好。
-   * 挑选规则：本插件偏好 > 全局偏好 > priority > 注册顺序。偏好要跨重启保留就得写进文档（servicePreferences /
+   * 挑选规则：本插件偏好 > 全局偏好 > priority > 位次。偏好要跨重启保留就得写进文档（servicePreferences /
    * pluginServicePreferences），宿主没提供文档时不动运行态
    */
   const changePreference = async (
@@ -806,7 +811,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
     // 深度思考的档位：可选项依赖「模型」这一项，dependency 带它的值（条目 id，按 api-llm 的写法拆）；没带时没有可选项，
     // 不替调用方挑模型。默认档标 default（没设时界面据它写按哪一档跑），模型不能调时没有可选项。labels 是各模型声明过的
-    // 档位的名字（同一个 id 取先登记的）：换了模型以后存着的档位不在可选项里，界面按它写出名字
+    // 档位的名字（同一个 id 取 list() 里排在前面的那一家的）：换了模型以后存着的档位不在可选项里，界面按它写出名字
     if (serviceName === 'llm-thinking') {
       const { dependency } = req.query;
       const ref = typeof dependency === 'string' ? modelRefOf(dependency) : undefined;
@@ -938,6 +943,9 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     plugins.watch(() => {
       admin.send({ type: 'plugins.changed' });
       attention.pluginsChanged();
+      // 主动提供前端的插件运行中上线或下线，webui-client 的胜者随之换人：目录换了才重挂
+      const dir = currentClientDir();
+      if (clientsReady && dir && dir !== clientDist) remountActiveClient();
     }),
   );
   // 宿主配置文档变了（插件详情保存、手改配置文件、会话设置写全局层与偏好）：插件详情与界面语言据它重取
@@ -1093,7 +1101,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     );
     clientCandidates.push(...fresh);
     // 把每个新发现的前端注册为 webui-client 服务的一个 provider（带 label，供服务偏好里切换）。
-    // 外部插件在 apply 里主动提供 webui-client 的也已在服务池中（注册更早 → 默认胜出，仍可被偏好切换）。
+    // 代登记的优先级是 -1：外部插件在 apply 里主动提供的 webui-client（缺省 0）默认胜出，不看谁先登记，仍可被偏好切换。
     //
     // 代前端包登记：条目身份是前端**包名本身**——它是服务偏好里展示的 contextId，也是
     // servicePreferences['webui-client'] 里持久化的键，还是装卸闸按包名比对的对象。
@@ -1103,7 +1111,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         provide.use(
           webuiClient,
           { getClientDir: () => candidate.dir },
-          { label: candidate.label, entryId: candidate.id },
+          { label: candidate.label, entryId: candidate.id, priority: DISCOVERED_CLIENT_PRIORITY },
         ),
       );
       logger.use.info(`发现前端: ${candidate.label} (${candidate.dir})`);
@@ -1115,8 +1123,9 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     // 冷启动时 storage 的激活在就绪之前收敛；等晚到的读回落定，listen / autoOpen /
     // access.txt 用的就是持久化的 token
     if (tokenLoading) await tokenLoading;
-    // 等插件状态机静置再登记扫描到的前端：重启出来的新实例在自己激活落定后就跑就绪回调，随它重启的插件此刻还没
-    // 激活完；等过之后与冷启动一样晚于全部激活，主动覆盖仍先登记。代价：重算一直不收敛时，前端要等它收敛后才登记与挂上。
+    // 等插件状态机静置再登记扫描到的前端、挂活跃前端：重启出来的新实例在自己激活落定后就跑就绪回调，随它重启的插件此刻还没
+    // 激活完；等过之后与冷启动一样晚于全部激活，主动提供前端的插件已经上线，下面挂上的才是它（此后在改偏好、摘除前端、
+    // 插件上线或下线换了胜者时重挂）。代价：重算一直不收敛时，前端要等它收敛后才登记与挂上。
     // 与取消信号赛跑：等待期间本实例开始关闭时，关闭要等这个回调落定，而静置又要等这次关闭
     const { signal } = lifecycle.use;
     if (caps.plugins.present && !signal.aborted)
@@ -1128,7 +1137,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     // 接手的新实例 listen 报 EADDRINUSE，禁用之后端口照样应答
     if (signal.aborted) return;
     discoverAndProvideClients();
-    // 活跃前端 = 解析后的 webui-client 服务（servicePreferences 偏好 > 优先级 > 注册顺序）；零前端则 404。
+    // 活跃前端 = 解析后的 webui-client 服务（servicePreferences 偏好 > 优先级 > 位次）；零前端则 404。
     const activeDir = currentClientDir();
     if (activeDir) {
       clientDist = activeDir;
@@ -1137,6 +1146,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     } else {
       logger.use.warn('未发现任何前端（webui-client provider）；前端路由将 404，请安装一个 aalis.client 包');
     }
+    clientsReady = true;
 
     // 监听失败（典型 EADDRINUSE：3000 被别的 dev server 占了）是 bind 之后**异步 emit** 的，
     // 不在任何调用栈内，外层 try/catch 接不住 —— 无人处理即 uncaughtException →

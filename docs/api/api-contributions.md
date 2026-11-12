@@ -16,7 +16,7 @@
 |---|---|---|---|
 | events | `@aalis/api-events` | 执行 | 广播通知——无返回、错误隔离、不可拦截 |
 | hooks | `@aalis/api-hooks` | 执行 | 中间件管道——可变 data、可短路、错误上溯 |
-| services | core 原语 | 数据 | 按名选出**一家**提供者（本插件偏好 > 全局偏好 > 优先级 > 注册顺序） |
+| services | core 原语 | 数据 | 按名选出**一家**提供者（本插件偏好 > 全局偏好 > 优先级 > 位次） |
 | contributions | `@aalis/api-contributions` | 数据 | 确定性枚举**全量**（按全局键码元序） |
 
 ## 与 hooks 的分工（判别法）

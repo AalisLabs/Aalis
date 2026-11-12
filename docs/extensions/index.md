@@ -19,7 +19,7 @@
 
 ## 1. 服务描述符（不是一张核心类型表）
 
-契约包导出运行时描述符（`defineService` 的结果）。消费方 `import { tools } from '@aalis/api-tools'` 写进 `uses`，`apply` 参数类型从描述符推导。同名多实现时，`use` 打到哪一家由「本插件偏好 > 全局偏好 > priority > 注册顺序」决定。
+契约包导出运行时描述符（`defineService` 的结果）。消费方 `import { tools } from '@aalis/api-tools'` 写进 `uses`，`apply` 参数类型从描述符推导。同名多实现时，`use` 打到哪一家由「本插件偏好 > 全局偏好 > priority > 位次」决定。
 
 > 领域能力（LLM 的 tool-calling / vision 等）**不在描述符的 name 上**——
 > 它们挂在服务**实例 / model-handle 元数据**上，由各领域 `*-api` 的 helper（如 `resolveLLMModel`）按需筛选。

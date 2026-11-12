@@ -170,10 +170,10 @@ export default definePlugin({
 
 ## 7. 边界与注意事项
 
-- **路由依赖 `canHandle` / 前缀约定**：`resolvePlatformBySession` 对未实现 `canHandle` 的 adapter 用 `sessionId.startsWith(platform + ':')` 兜底（`src/index.ts`）。若你的 sessionId 既不带前缀又不实现 `canHandle`，它将永远无法被路由——`sendPlatformMessage` 抛「没有 platform adapter 能处理」。CLI 即是典型反例（`plugin-cli/src/index.ts`）。前缀兜底只认平台名、不认实例，同一插件装多个实例时按 `list()` 的顺序（本插件偏好 > 全局偏好 > priority > 注册顺序）落到第一个，所以能多实例的适配器要自己实现 `canHandle`（OneBot 即是）。
+- **路由依赖 `canHandle` / 前缀约定**：`resolvePlatformBySession` 对未实现 `canHandle` 的 adapter 用 `sessionId.startsWith(platform + ':')` 兜底（`src/index.ts`）。若你的 sessionId 既不带前缀又不实现 `canHandle`，它将永远无法被路由——`sendPlatformMessage` 抛「没有 platform adapter 能处理」。CLI 即是典型反例（`plugin-cli/src/index.ts`）。前缀兜底只认平台名、不认实例，同一插件装多个实例时按 `list()` 的顺序（本插件偏好 > 全局偏好 > priority > 位次）落到第一个，所以能多实例的适配器要自己实现 `canHandle`（OneBot 即是）。
 - **`getPlatformNames` 用 `adapter.platform` 字段去重，不是用服务名**：同一 `platform` 字符串值的多个 adapter 会被并成一个名。确保 `platform` 字段在你的生态里唯一且稳定（它会进 authority 作用域、user-relation 白名单、归档 metadata）。
 - **非标准扩展方法不在契约里**：OneBot 的 `getSelfMutes` / `getSentMessages` / `handleFriendRequest` 等是 `PlatformAdapter & {…}` 交叉类型上附加的扩展（`adapter-onebot/src/index.ts`），只对知情消费者（`plugin-tool-onebot`，按会话路由到所属实例后用 `typeof` 探测方法）可见。第三方 adapter **不要**依赖这些；要扩展平台专属能力，沿用「`callAction(sessionId, action, params)` 走平台原生 API」这条标准通道，或自己另起一个独立服务名而非污染 `platform` 契约。
-- **多 entry 时 `platform.use` 选中的那一家基本无意义**：因为 platform 是按名/按 sessionId 路由的多实例服务。误用 `platform.use` 当「主平台」会在多 adapter 时打到不确定的那一个（按本插件偏好 > 全局偏好 > priority > 注册顺序）。一律用 helper。
+- **多 entry 时 `platform.use` 选中的那一家基本无意义**：因为 platform 是按名/按 sessionId 路由的多实例服务。误用 `platform.use` 当「主平台」会在多 adapter 时打到不确定的那一个（按本插件偏好 > 全局偏好 > priority > 位次）。一律用 helper。
 
 ## 8. 交叉链接
 

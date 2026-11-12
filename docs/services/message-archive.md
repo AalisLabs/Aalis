@@ -174,7 +174,7 @@ export default definePlugin({
 
 注册要点（参考 `docs/concepts/service-model.md`）：
 
-- `priority`：默认 `0`。要覆盖内置归档实现取更高值（数字越大越优先，含义自行记载）。同名竞争时消费方选中哪一家按本插件偏好 > 全局偏好 > priority > 注册顺序。
+- `priority`：默认 `0`。要覆盖内置归档实现取更高值（数字越大越优先，含义自行记载）。同名竞争时消费方选中哪一家按本插件偏好 > 全局偏好 > priority > 位次。
 - `entryId`：单实例服务无须分桶；若一个插件按子来源拆多个归档实例，用 `entryId: '${lifecycle.use.id}/${sub}'`（见 `docs/concepts/manifest-metadata.md`）。
 - `label`：可选展示名，便于 WebUI 服务面板辨识。
 

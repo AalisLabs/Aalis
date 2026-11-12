@@ -168,7 +168,7 @@ export interface ServiceProviderView {
 }
 
 export interface ServiceListResponse {
-  /** 服务名 → 提供者（按偏好、优先级、登记先后排好，第一个就是正在用的）与偏好的提供者 */
+  /** 服务名 → 提供者（按偏好、优先级、位次排好，第一个就是正在用的）与偏好的提供者 */
   services: Record<string, { providers: ServiceProviderView[]; preferred: string | null }>;
 }
 

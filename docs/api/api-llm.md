@@ -183,7 +183,7 @@ export function resolveLLMModel(
 
 `entryId` 写成 `` `${lifecycle.use.id}/${modelId}` `` 是本契约的约定，core 不检查：`resolveLLMModel` 给全两项时按 `${provider}/${model}` 精确比较条目的 `id`，只给 provider 时按 `${provider}/` 前缀匹配，不按约定写的条目这两种引用都命不中。
 
-按 `{ provider, model }` 查 entry：provider+model 完全匹配优先，其次只 provider / 只 model，均为空则在满足 `requiredCaps` 的范围内按 `list()` 的次序拿首个（本插件选中的那一家在前，其余按 priority 与注册顺序）。上层 ConfigSchema 用 `type: 'llm-ref'` 字段统一编辑。
+按 `{ provider, model }` 查 entry：provider+model 完全匹配优先，其次只 provider / 只 model，均为空则在满足 `requiredCaps` 的范围内按 `list()` 的次序拿首个（本插件选中的那一家在前，其余按 priority 与位次）。上层 ConfigSchema 用 `type: 'llm-ref'` 字段统一编辑。
 
 模型引用的文字写法是条目 id `<提供者实例 id>/<模型 id>`，与 `/model` 列出的相同：
 

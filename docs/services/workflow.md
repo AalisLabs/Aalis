@@ -253,7 +253,7 @@ export default definePlugin({
 ### priority / entryId / label
 
 `provide.use(workflow, instance, { priority?, label?, entryId? })`：
-- `priority`：默认 `0`。同名服务竞争时消费方选中哪一家按 **本插件偏好 > 全局偏好 > priority > 注册顺序**（无能力匹配，0.5.0 已移除——能力挂在实例上而非 DI 层）。普通第三方实现保持 `0`，让用户在 WebUI 用 preference 选；要默认压过参考实现才取更高值（如 `50`）。
+- `priority`：默认 `0`。同名服务竞争时消费方选中哪一家按 **本插件偏好 > 全局偏好 > priority > 位次**（无能力匹配，0.5.0 已移除——能力挂在实例上而非 DI 层）。普通第三方实现保持 `0`，让用户在 WebUI 用 preference 选；要默认压过参考实现才取更高值（如 `50`）。
 - `entryId`：条目的逻辑身份，默认 `lifecycle.use.id`；格式由契约约定，core 不检查。卸载时按激活清理，与 entryId 无关。
 - `label`：WebUI 选择器展示名。
 

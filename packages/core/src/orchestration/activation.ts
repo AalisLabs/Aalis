@@ -22,6 +22,8 @@ interface Edge {
 export class Activation {
   readonly id: string;
   readonly owner: symbol;
+  /** 登记的位次：根激活是空串，插件激活是它的 id（见 ServiceEntry.seat） */
+  readonly seat: string;
   readonly logger: Logger;
   readonly config: Readonly<Record<string, unknown>>;
   readonly resources: Resources;
@@ -44,9 +46,11 @@ export class Activation {
     resources: Resources,
     services: ServiceContainer,
     owners: Map<symbol, Activation>,
+    seat: string,
   ) {
     this.id = id;
     this.owner = owner;
+    this.seat = seat;
     this.logger = logger;
     this.config = config;
     this.resources = resources;

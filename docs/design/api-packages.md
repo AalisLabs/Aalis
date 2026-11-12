@@ -36,7 +36,7 @@ export const memory = defineService<MemoryService>('memory');
 
 之后消费方 `uses: { memory }`，`apply` 里 `memory` 是选择层，`memory.use` 推断为 `MemoryService`（转发给本插件选中的那一家）。动态按名查询（`services.get('memory')`）没有类型可依凭，由调用方收窄。
 
-> **能力不在这里。** `use` / `list()` / `services.get` 只按服务名解析，**没有** capabilities 参数；同名多实现按「本插件偏好 > 全局偏好 > 优先级 > 注册顺序」选中一家（偏好由用户经 WebUI 的 Services 页或 `servicePreferences` 设）。领域能力（LLM 的 `tool_calling` / `vision` 等）是服务实例 / model handle 上的**元数据**（如 `LLMModel.capabilities`），由各领域 `*-api` 的 helper 函数过滤——见下方「领域能力」。
+> **能力不在这里。** `use` / `list()` / `services.get` 只按服务名解析，**没有** capabilities 参数；同名多实现按「本插件偏好 > 全局偏好 > 优先级 > 位次」选中一家（偏好由用户经 WebUI 的 Services 页或 `servicePreferences` 设）。领域能力（LLM 的 `tool_calling` / `vision` 等）是服务实例 / model handle 上的**元数据**（如 `LLMModel.capabilities`），由各领域 `*-api` 的 helper 函数过滤——见下方「领域能力」。
 
 ### 2. `AalisEvents` — 事件名 → 参数元组（`@aalis/api-events`）
 
@@ -191,7 +191,7 @@ export default definePlugin({
   name: '@scope/plugin-example',
   uses: { llm },
   apply({ llm }) {
-    const model = llm.use; // LLMModel（本插件选中的那一家：本插件偏好 > 全局偏好 > 优先级 > 注册顺序）
+    const model = llm.use; // LLMModel（本插件选中的那一家：本插件偏好 > 全局偏好 > 优先级 > 位次）
   },
 });
 ```

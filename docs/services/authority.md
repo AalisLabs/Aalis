@@ -160,7 +160,7 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<Verdict>;
 
 ### 4.2 注册（provide）
 
-DI 按名解析：同名 `'authority'` 的多家提供者中，消费方选中哪一家按「本插件偏好 > 全局偏好 > priority > 注册顺序」（见 docs/concepts/service-model.md）。要让你的实现覆盖参考实现，注册时给更高优先级：
+DI 按名解析：同名 `'authority'` 的多家提供者中，消费方选中哪一家按「本插件偏好 > 全局偏好 > priority > 位次」（见 docs/concepts/service-model.md）。要让你的实现覆盖参考实现，注册时给更高优先级：
 
 ```ts
 provide.use(authority, new MyAuthority(...), { priority: 50 }); // 高于默认 0 即覆盖

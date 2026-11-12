@@ -235,6 +235,59 @@ describe('/admin 管理面推送', () => {
     await vi.waitFor(() => expect(a.events).toContainEqual({ type: 'client.reload' }));
   });
 
+  it('主动提供前端的插件运行中上线、下线：胜者换了目录才重挂并推 client.reload', async () => {
+    const clientOf = (name: string, mark: string) => {
+      const dir = mkdtempSync(join(tmpdir(), 'aalis-admin-client-'));
+      dirs.push(dir);
+      writeFileSync(join(dir, 'index.html'), '<!doctype html>');
+      writeFileSync(join(dir, 'mark.txt'), mark);
+      return definePlugin({
+        name,
+        provides: [webuiClient],
+        uses: { provide },
+        apply({ provide }) {
+          provide.use(webuiClient, { getClientDir: () => dir });
+        },
+      });
+    };
+    const mounts: string[] = [];
+    const logger: Logger = {
+      ...silent,
+      info: (...args) => void (String(args[0]).startsWith('前端静态目录') && mounts.push(String(args[0]))),
+      child: () => logger,
+    };
+    const app = quietApp({ logLevel: 'info', logger });
+    const port = await start(app, async app => void (await app.plugin(clientOf('zz-client-late-seat', 'B'))));
+    // 就绪之前的插件变化不重挂：启动只挂一次
+    expect(mounts).toHaveLength(1);
+    const a = await openAdmin(port);
+    const mark = async () => (await fetch(`http://127.0.0.1:${port}/mark.txt`, { headers: { cookie: COOKIE } })).text();
+    /** 做一次插件变化并等它推到页面；交回这时托管的是哪个目录。plugins.changed 先于同一轮的 client.reload 发出，取目录又是一个来回 */
+    const change = async (act: () => Promise<unknown>) => {
+      const before = a.count('plugins.changed');
+      await act();
+      await app.plugins.idle();
+      await vi.waitFor(() => expect(a.count('plugins.changed')).toBeGreaterThan(before));
+      return mark();
+    };
+    expect(await mark()).toBe('B');
+
+    // 同优先级按位次：实例名排在前面的后来者胜出
+    expect(await change(() => app.plugin(clientOf('aa-client-early-seat', 'A')))).toBe('A');
+    await vi.waitFor(() => expect(a.count('client.reload')).toBe(1));
+
+    // 胜者没换的插件变化不重挂
+    expect(await change(() => app.plugin(definePlugin({ name: 'zz-unrelated', apply() {} })))).toBe('A');
+    expect(a.count('client.reload')).toBe(1);
+
+    expect(await change(() => app.plugins.disable('aa-client-early-seat'))).toBe('B');
+    await vi.waitFor(() => expect(a.count('client.reload')).toBe(2));
+
+    // 一家都不剩：没有可换的目录，不推
+    await change(() => app.plugins.disable('zz-client-late-seat'));
+    expect(a.count('client.reload')).toBe(2);
+  });
+
   it('8 个标签页的 /admin 与 /session 都是 WebSocket 升级（101），不占浏览器对每个主机约 6 条的 HTTP 连接', async () => {
     const app = quietApp();
     // /session 接到一个只收不发的会话服务替身，连接一直开着

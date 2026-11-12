@@ -253,7 +253,7 @@ export type WebuiAdminClientMessage = { type: 'log.subscribe'; filter?: LogFilte
  * - `layout.changed`：owner 的布局记录（固定的页面、会话面板的标签）变了，前端重取 `GET /api/layout`；
  * - `attention.changed`：「需要处理」变了（审批推出或结算、插件的故障有变、提示登记或撤回），前端重取 `GET /api/attention`；
  * - `server.closing`：提供管理面的插件正在关闭（应用停机、重启，或它单独停用、重启），连接随后断开；重连上以后前端整页重新加载；
- * - `client.reload`：前端偏好改了或有前端包被卸载，活跃前端可能换了，前端整页重新加载。
+ * - `client.reload`：前端偏好改了、有前端包被卸载，或提供前端的插件上线、下线，活跃前端可能换了，前端整页重新加载。
  */
 export type WebuiAdminEvent =
   | { type: 'log'; entry: LogEntry }

@@ -155,7 +155,7 @@ export default definePlugin({
 
 `provide.use(descriptor, instance, { priority?, label?, entryId? })`（`packages/core/src/composition/core-services.ts`）：
 
-- `priority`：默认 `0`。同名服务竞争时，消费方选中哪一家按 **本插件偏好 > 全局偏好 > priority > 注册顺序**；要默认压过普通后端取更高值（如 `50`）。普通第三方提供者保持 `0` 即可，让用户在 WebUI 里用 preference 选。
+- `priority`：默认 `0`。同名服务竞争时，消费方选中哪一家按 **本插件偏好 > 全局偏好 > priority > 位次**；要默认压过普通后端取更高值（如 `50`）。普通第三方提供者保持 `0` 即可，让用户在 WebUI 里用 preference 选。
 - `entryId`：默认本次激活 id，是条目的逻辑身份（偏好与展示认它）；core 不检查格式，卸载清理与 `provides` 校验都按激活身份归属。一个插件想登记多个 embedding 实例（如多端点）时用 `${lifecycle.use.id}/${sub}`。
 - `label`：人类可读名，WebUI 选择器和 `list()` 返回的条目里展示（两个参考实现都用 `\`OpenAI / ${model}\`` 这种形态）。
 

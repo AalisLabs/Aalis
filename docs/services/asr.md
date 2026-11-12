@@ -129,7 +129,7 @@ export default definePlugin({
 
 ### 注册要点
 
-- `provide.use(descriptor, instance, { priority, label, entryId })`（签名 `packages/core/src/composition/core-services.ts`）。同名多 provider 共存，消费方选中哪一家按「本插件偏好 > 全局偏好 > 优先级 > 注册顺序」（`docs/concepts/service-model.md`、`docs/core/service.md`）。
+- `provide.use(descriptor, instance, { priority, label, entryId })`（签名 `packages/core/src/composition/core-services.ts`）。同名多 provider 共存，消费方选中哪一家按「本插件偏好 > 全局偏好 > 优先级 > 位次」（`docs/concepts/service-model.md`、`docs/core/service.md`）。
 - **priority**：普通数字，越大越优先，含义自行记载。写成插件里的常量，只作提供者之间的默认先后：参考实现用 50（云）/ 80（本地，质量更高默认更优先）。不要把 priority 开成插件配置：用户要换转写后端，设 media 的 `audio.prefer`，再开一个优先级配置，同一件事就有了两个入口。服务偏好只决定 `asr.use` 打到哪一家，media 回退时按 priority 排，偏好只在优先级相同时决胜。
 - **中止信号**：`input.signal` 与本插件这次激活的信号（`lifecycle.use.signal`）合并后交给下载、请求与子进程：调用方中止、或提供方停用、重启时都停下，以中止原因拒绝；超时照旧，谁先到按谁停。参考实现都这样做。
 - **缺必填配置要抛错，不要静默 `return`**：因为声明了 `provides:['asr']` 却没 `provide`，core 激活后校验会把插件标记为 error（`docs/concepts/manifest-metadata.md` §`provides` / `plugin-activation.ts`），错误信息很难懂。参考实现的做法是抛清晰中文错误（`plugin-asr-openai/src/index.ts`、`plugin-asr-whisper-cpp/src/index.ts`）。
@@ -225,7 +225,7 @@ process/storage 取业务句柄 `caps.proc.use` / `caps.storage.use` 传给实�
 
 ## 7. 交叉链接
 
-- `docs/concepts/service-model.md` —— DI 按名仲裁（偏好 > 优先级 > 注册顺序）、无 capability 选择
+- `docs/concepts/service-model.md` —— DI 按名仲裁（偏好 > 优先级 > 位次）、无 capability 选择
 - `docs/concepts/lazy-service-access.md` —— 业务句柄为什么是活的、provider bounce
 - `docs/concepts/manifest-metadata.md` —— `provides`/`uses` 双源、市场披露
 - `docs/concepts/storage-uri-grammar.md` —— `<root>:/path` 文法、`isStorageUri`

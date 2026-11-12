@@ -32,7 +32,7 @@ interface PkgLike {
 /**
  * 发现所有前端包：在 scanDirs 各目录下逐子目录、以及 depIds（项目根 deps）里，收录 package.json
  * 标了 `aalis.client:true` 且其 `dist/index.html` 存在的包。按包名去重，再按 id 排序（确定性输出）。
- * 活跃前端由 webui-client 服务解析决定（偏好 > 优先级 > 注册顺序），本函数只负责发现、不做偏好判断、
+ * 活跃前端由 webui-client 服务解析决定（偏好 > 优先级 > 位次），本函数只负责发现、不做偏好判断、
  * 不认任何具体名字。
  */
 export function discoverClients(scanDirs: string[], depIds: string[], env: DiscoveryEnv): ClientCandidate[] {

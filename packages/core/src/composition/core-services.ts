@@ -34,6 +34,7 @@ export interface ProvideOptions {
 interface CoreCaller {
   readonly id: string;
   readonly owner: symbol;
+  readonly seat: string;
   readonly logger: Logger;
   readonly config: Readonly<Record<string, unknown>>;
   readonly resources: Resources;
@@ -190,7 +191,7 @@ export function coreProviders(
           `可能是两个无关的契约取了同一个服务名，也可能是同一个 api 包装了两份：对照两边导入描述符的包，` +
           `包名不同是撞名（服务名应带包名前缀），包名相同用 npm ls <包名> 查重复安装、去重后只留一份。`,
       );
-    const off = container.register(name, implementation, entryId, c.owner, { ...options, descriptor });
+    const off = container.register(name, implementation, entryId, c.owner, { ...options, descriptor, seat: c.seat });
     runtime.serviceChanged(name);
     // 一个激活登记多个条目（每个模型、每个存储根各一条）时带上条目 id，否则同名的登记行无从区分
     c.logger.debug(entryId === c.id ? `服务已注册: ${name}` : `服务已注册: ${name}（${entryId}）`);

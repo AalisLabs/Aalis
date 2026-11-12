@@ -99,7 +99,7 @@ describe('webui-server 前端偏好切换：重挂不依赖落盘成功', () => 
     provideEvents(app);
     const host = app.bind({ provide, webuiClient });
     host.provide.use(storage, makeFakeStorage());
-    // 先注册者默认胜出：A 是启动时挂载的前端，B 是切换目标。逐个 await，登记顺序才确定。
+    // 同优先级按插件 id 排，clientA 默认胜出：A 是启动时挂载的前端，B 是切换目标。
     await app.plugin(clientProvider('clientA', dirA));
     await app.plugin(clientProvider('clientB', dirB));
     await app.plugins.idle();
@@ -128,7 +128,7 @@ describe('webui-server 前端偏好切换：重挂不依赖落盘成功', () => 
         await sleep(20);
       }
     }
-    expect(first, '前置：启动后挂的是先注册的 A').toContain('CLIENT-A');
+    expect(first, '前置：启动后挂的是插件 id 在前的 A').toContain('CLIENT-A');
     const prefer = () =>
       fetch(`${base}/api/services/webui-client/prefer`, {
         method: 'POST',

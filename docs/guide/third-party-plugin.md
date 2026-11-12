@@ -99,7 +99,7 @@ export default definePlugin({
 ```
 
 `provide.use(descriptor, instance, options?)` 的 `options`：`priority`、`exclusive`、`label`、`entryId`。
-core 不做服务能力选择。服务选择只看「本插件偏好 > 全局偏好 > 优先级 > 注册顺序」，跨实例的「按能力挑选」交给领域 helper。
+core 不做服务能力选择。服务选择只看「本插件偏好 > 全局偏好 > 优先级 > 位次」，跨实例的「按能力挑选」交给领域 helper。
 
 #### 能力挂在 handle 元数据上
 

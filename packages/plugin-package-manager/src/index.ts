@@ -1158,7 +1158,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // 并提供 HTTP 面）、`package-manager`（装卸能力本身）。少任何一样，用户就只能开 shell。
     //
     // 判据是**「谁在提供我此刻依赖的服务」而不是包名**——第三方换个实现照样受保护，
-    // 而 `services.all` 的首个条目即当前生效者（偏好 > 优先级 > 注册顺序），
+    // 而 `services.all` 的首个条目即当前生效者（偏好 > 优先级 > 位次），
     // webui-server 与 package-manager 都是用包名做实例 id 的插件。
     //
     // 只拦「当前生效的那个」：想换实现的正常路径是「装新的 → 切过去 → 再卸旧的」，

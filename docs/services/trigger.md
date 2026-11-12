@@ -120,7 +120,7 @@ export default definePlugin({
 
 ## 5. 行为不变量
 
-- **二选一**。选中哪一家按服务的挑选规则：本插件偏好 > 全局偏好 > 优先级 > 注册顺序。每条消息只由生效者判定；不生效的触发插件对这条消息不做任何事。两者都启用、没有偏好时由 trigger-policy 生效（Laya 的优先级 -10 低于它的 0，两者都是插件里的常量，选哪个只用偏好；从源码运行时 Laya 会被自动发现并启用，但默认不生效）；想用 Laya，在配置文件的 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，或在 WebUI 设置「系统」的服务偏好里切换 `trigger`。
+- **二选一**。选中哪一家按服务的挑选规则：本插件偏好 > 全局偏好 > 优先级 > 位次。每条消息只由生效者判定；不生效的触发插件对这条消息不做任何事。两者都启用、没有偏好时由 trigger-policy 生效（Laya 的优先级 -10 低于它的 0，两者都是插件里的常量，选哪个只用偏好；从源码运行时 Laya 会被自动发现并启用，但默认不生效）；想用 Laya，在配置文件的 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，或在 WebUI 设置「系统」的服务偏好里切换 `trigger`。
 - **生效者每次入站只取一次**。`isActiveTrigger` 在相位里先跑到的触发插件处取下 trigger 选中那一条的 id，以这次入站的相位数据为键记下（api-trigger 模块内的 `WeakMap`，经全局符号表取同一个对象：契约包装了两份、两个触发插件各用一份时仍共用这张表），后跑到的沿用它。判定途中切换偏好、停用或重载触发插件时，同一条消息不会被两个触发插件各判一次：在途消息由取下的那个判完；它若在轮到自己之前就被停用（中间件已从链上撤下），这条消息不经判定直接放行。
 - **切换即时生效**。在 WebUI 设置「系统」的服务偏好里把 `trigger` 切到另一个触发插件，下一条消息起由它判定；停用生效的触发插件，下一条消息由剩下的接手。手改 `aalis.config.yaml` 的 `servicePreferences` 随配置热重载生效。不要给单个触发插件设 `trigger` 的本插件偏好：生效者由相位里先跑到的那个触发插件按它自己的选择取下，各插件的选择不同时，谁生效取决于哪个先跑到。
 - **owner 自己的会话不经本相位**。房间类别为 `owner-only` 的会话由 plugin-gateway 跳过 `inbound:trigger`（[结构性放行](../plugins/plugin-gateway.md#结构性放行)），触发插件收不到这些消息，不必按平台或生效范围另做判断。
@@ -139,4 +139,4 @@ export default definePlugin({
 - [services/flow-control](./flow-control.md) — 下一相位的禁言、冷却与限速。
 - [services/media](./media.md) — `processMessage` 与附件描述。
 - [services/message](./message.md) — `buildIncomingContent`：与归档逐字一致的当前消息文本（说话人按 [api-message-archive 的 `speakerOf`](./message-archive.md)）。
-- [concepts/service-model](../concepts/service-model.md) — 多提供者的解析顺序（本插件偏好 > 全局偏好 > 优先级 > 注册顺序）。
+- [concepts/service-model](../concepts/service-model.md) — 多提供者的解析顺序（本插件偏好 > 全局偏好 > 优先级 > 位次）。

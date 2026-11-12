@@ -24,7 +24,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-/** OneBot 的适配器：认领 onebot: 开头的会话 id。在终端之后登记，按 id 解析归属时终端排在它前面 */
+/** OneBot 的适配器：认领 onebot: 开头的会话 id。插件 id 排在终端之后，按会话 id 解析归属时终端排在它前面 */
 const onebotAdapter = definePlugin({
   name: 'zz-adapter-onebot',
   provides: [platform],

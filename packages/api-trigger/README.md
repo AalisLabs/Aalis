@@ -4,7 +4,7 @@
 
 ## 角色
 
-- `trigger`：标记当前生效的触发插件。触发插件各自 `provide(trigger, 自己的实例)` 并在 `inbound:trigger` 相位挂中间件；服务胜者（偏好 > 优先级 > 注册顺序）即生效者，其余触发插件对每条消息直接放行。二选一，同一条消息只由生效者判定。
+- `trigger`：标记当前生效的触发插件。触发插件各自 `provide(trigger, 自己的实例)` 并在 `inbound:trigger` 相位挂中间件；服务胜者（偏好 > 优先级 > 位次）即生效者，其余触发插件对每条消息直接放行。二选一，同一条消息只由生效者判定。
 - 共用的函数：`isActiveTrigger`（这次入站是否由自己判定）、`hitsMuteKeyword`、`createBotNames`（名字表：别名与在用的人设的名字、昵称，人设按会话取，读名字出错时只剩别名）、`isAddressed`、`markTriggered`、`archiveSwallowed`。写日志的函数由调用方传入日志前缀。
 
 ## 安装

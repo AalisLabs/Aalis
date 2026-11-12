@@ -1325,7 +1325,7 @@ describe('自锁闸：生产接线算出的撤销通道名单', () => {
       await app.plugins.register(stubPlugin(pkg, svc));
     }
     // package-manager 自己按真实形态装载，它 provide 出来的 contextId 就是包名。
-    // **不能**另注册一个同名桩——那会按注册顺序占住解析结果，拿不到真服务。
+    // **不能**另注册一个同名桩——那会占住解析结果，拿不到真服务。
     // 闸的顺序是「先读 package.json 判类型、再查撤销通道」，所以得让这几个包可解析——
     // 注入一个只回 package.json 的假 process 服务（它们在真实部署里本就装着）。
     const CHANNEL_PKGS: Record<string, string> = {

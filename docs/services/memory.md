@@ -95,7 +95,7 @@ deleteMessagesByTimestamps?(sessionId, timestamps): Promise<number>; // 按时�
 | `plugin-memory-inmemory` | `-100` | 进程内 fallback，不持久化，同样全量实现可选方法 |
 | `plugin-memory-mongodb` | `5` | MongoDB 后端 |
 
-DI 按名挑选：本插件偏好 > 全局偏好 > priority > 注册顺序（见 `docs/concepts/service-model.md`）。sqlite（10）默认高于 inmemory（-100），两者同时装载且没有偏好时选中 sqlite。
+DI 按名挑选：本插件偏好 > 全局偏好 > priority > 位次（见 `docs/concepts/service-model.md`）。sqlite（10）默认高于 inmemory（-100），两者同时装载且没有偏好时选中 sqlite。
 
 ### 消费方（典型读写点）
 

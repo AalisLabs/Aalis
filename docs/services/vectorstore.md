@@ -140,7 +140,7 @@ export default definePlugin({
 
 注册细节：
 
-- `provide.use(vectorstore, store, opts?)`。`opts.priority` 是普通数字（越大越优先，含义自行记载）；lancedb 用 `10` 表「优先于 flat 默认」。同名竞争时消费方选中哪一家：**本插件偏好 > 全局偏好 > priority > 注册顺序**（DI 仅按名，无能力匹配，见 docs/concepts/service-model.md）。
+- `provide.use(vectorstore, store, opts?)`。`opts.priority` 是普通数字（越大越优先，含义自行记载）；lancedb 用 `10` 表「优先于 flat 默认」。同名竞争时消费方选中哪一家：**本插件偏好 > 全局偏好 > priority > 位次**（DI 仅按名，无能力匹配，见 docs/concepts/service-model.md）。
 - 存储路径用 storage URI（如 `data:/vectorstore`），经 `toStorageUri()` 归一；需要本地真实路径（LanceDB 这类原生库）用 `caps.storage.use.resolveLocalPath(uri, 'write')`。注意：vectorstore 自身不是单 owner 上下文里的「按会话隔离」资源，隔离靠消费者写进 metadata 的字段（见 §6）。
 
 ## 5. 消费者标准写法

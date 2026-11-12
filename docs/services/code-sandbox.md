@@ -120,7 +120,7 @@ export default definePlugin({
 });
 ```
 
-同名多实现时，消费方选中哪一家按「本插件偏好 > 全局偏好 > priority > 注册顺序」——这是纯按名选择，没有能力维度的匹配（详见 [服务模型](../concepts/service-model.md)）。
+同名多实现时，消费方选中哪一家按「本插件偏好 > 全局偏好 > priority > 位次」——这是纯按名选择，没有能力维度的匹配（详见 [服务模型](../concepts/service-model.md)）。
 
 ### 双源元数据要同步
 `provides` / `uses` 有两套独立来源，部署时都要写对（见 [清单元数据](../concepts/manifest-metadata.md)）：

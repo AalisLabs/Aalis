@@ -88,7 +88,7 @@ export type ValidateResult =
 
 ## 4. 写一个 provider
 
-绝大多数作者**不需要**再写 provider——官方 `@aalis/plugin-cron-engine` 已是唯一实现，重复 provide 同名服务时，消费方只会按「本插件偏好 > 全局偏好 > priority > 注册顺序」选中其中一家（见 [service-model](../concepts/service-model.md)）。仅当你要替换调度后端（例如换持久化的分布式定时）时才自行实现。
+绝大多数作者**不需要**再写 provider——官方 `@aalis/plugin-cron-engine` 已是唯一实现，重复 provide 同名服务时，消费方只会按「本插件偏好 > 全局偏好 > priority > 位次」选中其中一家（见 [service-model](../concepts/service-model.md)）。仅当你要替换调度后端（例如换持久化的分布式定时）时才自行实现。
 
 最小必须实现 = 接口三个方法 `subscribe / validate / nextFireTime`。可选 = `timeZone` 支持（不支持时建议忽略该参数并按本地时区评估，行为退化但不报错）。可直接复用 `@aalis/util-cron` 的纯函数完成校验与匹配，骨架如下：
 

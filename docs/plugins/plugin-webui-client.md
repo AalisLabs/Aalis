@@ -35,7 +35,7 @@ runtime 不加载它；打包产物由 `@aalis/plugin-webui-server` 托管。
    `aalis.client: true` 且存在 `dist/index.html` 的包即为前端候选（不认任何具体包名）
 3. webui-server 把每个候选注册成一条 `webui-client` 服务 provider（`getClientDir()`）
 4. 活跃前端 = `webui-client` 的服务解析结果（`servicePreferences['webui-client']` 偏好 >
-   provider 优先级 > 注册顺序），由 webui-server 挂成 Express 静态目录；切换偏好即实时重挂，
+   provider 优先级 > 位次），由 webui-server 挂成 Express 静态目录；切换偏好即实时重挂，
    并经 `/admin` 推 `client.reload` 让页面重载，无需重启
 
 第三方要换前端，正解就是照上面打 `aalis.client` 标记（详见 `docs/services/webui.md` 第 4b 节），
