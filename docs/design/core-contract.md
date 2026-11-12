@@ -22,6 +22,7 @@ preflight 执行；core 源码禁用 v8 / c8 / istanbul 的 ignore 注释，由 
 - 分工：要实例用 `services.get` / `services.all`（返回登记进容器的对象本身），展示与对外输出用 `services.inspect`（只投影登记元数据，选中的那一条带 `selected` 与 `basis`，不返回实例，可以放心序列化）。插件的业务调用只经 `uses` 声明的选择层，`get` / `all` 只用来查在不在、列运行期服务名的提供者与取身份键。
 - `provide.use(descriptor, impl, options?)` 是唯一发布入口。`options.entryId` 给条目指定逻辑身份（偏好、展示与 `of(id)` 认它，core 不检查格式），清理仍归本激活；同一激活登记同一服务的多条时各给一个。`provides` 按登记的激活核对：以任何逻辑身份登记的条目都计入登记方。
 - 资源口的 `identity` 是这次激活的不透明资源身份，即调用方身份：提供者据它认出调用方、把登记归到这次激活。每次激活各不相同，同一 id 的前后两次激活也不同。
+- 资源口的 `seat` 是这次激活的登记位次（宿主的根是空串，插件激活是它的实例 id）：提供者给跨插件的登记排次序时先比它的码元序，同一位次再按登记先后，与服务的位次同一条规则。
 - 进程里只能有一份 `@aalis/core`：另一份副本造的描述符、`optional` 包装在定义校验处（`definePlugin` 与注册）一律拒绝，宿主 runtime 在 import 插件前也会按包目录核对并拒载该插件。`provide` 只按服务名登记，不查副本。
 - 描述符与 `optional()` 包装造出即冻结。插件定义的 `uses`、`provides` 只收 `defineService` / `optional()` 造出来的对象，手写的同形对象与展开出来的副本在定义校验处拒绝；`provide.use` 与 `app.bind` 不做这道检查，`provide.use` 的第一个参数没有服务名时抛错。
 

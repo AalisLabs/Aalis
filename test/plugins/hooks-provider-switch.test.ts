@@ -1,6 +1,3 @@
-import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { type Hooks, hooks } from '../../packages/api-hooks/src/index.js';
@@ -13,13 +10,13 @@ import { registerHubs } from '../fixtures/hubs.js';
 // 钩子与贡献点由插件提供之后，提供者本身会上下线或换人。本文件钉住这几种情形下的实际行为：
 //   - 卡链告警改由 plugin-hooks 的日志器发出；
 //   - 没有提供者时 run 以被拒的 Promise 传出，不执行默认动作；
-//   - 提供者 bounce：依赖方随之重启，链按重新激活的次序重建，与冷启动同序；
-//   - 非独占下第二个提供者以更高优先级上线（热换）：消费者不重启，归属表整体重挂。每条登记自带登记序，
-//     新提供者按它排链，链序与换人前相同。core 在换人那次调用里同步驱动各归属表重挂，provide 返回时新表已完整。
+//   - 提供者 bounce：依赖方随之重启，链与冷启动同序；
+//   - 非独占下第二个提供者以更高优先级上线（热换）：消费者不重启，归属表整体重挂。每条登记自带位次与登记序，
+//     新提供者按它们排链，链序与换人前相同。core 在换人那次调用里同步驱动各归属表重挂，provide 返回时新表已完整。
 //   - 已知现状：换人时正在执行的链会跳过已移走的 handler，截停者被跳过时默认动作照样执行。旧登记表分不清
 //     「插件关了」与「搬去了新提供者」，两种修法各有代价；触发需运行中上线第二个钩子提供者，首方没有这种部署。
 //     上一条在这里显式钉住，改动时必须是有意识的。
-//   - 登记序由进程内全部 api-hooks 副本共用的计数器分配：契约包装了两份时，链序仍是登记序。
+// 链按登记方的位次排：用例里要谁在前，就让它的插件 id 排在前面。
 // ════════════════════════════════════════════════════════════
 
 const H = '__t:switch' as never;
@@ -78,12 +75,12 @@ describe('卡链告警与无提供者', () => {
     await app.pluginAll(
       [
         definePlugin({
-          name: 'stuck',
+          name: 'a-stuck',
           uses: { hooks },
           apply: ({ hooks }) => void hooks.use.middleware(H, async () => {}),
         }),
         definePlugin({
-          name: 'after',
+          name: 'b-after',
           uses: { hooks },
           apply: ({ hooks }) => void hooks.use.middleware(H, async (_d, next) => next()),
         }),
@@ -143,7 +140,7 @@ describe('提供者 bounce：依赖方重启，链与冷启动同序', () => {
 });
 
 describe('非独占热换（第二个提供者以更高优先级上线）', () => {
-  it('消费者不重启，归属表整体重挂到新提供者；跨消费者交错登记的链序保持不变', async () => {
+  it('消费者不重启，归属表整体重挂到新提供者；链序与换人前相同', async () => {
     const trail: string[] = [];
     const applied: string[] = [];
     const facades = new Map<string, Hooks>();
@@ -155,14 +152,14 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
       })),
     );
     await app.plugins.idle();
-    // a 在 b 之后再登记一条：原表里是 a1、b1、a2 交错
+    // a 在 b 之后再登记一条：按位次排，a 的两条都在 b 之前
     facades.get('a')?.middleware(H, async (_d, next) => {
       trail.push('a2');
       await next();
     });
     const host = app.bind({ hooks });
     await host.hooks.use.run(H, {} as never);
-    expect(trail).toEqual(['a1', 'b1', 'a2']);
+    expect(trail).toEqual(['a1', 'a2', 'b1']);
 
     await app.plugin(altHooks);
     await app.plugins.idle();
@@ -170,7 +167,7 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
     trail.length = 0;
     await host.hooks.use.run(H, {} as never);
     expect(applied, '消费者没有重启').toEqual(['a', 'b']);
-    expect(trail, '归属表整批重挂，但新提供者按登记序排链：仍是 a1、b1、a2 交错').toEqual(['a1', 'b1', 'a2']);
+    expect(trail, '归属表整批重挂，新提供者上链序相同').toEqual(['a1', 'a2', 'b1']);
   });
 
   it('已知现状：在飞链途中换人，已移走的截停者被跳过，run 返回 true 且执行默认动作', async () => {
@@ -187,7 +184,7 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
     await app.pluginAll(
       [
         definePlugin({
-          name: 'slow',
+          name: 'a-slow',
           uses: { hooks },
           apply: ({ hooks }) =>
             void hooks.use.middleware(H, async (_d, next) => {
@@ -198,7 +195,7 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
         }),
         // 截停者：不调 next，默认动作本不该执行
         definePlugin({
-          name: 'guard',
+          name: 'b-guard',
           uses: { hooks },
           apply: ({ hooks }) => void hooks.use.middleware(H, async () => {}),
         }),
@@ -227,7 +224,7 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
       entered2 = r;
     });
     const slowAgain = definePlugin({
-      name: 'slow2',
+      name: 'a-slow2',
       uses: { hooks },
       apply: ({ hooks }) =>
         void hooks.use.middleware('__t:switch-2' as never, async (_d, next) => {
@@ -237,7 +234,7 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
         }),
     });
     const guardAgain = definePlugin({
-      name: 'guard2',
+      name: 'b-guard2',
       uses: { hooks },
       apply: ({ hooks }) => void hooks.use.middleware('__t:switch-2' as never, async () => {}),
     });
@@ -314,50 +311,5 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
     });
     expect(sameTick, '同一拍发起的链被截停').toBe(false);
     expect(defaulted, '不执行默认动作').toBe(false);
-  });
-});
-
-describe('登记序跨契约包副本', () => {
-  it('进程里装了两份 api-hooks：后登记的仍排在后面（计数器全进程共用）', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'aalis-api-hooks-copy-'));
-    try {
-      // 第二个模块实例：同一份源码换个路径导入，与第一份共用同一份 core
-      copyFileSync(join(import.meta.dirname, '../../packages/api-hooks/src/index.ts'), join(dir, 'index.ts'));
-      const second = (await import(join(dir, 'index.ts'))) as { hooks: typeof hooks };
-      expect(second.hooks).not.toBe(hooks);
-
-      const trail: string[] = [];
-      const app = world();
-      await registerHubs(app);
-      const early = ['p1', 'p2', 'p3'].map(name =>
-        definePlugin({
-          name,
-          uses: { hooks },
-          apply: ({ hooks }) =>
-            void hooks.use.middleware(H, async (_d, next) => {
-              trail.push(name);
-              await next();
-            }),
-        }),
-      );
-      await app.pluginAll(early.map(definition => ({ definition })));
-      await app.plugins.idle();
-      await app.plugin(
-        definePlugin({
-          name: 'later',
-          uses: { hooks: second.hooks },
-          apply: ({ hooks: other }) =>
-            void other.use.middleware(H, async (_d, next) => {
-              trail.push('later');
-              await next();
-            }),
-        }),
-      );
-      await app.plugins.idle();
-      await app.bind({ hooks }).hooks.use.run(H, {} as never);
-      expect(trail).toEqual(['p1', 'p2', 'p3', 'later']);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
   });
 });

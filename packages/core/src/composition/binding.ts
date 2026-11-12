@@ -56,6 +56,7 @@ interface BindingScope {
   readonly id: string;
   /** 清理归属：原语登记与关停边认它，不是逻辑 id */
   readonly owner: symbol;
+  readonly seat: string;
   readonly logger: Logger;
   readonly resources: Resources;
   readonly services: Pick<ServiceContainer, 'ranked'>;
@@ -307,6 +308,7 @@ function createTarget<P, B>(
   const port: BindingPort<P> = {
     id: scope.id,
     identity: scope.owner,
+    seat: scope.seat,
     logger: scope.logger,
     get present() {
       return current() !== undefined;

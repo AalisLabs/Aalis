@@ -386,9 +386,8 @@ async function setup({
 }
 
 /**
- * 审批服务是只记接入的替身（会话服务的审批要用会话管理，用它聊天审批就排不到会话管理前面），会话管理最后启用：它的入站监听
- * 排在聊天审批之后。替身的在场只看最近一次在场上报是不是在 presenceMs 之内。emit 发一条入站（缺省是 owner 经账号甲在私聊里
- * 说的），等相位链执行完毕
+ * 审批服务是只记接入的替身。会话管理的入站监听排在聊天审批之后（聊天审批的插件 id 在前）。替身的在场只看最近一次在场上报
+ * 是不是在 presenceMs 之内。emit 发一条入站（缺省是 owner 经账号甲在私聊里说的），等相位链执行完毕
  */
 async function stubbed(presenceMs = 10 * MINUTE) {
   const { app } = hostedApp({ owners: [OWNER_QQ] });
@@ -836,7 +835,7 @@ describe('接入与在场', () => {
     expect(message.sessionId).toBe(OWNER_DM_B);
   });
 
-  it('会话管理的入站监听排在聊天审批之后（会话管理后启用）：她第一次私聊这个账号，第一条消息照样建接入、上报在场', async () => {
+  it('会话管理的入站监听排在聊天审批之后：她第一次私聊这个账号，第一条消息照样建接入、上报在场', async () => {
     const s = await stubbed();
     await s.emit({ sessionId: OWNER_DM, sessionType: 'private' });
     expect(s.attended).toEqual([{ who: OWNER_QQ, scope: { selfId: SELF }, presence: [true], left: false }]);

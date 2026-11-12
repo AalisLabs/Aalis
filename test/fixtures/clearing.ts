@@ -35,7 +35,8 @@ export async function command(app: App, sessionId: string, line: string): Promis
 
 /**
  * 删除或清理的一段里阻塞一家：只听 session:deleted 的一家（收到就阻塞），或先清再调 next 的一家清理（如人设、检查点）。entered
- * 在它第一次阻塞时落定，release 之后放行（之后的不再阻塞）
+ * 在它第一次阻塞时落定，release 之后放行（之后的不再阻塞）。清理的那一家排在清理链上 agent 之前（插件 id 以数字开头，
+ * 码元在 @ 之前）：停下回合的事要是放回链里做，它会先跑到
  */
 export function hanging(on: 'session:deleted' | 'memory:clear') {
   const entered = deferred();
@@ -45,7 +46,7 @@ export function hanging(on: 'session:deleted' | 'memory:clear') {
     await gate.promise;
   };
   const plugin = definePlugin({
-    name: `zz-hanging-${on.replace(':', '-')}`,
+    name: on === 'memory:clear' ? '00-hanging-memory-clear' : 'zz-hanging-session-deleted',
     uses: { events, hooks },
     apply: caps => {
       if (on === 'session:deleted') caps.events.use.on('session:deleted', hang);

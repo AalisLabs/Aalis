@@ -12,8 +12,10 @@ interface Entry {
   readonly fn: MiddlewareFn<unknown>;
   /** 逻辑身份，供卡链诊断点名 */
   readonly contextId: string;
-  /** 登记序，链按它升序排列 */
+  /** 登记序 */
   readonly order: number;
+  /** 登记方的位次：链先按它的码元序排，同一位次按登记序 */
+  readonly seat: string;
 }
 
 export class Registry implements HookRegistry {
@@ -22,16 +24,16 @@ export class Registry implements HookRegistry {
   /** @param onStall 广播型相位的卡链上报；缺省不报 */
   constructor(private readonly onStall?: (hook: string, contextId: string, skipped: number) => void) {}
 
-  register(hook: string, fn: MiddlewareFn<unknown>, contextId: string, order: number): () => void {
+  register(hook: string, fn: MiddlewareFn<unknown>, contextId: string, order: number, seat: string): () => void {
     let list = this.#chains.get(hook);
     if (!list) {
       list = [];
       this.#chains.set(hook, list);
     }
-    const entry: Entry = { fn, contextId, order };
-    // 按登记序插入：平常是新号追加到链尾；换提供者时归属表整批重挂，靠它还原原来的交错次序
+    const entry: Entry = { fn, contextId, order, seat };
+    // 按（位次，登记序）插入：插件重启后新号落回它自己的位次里；换提供者时归属表整批重挂，靠它还原原来的次序
     let at = list.length;
-    while (at > 0 && list[at - 1].order > order) at--;
+    while (at > 0 && (list[at - 1].seat > seat || (list[at - 1].seat === seat && list[at - 1].order > order))) at--;
     list.splice(at, 0, entry);
     return () => {
       // 查当前数组而非闭包捕获的 list：链清空时表项被删，再登记会新建数组

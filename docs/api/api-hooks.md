@@ -6,7 +6,7 @@
 
 ## 概述
 
-钩子是有序的中间件管道：同一钩子键上的中间件按登记顺序串行执行，可以修改传入的 data，也可以不调用 `next()` 截停整条链（包括默认动作）。事件则是广播通知，不可拦截（见 [api-events](./api-events.md)）。
+钩子是有序的中间件管道：同一钩子键上的中间件按登记方的位次串行执行（见下文「顺序」），可以修改传入的 data，也可以不调用 `next()` 截停整条链（包括默认动作）。事件则是广播通知，不可拦截（见 [api-events](./api-events.md)）。
 
 本包定义 `hooks` 描述符（服务名 `hooks`）、绑定接口 `Hooks`、中间件签名 `MiddlewareFn` / `MiddlewareNext`、提供者契约 `HookRegistry` 与扩展点 `HookContextMap`，不含实现。core 不内置钩子，默认提供者是 [`@aalis/plugin-hooks`](../plugins/plugin-hooks.md)，提供者不独占。使用钩子的插件在 `uses` 里声明 `hooks`，并把 `@aalis/api-hooks` 加进 `dependencies`；部署时须装上提供者插件。
 
@@ -43,10 +43,10 @@ interface Hooks {
 hooks.use.run(hookName, data, defaultAction)
   │
   ▼
-中间件 A（先登记） ───── await fn(data, next)
+中间件 A（排在前） ───── await fn(data, next)
   │ next()                     │ 不调用 next() → 截停
   ▼                             ▼
-中间件 B（后登记）        链终止，defaultAction 不执行
+中间件 B（排在后）        链终止，defaultAction 不执行
   │ next()
   ▼
 defaultAction() ← 所有中间件都调用 next() 后执行
@@ -59,25 +59,26 @@ defaultAction() ← 所有中间件都调用 next() 后执行
 
 ## 顺序
 
-链内按登记顺序执行，不使用数字优先级。相位之间的次序由调度方显式表达（如 gateway 的 `INBOUND_PHASE_ORDER`）；相位内的 handler 应与顺序无关，或由相位的拥有方约定。
+链内按登记方的位次排：宿主自己登记的最前，插件按实例 id 的码元序，同一个插件登记的几条按登记先后（码元逐个比较，不看语言环境）。不使用数字优先级。相位之间的次序由调度方显式表达（如 gateway 的 `INBOUND_PHASE_ORDER`）；相位内的 handler 应与顺序无关，或由相位的拥有方约定。
 
-登记序是门面在登记时分配的序号（进程内全部 api-hooks 副本共用一个计数器，单调递增），随登记一起交给提供者，提供者按它排链：
+位次与登记序随登记一起交给提供者（`register` 的 `seat` 与 `order`），提供者按它们排链。链序不看登记发生的时刻：
 
-- **提供者重启**：必选依赖它的插件先关闭，再按拓扑序重新激活并重新登记，拿到新的序号；可选依赖它的插件与宿主根不重启，原来的登记带着原序号重挂到新的提供者上。所以重启之后，不重启的登记排在重新激活的之前，链序与冷启动可能不同。
-- **换提供者**：以更高优先级换上另一个提供者时，消费者不重启，各插件的登记在换人那次调用里重挂到新提供者，提供者按登记序还原原来的交错次序，链序不变。已知现状：换人瞬间正在执行的链会跳过已移走的中间件，截停者可能因此缺席、默认动作照样执行；只发生在运行中换提供者的那一刻，只装 `@aalis/plugin-hooks` 一个提供者的部署不会遇到。
+- **插件重启**：重启的插件重新登记，落回它自己的位次，链序不变。
+- **提供者重启**：必选依赖它的插件随之重启并重新登记，可选依赖它的插件与宿主根的登记原样重挂到新的提供者上，链序与冷启动相同。
+- **换提供者**：以更高优先级换上另一个提供者时，消费者不重启，各插件的登记在换人那次调用里重挂到新提供者，链序不变。已知现状：换人瞬间正在执行的链会跳过已移走的中间件，截停者可能因此缺席、默认动作照样执行；只发生在运行中换提供者的那一刻，只装 `@aalis/plugin-hooks` 一个提供者的部署不会遇到。
 
 ## 提供者契约
 
 ```ts
 interface HookRegistry {
-  register(hook: string, fn: MiddlewareFn<unknown>, contextId: string, order: number): () => void;
+  register(hook: string, fn: MiddlewareFn<unknown>, contextId: string, order: number, seat: string): () => void;
   run(hook: string, data: unknown, defaultAction?: () => Promise<void>, opts?: RunOptions): Promise<boolean>;
 }
 ```
 
-插件不直接调用 `HookRegistry`：登记经 `hooks` 的绑定门面，门面填入本激活 id（`contextId`，供卡链告警点名）与登记序（`order`）。自行实现提供者时：
+插件不直接调用 `HookRegistry`：登记经 `hooks` 的绑定门面，门面填入本激活 id（`contextId`，供卡链告警点名）、登记序（`order`，进程内单调递增）与登记方的位次（`seat`：宿主的根是空串，插件是它的实例 id）。自行实现提供者时：
 
-- `register` 须按 `order` 升序插入该钩子的链；返回的退订幂等，只撤这一条。
+- `register` 须按（`seat`，`order`）插入该钩子的链：先比 `seat` 的码元序，同一 `seat` 按 `order` 升序。只按 `order` 排的话，插件重启后它的中间件会换位置。返回的退订幂等，只撤这一条。
 - `run` 的返回值语义与绑定接口相同。
 
 ## 扩展钩子键

@@ -112,7 +112,7 @@ interface ServiceView<T = unknown> {
   label?: unknown;
 }
 
-interface BindingPort<P> { /* id, identity, logger, present, provider, follow, track, registrar */ }
+interface BindingPort<P> { /* id, identity, seat, logger, present, provider, follow, track, registrar */ }
 interface Registrar<Item> {
   add(item: Item): () => void;
 }

@@ -326,7 +326,7 @@ describe('checkpoint × storage (真 fs)', () => {
   });
 
   it('这一轮被下游钩子拦下、到不了回合结束：这一轮照样结束并落盘', async () => {
-    // 拦截者登记在 checkpoint 之后，排在它的 next 里面
+    // 拦截者的插件 id 排在 checkpoint 之后，它在 checkpoint 的 next 里面
     await app.plugins.register(
       definePlugin({
         name: 'zz-block-input',

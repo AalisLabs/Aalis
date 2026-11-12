@@ -598,21 +598,28 @@ describe('状态在回合开始时翻 active', () => {
   });
 
   it('后面的回合开始中间件不调 next() 或抛错：房间都不停在 active', async () => {
-    const { sm, host, turn } = await setup();
+    const { app, sm, turn } = await setup();
     await sm.ensureSession(GROUP, { status: 'waiting' });
     const seen: (string | undefined)[] = [];
+    let mode: 'swallow' | 'throw' = 'swallow';
+    // 插件 id 排在 session-manager 之后，链上在它的中间件后面
+    await app.plugin(
+      definePlugin({
+        name: 'zz-turn-tail',
+        uses: { hooks },
+        apply: ({ hooks }) =>
+          void hooks.use.middleware('agent:turn:before', async () => {
+            seen.push(sm.getSession(GROUP)?.status);
+            if (mode === 'throw') throw new Error('<预处理失败>');
+          }),
+      }),
+    );
+    await app.plugins.idle();
 
-    const swallow = host.hooks.use.middleware('agent:turn:before', async () => {
-      seen.push(sm.getSession(GROUP)?.status);
-    });
     await turn(GROUP);
-    swallow();
     expect(sm.getSession(GROUP)?.status, '被拦下的回合不该停在进行中').not.toBe('active');
 
-    host.hooks.use.middleware('agent:turn:before', async () => {
-      seen.push(sm.getSession(GROUP)?.status);
-      throw new Error('<预处理失败>');
-    });
+    mode = 'throw';
     await expect(turn(GROUP)).rejects.toThrow('<预处理失败>');
     expect(sm.getSession(GROUP)?.status, '抛错的回合不该停在进行中').not.toBe('active');
     // 拦下与抛错都发生在翻 active 之后：收口靠的是同一个中间件的 finally

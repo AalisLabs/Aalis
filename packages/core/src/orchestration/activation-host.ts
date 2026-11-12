@@ -84,6 +84,7 @@ export class ActivationHost {
     const binding = {
       id: activation.id,
       owner: activation.owner,
+      seat: activation.seat,
       logger: activation.logger,
       resources: activation.resources,
       services: this.runtime.services,

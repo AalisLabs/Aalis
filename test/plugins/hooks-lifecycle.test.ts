@@ -77,28 +77,6 @@ describe('hooks 门面：插件登记随卸载清扫', () => {
     expect(data.trail).toEqual(['plugin-b']);
   });
 
-  it('跨插件按登记顺序：a 先登记 a1、a2，b 后登记 b1，链为 a1、a2、b1（登记序全进程一个计数器，不按门面各自计数）', async () => {
-    const app = await makeApp();
-    const multi = (name: string, tags: string[]) =>
-      definePlugin({
-        name,
-        uses: { hooks },
-        apply({ hooks }) {
-          for (const tag of tags) {
-            hooks.use.middleware('__t:lifecycle-hook', async (data, next) => {
-              data.trail.push(tag);
-              await next();
-            });
-          }
-        },
-      });
-    await app.pluginAll([{ definition: multi('plugin-a', ['a1', 'a2']) }, { definition: multi('plugin-b', ['b1']) }]);
-    await expectActive(app, 'plugin-b');
-    const data = { trail: [] as string[] };
-    await app.bind({ hooks }).hooks.use.run('__t:lifecycle-hook', data);
-    expect(data.trail).toEqual(['a1', 'a2', 'b1']);
-  });
-
   it('门面不外露登记表：只有 middleware / run，没有 register', async () => {
     const app = await makeApp();
     const host = app.bind({ hooks, services });

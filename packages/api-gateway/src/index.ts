@@ -119,7 +119,7 @@ export interface GatewayService {
  * Gateway 入站消息生命周期相位（按下面的顺序串行执行）。
  *
  * 每个相位是一个独立的命名钩子键，对应一个职责清晰的拦截点。
- * 同一相位内部的多个 handler 按 **注册顺序** 执行洋葱模型 (next 语义)，
+ * 同一相位内部的多个 handler 按 **登记方的位次** 执行洋葱模型 (next 语义)，
  * 跨相位则由 plugin-gateway 顺序调度，无需任何优先级数字。
  *
  *   COMMAND  → 指令解析与执行（由 plugin-commands 占据）。指令的意图确认也在这里：发出者对确认提示的回复

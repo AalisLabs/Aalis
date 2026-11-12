@@ -82,8 +82,6 @@ afterEach(async () => {
 interface SetupOptions {
   policy?: Record<string, unknown> | false;
   laya?: Record<string, unknown> | false;
-  /** Laya 先登记：它的中间件在链上排在规则插件前面（缺省规则插件先登记） */
-  layaFirst?: boolean;
   /**
    * 宿主配置文档（YAML 原文）：与 runtime 启动同序，在登记任何插件之前经 installHostConfig 应用其中的服务偏好；两个插件的配置
    * 与 runtime 一样写进文档的 plugins（按会话字段的全局层取自文档）
@@ -100,7 +98,6 @@ async function setup(opts: SetupOptions = {}) {
   const plugins: Array<[typeof triggerPolicyPlugin | typeof layaPlugin, Record<string, unknown>]> = [];
   if (opts.policy !== false) plugins.push([triggerPolicyPlugin, opts.policy ?? {}]);
   if (opts.laya !== false) plugins.push([layaPlugin, { endpoint: sidecar.url, ...opts.laya }]);
-  if (opts.layaFirst) plugins.reverse();
   if (opts.hostConfig !== undefined) {
     const sections = Object.fromEntries(plugins.map(([def, config]) => [def.name, config]));
     installHostConfig(app, createConfigStore({ ...parseYaml(opts.hostConfig), plugins: sections }));
@@ -153,8 +150,8 @@ const EVERY_TWO = { intervalMode: 'fixed', fixedInterval: 2 };
 
 describe('触发插件二选一', () => {
   it('都启用、没有偏好：规则生效（Laya 的优先级 -10 低于规则的 0），Laya 不请求侧车', async () => {
-    // Laya 先登记，与从源码发现的次序一致（readdir 下 trigger-laya 排在 trigger-policy 前），插件 id 也排在规则插件前面：优先级相等时 Laya 会胜出，靠 -10 让给规则
-    const h = await setup({ policy: EVERY_MESSAGE, layaFirst: true });
+    // Laya 的插件 id 排在规则插件前面：优先级相等时 Laya 会胜出，靠 -10 让给规则
+    const h = await setup({ policy: EVERY_MESSAGE });
     expect(h.host.services.use.all(trigger).map(v => toSource(v.label))).toEqual([RULE_LABEL, 'Laya 模型']);
     const r = await h.send(groupMsg('随便聊聊'));
     expect(r.reached).toBe(true);
@@ -230,11 +227,10 @@ describe('触发插件二选一', () => {
     const gate = deferred();
     sidecar.hold = gate.promise;
     sidecar.logit = 3;
-    // Laya 先登记：它放行时规则插件的中间件还没跑过，切换后若按当时的 current 再判一次，规则会接着判。
-    // 规则插件排在前面时它早已放行过这条，这个用例就验不到胜者记录
+    // Laya 的插件 id 排在规则插件前面，它的中间件先跑：它放行时规则插件的中间件还没跑过，切换后若按当时的 current
+    // 再判一次，规则会接着判
     const h = await setup({
       policy: { intervalMode: 'fixed', fixedInterval: 100 },
-      layaFirst: true,
       hostConfig: PREFER_LAYA,
     });
     const pending = h.send(groupMsg('在途'));

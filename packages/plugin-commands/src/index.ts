@@ -361,7 +361,7 @@ function registerCommands({
         // 附件、向量、人设、用户档案等子系统的清理由各自的 memory:clear 中间件处理（附件归写入它的插件）。
         // runClear 仅负责调度 hook 与处理 memory 主体。
       });
-    // 清消息历史时经 agent 先停下这些会话在跑的一轮、按住它们，再跑整条清理链：停下与按住在各家清理之外，不看它们的登记先后
+    // 清消息历史时经 agent 先停下这些会话在跑的一轮、按住它们，再跑整条清理链：停下与按住在各家清理之外，不看它们在清理链上的位置
     await (clearsMessages && agent.present
       ? agent.use.clearing(isGlobal ? undefined : [cmdCtx.sessionId], run)
       : run());

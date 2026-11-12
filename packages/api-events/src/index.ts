@@ -1,10 +1,9 @@
 // ============================================================
 // @aalis/api-events — 事件契约
 //
-// 事件是「通知多方」：emit 按登记顺序逐个调用监听器并等它落定，单个监听器抛错只影响它自己，emit 始终兑现。
-// 发射方等不等 emit 由它自己定。登记序是每条登记自带的序号，提供者按它排：换提供者时各归属表整批重挂，
-// 派发次序不变；提供者重启时必选依赖方随之重启、重新登记，排在不重启的登记（可选依赖方与宿主根，带原序号
-// 重挂）之后，次序与冷启动可能不同。
+// 事件是「通知多方」：emit 逐个调用监听器并等它落定，单个监听器抛错只影响它自己，emit 始终兑现。
+// 发射方等不等 emit 由它自己定。监听器按登记方的位次排（宿主的根最前，插件按实例 id 的码元序），同一登记方的几条按登记先后。
+// 次序不看登记发生的时刻：插件重启、提供者重启或换人都不改变它。
 // 默认提供者：@aalis/plugin-events。没有提供者时 emit 什么都不做（没有总线就没有可通知的监听器），
 // on 的登记留在归属表里，提供者上线后挂上。
 //
@@ -32,12 +31,13 @@ export type EventHandler<Args extends unknown[]> = (...args: Args) => void | Pro
  */
 export interface EventBus {
   /**
-   * 按 order 升序插入该事件的监听器表。order 是门面在登记时分配的登记序（进程内全部 api-events 副本共用一个计数器，单调递增），
-   * 换提供者重挂时原样带过来，提供者据它还原原来的交错次序。contextId 供监听器抛错时点名。返回退订（幂等，只撤这一条）
+   * 按（seat，order）插入该事件的监听器表：先比 seat 的码元序，同一 seat 按 order 升序。seat 是登记方的位次（宿主的根是空串，
+   * 插件是它的实例 id），order 是门面在登记时分配的登记序（进程内全部 api-events 副本共用一个计数器，单调递增）。
+   * 两者在换提供者重挂时原样带过来，次序不看登记发生的时刻。contextId 供监听器抛错时点名。返回退订（幂等，只撤这一条）
    */
-  on(event: string, handler: EventHandler<unknown[]>, contextId: string, order: number): () => void;
+  on(event: string, handler: EventHandler<unknown[]>, contextId: string, order: number, seat: string): () => void;
   /**
-   * 按登记序逐个调用并等待。只送达派发开始时已登记的，途中退订的跳过；单个监听器抛错（同步或异步）只记录，
+   * 按监听器表的次序逐个调用并等待。只送达派发开始时已登记的，途中退订的跳过；单个监听器抛错（同步或异步）只记录，
    * 不中断其余监听器，也不使返回的 Promise 被拒
    */
   emit(event: string, ...args: unknown[]): Promise<void>;
@@ -53,7 +53,7 @@ export interface Events {
 
 /**
  * 登记序计数器：进程内全部 api-events 副本共用一个（经全局符号表取同一个对象），登记即取号。
- * 契约包可能装了两份，各自从 0 计数的话序号不可比，提供者按序派发就会把后登记的排到前面。
+ * 契约包可能装了两份：各自计数的话，同一个登记方经两份登记的几条序号不可比，提供者排监听器时会把后登记的排到前面。
  */
 const ORDER = Symbol.for('@aalis/api-events.order');
 const shared = globalThis as Record<symbol, { n: number } | undefined>;
@@ -65,7 +65,7 @@ export const events = defineService<EventBus, Events>('events', port => {
   // 键带事件名，关闭后登记的告警能点名
   const ledger = port.registrar<{ event: string; handler: EventHandler<unknown[]>; order: number }>({
     key: ({ event, order }) => `${event}#${order}`,
-    register: (bus, { event, handler, order }) => bus.on(event, handler, port.id, order),
+    register: (bus, { event, handler, order }) => bus.on(event, handler, port.id, order, port.seat),
   });
   return {
     on: (event, handler) => ledger.add({ event, handler: handler as EventHandler<unknown[]>, order: ++orderCounter.n }),

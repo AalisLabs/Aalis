@@ -86,7 +86,7 @@ describe('网关等收录', () => {
   it('新群第一条消息进入指令相位时已建档、带聊天窗口；平台档开 system、平台类型档 onebot · group 不开时第一轮拿不到 system', async () => {
     const tools = fieldsPlugin('zz-tools', SCHEMA);
     const slow = slowAdapter();
-    // 网关先于会话管理登记：它的入站监听先跑，不等收录的话指令相位会先于建档
+    // 网关的插件 id 排在会话管理前面：它的入站监听先跑，不等收录的话指令相位会先于建档
     const started = await startSettings({
       doc: {
         sessionConfig: {

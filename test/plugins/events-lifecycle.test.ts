@@ -1,6 +1,3 @@
-import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type Events, events } from '../../packages/api-events/src/index.js';
 import { App, definePlugin, type Logger, lifecycle, provide, services } from '../../packages/core/src/index.js';
@@ -14,8 +11,7 @@ import { createActivationFixture } from '../helpers/activation.js';
 //   - 没有提供者时 emit 什么都不做，on 的登记留在归属表里、提供者上线后挂上；
 //   - 监听器抛错由 plugin-events 的日志器点名登记方；
 //   - 提供者重启：required 依赖方随之重启，宿主根的登记重挂到新总线；
-//   - 第二个提供者以更高优先级上线：依赖方不重启，归属表整批重挂，派发次序不变；
-//   - 登记序由进程内全部 api-events 副本共用的计数器分配。
+//   - 第二个提供者以更高优先级上线：依赖方不重启，归属表整批重挂，派发次序不变。
 // 事件名 'zz:named'、'zz:plain' 经 declaration merging 登记在 test/fixtures/zz-events.ts。
 // ════════════════════════════════════════════════════════════
 
@@ -35,8 +31,6 @@ async function withHubs(logger?: Logger): Promise<App> {
   await registerHubs(app);
   return app;
 }
-
-const tick = () => new Promise<void>(resolve => setTimeout(resolve, 0));
 
 /** 在 'zz:named' 上登记一个把「自己的名字:收到的名字」记进 trail 的监听器；门面留给用例在运行期再登记 */
 function listener(name: string, trail: string[], applied: string[] = [], facades?: Map<string, Events>) {
@@ -65,23 +59,6 @@ describe('监听器归登记它的那次激活', () => {
     trail.length = 0;
     await host.events.use.emit('zz:named', '2');
     expect(trail).toEqual(['b:2']);
-  });
-
-  it('跨插件按登记顺序派发：a 先登记两条、b 后登记一条，次序为 a1、a2、b1', async () => {
-    const app = await withHubs();
-    const trail: string[] = [];
-    const multi = (name: string, tags: string[]) =>
-      definePlugin({
-        name,
-        uses: { events },
-        apply({ events }) {
-          for (const tag of tags) events.use.on('zz:plain', () => void trail.push(tag));
-        },
-      });
-    await app.pluginAll([{ definition: multi('a', ['a1', 'a2']) }, { definition: multi('b', ['b1']) }]);
-    await app.plugins.idle();
-    await app.bind({ events }).events.use.emit('zz:plain');
-    expect(trail).toEqual(['a1', 'a2', 'b1']);
   });
 
   it('手动退订只撤这一条；同一函数登记两次各算各的', async () => {
@@ -264,7 +241,7 @@ describe('提供者重启', () => {
 });
 
 describe('第二个提供者以更高优先级上线', () => {
-  it('依赖方不重启，归属表整批重挂到新总线；跨依赖方交错登记的派发次序不变', async () => {
+  it('依赖方不重启，归属表整批重挂到新总线；派发次序与换人前相同', async () => {
     const trail: string[] = [];
     const applied: string[] = [];
     const facades = new Map<string, Events>();
@@ -273,11 +250,11 @@ describe('第二个提供者以更高优先级上线', () => {
       [listener('a', trail, applied, facades), listener('b', trail, applied, facades)].map(d => ({ definition: d })),
     );
     await app.plugins.idle();
-    // a 在 b 之后再登记一条：原总线上是 a、b、a2 交错
+    // a 在 b 之后再登记一条：按位次排，a 的两条都在 b 之前
     facades.get('a')?.on('zz:named', name => void trail.push(`a2:${name}`));
     const host = app.bind({ events, services });
     await host.events.use.emit('zz:named', '1');
-    expect(trail).toEqual(['a:1', 'b:1', 'a2:1']);
+    expect(trail).toEqual(['a:1', 'a2:1', 'b:1']);
 
     const alt = new Bus();
     await app.plugin(
@@ -293,7 +270,7 @@ describe('第二个提供者以更高优先级上线', () => {
     expect(applied, '依赖方没有重启').toEqual(['a', 'b']);
     trail.length = 0;
     await host.events.use.emit('zz:named', '2');
-    expect(trail, '新总线按登记序排：仍是 a、b、a2 交错，各收到一次').toEqual(['a:2', 'b:2', 'a2:2']);
+    expect(trail, '新总线上次序相同，各收到一次').toEqual(['a:2', 'a2:2', 'b:2']);
   });
 
   it('换人那次 provide 返回时各归属表已重挂到新总线：同一拍发的事件照样送达', async () => {
@@ -305,35 +282,5 @@ describe('第二个提供者以更高优先级上线', () => {
     host.provide.use(events, new Bus(), { priority: 10, entryId: 'root/alt-events' });
     await host.events.use.emit('zz:named', 'same-tick');
     expect(trail).toEqual(['a:same-tick']);
-  });
-});
-
-describe('登记序跨契约包副本', () => {
-  it('进程里装了两份 api-events：后登记的仍排在后面（计数器全进程共用）', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'aalis-api-events-copy-'));
-    try {
-      // 第二个模块实例：同一份源码换个路径导入，与第一份共用同一份 core
-      copyFileSync(join(import.meta.dirname, '../../packages/api-events/src/index.ts'), join(dir, 'index.ts'));
-      const second = (await import(join(dir, 'index.ts'))) as { events: typeof events };
-      expect(second.events).not.toBe(events);
-
-      const trail: string[] = [];
-      const app = await withHubs();
-      await app.pluginAll(['p1', 'p2', 'p3'].map(name => ({ definition: listener(name, trail) })));
-      await app.plugins.idle();
-      await app.plugin(
-        definePlugin({
-          name: 'later',
-          uses: { events: second.events },
-          apply: ({ events: other }) => void other.use.on('zz:named', name => void trail.push(`later:${name}`)),
-        }),
-      );
-      await app.plugins.idle();
-      await app.bind({ events }).events.use.emit('zz:named', 'x');
-      expect(trail).toEqual(['p1:x', 'p2:x', 'p3:x', 'later:x']);
-      await tick();
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
   });
 });

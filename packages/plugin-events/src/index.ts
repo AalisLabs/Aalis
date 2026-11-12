@@ -12,8 +12,10 @@ interface Entry {
   readonly handler: EventHandler<unknown[]>;
   /** 逻辑身份，监听器抛错时点名 */
   readonly contextId: string;
-  /** 登记序，监听器表按它升序排列 */
+  /** 登记序 */
   readonly order: number;
+  /** 登记方的位次：监听器表先按它的码元序排，同一位次按登记序 */
+  readonly seat: string;
 }
 
 export class Bus implements EventBus {
@@ -22,14 +24,14 @@ export class Bus implements EventBus {
   /** @param logger 监听器抛错记在它上面，点名事件与登记方；缺省不记 */
   constructor(private readonly logger?: Pick<Logger, 'warn'>) {}
 
-  on(event: string, handler: EventHandler<unknown[]>, contextId: string, order: number): () => void {
+  on(event: string, handler: EventHandler<unknown[]>, contextId: string, order: number, seat: string): () => void {
     const existing = this.#listeners.get(event);
     const list = existing ?? [];
     if (!existing) this.#listeners.set(event, list);
-    const entry: Entry = { handler, contextId, order };
-    // 按登记序插入：平常是新号追加到表尾；换提供者时归属表整批重挂，靠它还原原来的交错次序
+    const entry: Entry = { handler, contextId, order, seat };
+    // 按（位次，登记序）插入：插件重启后新号落回它自己的位次里；换提供者时归属表整批重挂，靠它还原原来的次序
     let at = list.length;
-    while (at > 0 && list[at - 1].order > order) at--;
+    while (at > 0 && (list[at - 1].seat > seat || (list[at - 1].seat === seat && list[at - 1].order > order))) at--;
     list.splice(at, 0, entry);
     return () => {
       // 一张表只在清空的那一刻离开 #listeners：entry 还在 list 里时，list 就是该事件当前的那张表

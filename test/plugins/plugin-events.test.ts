@@ -7,12 +7,12 @@ import { Bus } from '../../packages/plugin-events/src/index.js';
 const tick = () => new Promise<void>(resolve => setTimeout(resolve, 0));
 const CAP = 1000; // 违例时会无限送达；数到上限停手，免得阻塞测试进程
 
-/** 依次取号的登记：与门面分配登记序的做法相同 */
+/** 依次取号的登记：与门面分配登记序的做法相同。位次都给空串，比的是同一登记方之内的登记序 */
 function world(logger?: ConstructorParameters<typeof Bus>[0]) {
   const bus = new Bus(logger);
   let n = 0;
   const on = (event: string, handler: (...args: never[]) => unknown, contextId = 'p') =>
-    bus.on(event, handler as never, contextId, ++n);
+    bus.on(event, handler as never, contextId, ++n, '');
   return { bus, on };
 }
 
@@ -87,9 +87,9 @@ describe('登记与退订', () => {
   it('按登记序插入：序号小的后到也排在前面（换提供者整批重挂时靠它还原次序）', async () => {
     const bus = new Bus();
     const order: string[] = [];
-    bus.on('e', () => void order.push('third'), 'p', 30);
-    bus.on('e', () => void order.push('first'), 'p', 10);
-    bus.on('e', () => void order.push('second'), 'p', 20);
+    bus.on('e', () => void order.push('third'), 'p', 30, '');
+    bus.on('e', () => void order.push('first'), 'p', 10, '');
+    bus.on('e', () => void order.push('second'), 'p', 20, '');
     await bus.emit('e');
     expect(order).toEqual(['first', 'second', 'third']);
   });

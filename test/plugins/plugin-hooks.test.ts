@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Registry as HookRegistry } from '../../packages/plugin-hooks/src/index.js';
 
 // plugin-hooks 的登记表：洋葱链、截停、登记序、运行中变更与卡链上报。归属与撤回在绑定门面的归属表，不在本表。
+// 这里的登记都给同一个位次（空串），比的是同一登记方之内的登记序；跨登记方的次序见 hub-seat-order.test.ts。
 
 /** 登记序：生产里由 hooks 门面分配，这里按调用次序递增 */
 let seq = 0;
@@ -20,6 +21,7 @@ describe('HookRegistry', () => {
       },
       'ctx-test',
       ++seq,
+      '',
     );
     reg.register(
       'inbound:command',
@@ -30,6 +32,7 @@ describe('HookRegistry', () => {
       },
       'ctx-test',
       ++seq,
+      '',
     );
 
     // biome-ignore lint/suspicious/noExplicitAny: test
@@ -52,6 +55,7 @@ describe('HookRegistry', () => {
       },
       'ctx-test',
       ++seq,
+      '',
     );
     reg.register(
       'inbound:command',
@@ -60,6 +64,7 @@ describe('HookRegistry', () => {
       },
       'ctx-test',
       ++seq,
+      '',
     );
     // biome-ignore lint/suspicious/noExplicitAny: test
     const reached = await reg.run('inbound:command', {} as any, async () => {
@@ -95,6 +100,7 @@ describe('HookRegistry 运行中变更', () => {
       },
       'ctx-test',
       ++seq,
+      '',
     );
     reg.register(
       'inbound:command',
@@ -104,6 +110,7 @@ describe('HookRegistry 运行中变更', () => {
       },
       'ctx-test',
       ++seq,
+      '',
     );
     // biome-ignore lint/suspicious/noExplicitAny: test
     const reached = await reg.run('inbound:command', {} as any, async () => {
@@ -132,6 +139,7 @@ describe('HookRegistry 运行中变更', () => {
       },
       'ctx-test',
       ++seq,
+      '',
     );
     offLater = reg.register(
       'inbound:command',
@@ -141,6 +149,7 @@ describe('HookRegistry 运行中变更', () => {
       },
       'ctx-test',
       ++seq,
+      '',
     );
     reg.register(
       'inbound:command',
@@ -150,6 +159,7 @@ describe('HookRegistry 运行中变更', () => {
       },
       'ctx-test',
       ++seq,
+      '',
     );
     // biome-ignore lint/suspicious/noExplicitAny: test
     const reached = await reg.run('inbound:command', {} as any);
@@ -168,6 +178,7 @@ describe('HookRegistry 运行中变更', () => {
       },
       'ctx-a',
       ++seq,
+      '',
     );
     offA();
     // 链清空后表项被删，再登记会新建数组；退订闭包必须重查活容器，不能捕获旧数组
@@ -179,6 +190,7 @@ describe('HookRegistry 运行中变更', () => {
       },
       'ctx-b',
       ++seq,
+      '',
     );
     reg.register(
       'inbound:command',
@@ -188,6 +200,7 @@ describe('HookRegistry 运行中变更', () => {
       },
       'ctx-c',
       ++seq,
+      '',
     );
     offA();
     offB();
@@ -208,8 +221,8 @@ describe('HookRegistry 卡链上报', () => {
   it('warnOnStall 时点名卡链者与被跳过的数量', async () => {
     const calls: unknown[][] = [];
     const reg = new HookRegistry((...args) => void calls.push(args));
-    reg.register('inbound:command', stalled, 'ctx-a', ++seq);
-    reg.register('inbound:command', async (_d, n) => n(), 'ctx-b', ++seq);
+    reg.register('inbound:command', stalled, 'ctx-a', ++seq, '');
+    reg.register('inbound:command', async (_d, n) => n(), 'ctx-b', ++seq, '');
     await reg.run('inbound:command', {} as never, undefined, { warnOnStall: true });
     expect(calls).toEqual([['inbound:command', 'ctx-a', 1]]);
   });
@@ -217,8 +230,8 @@ describe('HookRegistry 卡链上报', () => {
   it('未带 warnOnStall 时正常截停不上报：截停是中间件的正当语义', async () => {
     const calls: unknown[][] = [];
     const reg = new HookRegistry((...args) => void calls.push(args));
-    reg.register('inbound:command', stalled, 'ctx-a', ++seq);
-    reg.register('inbound:command', async (_d, n) => n(), 'ctx-b', ++seq);
+    reg.register('inbound:command', stalled, 'ctx-a', ++seq, '');
+    reg.register('inbound:command', async (_d, n) => n(), 'ctx-b', ++seq, '');
     expect(await reg.run('inbound:command', {} as never)).toBe(false);
     expect(await reg.run('inbound:command', {} as never, undefined, {})).toBe(false);
     expect(calls).toEqual([]);
@@ -228,8 +241,8 @@ describe('HookRegistry 卡链上报', () => {
     const reg = new HookRegistry(() => {
       throw new Error('sink broken');
     });
-    reg.register('inbound:command', stalled, 'ctx-a', ++seq);
-    reg.register('inbound:command', async (_d, n) => n(), 'ctx-b', ++seq);
+    reg.register('inbound:command', stalled, 'ctx-a', ++seq, '');
+    reg.register('inbound:command', async (_d, n) => n(), 'ctx-b', ++seq, '');
     await expect(reg.run('inbound:command', {} as never, undefined, { warnOnStall: true })).resolves.toBe(false);
   });
 });
@@ -247,6 +260,7 @@ describe('HookRegistry 登记序', () => {
         },
         `ctx-${tag}`,
         at,
+        '',
       );
     add('c', 30);
     add('a', 10);

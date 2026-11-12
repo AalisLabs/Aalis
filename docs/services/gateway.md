@@ -224,7 +224,7 @@ export default definePlugin({
 
 - **业务句柄是活的**：`gateway.use` 的选择、缺席与固定同一家的规则见 [选择层与业务层](../core/context.md#选择层与业务层)。
 - **gateway 视为可选依赖时给出回退**：plugin-agent 把 gateway 声明为 `optional`，出站时 `gateway.present ? gateway.use.dispatchOutbound(msg) : events.use.emit('outbound:message', msg)`，缺席时记一条 warn 后走事件总线（`packages/plugin-agent/src/index.ts`）。若插件**必须**调用 gateway 才有意义，则写成 `uses required: ['gateway']`（如 plugin-commands 靠它回送指令结果与确认提示，`packages/plugin-commands/src/index.ts`），gateway 缺席时插件停在 pending、不激活。只注册相位 hook 不需要依赖 gateway。
-- **注册相位 = 用 `hooks.use.middleware(INBOUND_PHASE.X, (data, next) => ...)`**：洋葱模型，`await next()` 放行进入后续相位；**不调用 `next()`** 即「我已处理」，整条入站管道立即停止、不触达 agent（`packages/plugin-commands/src/index.ts`）。相位内多个 handler 按注册顺序执行，无需优先级数字。`hooks.use.middleware` 签名见 `packages/api-hooks/src/index.ts`（`Hooks`）。
+- **注册相位 = 用 `hooks.use.middleware(INBOUND_PHASE.X, (data, next) => ...)`**：洋葱模型，`await next()` 放行进入后续相位；**不调用 `next()`** 即「我已处理」，整条入站管道立即停止、不触达 agent（`packages/plugin-commands/src/index.ts`）。相位内多个 handler 按登记方的位次执行（插件按实例 id，同一插件按登记先后），无需优先级数字。`hooks.use.middleware` 签名见 `packages/api-hooks/src/index.ts`（`Hooks`）。
 - **错误边界**：默认实现把 `processInbound` / `dispatchOutbound` 整体 try/catch 并降级为 `logger.use.warn`（`packages/plugin-gateway/src/index.ts`）—— 单条消息出错不拖垮总线。你的相位 handler 也应自行兜底，别让异常冒泡出相位链。
 
 ## 7. 能力 / 风险 → 影响

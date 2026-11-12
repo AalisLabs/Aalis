@@ -41,7 +41,7 @@ import { deferred } from '../helpers/deferred.js';
 // 贡献组装与 agent:llm:before 之后、调用之前），插不进的排队；一轮结束后队首是真人消息时，队里的真人消息一起开下一轮，
 // 前面说明是上一轮进行期间到的；带来源的注入各自成一轮。输入在进入一轮时归档。能停下一轮的只有停止（只停在跑的一轮）、
 // 连同排队项的停止（禁言、停机、会话删除、清消息历史），放掉的输入在那一轮落定之后归档（会话删除与清消息历史不归档）；/clear
-// 经 agent 先停下并按住会话再跑整条清理，清的期间到的输入清完再处理，不看各家清理中间件登记在 agent 之前还是之后；停在等着
+// 经 agent 先停下并按住会话再跑整条清理，清的期间到的输入清完再处理，不看各家清理中间件在链上排在 agent 之前还是之后；停在等着
 // 别处的工具（wait_subtasks、workflow_run）里的一轮随中止不再等。读历史时夹进工具调用组的别的消息挪到组后，结果没找齐的组与
 // 不在任何组里的结果不发给模型。
 // 模型是能阻塞某一次调用的替身（step-llm），工具是探针；会话管理是按 id 现造记录的替身（onebot 的房间带出生平台与聊天窗口）；
@@ -102,8 +102,6 @@ async function boot(
     decide?: (request: ChatModelRequest, n: number) => ChatResponse;
     /** 会话管理的替身：会话记录按 id 现造，代号由 deleteSession 换 */
     sessions?: boolean;
-    /** 装在 agent 之前的插件 */
-    before?: (app: App) => Promise<void>;
     /** 装在 agent 之后的插件 */
     after?: (app: App) => Promise<void>;
     /** 各会话启用的工具分组（不在分组里的探针总能用） */
@@ -127,7 +125,6 @@ async function boot(
   await app.plugin(toolsPlugin, { enabledToolGroups: opts.toolGroups ?? [] });
   await app.plugin(memoryInMemoryPlugin);
   await app.plugin(messageArchivePlugin, { debugLogs: false });
-  await opts.before?.(app);
   await app.plugin(agentPlugin, { systemPrompt: 'test' });
   await opts.after?.(app);
   await app.plugins.idle();
@@ -842,12 +839,12 @@ describe('能停下一轮的', () => {
   it.each([
     ['/clear', '这个会话', WEBUI],
     ['/clear all', '别的会话', { ...WEBUI, sessionId: 'zz-steer-other' }],
-  ] as const)('清消息历史的 %s 先停下%s在跑的一轮（aborted），排着与待插入的不开轮、不归档，等它落定再跑清理链（登记在 agent 之前的一家也在这之后）；带 -t vector 的不停也不碰', async (line, _whose, where) => {
-    /** 登记在 agent 之前的一家清理：记下它跑的那一刻最近一轮的结局 */
+  ] as const)('清消息历史的 %s 先停下%s在跑的一轮（aborted），排着与待插入的不开轮、不归档，等它落定再跑清理链（排在 agent 之前的一家也在这之后）；带 -t vector 的不停也不碰', async (line, _whose, where) => {
+    /** 清理链上排在 agent 之前的一家清理（插件 id 以数字开头，码元在 @ 之前）：记下它跑的那一刻最近一轮的结局 */
     const seen: Array<string | undefined> = [];
     let latest = (): string | undefined => undefined;
     const recorder = definePlugin({
-      name: 'zz-clear-recorder',
+      name: '00-clear-recorder',
       uses: { hooks },
       apply: ({ hooks }) => {
         hooks.use.middleware('memory:clear', async (_data, next) => {
@@ -857,8 +854,8 @@ describe('能停下一轮的', () => {
       },
     });
     const s = await boot({
-      before: app => app.plugin(recorder).then(() => undefined),
       after: async app => {
+        await app.plugin(recorder);
         await withCommands(app);
         await app.plugin(vectorType);
       },
@@ -889,9 +886,14 @@ describe('能停下一轮的', () => {
   it.each([
     '/clear',
     '/clear all',
-  ])('%s，先清再调 next 的一家清理登记在 agent 之前：清的期间到的输入等清完再处理，不开轮、不被清掉，清完照常开轮', async line => {
+  ])('%s，先清再调 next 的一家清理排在 agent 之前：清的期间到的输入等清完再处理，不开轮、不被清掉，清完照常开轮', async line => {
     const cleaner = hanging('memory:clear');
-    const s = await boot({ before: cleaner.install, after: withCommands });
+    const s = await boot({
+      after: async app => {
+        await cleaner.install(app);
+        await withCommands(app);
+      },
+    });
     await s.say(WEBUI, '<甲>');
     const clear = command(s.app, WEBUI.sessionId, line);
     await cleaner.entered;

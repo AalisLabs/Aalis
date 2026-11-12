@@ -34,7 +34,7 @@ interface Cli {
   delivered: OutgoingMessage[];
 }
 
-/** 非 TTY 模式启动 CLI。before 在装 CLI 之前跑（在那里装的插件登记的出站监听排在 CLI 的前面），收尾还原 isTTY 并停掉 app */
+/** 非 TTY 模式启动 CLI。before 在装 CLI 之前跑，收尾还原 isTTY 并停掉 app */
 async function headlessCli(run: (cli: Cli) => Promise<void>, before?: (app: App) => Promise<unknown>): Promise<void> {
   const tty = { out: process.stdout.isTTY, in: process.stdin.isTTY };
   Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
@@ -157,34 +157,33 @@ describe('plugin-cli 附件', () => {
 
   /** 另一个平台 zz-inbox 的适配器，认领出站的 platform 是它的消息（如 owner 从 WebUI 驱动这个会话时 WebUI 的收件箱） */
   const inbox = Promise.resolve({ ok: true as const });
-  const inboxPlatform = definePlugin({
-    name: 'zz-platform-inbox',
-    provides: [platform],
-    uses: { provide, events },
-    apply: caps => {
-      caps.provide.use(platform, {
-        adapterName: 'ZZ',
-        platform: 'zz-inbox',
-        getConnections: () => [],
-        sendMessage: async () => {},
-      });
-      caps.events.use.on('outbound:message', msg => {
-        if (msg.platform === 'zz-inbox' && !msg.delivery) msg.delivery = inbox;
-      });
-    },
-  });
+  const inboxPlatformNamed = (name: string) =>
+    definePlugin({
+      name,
+      provides: [platform],
+      uses: { provide, events },
+      apply: caps => {
+        caps.provide.use(platform, {
+          adapterName: 'ZZ',
+          platform: 'zz-inbox',
+          getConnections: () => [],
+          sendMessage: async () => {},
+        });
+        caps.events.use.on('outbound:message', msg => {
+          if (msg.platform === 'zz-inbox' && !msg.delivery) msg.delivery = inbox;
+        });
+      },
+    });
+  const inboxPlatform = inboxPlatformNamed('zz-platform-inbox');
 
+  // 出站监听按插件 id 排：数字的码元在 @ 之前，00- 开头的排在 @aalis/plugin-cli 前面
   it.each([
-    ['CLI 先装', false],
-    ['那个平台先装', true],
-  ])('出站的 platform 另有在场的适配器登记（%s）：照样写到终端，不认领、不发 outbound:delivered，回执归那个平台', (_order, inboxFirst) =>
+    ['排在 CLI 之后', inboxPlatform],
+    ['排在 CLI 之前', inboxPlatformNamed('00-platform-inbox')],
+  ])('出站的 platform 另有在场的适配器登记（它的出站监听%s）：照样写到终端，不认领、不发 outbound:delivered，回执归那个平台', (_order, adapter) =>
     headlessCli(
-      async cli => {
-        if (!inboxFirst) {
-          await cli.app.plugin(inboxPlatform);
-          await cli.app.plugins.idle();
-        }
-        await writtenNotClaimed(
+      cli =>
+        writtenNotClaimed(
           cli,
           attachments => ({
             sessionId: 'cli-default',
@@ -194,9 +193,8 @@ describe('plugin-cli 附件', () => {
             attachments,
           }),
           inbox,
-        );
-      },
-      inboxFirst ? app => app.plugin(inboxPlatform) : undefined,
+        ),
+      app => app.plugin(adapter),
     ));
 
   it('出站的 platform 没有适配器（如工作流注入这个会话）：CLI 认领回执、发出 outbound:delivered，别的平台在场也一样', () =>

@@ -49,7 +49,7 @@ export default definePlugin({
 
 `InboundPhaseData = { message: IncomingMessage; metadata: Record<string, unknown>; agent: AgentService | undefined; chat?: ChatScope }`
 
-同一相位内多个 handler 按 **注册顺序** 执行 Koa 风格洋葱模型，无优先级数字。
+同一相位内多个 handler 按 **登记方的位次**（插件按实例 id，同一插件按登记先后）执行 Koa 风格洋葱模型，无优先级数字。
 
 ## 结构性放行
 

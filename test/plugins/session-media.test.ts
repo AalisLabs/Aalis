@@ -270,17 +270,18 @@ describe('/clear 的附件清理归写入方', () => {
     const results = await clear({ scope: 'session', sessionId: GROUP, types: ['image'] });
     const files = results.filter(r => r.source !== 'media-description');
     expect(files.map(r => [r.source, r.type, r.success, toSource(r.message)])).toEqual([
+      // 各家的结果按插件 id 排
       ['onebot-image', 'image', true, 'OneBot 收发的图片已清空（1 个）'],
-      ['media-image', 'image', true, '上传的图片已清空（1 个）'],
       ['draw', 'image', true, '绘图产物已清空（1 个）'],
+      ['media-image', 'image', true, '上传的图片已清空（1 个）'],
     ]);
     expect(
       files.map(r => localize(r.message, text => resolveText(text, ['en']))),
       '英文同样按文件计',
     ).toEqual([
       'Cleared images sent and received over OneBot (1 file)',
-      'Cleared uploaded images (1 file)',
       'Cleared drawings (1 file)',
+      'Cleared uploaded images (1 file)',
     ]);
     expect(left('images', GROUP_DIR)).toEqual(['zz-third']);
     expect(left('images', OTHER_DIR)).toEqual(['draw', 'onebot', 'zz-third']);
@@ -297,8 +298,8 @@ describe('/clear 的附件清理归写入方', () => {
       '与会话级同一套句子，按删掉的文件数计',
     ).toEqual([
       ['onebot-image', 'image', true, 'OneBot 收发的图片已清空（2 个）'],
-      ['media-image', 'image', true, '上传的图片已清空（1 个）'],
       ['draw', 'image', true, '绘图产物已清空（2 个）'],
+      ['media-image', 'image', true, '上传的图片已清空（1 个）'],
     ]);
     expect(left('images', GROUP_DIR)).toEqual(['zz-third']);
     expect(left('images', OTHER_DIR)).toEqual(['zz-third']);

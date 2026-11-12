@@ -91,6 +91,11 @@ export interface BindingPort<P> {
    * 每次激活各不相同，同一 id 的前后两次激活也不同；按插件持久的状态用 id。
    */
   readonly identity: symbol;
+  /**
+   * 消费方的登记位次：宿主的根是空串，插件激活是它的实例 id。提供者给跨插件的登记排次序时先比它的码元序（根最前），
+   * 同一位次再按登记先后，与同优先级的服务提供者同一条规则：次序不看登记发生的时刻，插件重启不改变它
+   */
+  readonly seat: string;
   readonly logger: Logger;
   /** 目标那一家此刻在不在，与选择层的 `present` 同口径 */
   readonly present: boolean;

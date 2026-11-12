@@ -51,7 +51,7 @@ interface SetupOptions {
   indexing?: Record<string, number>;
   /** 为真时向量存储不可用：访问 deleteByFilter 即抛 */
   storeDown?: () => boolean;
-  /** 在向量记忆之前登记一个 assistant:message:archived 监听，等这么多毫秒才返回 */
+  /** 宿主根登记一个 assistant:message:archived 监听（排在向量记忆之前），等这么多毫秒才返回 */
   slowArchivedListener?: number;
 }
 

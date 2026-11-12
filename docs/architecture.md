@@ -140,7 +140,7 @@ Aalis 提供四种互补的扩展手段，覆盖不同粒度的定制需求：
 
 ### 1. 中间件管道 (Hooks)
 
-插件通过 `hooks.use.middleware(hook, fn)` 注册中间件，拦截核心流程的各阶段。中间件可修改数据或中断流程。同一钩子内多个 handler 按注册顺序执行洋葱模型（无优先级数字）；跨钩子顺序由调度方（如 plugin-gateway）显式决定。`hooks` 描述符来自 `@aalis/api-hooks`，默认提供者是 `@aalis/plugin-hooks`。
+插件通过 `hooks.use.middleware(hook, fn)` 注册中间件，拦截核心流程的各阶段。中间件可修改数据或中断流程。同一钩子内多个 handler 按登记方的位次执行洋葱模型（宿主最前，插件按实例 id，同一插件按登记先后；无优先级数字）；跨钩子顺序由调度方（如 plugin-gateway）显式决定。`hooks` 描述符来自 `@aalis/api-hooks`，默认提供者是 `@aalis/plugin-hooks`。
 
 ```typescript
 // 拦截消息（不调用 next = 丢掉这条输入，不进一轮）
@@ -306,17 +306,17 @@ optional 上下线与选中的那一家换人不改变目标态，不级联 boun
 hooks.use.run(hookName, data, defaultAction?) → reachedEnd: boolean
   │
   ▼
-handler A（先注册）─── await fn(data, next)
+handler A（排在前）─── await fn(data, next)
   │ next()              │ 不调用 next() → 链终止
   ▼                      ▼
-handler B（后注册）   管道返回 false，defaultAction 不执行
+handler B（排在后）   管道返回 false，defaultAction 不执行
   │ next()
   ▼
 defaultAction()        ← 所有 handler 通过后执行
 ```
 
 **关键约定**：
-- 同一钩子内多个 handler 按 **注册顺序** 执行洋葱模型，无优先级数字
+- 同一钩子内多个 handler 按 **登记方的位次**（插件按实例 id，同一插件按登记先后）执行洋葱模型，无优先级数字
 - 不调用 `next()` 即中止整个管道（含 defaultAction）；`hooks.use.run()` 返回 `false`
 - 没有 `hooks` 提供者时 `hooks.use.run()` 返回被拒的 Promise，defaultAction 不执行
 - 跨钩子的顺序由调度方（如 plugin-gateway）显式决定
