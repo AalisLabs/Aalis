@@ -11,7 +11,7 @@ import {
   type CheckedUses,
   dependencies,
   isOptional,
-  optional,
+  isOwnDescriptor,
   type ServiceDescriptor,
   type Uses,
 } from './descriptors.js';
@@ -92,10 +92,6 @@ function assertValidPluginName(name: unknown): asserts name is string {
   }
 }
 
-function isServiceDescriptor(value: unknown): value is ServiceDescriptor<unknown, unknown> {
-  return typeof (value as { bind?: unknown } | null)?.bind === 'function';
-}
-
 /** 一项依赖：apply 里的键、服务名、是否 required */
 type Dep = { readonly key: string; readonly service: string; readonly kind: 'required' | 'optional' };
 
@@ -108,7 +104,7 @@ export interface DefinitionSpec {
   readonly displayName: unknown;
   readonly reusable: boolean | undefined;
   readonly apply: PluginDefinition['apply'];
-  /** uses 的拷贝，optional 包装换成新的 */
+  /** uses 的拷贝：表是新的，各项就是定义里的那个对象（描述符与 optional 包装造出即冻结） */
   readonly uses: Uses;
   /** 依赖的键、服务名与是否 required（管理面的状态读它） */
   readonly deps: readonly Dep[];
@@ -119,7 +115,8 @@ export interface DefinitionSpec {
 }
 
 /**
- * 校验一份定义并返回取定的那份：name 合法，uses 为纯对象且每一项都是描述符，apply 是函数，provides 元素都是描述符。
+ * 校验一份定义并返回取定的那份：name 合法，uses 为纯对象且每一项都是本份 core 造的描述符（手写的对象不收），apply 是函数，
+ * provides 元素都是描述符。
  * 每个字段只读一次（getter 只执行一次），校验的与取定的是同一次读到的值
  */
 export function validateDefinition(definition: PluginDefinition): DefinitionSpec {
@@ -130,13 +127,13 @@ export function validateDefinition(definition: PluginDefinition): DefinitionSpec
   }
   const copy: Uses = {};
   for (const [key, use] of Object.entries(uses)) {
-    assertOwnCopy(use, `插件 "${name}" 的 uses.${key} `);
+    // 另一份 core 的 optional 包装在这里不算包装，按它本身查，与外来的描述符落在同一处
     const descriptor: unknown = isOptional(use) ? use.optional : use;
     assertOwnCopy(descriptor, `插件 "${name}" 的 uses.${key} `);
-    if (!isServiceDescriptor(descriptor)) {
+    if (!isOwnDescriptor(descriptor)) {
       throw new Error(`插件 "${name}" 的 uses.${key} 不是服务描述符（应为 defineService 的结果）`);
     }
-    copy[key] = descriptor === use ? descriptor : optional(descriptor);
+    copy[key] = use as Uses[string];
   }
   const deps = dependencies(copy).map(({ key, descriptor, required }): Dep => {
     return { key, service: descriptor.name, kind: required ? 'required' : 'optional' };
@@ -147,7 +144,7 @@ export function validateDefinition(definition: PluginDefinition): DefinitionSpec
   const provided: string[] = [];
   for (const item of provides ?? []) {
     assertOwnCopy(item, `插件 "${name}" 的 provides 元素`);
-    if (!isServiceDescriptor(item)) {
+    if (!isOwnDescriptor(item)) {
       throw new Error(`插件 "${name}" 的 provides 含有不是描述符的元素（${String(item)}）`);
     }
     provided.push(item.name);

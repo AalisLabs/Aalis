@@ -68,7 +68,7 @@ describe('定义登记时取定', () => {
     }
   });
 
-  it('登记后就地往 uses 里加一项、改 optional 包装指向的服务：激活仍按登记时那份', async () => {
+  it('登记后就地往 uses 里加一项、把其中一项换成指向别的服务的包装：激活仍按登记时那份', async () => {
     const app = makeApp();
     const a = defineService<{ who(): string }>('snapshot-a');
     const b = defineService<{ who(): string }>('snapshot-b');
@@ -85,7 +85,7 @@ describe('定义登记时取定', () => {
     } as unknown as PluginDefinition;
     await app.plugins.register(definition, {}, undefined, { disabled: true });
     uses.extra = b;
-    (uses.dep as { optional: unknown }).optional = b;
+    uses.dep = optional(b);
     await app.plugins.enable('inplace');
     await app.plugins.idle();
     expect(seen).toEqual([['dep'], 'a']);

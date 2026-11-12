@@ -231,50 +231,63 @@ describe('follow：只认函数 cleanup，thenable 拒绝被接住', () => {
   });
 });
 
-describe('optional：品牌标记，自有 optional 字段不能绕过激活闸', () => {
-  it('描述符挂自有 optional: true：定义期不抛，缺席时 pending', async () => {
-    const { app } = world();
-    const d = defineService<{ n: number }>('zz-bind-poison-true');
-    const poisoned = Object.assign(d, { optional: true });
-    let ran = false;
-    let threw: unknown;
-    try {
-      await app.plugin(
-        definePlugin({
-          name: 'c-true',
-          uses: { s: poisoned },
-          apply() {
-            ran = true;
-          },
-        }),
-      );
-    } catch (err) {
-      threw = err;
-    }
-    await app.plugins.idle();
-    expect(threw, `定义期不应抛：${threw}`).toBeUndefined();
-    expect(ran, '误把 required 描述符认成 optional 会让 apply 运行').toBe(false);
-    expect(app.plugins.getPlugin('c-true')?.state).toBe('pending');
+describe('描述符与 optional 包装：造出即冻结，插件定义只收本份 core 造的', () => {
+  it('改名、换 bind、挂字段都抛 TypeError', () => {
+    const d = defineService<{ n: number }>('zz-bind-frozen');
+    const o = optional(d);
+    expect(() => {
+      (d as { name: string }).name = 'zz-bind-renamed';
+    }).toThrow(TypeError);
+    expect(() => {
+      (d as { bind: unknown }).bind = () => ({});
+    }).toThrow(TypeError);
+    expect(() => Object.assign(d, { optional: true })).toThrow(TypeError);
+    expect(() => {
+      (o as { optional: unknown }).optional = defineService('zz-bind-other');
+    }).toThrow(TypeError);
+    expect(() => Object.assign(o, { extra: 1 })).toThrow(TypeError);
+    expect(d.name).toBe('zz-bind-frozen');
+    expect(o.optional).toBe(d);
   });
 
-  it('描述符挂自有 optional: 描述符自身 仍按 required 走激活闸', async () => {
-    const { app } = world();
-    const d = defineService<{ n: number }>('zz-bind-poison');
-    // 自有 optional 字段不是 optional() 包装：须仍走 required 激活闸
-    const poisoned = Object.assign(d, { optional: d });
-    let ran = false;
-    await app.plugin(
-      definePlugin({
-        name: 'c',
-        uses: { s: poisoned },
-        apply() {
-          ran = true;
-        },
-      }),
+  const d = defineService<{ n: number }>('zz-bind-hand');
+  it.each([
+    ['手写的 { name, bind }', () => ({ name: 'zz-bind-hand', bind: (port: { provider: unknown }) => port.provider })],
+    ['缺 name 的手写对象', () => ({ bind: (port: { provider: unknown }) => port.provider })],
+    ['描述符的展开副本', () => ({ ...d })],
+    ['展开副本上挂自有 optional 字段', () => ({ ...d, optional: d })],
+    ['optional 包装的展开副本', () => ({ ...optional(d) })],
+    ['optional() 里包着手写对象', () => optional({ ...d })],
+    ['optional() 套 optional()', () => optional(optional(d) as never)],
+    ['以描述符为原型派生的对象', () => Object.create(d)],
+    ['null', () => null],
+  ])('手写的对象放进 uses：定义时拒绝（%s）', (_label, make) => {
+    expect(() => definePlugin({ name: 'c', uses: { s: make() as never }, apply() {} })).toThrow(
+      '不是服务描述符（应为 defineService 的结果）',
     );
-    await app.plugins.idle();
-    expect(ran, '误把 required 描述符认成 optional 会让 apply 运行').toBe(false);
-    expect(app.plugins.getPlugin('c')?.state).toBe('pending');
+  });
+
+  it('手写的对象、optional 包装、派生的对象与空值放进 provides：定义时拒绝', () => {
+    for (const item of [{ ...d }, optional(d), Object.create(d), null]) {
+      expect(() => definePlugin({ name: 'c', provides: [item as never], apply() {} })).toThrow('不是描述符的元素');
+    }
+  });
+
+  it('抄了章的手写对象：按另一份 core 造的拒绝', () => {
+    const forged = Object.defineProperty({ ...d }, Symbol.for('aalis.core.minted'), { value: true });
+    // 直接放进 uses、包在本份的 optional() 里、放进 provides，三处都点名另一份 core
+    for (const uses of [{ s: forged }, { s: optional(forged as never) }]) {
+      expect(() => definePlugin({ name: 'c', uses: uses as never, apply() {} })).toThrow('另一份 @aalis/core');
+    }
+    expect(() => definePlugin({ name: 'c', provides: [forged as never], apply() {} })).toThrow('另一份 @aalis/core');
+  });
+
+  it('没经 definePlugin 的定义带手写描述符：登记时拒绝并记 error', async () => {
+    const { app, warnings } = world();
+    const handwritten = { name: 'c', uses: { s: { ...d } }, apply() {} };
+    expect(await app.plugin(handwritten as never)).toBe(false);
+    expect(app.plugins.getStatus()).toEqual([]);
+    expect(warnings.filter(m => m.includes('不是服务描述符（应为 defineService 的结果）'))).toHaveLength(1);
   });
 
   it('真正的 optional() 缺席时仍激活', async () => {
@@ -297,6 +310,17 @@ describe('optional：品牌标记，自有 optional 字段不能绕过激活闸'
 });
 
 describe('provide：空实现与非有限 priority 拒绝', () => {
+  it('第一个参数不是描述符（没有服务名）：拒绝，不登记到空名字下', () => {
+    const { app } = world();
+    const publish = app.bind({ provide }).provide.use as (descriptor: unknown, implementation: unknown) => unknown;
+    for (const wrong of [{}, { name: '' }, { name: '  ' }, { name: 7 }, { bind() {} }]) {
+      expect(() => publish(wrong, { n: 1 })).toThrow('不是服务描述符');
+    }
+    // 手写对象只要带着服务名，照常按名字登记
+    publish({ name: 'zz-bind-by-name' }, { n: 1 });
+    expect(app.bind({ services }).services.use.get('zz-bind-by-name')).toEqual({ n: 1 });
+  });
+
   it('provide(null) 抛，提供者 error、消费者不得 active', async () => {
     const ping = defineService<{ ping(): string }>('zz-bind-null');
     const { app, host } = world();
@@ -377,10 +401,16 @@ describe('provide：空实现与非有限 priority 拒绝', () => {
   });
 });
 
-describe('defineService：name 须 trim 后非空', () => {
-  it('空串与空白拒绝', () => {
+describe('defineService：造时校验 name 与 bind', () => {
+  it('name 是空串或空白：拒绝', () => {
     expect(() => defineService('')).toThrow('服务 name 不能为空');
     expect(() => defineService('   ')).toThrow('服务 name 不能为空');
+  });
+
+  it('给了 bind 却不是函数：拒绝，不留到激活绑定时才报', () => {
+    for (const bind of [42, null, {}]) {
+      expect(() => defineService('zz-bind-bad', bind as never)).toThrow('服务 bind 必须是函数');
+    }
   });
 });
 

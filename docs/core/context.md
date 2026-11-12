@@ -31,7 +31,7 @@ export default definePlugin({
 |---|---|
 | `name` | 插件名，与 `package.json` 的 `name` 一致；单实例时即实例 id |
 | `displayName` / `subsystem` | 展示元数据。core 不读、不校验 `subsystem` 取值 |
-| `uses` | 用到的全部能力。键是 `apply` 的参数名，值是描述符；可选依赖包一层 `optional()`。没有默认注入 |
+| `uses` | 用到的全部能力。键是 `apply` 的参数名，值是 `defineService` 造的描述符（手写的同形对象不收）；可选依赖包一层 `optional()`。没有默认注入 |
 | `provides` | 本插件提供的服务描述符列表。激活后按本次激活实际登记的条目校验确已 `provide`（以任何逻辑身份登记的都算，别的激活登记的同 id 条目不算）；未提供则本次激活进入 `error` |
 | `reusable` | 允许同一份定义以 `name:suffix` 多次注册；默认 false |
 | `apply(caps)` | 拿到各项选择层后的装配。可返回 Promise |

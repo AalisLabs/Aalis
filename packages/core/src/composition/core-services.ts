@@ -171,7 +171,11 @@ export function coreProviders(
     },
   };
   const [, provideFor] = entry<Provide>(provide, c => (descriptor, implementation, options) => {
+    // 这里只按服务名登记，手写的对象也收：名字是唯一要读的字段，缺了会登记到 undefined 名下、谁也用不到
     const name = descriptor.name;
+    if (typeof name !== 'string' || name.trim() === '') {
+      throw new Error('provide 的第一个参数不是服务描述符（应为 defineService 的结果）');
+    }
     if (c.resources.refuses(`provide("${name}")`)) return () => {};
     const entryId = options?.entryId ?? c.id;
     if (container.hasEntry(name, entryId, c.owner))

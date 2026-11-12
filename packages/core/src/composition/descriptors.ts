@@ -124,26 +124,32 @@ export interface ServiceDescriptor<P, B = P> {
   bind(port: BindingPort<P>): B;
 }
 
-/** 模块私有品牌：装配只认 optional() 盖过的包装，描述符自有 `optional` 字段不算 */
+/** 模块私有品牌：在类型上把 optional() 包装与描述符分开；运行时还须在本份造过的名单里 */
 const OPTIONAL = Symbol('aalis.optional-use');
 /**
- * 本副本身份。进程里装了两份 core 时，另一份造的描述符、optional 包装带的是它的身份；跨副本只共用这一个
- * 检测键（值各自私有），据此在定义校验处拒绝混装——两份 core 会让日志中枢等进程级身份静默分裂。
+ * 跨副本的检测键。进程里装了两份 core 时，另一份造的描述符、optional 包装也带着它，据此在定义校验处拒绝混装——两份
+ * core 会让日志中枢等进程级身份静默分裂。
  */
 const MINTED = Symbol.for('aalis.core.minted');
-const THIS_COPY = Symbol('aalis.core.copy');
+/** 本份 core 造过的描述符与 optional 包装。章与品牌都能抄到别的对象上，这份名单抄不走：定义校验只认这里面的 */
+const ours = new WeakSet<object>();
 
+/**
+ * 盖章、记进名单并冻结。插件登记时取定 uses 里的服务名，每次激活绑定时再读描述符的 name 与 bind：冻结之后两次读到的
+ * 是同一个值，bind 也不会被换成别人包过的
+ */
 function mint<T extends object>(value: T): T {
-  return Object.defineProperty(value, MINTED, { value: THIS_COPY });
+  ours.add(value);
+  return Object.freeze(Object.defineProperty(value, MINTED, { value: true }));
 }
 
 /**
- * 另一份 core 造的对象一律拒绝；没盖章的手写对象按形状放行
+ * 另一份 core 造的对象（自己带着章却不在本份的名单里）一律拒绝。只认自有的章：以本份描述符为原型派生的对象读得到
+ * 继承来的章，它不是另一份 core 造的，留给调用方按「不是描述符」拒绝
  * @internal
  */
 export function assertOwnCopy(value: unknown, what: string): void {
-  const stamp = (value as { [MINTED]?: unknown } | null)?.[MINTED];
-  if (stamp !== undefined && stamp !== THIS_COPY) {
+  if (Object.hasOwn(Object(value), MINTED) && !ours.has(value as object)) {
     throw new Error(
       `${what}来自另一份 @aalis/core：进程里装了两份 core，只能装一份（插件以 peerDependencies 引用 core；排查见 https://aalis.acenyan.com/guide/third-party-plugin#two-cores）`,
     );
@@ -186,6 +192,9 @@ export function defineService<P, B>(name: string, bind?: (port: BindingPort<P>) 
   if (typeof name !== 'string' || name.trim() === '') {
     throw new Error('服务 name 不能为空');
   }
+  if (bind !== undefined && typeof bind !== 'function') {
+    throw new Error('服务 bind 必须是函数');
+  }
   return mint({ name, bind: bind ?? (port => port.provider as unknown as B) });
 }
 
@@ -195,12 +204,20 @@ export function optional<P, B>(descriptor: ServiceDescriptor<P, B>): OptionalUse
 }
 
 /**
- * 是否为 optional() 包装。不看自有 `optional` 字段。
+ * 是否为本份 optional() 造的包装。自有 `optional` 字段、展开出来的副本都不算
  * @internal
  */
 // biome-ignore lint/suspicious/noExplicitAny: 与 Uses 的 any 载体一致
 export function isOptional(use: unknown): use is OptionalUse<any, any> {
-  return typeof use === 'object' && use !== null && (use as { [OPTIONAL]?: boolean })[OPTIONAL] === true;
+  return ours.has(use as object) && (use as { [OPTIONAL]?: boolean })[OPTIONAL] === true;
+}
+
+/**
+ * 是否为本份 defineService 造的描述符。手写的对象、展开出来的副本都不算
+ * @internal
+ */
+export function isOwnDescriptor(value: unknown): value is ServiceDescriptor<unknown, unknown> {
+  return ours.has(value as object) && !isOptional(value);
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: 与 Uses 的 any 载体一致
