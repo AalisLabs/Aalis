@@ -55,10 +55,22 @@ export class Registry implements HookRegistry {
         const entry = snapshot[index++];
         // 运行途中已撤回的 handler 跳过
         if (!this.#chains.get(hook)?.includes(entry)) continue;
-        const before = index;
-        await entry.fn(data, next);
-        // 游标没动过 = 它没调 next()，其后的 handler 被静默跳过——广播型相位点名肇事者
-        if (opts?.warnOnStall && index === before && index < snapshot.length) {
+        // 每个 handler 拿到自己的 next，只能调一次：再调的话游标已经往后走了，会越过上一次停在那里的 handler
+        // （截停的、抛错的、还没返回的）接着往下，走到底时默认动作再执行一遍。包装不是 async：第一次调用交回的就是
+        // 链自己的 Promise，不多绕微任务。再调时交回被拒的 Promise，并先挂上空处理：等它的照样收到这个错，
+        // 没等的不成为未处理的拒绝（宿主把未处理的拒绝当致命错误，一个插件的这种写法不该带走整个进程）
+        let called = false;
+        await entry.fn(data, () => {
+          if (called) {
+            const refused = Promise.reject(new Error(`钩子 ${hook}: handler(来自 ${entry.contextId}) 重复调用 next()`));
+            refused.catch(() => {});
+            return refused;
+          }
+          called = true;
+          return next();
+        });
+        // 它没调 next()，其后的 handler 被静默跳过——广播型相位点名肇事者
+        if (opts?.warnOnStall && !called && index < snapshot.length) {
           try {
             this.onStall?.(hook, entry.contextId, snapshot.length - index);
           } catch {

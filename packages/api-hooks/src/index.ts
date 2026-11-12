@@ -18,7 +18,7 @@ import { defineService } from '@aalis/core';
 /** 钩子扩展点（空接口；由各 -api 包经 declaration merging 注入「钩子名 → 中间件上下文」） */
 export interface HookContextMap {}
 
-/** 中间件 next：把控制交给下一个中间件或默认动作 */
+/** 中间件 next：把控制交给下一个中间件或默认动作。一个中间件里只能调一次，再调返回被拒的 Promise */
 export type MiddlewareNext = () => Promise<void>;
 
 /** 中间件：可改 data（引用传递），调 next() 继续，不调即截停（含默认动作） */

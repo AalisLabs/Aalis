@@ -318,6 +318,7 @@ defaultAction()        ← 所有 handler 通过后执行
 **关键约定**：
 - 同一钩子内多个 handler 按 **登记方的位次**（插件按实例 id，同一插件按登记先后）执行洋葱模型，无优先级数字
 - 不调用 `next()` 即中止整个管道（含 defaultAction）；`hooks.use.run()` 返回 `false`
+- 一个 handler 里 `next()` 只能调一次，再调返回被拒的 Promise
 - 没有 `hooks` 提供者时 `hooks.use.run()` 返回被拒的 Promise，defaultAction 不执行
 - 跨钩子的顺序由调度方（如 plugin-gateway）显式决定
 
