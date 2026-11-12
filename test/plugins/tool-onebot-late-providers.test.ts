@@ -7,7 +7,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { toolContext } from '../fixtures/tool-call.js';
 
 // ════════════════════════════════════════════════════════════
-// tool-onebot 与可选依赖的上线顺序无关：OneBot 工具只在出现 OneBot 平台时注册，但适配器可能晚于 app:ready 上线，
+// tool-onebot 与可选依赖的上线顺序无关：OneBot 工具只在出现 OneBot 平台时注册，但适配器可能在就绪之后才上线，
 // 且作为 platform 的非胜者上线（follow 不触发）：平台出现时补注册一次，之后不重复。
 // ════════════════════════════════════════════════════════════
 
@@ -52,7 +52,7 @@ async function setup() {
 }
 
 describe('tool-onebot 平台闸可重入', () => {
-  it('OneBot 适配器在 app:ready 之后才上线、且不是 platform 胜者：工具随后注册', async () => {
+  it('OneBot 适配器在就绪之后才上线、且不是 platform 胜者：工具随后注册', async () => {
     const { app, host, onebotTools } = await setup();
     // 同一激活登记两家：各给一个条目 id，list() 才分得清
     host.provide.use(platform, adapter('cli'), { entryId: 'adapter-cli' });

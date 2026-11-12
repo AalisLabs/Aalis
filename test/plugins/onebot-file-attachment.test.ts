@@ -358,7 +358,7 @@ async function boot(
     await app.plugins.idle();
     if (app.plugins.getPlugin(imageSenderPlugin.name)?.state !== 'active') throw new Error('image-sender 未激活');
   }
-  await app.start(); // app:ready 时连接
+  await app.start(); // 就绪时连接
   const selfInfo = protocol === 'v11' ? 'get_login_info' : 'get_self_info';
   await until(() => actions.some(a => a.action === selfInfo));
 

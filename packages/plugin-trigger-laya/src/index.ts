@@ -303,7 +303,7 @@ function run(caps: Caps): void {
         .catch(err => logger.use.warn(`[laya] 启停侧车出错: ${err}`));
       return chain;
     };
-    caps.events.use.on('app:ready', () => {
+    caps.lifecycle.use.onReady(() => {
       appReady = true;
       void reconcile();
     });

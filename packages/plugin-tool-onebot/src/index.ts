@@ -11,7 +11,7 @@ import { type SessionHistoryReadResult, sessionHistory } from '@aalis/api-sessio
 import { sessionManager, TAKE_UNKNOWN, takeFrom } from '@aalis/api-session-manager';
 import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
 import { tools, withToolGroups } from '@aalis/api-tools';
-import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
+import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
 import { defineConfig, parseConfig } from '@aalis/schema-config';
 import { toSource } from '@aalis/schema-i18n';
 import { t } from './texts.js';
@@ -101,6 +101,7 @@ const uses = {
    */
   sessionManager: optional(sessionManager),
   events,
+  lifecycle,
   logger,
   config,
 };
@@ -562,7 +563,7 @@ export default definePlugin({
   configSchema,
   uses,
   apply(caps) {
-    const { tools, events, logger, platform } = caps;
+    const { tools, events, lifecycle, logger, platform } = caps;
     const cfg = parseConfig(configSchema, caps.config.use, logger.use);
     const bundle: OneBotToolBundle = {
       daily: withToolGroups(tools.use, ['onebot-daily']),
@@ -575,8 +576,8 @@ export default definePlugin({
     const historyCfg: OneBotSessionHistoryConfig = { maxLimit, defaultLimit: Math.min(defaultLimitRaw, maxLimit) };
 
     // 仅当 OneBot 平台可用时才注册工具。platform 是可选的多提供者服务，OneBot 适配器可能晚于
-    // app:ready 上线（WebUI 启用、市场热装、启动失败后修好），且作为非胜者上线时 follow 不触发：
-    // 故在 app:ready 与每次 platform 提供者注册时各判一次，出现 onebot 即注册，之后不再重复。
+    // 就绪上线（WebUI 启用、市场热装、启动失败后修好），且作为非胜者上线时 follow 不触发：
+    // 故在就绪时与每次 platform 提供者注册时各判一次，出现 onebot 即注册，之后不再重复。
     // 平台离场不反注册：工具调用时找不到 OneBot 连接本就会报错。
     let toolsRegistered = false;
     const registerToolsOnce = (): void => {
@@ -612,7 +613,7 @@ export default definePlugin({
       if (cfg.sessionHistory.enabled) registerSessionHistoryTools(caps, bundle, historyCfg);
       registerRequestTools(caps, bundle);
     };
-    events.use.on('app:ready', () => {
+    lifecycle.use.onReady(() => {
       registerToolsOnce();
       if (!toolsRegistered) logger.use.info('未检测到 OneBot 平台，暂不注册 OneBot 工具（平台上线后自动补注册）');
     });

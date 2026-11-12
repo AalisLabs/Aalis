@@ -63,8 +63,8 @@
       "required": [
         "config",
         "contributions",
-        "events",
         "hooks",
+        "lifecycle",
         "logger",
         "provide"
       ]

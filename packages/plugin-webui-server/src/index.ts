@@ -428,7 +428,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   });
 
   // 前端静态文件托管：前端包不是插件（无 apply，纯静态资源），托管权在本插件——
-  // app:ready 时由 client-discovery 按 `aalis.client` 标记发现候选，本插件把每个候选注册成
+  // 就绪时由 client-discovery 按 `aalis.client` 标记发现候选，本插件把每个候选注册成
   // 一条 webui-client 服务 provider，再由服务解析（偏好 > 优先级 > 注册顺序）定出活跃前端。
   let clientDist = '';
   let staticMiddleware: express.RequestHandler | null = null;
@@ -466,7 +466,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     if (refused > 0) logger.use.warn(`前端的字典 ${file} 里有 ${refused} 条不合格，没有登记`);
   }
 
-  // 已发现的前端候选（app:ready 时填充，逐个注册为 webui-client 服务 provider）。
+  // 已发现的前端候选（就绪时填充，逐个注册为 webui-client 服务 provider）。
   const clientCandidates: Array<{ id: string; label: string; dir: string }> = [];
   /**
    * 候选 id → 它那条 webui-client provider 的注销句柄。
@@ -506,7 +506,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // ---------- REST API ----------
 
   // ---------- 插件管理 + 全局配置 ----------
-  // fs 扫描 env：discoverClients（app:ready 时）与市场「已装」兜底共用一份，避免两处重复。
+  // fs 扫描 env：discoverClients（就绪时）与市场「已装」兜底共用一份，避免两处重复。
   const fsScanEnv = {
     existsSync,
     readdirSync: (p: string) => {
@@ -1077,7 +1077,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       logger.use.info(`前端已消失，摘除候选: ${stale.label} (${stale.dir})`);
     }
     // 摘掉 provider 只改了「服务解析结果」，**真正服务 HTTP 的是 clientDist / staticMiddleware**，
-    // 它们在 app:ready 时绑定、之后只由 remountActiveClient 更新。不重挂的话，被摘掉的正好是当前
+    // 它们在就绪时绑定、之后只由 remountActiveClient 更新。不重挂的话，被摘掉的正好是当前
     // 活跃前端时，express.static 仍指向已删目录 —— 请求落到 SPA 兜底、`index.html` 不存在
     // → 整站 404，而服务池里明明还有别的可用前端。切换偏好那条路径早就这么做了，这里对齐。
     if (removed > 0) remountActiveClient();
@@ -1106,17 +1106,22 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   }
 
   // 启动服务器
-  events.use.on('app:ready', async () => {
-    // 冷启动时 storage 的激活在 app:ready 之前收敛；等晚到的读回落定，listen / autoOpen /
+  lifecycle.use.onReady(async () => {
+    // 冷启动时 storage 的激活在就绪之前收敛；等晚到的读回落定，listen / autoOpen /
     // access.txt 用的就是持久化的 token
     if (tokenLoading) await tokenLoading;
-    // 等插件状态机静置再登记扫描到的前端：bounce 后 sticky 的 app:ready 在本实例激活途中补发，立刻登记会落在
-    // provides 核对之前（dev 多报「未在 provides 中声明」），等过之后与冷启动一样晚于全部激活，主动覆盖仍先登记。
-    // 代价：重算一直不收敛时，前端要等它收敛后才登记与挂上
-    if (caps.plugins.present) await caps.plugins.use.idle();
+    // 等插件状态机静置再登记扫描到的前端：重启出来的新实例在自己激活落定后就跑就绪回调，随它重启的插件此刻还没
+    // 激活完；等过之后与冷启动一样晚于全部激活，主动覆盖仍先登记。代价：重算一直不收敛时，前端要等它收敛后才登记与挂上。
+    // 与取消信号赛跑：等待期间本实例开始关闭时，关闭要等这个回调落定，而静置又要等这次关闭
+    const { signal } = lifecycle.use;
+    if (caps.plugins.present && !signal.aborted)
+      await Promise.race([
+        caps.plugins.use.idle(),
+        new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true })),
+      ]);
     // 等待期间本实例可能已开始关闭（bounce、disable、unload）。醒来照常登记、listen 的话，它成了占着端口的旧实例：
     // 接手的新实例 listen 报 EADDRINUSE，禁用之后端口照样应答
-    if (lifecycle.use.signal.aborted) return;
+    if (signal.aborted) return;
     discoverAndProvideClients();
     // 活跃前端 = 解析后的 webui-client 服务（servicePreferences 偏好 > 优先级 > 注册顺序）；零前端则 404。
     const activeDir = currentClientDir();

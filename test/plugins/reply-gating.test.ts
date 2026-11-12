@@ -188,7 +188,7 @@ async function setup(opts: SetupOptions = {}): Promise<Harness> {
     const state = app.plugins.getPlugin(p.name)?.state;
     if (state !== 'active') throw new Error(`${p.name} 未激活（state=${state}）`);
   }
-  await app.start(); // app:ready → platform 档 idle 调度器启动
+  await app.start(); // 就绪 → platform 档 idle 调度器启动
 
   return {
     app,

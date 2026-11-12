@@ -51,7 +51,7 @@ describe('WebUI 媒体路由', () => {
       },
     ]);
     await app.start();
-    // app:started 之后才开始监听：等端口能连上
+    // 就绪回调里才开始监听：等端口能连上
     for (let i = 0; ; i++) {
       try {
         await fetch(`http://127.0.0.1:${port}/api/media`);

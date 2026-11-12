@@ -23,7 +23,7 @@ export function isListening(port: number): Promise<boolean> {
   });
 }
 
-/** webui-server 在 app:ready 时才监听：等登录状态接口答得上来 */
+/** webui-server 在就绪时才监听：等登录状态接口答得上来 */
 export async function waitListening(port: number): Promise<void> {
   await vi.waitFor(
     async () => {

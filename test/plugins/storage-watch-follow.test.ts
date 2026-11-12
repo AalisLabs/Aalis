@@ -11,8 +11,8 @@ import { provideHostPaths } from '../fixtures/host-paths.js';
 import { HUB_PLUGINS } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
-// skills 与 persona 的目录监听曾只在自己的 app:ready 里挂一次，挂在当时的 storage 提供者上：
-// - storage 晚于 app:ready 上线：从不扫描、不监听，技能为空、人设停在内置默认；
+// skills 与 persona 的目录监听曾只在启动就绪时挂一次，挂在当时的 storage 提供者上：
+// - storage 在就绪之后才上线：从不扫描、不监听，技能为空、人设停在内置默认；
 // - storage 重启后热重载还能用，只因旧提供者的 fs 监听器没随它关闭（泄漏）。
 // 现改为跟随 storage（follow）：在场即挂监听并全量扫描，换代时先关旧监听再重挂；
 // storage-local 关闭时也会关掉自己建的监听器；skills / persona 自己卸载时由 follow 的清理关掉监听。
@@ -121,7 +121,7 @@ describe('skills / persona 的目录监听跟随 storage 提供者', () => {
     expect(rescans() - before, '卸载后的监听仍在触发重扫').toBe(0);
   });
 
-  it('storage 在 app:ready 之后才上线：已有的技能与人设被扫到，之后的变化也被感知', async () => {
+  it('storage 在就绪之后才上线：已有的技能与人设被扫到，之后的变化也被感知', async () => {
     writeSkill(skillsDir(), 'zz-pre');
     writeCard(cardsDir(), 'zzpre');
     app = new App({ name: 'T', logLevel: 'error' });

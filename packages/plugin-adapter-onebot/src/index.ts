@@ -2526,7 +2526,7 @@ function runAdapter(caps: Caps): void {
 
   // ----- 生命周期 -----
 
-  events.use.on('app:ready', () => {
+  lifecycle.use.onReady(() => {
     for (const connConfig of connections) {
       if (!connConfig.url) {
         logger.use.warn('OneBot 连接配置缺少 url，跳过');

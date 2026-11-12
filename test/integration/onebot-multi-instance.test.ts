@@ -145,7 +145,7 @@ async function world(accounts: { a: Account[]; b: Account[] }) {
   for (const id of [A, B, sessionManagerPlugin.name, toolOnebot.name]) {
     if (app.plugins.getPlugin(id)?.state !== 'active') throw new Error(`${id} 未激活`);
   }
-  await app.start(); // app:ready 时连接
+  await app.start(); // 就绪时连接
   const onlineCount = [...accounts.a, ...accounts.b].filter(a => a.online).length;
   await until(
     () => aggregatePlatformConnections(host.platform).filter(c => c.status === 'online').length === onlineCount,

@@ -16,7 +16,7 @@ import { sessionValuesPlugin } from '../fixtures/session-settings.js';
 // ════════════════════════════════════════════════════════════
 // persona 从 storage 载入角色卡：
 //   1. 冷启动同批登记时 persona 排在 storage-local 前面（按字母序加载的实际顺序）：apply 时读不到卡，
-//      先用内置默认；主卡完全靠 app:ready 跟随 storage 的首扫（refresh → reloadPrimaryCardFromCache）载入。
+//      先用内置默认；主卡完全靠就绪回调里跟随 storage 的首扫（refresh → reloadPrimaryCardFromCache）载入。
 //      这一步回归时人设会静默退回内置的 Aalis，其它用例都让 storage 先上线，照样全绿。
 //   2. 非主卡的 outputFormat 缓存曾按显示名写入、按文件名删除：同名的两张卡共用先解析的那份格式，
 //      热改非主卡的 outputFormat 要重启才生效（此时 outputFormatPrompt 已是新文本，两边对不上）。

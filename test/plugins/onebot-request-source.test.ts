@@ -80,7 +80,7 @@ describe('plugin-adapter-onebot：请求事件的系统通知', () => {
     });
     await app.plugins.idle();
     if (app.plugins.getPlugin(onebotPlugin.name)?.state !== 'active') throw new Error('onebot 适配器未激活');
-    await app.start(); // app:ready 时连接
+    await app.start(); // 就绪时连接
     await until(() => socket !== undefined);
 
     const request = (extra: Record<string, unknown>) =>

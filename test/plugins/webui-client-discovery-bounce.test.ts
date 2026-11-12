@@ -7,8 +7,8 @@ import { App, definePlugin, type Logger, provide, services } from '../../package
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { provideHostPaths } from '../fixtures/host-paths.js';
 
-// webui-server 在 app:ready 时把扫描到的前端包登记成 webui-client 的条目。bounce 后 sticky 的 app:ready 在新实例
-// 激活途中补发，登记要等插件状态机静置之后，落在这次激活的 provides 核对之后，与冷启动一样；
+// webui-server 在就绪时把扫描到的前端包登记成 webui-client 的条目。bounce 出来的新实例在自己激活落定后跑就绪回调，
+// 登记要等插件状态机静置之后，落在这次激活的 provides 核对之后，与冷启动一样；
 // 主动 provide webui-client 的插件仍先于扫描到的包登记，默认胜出。
 
 const apps: App[] = [];

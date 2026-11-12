@@ -236,7 +236,7 @@ function run(caps: Caps): void {
   });
 
   // 平台级 idle 启动；全局层改了（宿主文档变化）时原来关着的随即按新值排
-  events.use.on('app:ready', () => {
+  lifecycle.use.onReady(() => {
     platformIdle.start();
   });
   events.use.on('host-config:changed', () => platformIdle.wake());

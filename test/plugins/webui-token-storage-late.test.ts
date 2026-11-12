@@ -162,7 +162,7 @@ describe('webui-server 的 token 与访问凭据文件', () => {
   });
 
   it('storage 在启动前上线、读回尚未落定：监听等读回完成，access.txt 从第一次写起就是持久化 token', async () => {
-    // 假 storage 卡住 token 的读取：app:ready 若不等读回，listen 会先用临时 token 写 access.txt、打开浏览器
+    // 假 storage 卡住 token 的读取：就绪回调若不等读回，listen 会先用临时 token 写 access.txt、打开浏览器
     let releaseRead = () => {};
     const readGate = new Promise<void>(r => {
       releaseRead = r;

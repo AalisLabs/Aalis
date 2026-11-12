@@ -7,7 +7,7 @@ import { sessionFields } from '@aalis/api-session-settings';
 import { isStorageNotFound, type StorageService, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
-import { type BoundOf, config, definePlugin, defineService, events, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, defineService, lifecycle, logger, optional, provide } from '@aalis/core';
 import { type ConfigOf, defineConfig, parseConfig } from '@aalis/schema-config';
 import { TextError, type TextRef, textOf } from '@aalis/schema-i18n';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
@@ -276,7 +276,7 @@ const uses = {
   document: optional(ownHostConfig),
   contributions,
   hooks,
-  events,
+  lifecycle,
   logger,
   config,
   provide,
@@ -294,7 +294,7 @@ export default definePlugin({
 });
 
 function run(caps: Caps): void {
-  const { tools, webui, contributions, hooks, events, provide } = caps;
+  const { tools, webui, contributions, hooks, lifecycle, provide } = caps;
   const logger = caps.logger.use.child('skills');
   const config: SkillsConfig = parseConfig(configSchema, caps.config.use, logger);
   const fields = caps.sessionFields.use.fields(configSchema, caps);
@@ -1207,7 +1207,7 @@ function run(caps: Caps): void {
 
   // ── 跟随 storage：在场即补建目录、挂监听、全量扫描；提供者换代（重启 / 改配置 / 晚上线）时重挂 ──
   // 换代时 follow 先跑上次返回的清理，关掉挂在旧提供者上的监听。
-  // 首挂放在 sticky 的 app:ready 里并等它扫完，保持「start() 返回时技能已加载」；此刻 storage 不在场则等它上线再挂。
+  // 首挂放在就绪回调里并等它扫完，保持「start() 返回时技能已加载」；此刻 storage 不在场则等它上线再挂。
   async function rescanAndLog(level: 'info' | 'debug', reason: string): Promise<void> {
     try {
       await service.rescan();
@@ -1216,7 +1216,7 @@ function run(caps: Caps): void {
       logger.warn(`扫描 skills 失败（${reason}）：${err}`);
     }
   }
-  events.use.on('app:ready', async () => {
+  lifecycle.use.onReady(async () => {
     let first: Promise<void> | undefined;
     caps.storage.follow(() => {
       let off: (() => void) | undefined;

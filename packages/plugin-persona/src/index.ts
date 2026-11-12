@@ -13,7 +13,7 @@ import {
   type BoundOf,
   config as configCap,
   definePlugin,
-  events as eventsCap,
+  lifecycle as lifecycleCap,
   logger as loggerCap,
   optional,
   provide as provideCap,
@@ -476,7 +476,7 @@ const uses = {
   provide: provideCap,
   config: configCap,
   logger: loggerCap,
-  events: eventsCap,
+  lifecycle: lifecycleCap,
   hooks: hooksCap,
   /** 登记 /clear 的 persona 类型 */
   contributions: optional(contributionsCap),
@@ -501,7 +501,7 @@ export default definePlugin({
 });
 
 async function run(caps: Caps): Promise<void> {
-  const { provide, config, logger, events, hooks } = caps;
+  const { provide, config, logger, lifecycle, hooks } = caps;
   const cfg = parseConfig(configSchema, config.use, logger.use);
   const { statePersistence, timeInjection, timeZone } = cfg;
 
@@ -673,8 +673,8 @@ async function run(caps: Caps): Promise<void> {
 
   // 跟随 storage：在场即补建人设目录、挂监听、全量扫描；提供者换代（重启 / 改配置 / 晚上线）时重挂。
   // 换代时 follow 先跑上次返回的清理，关掉挂在旧提供者上的监听。
-  // 首挂放在 sticky 的 app:ready 里并等它扫完，保持「start() 返回时主卡已按存储加载」；此刻 storage 不在场则等它上线再挂。
-  events.use.on('app:ready', async () => {
+  // 首挂放在就绪回调里并等它扫完，保持「start() 返回时主卡已按存储加载」；此刻 storage 不在场则等它上线再挂。
+  lifecycle.use.onReady(async () => {
     let first: Promise<void> | undefined;
     caps.storage.follow(() => {
       const offs: Array<() => void> = [];
