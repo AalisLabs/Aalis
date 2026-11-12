@@ -28,7 +28,7 @@ describe('register 的返回值', () => {
     await app.stop();
   });
 
-  it('手写缺 name / 空串 / 危险键 / 带实例后缀：false + error 一次 + 不登记', async () => {
+  it('手写缺 name / 空串 / 危险键 / 带实例后缀 / 宿主根的 id：false + error 一次 + 不登记', async () => {
     const hub = new LogHub();
     const lines: string[] = [];
     hub.onEntry(e => lines.push(`${e.level}:${e.message}`));
@@ -39,13 +39,14 @@ describe('register 的返回值', () => {
     expect(await app.plugins.register({ name: '', apply() {} })).toBe(false);
     expect(await app.plugins.register({ name: 'constructor', apply() {} })).toBe(false);
     expect(await app.plugins.register({ name: 'a:b', apply() {} })).toBe(false);
+    expect(await app.plugins.register({ name: 'root', apply() {} })).toBe(false);
 
     await app.plugins.idle();
     expect(app.plugins.getStatus()).toEqual([]);
     expect(JSON.parse(JSON.stringify(app.plugins.getStatus()))).toEqual([]);
 
     const errors = lines.filter(l => l.startsWith('error:') && l.includes('拒绝注册'));
-    expect(errors, '每个非法定义恰好 error 一次').toHaveLength(4);
+    expect(errors, '每个非法定义恰好 error 一次').toHaveLength(5);
     await app.stop();
   });
 

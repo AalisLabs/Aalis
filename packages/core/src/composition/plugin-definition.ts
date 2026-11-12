@@ -27,7 +27,7 @@ export interface PluginMeta {}
 export interface PluginDefinition<U = {}> extends PluginMeta {
   /**
    * 插件名，与 package.json 的 name 一致；单实例时即实例 id。
-   * 须为 trim 后非空的字符串，不能是 `__proto__` / `constructor` / `prototype`，
+   * 须为 trim 后非空的字符串，不能是 `__proto__` / `constructor` / `prototype`，不能是 `root`（宿主根的实例 id），
    * 且不含 instanceId 的 `:suffix`（parseInstanceId 以第一个 ':' 切开）。
    */
   name: string;
@@ -84,6 +84,10 @@ export function assertValidInstanceId(id: unknown): asserts id is string {
 
 function assertValidPluginName(name: unknown): asserts name is string {
   assertValidId(name, 'name');
+  // 枢纽服务按实例 id 归属登记：与宿主根同名的插件，它的登记会和宿主自己的混在一起、互相顶替
+  if (name === 'root') {
+    throw new Error('插件的 name 不能是 "root"：它是宿主根的实例 id');
+  }
   // parseInstanceId 以第一个 ':' 切出实例后缀，所以「带后缀」即「含 ':'」
   if (name.includes(':')) {
     throw new Error(

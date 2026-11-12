@@ -189,6 +189,13 @@ describe('定义对象的 name', () => {
     // 闸只管写进普通对象当键时危险的原串；带空白的串本身不危险，id 存储时也不 trim
     expect(definePlugin({ name: ' __proto__ ', apply() {} }).name).toBe(' __proto__ ');
   });
+
+  it('name 不能是 root：它是宿主根的实例 id', () => {
+    expect(() => definePlugin({ name: 'root', apply() {} })).toThrow('插件的 name 不能是 "root"：它是宿主根的实例 id');
+    // 只挡这一个原串
+    expect(definePlugin({ name: '@scope/root', apply() {} }).name).toBe('@scope/root');
+    expect(definePlugin({ name: 'Root', apply() {} }).name).toBe('Root');
+  });
 });
 
 describe('定义对象的 uses / apply / provides', () => {

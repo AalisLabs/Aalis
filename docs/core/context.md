@@ -23,7 +23,7 @@ export default definePlugin({
 
 `definePlugin` 在模块加载时校验声明表（`name` 合法、`uses` 每一项都是描述符或 `optional()` 包装）并原样返回，好让 `apply` 的参数类型从 `uses` 推导出来。加载器只接受 **default 导出的定义对象**。
 
-`name` 须为 trim 后非空的字符串，不含实例后缀 `:suffix`（只用于 `register` 的 instanceId），也不能是 `__proto__` / `constructor` / `prototype`：这一条只保证 id 写进普通对象当键（配置文档、管理面索引）时安全，读取继承属性仍要用 `Object.hasOwn`。`instanceId` 同规则（允许 `name:suffix`）。手写、未经 `definePlugin` 的对象在 `register` 还会再过同一道闸：校验失败（含定义里有另一份 `@aalis/core` 造的描述符或 `optional` 包装）返回 `false` 并记 error，不抛错。定义期 `definePlugin` 抛错；登记期不抛、返回 `false`。
+`name` 须为 trim 后非空的字符串，不含实例后缀 `:suffix`（只用于 `register` 的 instanceId），不能是 `__proto__` / `constructor` / `prototype`，也不能是 `root`（宿主根的实例 id）。危险键这一条只保证 id 写进普通对象当键（配置文档、管理面索引）时安全，读取继承属性仍要用 `Object.hasOwn`。`instanceId` 同规则（允许 `name:suffix`）。手写、未经 `definePlugin` 的对象在 `register` 还会再过同一道闸：校验失败（含定义里有另一份 `@aalis/core` 造的描述符或 `optional` 包装）返回 `false` 并记 error，不抛错。定义期 `definePlugin` 抛错；登记期不抛、返回 `false`。
 
 字段：
 
