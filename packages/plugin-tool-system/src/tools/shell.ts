@@ -120,6 +120,8 @@ export function registerShellTools(tools: BoundTools, config: ShellConfig): void
           if (result.signal !== null) return JSON.stringify({ aborted: true, message: '命令已中止', ...output });
           return JSON.stringify({ ...output, note: '调用已中止' });
         }
+        // 没被中止而被信号结束（被外部结束，或 process 提供者停用时收掉）：退出码只有 -1，写明是哪个信号
+        if (result.signal !== null) return JSON.stringify({ ...output, note: `被信号 ${result.signal} 结束` });
         return JSON.stringify(output);
       } catch (err) {
         // spawn 失败与已中止时 spawn 同步抛出落这里（此时无输出可留）；中止运行中的命令不走此分支。

@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { ProcessService, SpawnOptions } from '../../packages/api-process/src/index.js';
+import type { ExecResult, ProcessService, SpawnOptions } from '../../packages/api-process/src/index.js';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
 import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { LocalProcessService } from '../../packages/plugin-process-local/src/index.js';
@@ -16,6 +16,7 @@ import { toolContext } from '../fixtures/tool-call.js';
 //   - exec 把 callCtx.signal 交给 process 服务（按进程组停干净，见 process-local-abort.test.ts），启动进程不带超时；
 //   - 被信号结束的才报「命令已中止」；中止前已正常退出的按实际退出回报、注明调用已中止，
 //     免得下一轮把已经生效的命令再跑一遍；
+//   - 没被中止而被信号结束的（被外部结束、process 提供者停用时收掉）写明是哪个信号；
 //   - shell 工具只有 exec：后台进程表与它的几个工具由执行器的转后台与后台任务工具取代。
 // 启动真实进程的用例只在 POSIX 跑。
 // ════════════════════════════════════════════════════════════
@@ -148,36 +149,51 @@ describe('exec 接住中止（POSIX，真实进程）', () => {
   });
 });
 
+/** 替身 ProcessService：spawn 出的进程以 wait 的返回落定，别的入口 exec 不该碰 */
+function fakeProcess(wait: () => Promise<ExecResult>): ProcessService {
+  return {
+    spawn: () => ({
+      pid: undefined,
+      stdin: null,
+      stdout: null,
+      stderr: null,
+      wait,
+      kill: () => false,
+      unref: () => {},
+    }),
+    execFile: async () => {
+      throw new Error('exec 不该调 execFile');
+    },
+    makeTempDir: async () => {
+      throw new Error('exec 不该建临时目录');
+    },
+    readExternalFile: async () => {
+      throw new Error('exec 不该读外部文件');
+    },
+  };
+}
+
 describe('exec 接住中止（替身进程）', () => {
   it('安全：命令已正常退出、wait 落定前中止：按实际退出回报并注明调用已中止，不报 aborted', async () => {
     const ac = new AbortController();
-    const fake: ProcessService = {
-      spawn: () => ({
-        pid: undefined,
-        stdin: null,
-        stdout: null,
-        stderr: null,
-        wait: async () => {
-          ac.abort(); // 退出之后、落定之前（如孙进程占着管道的收尾窗口）中止到达
-          return { code: 0, signal: null, stdout: 'zz-slice1-done\n', stderr: '' };
-        },
-        kill: () => false,
-        unref: () => {},
-      }),
-      execFile: async () => {
-        throw new Error('exec 不该调 execFile');
-      },
-      makeTempDir: async () => {
-        throw new Error('exec 不该建临时目录');
-      },
-      readExternalFile: async () => {
-        throw new Error('exec 不该读外部文件');
-      },
-    };
+    const fake = fakeProcess(async () => {
+      ac.abort(); // 退出之后、落定之前（如孙进程占着管道的收尾窗口）中止到达
+      return { code: 0, signal: null, stdout: 'zz-slice1-done\n', stderr: '' };
+    });
     const { exec } = register(fake);
     const res = await call(exec, { command: 'git push' }, ac.signal);
     expect(res.aborted).toBeUndefined();
     expect(res).toMatchObject({ exitCode: 0, stdout: 'zz-slice1-done\n', note: '调用已中止' });
+  });
+});
+
+describe('exec 没被中止而被信号结束（替身进程）', () => {
+  it('写明是哪个信号：退出码只有 -1，不报 aborted（外部结束、process 提供者停用时收掉都是这样落定）', async () => {
+    const fake = fakeProcess(async () => ({ code: null, signal: 'SIGKILL', stdout: 'zz-slice1-half\n', stderr: '' }));
+    const { exec } = register(fake);
+    const res = await call(exec, { command: 'sleep 60' }, new AbortController().signal);
+    expect(res.aborted).toBeUndefined();
+    expect(res).toEqual({ exitCode: -1, stdout: 'zz-slice1-half\n', stderr: '', note: '被信号 SIGKILL 结束' });
   });
 });
 
