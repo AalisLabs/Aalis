@@ -226,6 +226,14 @@ describe('定义对象的 uses / apply / provides', () => {
     expect(app.plugins.getPlugin('no-apply')).toBeUndefined();
   });
 
+  it('provides 非数组（空串、null、别的可遍历对象）：definePlugin 抛', () => {
+    for (const provides of ['', null, new Set()]) {
+      expect(() => definePlugin(asDef({ name: 'prov-shape', provides, apply() {} }))).toThrow(
+        '插件 "prov-shape" 的 provides 必须是数组',
+      );
+    }
+  });
+
   it('provides 元素非描述符：文案含原值', () => {
     expect(() => definePlugin(asDef({ name: 'prov-str', provides: ['zz-s5-kv'], apply() {} }))).toThrow(
       '插件 "prov-str" 的 provides 含有不是描述符的元素（zz-s5-kv）',

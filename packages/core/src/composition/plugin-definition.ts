@@ -120,7 +120,7 @@ export interface DefinitionSpec {
 
 /**
  * 校验一份定义并返回取定的那份：name 合法，uses 为纯对象且每一项都是本份 core 造的描述符（手写的对象不收），apply 是函数，
- * provides 元素都是描述符。
+ * provides 给了就是数组、元素都是描述符。
  * 每个字段只读一次（getter 只执行一次），校验的与取定的是同一次读到的值
  */
 export function validateDefinition(definition: PluginDefinition): DefinitionSpec {
@@ -144,6 +144,10 @@ export function validateDefinition(definition: PluginDefinition): DefinitionSpec
   });
   if (typeof apply !== 'function') {
     throw new Error(`插件 "${name}" 的 apply 必须是函数`);
+  }
+  // 空串可遍历、又是假值，不拦的话两头都放过去，到激活核对 provides 时才出错
+  if (provides !== undefined && !Array.isArray(provides)) {
+    throw new Error(`插件 "${name}" 的 provides 必须是数组`);
   }
   const provided: string[] = [];
   for (const item of provides ?? []) {
