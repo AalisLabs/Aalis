@@ -108,7 +108,7 @@ export async function retireBatch(
  * 旧激活已清，required 依赖都有提供者，且它为这些服务选中的那一家都未进关闭计划。同步段返回时 entry.activation 已是本次激活（配置拷贝失败时没有激活）。
  * 转入后台期间它的服务暂不对外（ServiceContainer.hold）；成功时先写 active 再上线，失败与被接管时随拆卸摘除。
  */
-export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps): Promise<'retry' | undefined> {
+export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps): Promise<void> {
   const { host, logger } = deps;
   const services = host.runtime.services;
 
@@ -177,7 +177,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
       if (target === 'pending')
         logger.debug(`插件 "${entry.instanceId}" 初始化期间 required 服务不可用，清理后等待依赖恢复`);
       await retireBatch([entry], target, deps);
-      return target === 'pending' ? 'retry' : undefined;
+      return;
     }
     logger.error(`插件 "${entry.instanceId}" 激活失败:`, err);
     // 抛出 undefined 时没有原值可存：换成说明它的 Error，免得 error 态没有原因

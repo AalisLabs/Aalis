@@ -64,7 +64,8 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
   }
   /**
    * 有被推迟的重算：在飞 recompute 或挂起段期间到来的请求合并成一次。
-   * 目标态只看容器里此刻有没有服务，合并不丢信息。消费前先摘下，执行期间的新请求另排一次。
+   * 目标态只看容器里此刻有没有服务，合并不丢信息。消费前先摘下；在飞的那次重算收敛时再清一次（执行期间到来的请求它都已
+   * 看到），收敛之后才到的另跑一次。
    */
   #queued = false;
   /**
@@ -534,8 +535,8 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
     }
     this.#queued = true;
 
-    // 单飞 + 排队（修 lost wakeup）：在飞期间/挂起段的请求合并排队，
-    // 由在飞 run 收尾时补跑或挂起段收尾的 recompute 消化。注意这里必须
+    // 单飞 + 排队（修 lost wakeup）：在飞期间/挂起段的请求合并排队，由在飞的那次重算多看一轮吸收（它收敛之后才到的
+    // 由下面的循环再跑一次），或由挂起段收尾的 recompute 消化。注意这里必须
     // 立即返回而不能把在飞 promise 交还调用方——若调用方恰在某插件 apply()
     // 内同步调用（在飞 run 正 await 它），等待在飞 promise 会自我死锁。
     if (this.#reloading || this.#suspended) {
@@ -612,12 +613,15 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
           return owner !== undefined && !this.#host.closing(owner);
         });
         if (!ready) continue;
-        // 'retry'：required 缺失、预算未用尽，已回到 pending，下一轮重新观察依赖
-        if ((await this.#activate(entry)) === 'retry' || (entry.state as PluginState) === 'active') changed = true;
+        // 等过一次激活就再看一轮，不论它落在哪个状态：等待期间到来的请求（服务变更、管理动作）都已改了注册表或容器
+        await this.#activate(entry);
+        changed = true;
       }
     }
 
+    // 最后一轮没有等过任何东西，此前到来的请求改动的状态它都已看到：这些请求排下的补跑不必再跑。
     // 停机打断的这一轮没有收敛，但订阅方都已开始关闭，轮到时自己跳过
+    this.#queued = false;
     for (const poke of this.#watchers) poke();
   }
 
@@ -629,7 +633,7 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
    * 一个 abort 监听器、一个只触发一次的阈值定时器看到落定或 abort 为止：到点转入后台、记一条 warn，此后不再提醒，
    * 后台状态经 getStatus 的 slow 查看。不留周期定时器，没调 stop 的嵌入式宿主至多被它拖到阈值到点才退出。
    */
-  #activate(entry: PluginRecord): Promise<'retry' | undefined> {
+  #activate(entry: PluginRecord): Promise<void> {
     const landing = activatePlugin(entry, this.#deps);
     // 同步段已挂上本次激活（配置拷贝失败时没有）；清引用最早在一个微任务之后
     const activation = entry.activation;
@@ -639,7 +643,7 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
     return new Promise((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const letGo = (): void => {
-        resolve(undefined);
+        resolve();
         landing
           .finally(() => this.#kick(`${entry.instanceId} 激活落定`))
           .catch(err => this.#logger.error(`插件 "${entry.instanceId}" 激活收尾报错:`, err));

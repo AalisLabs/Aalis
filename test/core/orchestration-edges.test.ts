@@ -340,7 +340,7 @@ describe('保留的安全网：故障注入', () => {
     expect(app.plugins.getPlugin('solo')).toBeUndefined();
   });
 
-  it('服务上线触发的反应式重算抛错（激活收尾意外抛出）：记 error 点名触发原因，不外泄成未处理拒绝', async () => {
+  it('服务上线触发的反应式重算抛错（激活收尾意外抛出）：记 error 点名触发原因，不外泄成未处理拒绝，idle 照常落定', async () => {
     const { app, at } = world();
     const dep = defineService<object>('t:edges:reactive-dep');
     await app.plugin(definePlugin({ name: 'consumer', uses: { dep }, apply() {} }));
@@ -355,5 +355,11 @@ describe('保留的安全网：故障注入', () => {
     await new Promise<void>(resolve => setImmediate(resolve));
     broken.mockRestore();
     expect(at('error')).toEqual([`recompute(服务 ${dep.name} 变更) 报错: Error: 注入的故障`]);
+    // 这一次重算没走到收敛就抛了：排队标记不能留着，之后的 idle 照常落定
+    const waited = await Promise.race([
+      app.plugins.idle().then(() => 'settled'),
+      new Promise(resolve => setTimeout(() => resolve('hung'), 200)),
+    ]);
+    expect(waited).toBe('settled');
   });
 });
