@@ -6,7 +6,6 @@ import type { Resources } from '../infrastructure/resources.js';
 
 /** 一条跟随边：消费方的一次托管绑定挂在提供方的服务上，两端共用同一个对象 */
 interface Edge {
-  readonly from: Activation;
   /** 提供方身份 */
   readonly owner: symbol;
   readonly required: boolean;
@@ -63,7 +62,6 @@ export class Activation {
     // 容器里的条目都出自仍在册的激活（撤回先于除名）
     const provider = this.#owners.get(owner)!;
     const edge: Edge = {
-      from: this,
       owner,
       required: this.declared.get(name) === true,
       pump,
@@ -89,12 +87,13 @@ export class Activation {
 
   /**
    * 撤回段：本激活的服务已下线，就地驱动仍挂在上面的跟随者交接，返回交接落定。逐个驱动、一并等，
-   * 慢跟随者不阻塞别人。已进关闭计划的跟随者不驱动——拆卸窗口内的服务变更不引爆清理，它们由各自的撤回段收。
+   * 慢跟随者不阻塞别人。已进关闭计划的跟随者照样驱动：它此刻应挂的是「没有」，驱动只清掉挂在本激活上的这一条，
+   * 不会挂到别家。它自己的撤回段可能排在本激活的清理之后（别的计划里才开始关的、成环时被放行的），等它来收就晚了。
    */
   handover(): Promise<unknown> | undefined {
     const pending: Promise<void>[] = [];
     for (const edge of [...this.#inbound]) {
-      if (!edge.settling && !edge.from.resources.disposed) edge.pump();
+      if (!edge.settling) edge.pump();
       if (edge.settling) pending.push(edge.settling);
     }
     return pending.length === 0 ? undefined : Promise.all(pending);

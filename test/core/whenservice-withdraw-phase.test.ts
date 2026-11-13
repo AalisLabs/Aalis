@@ -38,7 +38,6 @@ function makeHub(): Hub {
 }
 
 const hubDesc = defineService<Hub>('__t:ws-hub');
-const ownDesc = defineService('__t:ws-own');
 const depDesc = defineService<{ id: string }>('__t:ws-dep');
 const svcDesc = defineService('__t:ws-wd-svc');
 
@@ -139,49 +138,53 @@ describe('follow cleanup 走撤回段', () => {
     expect(order).toEqual(['withdraw', 'late', 'cleanup:early']);
   });
 
-  it('拆卸窗口内的服务变更不引爆 cleanup：子插件关闭摘掉提供者时，根的 cleanup 仍等到自己的撤回段', async () => {
-    const { app, host } = makeApp();
-    host.provide.use(ownDesc, {});
+  it('提供者先关：挂在它上面的跟随在它清理之前就地收掉，跟随方已在关闭中也一样', async () => {
+    const { app } = makeApp();
+    let childCleaned = false;
     await app.plugin(
       definePlugin({
         name: 'child',
-        uses: { provide },
+        uses: { provide, lifecycle },
         provides: [depDesc],
-        apply({ provide: childPub }) {
+        apply({ provide: childPub, lifecycle }) {
           childPub.use(depDesc, { id: 'child' });
+          lifecycle.use.onDispose(() => {
+            childCleaned = true;
+          });
         },
       }),
     );
     await app.plugins.idle();
     expect(app.plugins.getPlugin('child')?.state).toBe('active');
-    const root = app.bind({ dep: optional(depDesc), services });
-    let ownVisibleAtCleanup: boolean | undefined;
+    const root = app.bind({ dep: optional(depDesc) });
+    let cleanedAtCleanup: boolean | undefined;
     root.dep.follow(() => () => {
-      // 撤回段跑在原语切断之后：根自己 provide 的服务此刻应已下线
-      ownVisibleAtCleanup = root.services.use.get(ownDesc) !== undefined;
+      cleanedAtCleanup = childCleaned;
     });
-    // 根用子插件的服务：根收尾 → 子关闭（摘掉提供者）→ 根撤回
+    // 根用子插件的服务：根收尾 → 子关闭（摘掉提供者）→ 根撤回。等到根自己的撤回段再收，子插件早已清理完
     await app.stop();
-    expect(ownVisibleAtCleanup, 'cleanup 若在子插件关闭期间被服务变更通知引爆，原语登记尚未切断').toBe(false);
+    expect(cleanedAtCleanup).toBe(false);
   });
 
-  it('拆卸窗口内提供者重新上线：关闭中的激活不再挂新实例', async () => {
+  it('拆卸窗口内提供者换了登记：关闭中的激活不再挂新实例，旧的那条等到自己的撤回段才清理', async () => {
     const { app, host } = makeApp();
     const offDep = host.provide.use(depDesc, { id: 'old' });
-    const attached: string[] = [];
+    const trace: string[] = [];
     await app.plugin(
       definePlugin({
         name: 'p',
         uses: { lifecycle, dep: optional(depDesc) },
         apply({ lifecycle, dep }) {
           dep.follow(svc => {
-            attached.push(svc.id);
+            trace.push(`挂上 ${svc.id}`);
+            return () => void trace.push(`清理 ${svc.id}`);
           });
-          // 收尾段：本激活已进入关闭，跟随订阅尚未撤回
+          // 收尾段：本激活已进入关闭，跟随订阅尚未撤回。提供者（宿主的根）没有在关，只是换了一条登记
           lifecycle.use.onDrain(async () => {
             offDep();
             host.provide.use(depDesc, { id: 'new' });
             await new Promise(r => setTimeout(r, 10));
+            trace.push('收尾完');
           });
         },
       }),
@@ -189,7 +192,7 @@ describe('follow cleanup 走撤回段', () => {
     await app.plugins.idle();
     expect(app.plugins.getPlugin('p')?.state).toBe('active');
     await app.plugins.unload('p');
-    expect(attached).toEqual(['old']);
+    expect(trace).toEqual(['挂上 old', '收尾完', '清理 old']);
   });
 
   it('同一资源口复用一条撤回登记，手动退订的跟随者不再挂载', () => {

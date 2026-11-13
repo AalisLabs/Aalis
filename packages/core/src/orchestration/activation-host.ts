@@ -54,7 +54,7 @@ export class ActivationHost {
     const runtime = this.runtime;
     let removed: string[] = [];
     const resources = new Resources(id, logger, {
-      // 提供者自己的清理之前：挂在它上面、还没进关闭计划的跟随者就地交接，落定后提供者才关。服务变更等全部切断项执行完毕才通知：
+      // 提供者自己的清理之前：挂在它上面的跟随者就地交接（已进关闭计划的也驱动），落定后提供者才关。服务变更等全部切断项执行完毕才通知：
       // 本激活的原语与归属表条目一并撤掉之后，下游才收敛
       afterCut: (): Promise<unknown> | undefined => {
         const settling = activation.handover();
