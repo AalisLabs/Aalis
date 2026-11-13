@@ -8,6 +8,79 @@
 
 ---
 
+## 2026-11-13（core 0.22.0 minor；71 个包：62 minor / 6 patch / 3 新包 api-events、plugin-events、api-host-restart）
+
+按次版本：core 0.22.0、runtime 0.21.0、create-aalis 0.11.0、api-agent 0.12.0、api-approval 0.3.0、api-doctor 0.10.0、api-gateway 0.11.0、api-hooks 0.4.0、api-host-config 0.4.0、api-llm 0.16.0、api-media 0.14.0、api-memory 0.10.0、api-session-manager 0.14.0、api-session-settings 0.2.0、api-todo-list 0.2.0、api-tools 0.13.0、api-webui 0.15.0、api-workflow 0.14.0、schema-message 0.12.0、plugin-adapter-onebot 0.18.0、plugin-agent 0.18.0、plugin-authority 0.16.0、plugin-chat-approval 0.2.0、plugin-checkpoint 0.18.0、plugin-cli 0.15.0、plugin-commands 0.16.0、plugin-doctor 0.11.0、plugin-file-reader 0.16.0、plugin-flow-control 0.17.0、plugin-gateway 0.10.0、plugin-hooks 0.4.0、plugin-i18n 0.2.0、plugin-image-sender 0.11.0、plugin-llm-deepseek 0.17.0、plugin-llm-ollama 0.15.0、plugin-llm-openai 0.17.0、plugin-media 0.18.0、plugin-memory-summary 0.15.0、plugin-memory-vector 0.16.0、plugin-message-archive 0.15.0、plugin-package-manager 0.12.0、plugin-persona 0.16.0、plugin-process-local 0.11.0、plugin-prompt-budget 0.10.0、plugin-reach 0.4.0、plugin-scheduler 0.18.0、plugin-session-manager 0.17.0、plugin-session-server 0.4.0、plugin-session-settings 0.2.0、plugin-skills 0.16.0、plugin-subtask 0.16.0、plugin-todo-list 0.14.0、plugin-tool-browser 0.16.0、plugin-tool-onebot 0.14.0、plugin-tools 0.13.0、plugin-trigger-policy 0.18.0、plugin-usage-stats 0.3.0、plugin-user-profile 0.16.0、plugin-user-relation 0.18.0、plugin-webui-client 0.18.0、plugin-webui-server 0.19.0、plugin-workflow 0.18.0；按补丁版本：schema-config 0.16.3、api-asr 0.12.2、api-trigger 0.3.1、plugin-contributions 0.3.2、plugin-tool-system 0.14.3、plugin-websearch-serper 0.13.2；新包：api-events 0.1.0、plugin-events 0.1.0、api-host-restart 0.1.0。
+
+本批用到事件、就绪回调、`watch`、位次或 `host-restart` 的 57 个包，`@aalis/core` 的 peer 下限抬到 `>=0.22.0 <1.0.0`（三个新包同此）：它们与 core 0.21 不能混装。
+
+### 事件总线搬出 core，core 不再发事件
+
+- @aalis/core（破坏性）：core 不再内置事件总线。删掉内置服务 `events`（内置服务剩五项：`lifecycle`、`logger`、`config`、`provide`、`services`）与包根导出的 `events`、`Events`、`AalisEvents`。事件改由一对新包提供，做法与钩子、贡献点相同：契约 `@aalis/api-events`，默认提供者 `@aalis/plugin-events`。用到事件的插件改从 `@aalis/api-events` 导入 `events` 并把它加进 `dependencies`，`AalisEvents` 的增广改写成 `declare module '@aalis/api-events'`；服务名仍是 `events`，`uses` 的写法不变。
+- @aalis/api-events 0.1.0（新包）：`events` 描述符、扩展点 `AalisEvents`、`EventArgs`、监听器签名 `EventHandler` 与提供者契约 `EventBus`。没有提供者时 `emit` 什么都不做；`on` 的登记留着，提供者上线后挂上，上线之前发出的事件不补发。
+- @aalis/plugin-events 0.1.0（新包）：默认提供者。派发规则与原来相同：逐个等、只送达派发开始时已登记的、监听器之间互相隔离，监听器抛错记 warn 并点名登记方。部署须装上它：没装时声明了必选 `events` 的插件停在 pending。它是普通插件，可以在管理页停用。
+- @aalis/core（破坏性）：core 不再发事件，`AalisEvents` 里原有的八个事件删掉：`app:ready`、`app:started`、`app:stopping`、`app:restarting`、`service:changed`、`plugins:changed`、`plugin:loaded`、`plugin:unloaded`。整体装好之后开始对外干活用 `lifecycle.onReady`；收尾用本激活的 `signal`、`onDrain`、`onDispose`；某个服务的提供者可能变了用它选择层的 `watch`；插件状态可能变了用 `plugins` 服务的 `watch`。`plugin:loaded`、`plugin:unloaded` 没有替代。
+- @aalis/core：总线上只为内置事件存在的部分一并删掉：一次性事件的补发、单个监听器的等待上限。原来名字以 `app:` 开头的事件（含插件自己声明的），单个监听器至多等 `slowThresholdMs`，现在一律等到它返回。
+- @aalis/plugin-events：停机时提供者按关停计划关闭，声明了 `events` 的插件都排在它之前收尾。宿主根最后关闭：提供者关闭之后，根上的监听不再收到事件，根这时发出的事件也没有提供者可送；原来一直送到根关闭。
+
+### 就绪回调、停机状态与变化订阅
+
+- @aalis/core：`lifecycle` 新增 `onReady(fn)`。`start()` 先等插件状态静置，再按激活顺序逐个激活、同一激活内按登记序逐个等，宿主根排在全部插件之后；启动之后才激活的插件在自己的 `apply` 落定后跑；本激活的就绪回调开始跑之后才登记的（含在回调里登记的），下一个微任务另跑，不排进这一趟，`start()` 不等它。单个回调至多等 `slowThresholdMs`，抛错与拒绝只记在该激活名下；在跑的回调算这次激活的在飞工作，关闭等它落定。
+- @aalis/core：`start()` 多等一次静置并跑完就绪回调才落定，「启动完成」随之晚记；启动途中已开始停机的不记。
+- @aalis/core：新增 `App.stopping`（只读布尔）：`stop()` 一开始即为 true。它在 App 本体上，给持有 App 的宿主读；插件拿不到，插件的 `lifecycle` 只有 `id`、`signal`、`onReady`、`onDrain`、`onDispose`，收尾与清理做什么不因整机停机还是单独停用而不同。
+- @aalis/core：选择层新增 `watch(fn)`（这个服务对外的提供者或选择可能变了时调用），`plugins` 服务新增 `watch(fn)`（每轮重算收敛后调用；只登记了禁用条目时也调一次）。两处同一套规则：登记时不调；每次变化在下一个微任务里调一次，期间的多次合并成一次；订阅随这次激活撤回。
+- @aalis/core（破坏性，类型）：`LifecycleCap.onReady`、`ServiceSelection.watch`、`PluginManagerService.watch` 与下面的 `BindingPort.seat` 都是必填成员，手写这几个接口的对象（如测试里的替身）要补上才能通过类型检查。
+- @aalis/core（破坏性）：`plugins` 服务的提供者改成与内置服务相同的形状（按调用方的激活给门面），经 `services` 动态取 `plugins` 拿到的是这个函数，不再是管理对象；经 `uses` 声明取得的不变。
+- @aalis/core：停机之后，插件留着的 `plugins` 句柄再调管理动作返回 false 并记 debug，原来抛服务不可用的错误。
+- @aalis/core：`getStatus()` 的 `slow` 只在 `state` 为 `activating` 时给出；原来后台激活落定的收尾段里会读到 `error`、`pending` 或 `active` 又带 `slow`。
+
+### core 公开面的删除与收紧
+
+- @aalis/core（破坏性）：删 `createApp`，构造应用只有 `new App(options)` 一种写法，参数不变。
+- @aalis/core、@aalis/runtime（破坏性）：删 `AppOptions.devMode` 与 `startAalis` 的 `devMode` 选项。它管的两条声明告警常开：同一激活以同一条目 id 把同一服务提供了两次；提供了服务却没写进 `provides`。设了 `NODE_ENV=production` 的部署装了声明不全的插件时，日志里会多出这两条。
+- @aalis/core（破坏性）：`app.plugins` 只交出 `plugins` 服务契约里的方法，与插件拿到的门面相同；重算、停机开关、就绪相位、批量登记等内部方法不再调得到。
+- @aalis/core（破坏性）：`defineService` 与 `optional()` 造出的对象造出即冻结，改 `name`、换 `bind`、加字段抛 TypeError。插件定义的 `uses` 与 `provides` 只收本份 core 造的描述符：手写的同形对象、展开出来的副本、`optional()` 里包着的手写对象、`optional()` 套 `optional()` 一律拒绝：`uses` 里的报「不是服务描述符（应为 defineService 的结果）」，`provides` 里的报「provides 含有不是描述符的元素」；另一份 core 造的照旧点名「来自另一份 @aalis/core」。`provide.use` 与 `app.bind` 仍按形状收。
+- @aalis/core：`defineService` 的 `bind` 给了却不是函数时当场抛错，原来到激活绑定时才报；`provide.use` 的第一个参数没有服务名（缺、不是字符串、空白）时抛错，原来登记到 undefined 名下。
+- @aalis/core：插件定义的 `provides` 不是数组时定义校验报「provides 必须是数组」。原来空串能通过校验、到激活核对时才以 TypeError 失败；`null` 当作没有声明，Set 等可遍历对象当作列表收下。
+- @aalis/core（破坏性）：插件的 `name` 不能是 `root`（宿主根的实例 id），定义校验报「插件的 name 不能是 "root"：它是宿主根的实例 id」。
+- @aalis/core（破坏性）：重启移出 core。删 `AppOptions.restartStrategy`、`App.restart`、类型 `RestartStrategy` 与应用服务上的 `restart`（应用服务只剩 `stop`）。见下面「重启」一节。
+
+### 次序按登记方的位次，插件重启后不换位置
+
+位次是登记方的身份：宿主的根最前，插件按实例 id 的码元序，同一登记方的几条按登记先后。原来按登记发生的时刻排，插件重启后重新登记就落到队尾。
+
+- @aalis/core：同优先级的服务提供者按位次排。默认那家重启之后不再悄悄换成别家；冷启动、运行中装上、重启进程得到的次序相同。同一服务有几家同优先级的提供者、又没设偏好时，默认那家由插件 id 决定，可能与原先不同；界面上跟着服务次序的列表（平台连接、用量统计的余额等）按插件 id 排。
+- @aalis/core：绑定口新增只读字段 `seat`，即消费方这次激活的位次，供枢纽服务的契约包登记时带上。
+- @aalis/api-hooks（破坏性）：提供者契约 `HookRegistry.register` 多一个参数 `seat`，自己实现提供者的要收下并按（位次，登记序）排。新包 `@aalis/api-events` 的 `EventBus.on` 同样带 `seat`。
+- @aalis/plugin-hooks、@aalis/plugin-events：钩子链与事件监听按位次排。同一个钩子上几家插件的中间件，先后由插件 id 决定，不再是谁先激活谁在前；插件重启、提供者重启或换人都不改变次序。`/clear` 的结果各行按插件 id 排。
+- @aalis/plugin-webui-server：扫描到的前端由它代登记，优先级改为 -1（服务列表里如此显示），插件主动提供的前端（缺省 0）默认胜出。
+
+### 钩子
+
+- @aalis/plugin-hooks、@aalis/api-hooks（破坏性）：一个中间件里 `next()` 只能调一次，再调返回被拒的 Promise（「钩子 <hook>: handler(来自 <contextId>) 重复调用 next()」），没等它的不成为未处理的拒绝。原来再调会让链从游标处接着往下走：走到底之后再调，默认动作再执行一遍；下游截停或抛错之后再调，越过它接着往下走。只调一次的中间件行为与时序不变。自己实现提供者的，交给每个中间件的 `next` 同样只许调一次。
+
+### 重启
+
+- @aalis/api-host-restart 0.1.0（新包）：宿主服务 `host-restart`，接口 `HostRestart.restart({ rollback? })`；回滚凭据的类型 `RestartRollback` 从 runtime 搬到这里。宿主没有重启能力时不提供这个服务。
+- @aalis/runtime（破坏性）：新增 `createHostRestart(app, strategy)` 实现这个服务，`startAalis` 在守护模式下把它独占登记在宿主根上，子命令模式不提供；类型 `RestartStrategy` 改由 runtime 导出，不再导出 `RestartRollback`。自己写宿主的改为在根上提供 `host-restart`。
+- @aalis/plugin-commands、@aalis/plugin-webui-server、@aalis/plugin-package-manager：`/restart`、`POST /api/restart` 与更新后的重启改经 `host-restart`（可选依赖）。宿主不提供时照旧回报失败，原因写的是「服务 "host-restart" 不可用」。plugin-package-manager 不再依赖 `@aalis/runtime`；plugin-webui-server 不再声明应用服务。
+- @aalis/runtime：以 `--service` 运行时，重启在退出之前等文件日志写完，`latest.log` 里不再缺停机尾声的几行。
+- @aalis/runtime：重启已发起之后收到 SIGINT、SIGTERM（或输出断开）时停下：还没启动新进程的不再启动；已启动、还没报就绪的给它的进程组发 SIGTERM；服务形态的重启策略不再自行以 75 退出，退出码由那次停机决定。原来停机走完后新进程照样起来，而它自成会话、Ctrl+C 打不到。带回滚凭据时记一条说明：更新留在盘上，不自动回滚。
+- @aalis/runtime：启动途中（插件加载、激活与就绪回调期间）收到 SIGINT、SIGTERM、SIGHUP 或输出断开同样走完停机；原来进程当场结束，已激活插件的收尾不跑。
+- @aalis/runtime：配置热重载交叠、或途中应用开始停机时，文件里删掉的后缀实例不再以默认值写回文件、重新激活。
+
+### 插件
+
+- @aalis/plugin-process-local（破坏性）：清理时一律收掉经它启动的进程组，原来只在整机停机时收。单独停用、重启、卸载它时，可选依赖它的插件不随之关闭，它们的子进程被收掉，`wait()` 以被信号结束的结果落定。
+- @aalis/plugin-tool-system：`exec` 的命令没被这次调用中止、却被信号结束时（被外部结束，或 `process` 的提供者停用、重启时收掉），结果另加 `note`「被信号 SIGKILL 结束」（信号名照实）；原来只有退出码 -1。
+- @aalis/plugin-tools：收尾时还在跑的后台任务，原因统一写「Aalis 停止或工具注册表停用时还在跑」；停机途中、本插件开始收尾之前结束的任务照常通知。
+- @aalis/api-webui、@aalis/plugin-webui-server、@aalis/plugin-webui-client（破坏性）：管理事件 `app.restarting` 改名 `server.closing`，在 plugin-webui-server 自己的收尾里推：应用停机、重启与单独停用、重启本插件都推。页面收到后横条写「服务端已关闭，连上后自动刷新页面」，管理连接重连上以后整页重新加载。
+- @aalis/plugin-webui-server、@aalis/plugin-i18n：`events` 改为可选依赖，在管理页停用 `@aalis/plugin-events` 时管理页照常在线，界面文字照常翻译。
+- @aalis/plugin-webui-server：主动提供前端的插件运行中上线或下线、`webui-client` 的胜者换了目录时，重挂静态目录并推 `client.reload`；原来只在改偏好与摘除前端包时重挂。
+- @aalis/plugin-cli：接管终端从「全部就绪工作完成之后」提前到就绪回调轮到它的那一刻。已知现状：插件按名字顺序登记时它排在人设的首次扫描之前，欢迎行写的是「Aalis」而不是主卡的名字；状态栏与回复的名字不受影响。
+- 就绪工作改在就绪回调里做的七个插件（plugin-adapter-onebot、plugin-persona、plugin-skills、plugin-tool-onebot、plugin-trigger-laya、plugin-trigger-policy、plugin-webui-server）：启动之后才激活的实例（启用、重启、热装）在 `apply` 落定之后才做就绪工作，原来登记后下一个微任务就做。plugin-persona、plugin-skills、plugin-tool-onebot 不再用 `events`；plugin-i18n 加上可选的 `plugins`。
+- create-aalis：新建项目的基础插件清单加上 `@aalis/plugin-events`。
+
 ## 2026-11-11（core 0.21.1；89 个包：9 minor / 79 patch / 1 新包）
 
 按次版本：runtime 0.20.0、api-plugin-source 0.3.0、plugin-package-manager 0.11.0、plugin-scheduler 0.17.0、plugin-workflow 0.17.0、plugin-draw 0.6.0、plugin-code-sandbox-os 0.9.0、plugin-process-local 0.10.0、plugin-flow-control 0.16.0；按补丁版本：core 0.21.1、schema-config 0.16.2、api-host-config 0.3.1、api-agent 0.11.1、api-approval 0.2.1、api-asr 0.12.1、api-authority 0.12.1、api-media 0.13.1、api-package-manager 0.3.1、api-tools 0.12.2、plugin-adapter-onebot 0.17.2、plugin-agent 0.17.1、plugin-asr-openai 0.13.1、plugin-asr-whisper-cpp 0.13.1、plugin-authority 0.15.2、plugin-checkpoint 0.17.1、plugin-commands 0.15.1、plugin-contributions 0.3.1、plugin-embedding-ollama 0.13.1、plugin-embedding-openai 0.14.1、plugin-file-reader 0.15.1、plugin-hooks 0.3.1、plugin-image-sender 0.10.1、plugin-llm-deepseek 0.16.1、plugin-llm-ollama 0.14.1、plugin-llm-openai 0.16.1、plugin-maimai 0.12.1、plugin-media 0.17.1、plugin-memory-summary 0.14.1、plugin-memory-vector 0.15.1、plugin-message-archive 0.14.1、plugin-office 0.13.1、plugin-okx-trading 0.13.1、plugin-reach 0.3.2、plugin-session-manager 0.16.2、plugin-subtask 0.15.2、plugin-tool-browser 0.15.1、plugin-tool-onebot 0.13.1、plugin-tool-system 0.14.2、plugin-tools 0.12.1、plugin-user-profile 0.15.1、plugin-user-relation 0.17.1、plugin-websearch-serper 0.13.1、plugin-webui-server 0.18.1、api-doctor 0.9.1、api-llm 0.15.1、api-memory 0.9.1、api-process 0.10.1、api-reach 0.4.1、api-session-protocol 0.2.2、api-session-settings 0.1.1、api-webui 0.14.1、api-workflow 0.13.1、create-aalis 0.10.1、plugin-cli 0.14.3、plugin-cron-engine 0.10.1、plugin-doctor 0.10.1、plugin-i18n 0.1.1、plugin-mcp-client 0.15.2、plugin-mcp-server 0.15.1、plugin-memory-history 0.14.1、plugin-memory-inmemory 0.13.1、plugin-memory-mongodb 0.14.1、plugin-memory-sqlite 0.14.1、plugin-prompt-budget 0.9.1、plugin-session-server 0.3.2、plugin-skills 0.15.2、plugin-storage-local 0.16.1、plugin-tool-code-runner 0.12.1、plugin-tool-search 0.13.1、plugin-tool-session 0.16.1、plugin-trigger-policy 0.17.1、plugin-usage-stats 0.2.2、plugin-vectorstore-lancedb 0.14.1、plugin-webui-client 0.17.2、schema-i18n 0.1.1、schema-message 0.11.2、util-cron 0.2.1、util-json-repair 0.6.1；util-chromium 0.1.0（新包）。

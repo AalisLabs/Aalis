@@ -3,7 +3,8 @@ import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 // ════════════════════════════════════════════════════════════
-// 已删除的机制不留痕迹：下表的标识在仓库的代码、测试与文档里一处都不能再出现（CHANGELOG 记的是历史，不查）。
+// 已删除的机制不留痕迹：下表的标识在仓库的代码、测试与文档里一处都不能再出现（CHANGELOG 与 core 契约文档里
+// 按版本记历史的表格行记的是历史，不查）。
 // 删掉一套机制时把它的标识加进来；某个标识日后被正当地重新用上，先改这里的说明再删行。
 // ════════════════════════════════════════════════════════════
 
@@ -395,10 +396,7 @@ const REMOVED: Array<[string, string]> = [
   ['app.restart(', 'App 与应用服务上的重启入口：改经 host-restart 服务'],
 ];
 
-/**
- * [事件名, 删掉的是什么]：core 自带的事件。core 契约文档按版本记历史的表格行里写着这些名字，那些行不查
- * （HISTORY_ROW）；别处不论引号、反引号都不能再出现
- */
+/** [事件名, 删掉的是什么]：core 自带的事件。不论引号、反引号都不能再出现 */
 const REMOVED_EVENTS: Array<[string, string]> = [
   ['app:ready', '启动就绪，由 lifecycle.onReady 取代'],
   ['app:started', '启动完成，由 lifecycle.onReady 取代'],
@@ -409,6 +407,7 @@ const REMOVED_EVENTS: Array<[string, string]> = [
   ['plugin:loaded', '插件激活，没有替代'],
   ['plugin:unloaded', '插件卸载，没有替代'],
 ];
+/** core 契约文档按版本记历史的表格逐版写着删掉的名字，那些行不查 */
 const HISTORY_FILE = 'docs/design/core-contract.md';
 /** 历史表格的一行：以版本号开头 */
 const HISTORY_ROW = /^\| \d+\.\d+\.\d+ \|.*$/gm;
@@ -514,16 +513,17 @@ function scannedFiles(): string[] {
 }
 
 describe('已删除的机制不留痕迹', () => {
-  const files = scannedFiles().map(file => [file, readFileSync(join(ROOT, file), 'utf-8')] as const);
+  const files = scannedFiles().map(file => {
+    const text = readFileSync(join(ROOT, file), 'utf-8');
+    return [file, file === HISTORY_FILE ? text.replace(HISTORY_ROW, '') : text] as const;
+  });
   it.each(REMOVED)('%s（%s）', identifier => {
     const hits = files.filter(([, text]) => text.includes(identifier)).map(([file]) => file);
     expect(hits).toEqual([]);
   });
 
   it.each(REMOVED_EVENTS)('事件 %s（%s）', name => {
-    const hits = files
-      .filter(([file, text]) => (file === HISTORY_FILE ? text.replace(HISTORY_ROW, '') : text).includes(name))
-      .map(([file]) => file);
+    const hits = files.filter(([, text]) => text.includes(name)).map(([file]) => file);
     expect(hits).toEqual([]);
   });
 

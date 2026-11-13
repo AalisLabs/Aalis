@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-workflow",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -50,7 +50,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.21.0 <1.0.0"
+    "@aalis/core": ">=0.22.0 <1.0.0"
   },
   "aalis": {
     "service": {

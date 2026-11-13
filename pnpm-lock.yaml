@@ -1832,7 +1832,7 @@ importers:
   packages/plugin-hooks:
     dependencies:
       '@aalis/api-hooks':
-        specifier: workspace:>=0.3.0 <1.0.0
+        specifier: workspace:>=0.4.0 <1.0.0
         version: link:../api-hooks
       '@aalis/schema-i18n':
         specifier: workspace:>=0.1.0 <1.0.0
@@ -3979,7 +3979,7 @@ importers:
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../api-tools
       '@aalis/api-webui':
-        specifier: workspace:>=0.14.0 <1.0.0
+        specifier: workspace:>=0.15.0 <1.0.0
         version: link:../api-webui
       '@aalis/schema-config':
         specifier: workspace:>=0.16.0 <1.0.0

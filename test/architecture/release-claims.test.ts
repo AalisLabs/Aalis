@@ -4,30 +4,29 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '../../packages');
-const CORE_PEER = '>=0.21.0 <1.0.0';
+const CORE_PEER_022 = '>=0.22.0 <1.0.0';
+/**
+ * 2026-11-13 一节：用到事件契约、就绪回调、watch、登记位次或 host-restart 的包与 core 0.21 不能混装，下限抬到 0.22：
+ * 57 个原有的，加 api-events、plugin-events、api-host-restart 三个新包
+ */
+const CORE_PEER_022_COUNT = 60;
+const CORE_PEER_021 = '>=0.21.0 <1.0.0';
 /**
  * 2026-10-31 一节发布的包里带 core peer 的 107 个一律抬到 0.21（新版插件的显示名与页面标题是文字对象，core 0.21 起才收）；
- * 其中六个之后移出主仓、改做仓外的扩展插件，仓里剩 101 个
+ * 其中六个之后移出主仓、改做仓外的扩展插件，56 个在 2026-11-13 一节抬到 0.22，仓里剩 45 个
  */
-const CORE_PEER_COUNT = 101;
-/**
- * 不在这一节里的包。留在原下限的：用不到 core 0.21 的新东西（api-host-paths、api-host-logs 在 2026-11-01 两节里发了新版，
- * 同样用不到）。之后新增的：api-events、plugin-events 配的是不再内置事件总线的 core，api-host-restart 配的是不再管重启的 core
- */
-const UNRELEASED = [
+const CORE_PEER_021_COUNT = 45;
+/** 留在更早下限的：用不到之后各版 core 的新东西 */
+const EARLIER = [
   'api-asr = >=0.20.0 <1.0.0',
   'api-code-sandbox = >=0.20.0 <1.0.0',
   'api-contributions = >=0.20.0 <1.0.0',
-  'api-events = >=0.22.0 <1.0.0',
   'api-flow-control = >=0.20.0 <1.0.0',
   'api-host-logs = >=0.20.0 <1.0.0',
   'api-host-paths = >=0.20.0 <1.0.0',
-  'api-host-restart = >=0.22.0 <1.0.0',
   'api-plugin-source = >=0.20.0 <1.0.0',
-  'api-todo-list = >=0.20.0 <1.0.0',
   'api-user-relation = >=0.20.0 <1.0.0',
   'api-vectorstore = >=0.20.0 <1.0.0',
-  'plugin-events = >=0.22.0 <1.0.0',
   'schema-log = >=0.18.0 <1.0.0',
 ];
 
@@ -65,8 +64,8 @@ function gte(a: [number, number, number], b: [number, number, number]): boolean 
   return true;
 }
 
-describe('发布声明（2026-10-31 一节）', () => {
-  it('带 @aalis/core peer 的包：本批发布、仍在仓里的 101 个为 >=0.21.0 <1.0.0；其余 11 个留在原下限，3 个是之后新增的', () => {
+describe('发布声明（2026-11-13 一节）', () => {
+  it('带 @aalis/core peer 的包：60 个为 >=0.22.0 <1.0.0，45 个为 >=0.21.0 <1.0.0，其余 10 个留在更早的下限', () => {
     const hits: Array<{ dir: string; spec: string }> = [];
     for (const dir of dirs()) {
       const manifest = readManifest(dir);
@@ -75,8 +74,21 @@ describe('发布声明（2026-10-31 一节）', () => {
       if (spec === undefined) continue;
       hits.push({ dir, spec });
     }
-    expect(hits.filter(h => h.spec === CORE_PEER)).toHaveLength(CORE_PEER_COUNT);
-    expect(hits.filter(h => h.spec !== CORE_PEER).map(h => `${h.dir} = ${h.spec}`)).toEqual(UNRELEASED);
+    expect(hits.filter(h => h.spec === CORE_PEER_022)).toHaveLength(CORE_PEER_022_COUNT);
+    expect(hits.filter(h => h.spec === CORE_PEER_021)).toHaveLength(CORE_PEER_021_COUNT);
+    expect(
+      hits.filter(h => h.spec !== CORE_PEER_022 && h.spec !== CORE_PEER_021).map(h => `${h.dir} = ${h.spec}`),
+    ).toEqual(EARLIER);
+  });
+
+  it.each([
+    // 提供者实现的登记签名带位次参数，契约从这一版起才有
+    ['plugin-hooks', '@aalis/api-hooks', [0, 4, 0] as [number, number, number]],
+    // 管理事件 server.closing 的类型从这一版起才有
+    ['plugin-webui-server', '@aalis/api-webui', [0, 15, 0] as [number, number, number]],
+  ])('%s 对 %s 的依赖下限跟上本批改形的契约', (dir, name, floor) => {
+    const parsed = parseFloor(readManifest(dir).dependencies?.[name] ?? '');
+    expect(parsed && gte(parsed, floor), `${dir} 的 ${name}`).toBe(true);
   });
 });
 
