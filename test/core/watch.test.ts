@@ -12,6 +12,9 @@ import {
   services,
 } from '../../packages/core/src/index.js';
 import { Resources } from '../../packages/core/src/infrastructure/resources.js';
+import { ActivationHost } from '../../packages/core/src/orchestration/activation-host.js';
+import { PluginManager } from '../../packages/core/src/orchestration/plugin.js';
+import { ServiceContainer } from '../../packages/core/src/primitives/services.js';
 
 // ════════════════════════════════════════════════════════════
 // watch：「可能变了，请重读」的订阅。选择层的 caps.xxx.watch 看一个服务的提供者与选择，plugins.watch 看插件状态，
@@ -459,5 +462,26 @@ describe('订阅的摘除', () => {
     resources.watch('x', hook, () => {});
     await resources.disposeAsync();
     expect(hooked.size).toBe(0);
+  });
+
+  it('plugins.watch 交出的来源：摘掉之后重算收敛不再通知它', async () => {
+    const manager = new PluginManager(new ActivationHost(new ServiceContainer(), quiet), quiet, 1000, 1000);
+    let pokes = 0;
+    let unhook = (): unknown => undefined;
+    // 订阅方的替身：只接下来源，自己挂一个计数的通知
+    const subscriber = {
+      resources: {
+        watch: (_what: string, hook: (poke: () => void) => () => unknown) => {
+          unhook = hook(() => void pokes++);
+          return () => undefined;
+        },
+      },
+    };
+    manager.watch(() => undefined, subscriber as never);
+    await manager.register(definePlugin({ name: 'watch-unhook-a', apply() {} }));
+    expect(pokes).toBe(1);
+    unhook();
+    await manager.register(definePlugin({ name: 'watch-unhook-b', apply() {} }));
+    expect(pokes).toBe(1);
   });
 });
