@@ -15,7 +15,7 @@ const store = defineService<{ write: () => void }>('__t:tr-store');
 
 describe('Activation 并发拆卸', () => {
   it('并发 disposeAsync：后来者 join 在飞拆卸，返回时清理已真正完成', async () => {
-    const app = createInspectableApp({ name: 'T', logLevel: 'error' });
+    const app = createInspectableApp({ logLevel: 'error' });
     const log: string[] = [];
     const child = activationHost(app).create('slow-child');
     child.resources.onDispose(async () => {
@@ -34,7 +34,7 @@ describe('Activation 并发拆卸', () => {
   });
 
   it('根激活级联撞上半拆的插件激活：根的 disposeAsync 等到它清理落地', async () => {
-    const app = createInspectableApp({ name: 'T', logLevel: 'error' });
+    const app = createInspectableApp({ logLevel: 'error' });
     const log: string[] = [];
     const parent = rootActivation(app);
     const child = activationHost(app).create('child');
@@ -51,7 +51,7 @@ describe('Activation 并发拆卸', () => {
   });
 
   it('拆卸完成后再次 disposeAsync 立即返回（幂等，不重跑清理）', async () => {
-    const app = createInspectableApp({ name: 'T', logLevel: 'error' });
+    const app = createInspectableApp({ logLevel: 'error' });
     let runs = 0;
     const child = activationHost(app).create('idempotent');
     child.resources.onDispose(async () => {
@@ -68,7 +68,7 @@ describe('Activation 并发拆卸', () => {
 
 describe('App.stop 撞上在飞 recompute', () => {
   it('bounce 在飞时停机，仍保持拓扑逆序：消费者落盘先于提供者关闭', async () => {
-    const app = createInspectableApp({ name: 'T', logLevel: 'error' });
+    const app = createInspectableApp({ logLevel: 'error' });
     const order: string[] = [];
 
     await app.plugin(

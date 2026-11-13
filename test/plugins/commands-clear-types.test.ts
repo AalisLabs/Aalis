@@ -47,7 +47,7 @@ function probe(name: string, types: Array<{ id: string; label: string }>, handle
  * 另装绘图（附件的写入方之一）
  */
 async function world(opts: { probes?: ReturnType<typeof probe>[]; noContributions?: boolean; draw?: boolean } = {}) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   cleanups.push(() => app.stop());
   if (opts.noContributions) {
     provideEvents(app);

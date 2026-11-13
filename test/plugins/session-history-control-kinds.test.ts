@@ -34,7 +34,7 @@ afterEach(async () => {
 
 /** 存档里是 stored（按时间升序），按条数读取最后 limit 条；返回 session_get_history 的结果 */
 async function readHistory(args: Record<string, unknown>, stored = STORED) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide });

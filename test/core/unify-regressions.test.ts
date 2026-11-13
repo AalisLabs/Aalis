@@ -44,7 +44,6 @@ function world(options?: { disposeTimeoutMs?: number; logger?: Logger }) {
     child: () => logger,
   };
   const app = createInspectableApp({
-    name: 'T',
     logLevel: 'error',
     logger,
     disposeTimeoutMs: options?.disposeTimeoutMs,

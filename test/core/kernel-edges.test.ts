@@ -45,7 +45,6 @@ afterEach(async () => {
 function world() {
   const { logger, warnings } = capture();
   const app = createInspectableApp({
-    name: 'kernel-edges',
     logLevel: 'error',
     logger,
     disposeTimeoutMs: 300,

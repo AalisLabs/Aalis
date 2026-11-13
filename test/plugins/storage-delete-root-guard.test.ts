@@ -30,7 +30,7 @@ describe('storage.delete 删根守卫 (真 fs)', () => {
     logs = [];
     const logHub = new LogHub();
     logHub.onEntry(entry => void logs.push(entry));
-    app = new App({ name: 'T', logLevel: 'info', logHub });
+    app = new App({ logLevel: 'info', logHub });
     provideHostPaths(app, base);
     await app.plugin(storageLocal, {
       roots: [

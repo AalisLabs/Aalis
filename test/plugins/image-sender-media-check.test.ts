@@ -50,7 +50,7 @@ const ROOM_CALL = toolContext({ sessionId: ROOM, platform: 'onebot', userId: '90
  * owner 是 webui:console
  */
 function startApp(histories: Record<string, Message[]>) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   const handlers: Record<string, ToolHandler> = {};
   const host = app.bind({ provide, events });

@@ -74,7 +74,7 @@ afterEach(async () => {
  */
 async function startStack({ withSessionServer = true } = {}) {
   const port = await freePort();
-  const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+  const app = new App({ logLevel: 'error', logger: silent });
   apps.push(app);
   const paths = provideHome(app);
   await registerHubs(app);
@@ -103,7 +103,7 @@ async function startStack({ withSessionServer = true } = {}) {
 /** 会话服务换成替身：记下每条连接的对端、收到的帧与 close 次数，send 留给用例主动发帧 */
 async function startWithStub() {
   const port = await freePort();
-  const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+  const app = new App({ logLevel: 'error', logger: silent });
   provideEvents(app);
   apps.push(app);
   const links: Array<{ peer: SessionPeer; received: string[]; closes: number; send(frame: string): void }> = [];

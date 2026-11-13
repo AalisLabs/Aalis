@@ -41,7 +41,7 @@ function memoryProvider(name: string, backend: ReturnType<typeof makeBackend>, p
 
 /** 装 plugin-commands、一个记忆后端 mem-a，以及一个让 memory:clear 链阻塞、直到放行的中间件 */
 async function world(memA: ReturnType<typeof makeBackend>) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, commands: commandsService });

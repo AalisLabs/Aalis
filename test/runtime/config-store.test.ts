@@ -31,7 +31,7 @@ function track<T extends { app: App }>(world: T): T {
 }
 
 function emptyStore() {
-  return createConfigStore({ name: 'T', logLevel: 'error', plugins: {} });
+  return createConfigStore({ logLevel: 'error', plugins: {} });
 }
 
 /** JSON / YAML 把 `__proto__` 解成自有键，对象字面量做不到。 */
@@ -65,9 +65,8 @@ function watched(initial: AalisConfig) {
 
 describe('配置文档（内存态）', () => {
   it('未传入或留空（YAML 解析成 null）的字段使用默认值', () => {
-    for (const input of [{}, { name: null, logLevel: null, plugins: null, disabledPlugins: null }]) {
+    for (const input of [{}, { logLevel: null, plugins: null, disabledPlugins: null }]) {
       const store = createConfigStore(input as never);
-      expect(store.get('name')).toBe('Aalis');
       expect(store.get('logLevel')).toBe('info');
       expect(store.get('plugins')).toEqual({});
       expect(store.get('disabledPlugins')).toEqual([]);
@@ -100,14 +99,14 @@ describe('配置文档（内存态）', () => {
   });
 
   it('provider 推送新快照即替换当前状态', () => {
-    const { store, push } = watched({ name: 'One', logLevel: 'info', plugins: {} });
-    expect(store.get('name')).toBe('One');
-    push({ name: 'Two', logLevel: 'info', plugins: {} });
-    expect(store.get('name')).toBe('Two');
+    const { store, push } = watched({ logLevel: 'info', plugins: {} });
+    expect(store.get('logLevel')).toBe('info');
+    push({ logLevel: 'debug', plugins: {} });
+    expect(store.get('logLevel')).toBe('debug');
   });
 
   it('推送的 JSON 带 __proto__ 不得改快照原型', () => {
-    const { store, push } = watched({ name: 'T', logLevel: 'error', plugins: {} });
+    const { store, push } = watched({ logLevel: 'error', plugins: {} });
     push(poisonedSnapshot());
     expectUnpoisoned(store.getAll());
     expect(store.get('pollutedA6v' as never)).toBeUndefined();
@@ -167,24 +166,24 @@ describe('FsYamlConfigProvider（集成）', () => {
   afterEach(() => cfg?.cleanup());
 
   it('从 YAML 加载配置树', () => {
-    cfg = tempConfig('name: MyApp\nlogLevel: debug\nplugins:\n  myplug:\n    apikey: literal-secret\n');
+    cfg = tempConfig('logLevel: debug\nplugins:\n  myplug:\n    apikey: literal-secret\n');
     const store = createConfigStore(cfg.config, cfg.provider);
-    expect(store.get('name')).toBe('MyApp');
+    expect(store.get('logLevel')).toBe('debug');
     expect(store.getPluginConfig('myplug').apikey, '值原样加载，不做任何替换').toBe('literal-secret');
   });
 
   it('persist() 原样写回字符串值（密钥直接住在 config 里，不得被改写）', async () => {
-    cfg = tempConfig('name: X\nlogLevel: info\nplugins:\n  myplug:\n    token: sk-literal\n');
+    cfg = tempConfig('logLevel: info\nplugins:\n  myplug:\n    token: sk-literal\n');
     const store = createConfigStore(cfg.config, cfg.provider);
-    store.set('name', 'Y');
+    store.set('logLevel', 'debug');
     await store.persist();
     const written = readFileSync(cfg.path, 'utf-8');
-    expect(written).toMatch(/name: Y/);
+    expect(written).toMatch(/logLevel: debug/);
     expect(written).toContain('sk-literal');
   });
 
   it('YAML 解析出的 __proto__ 自有键进文档时不得改原型', () => {
-    cfg = tempConfig('name: T\nlogLevel: error\nplugins: {}\n__proto__:\n  pollutedA6v: yes\n');
+    cfg = tempConfig('logLevel: error\nplugins: {}\n__proto__:\n  pollutedA6v: yes\n');
     expect(
       Object.getOwnPropertyNames(cfg.config).includes('__proto__'),
       '本用例前提：YAML 把 __proto__ 解成自有键，与 JSON.parse 同类',
@@ -294,7 +293,7 @@ describe('字典读写不落原型链', () => {
 
 describe('watch', () => {
   it('返回退订闭包；退订后 provider 侧也停表，可再次订阅', () => {
-    const base = { name: 'T', logLevel: 'error', plugins: {} };
+    const base = { logLevel: 'error', plugins: {} };
     let stopped = 0;
     let push!: (next: AalisConfig) => void;
     const store = createConfigStore(base, {
@@ -307,9 +306,9 @@ describe('watch', () => {
     });
     const seen: number[] = [];
     const off = store.watch(() => seen.push(1));
-    push({ ...base, name: 'T2' });
+    push({ ...base, logLevel: 'debug' });
     expect(seen).toHaveLength(1);
-    expect(store.get('name')).toBe('T2');
+    expect(store.get('logLevel')).toBe('debug');
     off();
     expect(stopped).toBe(1);
     expect(() => store.watch(() => {})).not.toThrow();
@@ -325,7 +324,7 @@ describe('watch', () => {
 describe('host-config 的裁剪政策（installHostConfig 按配置同步选项填）', () => {
   it('缺省与配置同步一样为裁剪；传 trimUnknownFields=false 即为 false', () => {
     const policyOf = (opts?: { trimUnknownFields?: boolean }) => {
-      const app = new App({ name: 'T', logLevel: 'error' });
+      const app = new App({ logLevel: 'error' });
       apps.push(app);
       installHostConfig(app, emptyStore(), opts);
       return app.bind({ hostConfig }).hostConfig.use.trimUnknownFields;
@@ -654,27 +653,27 @@ describe('插件配置段须为映射', () => {
   ];
 
   it('留空的插件段与留空的 plugins 读入即 {}', () => {
-    const store = createConfigStore({ name: 'T', logLevel: 'error', plugins: { a: null } } as never);
+    const store = createConfigStore({ logLevel: 'error', plugins: { a: null } } as never);
     expect(store.getAll().plugins).toEqual({ a: {} });
     expect(store.getPluginConfig('a')).toEqual({});
-    expect(createConfigStore({ name: 'T', logLevel: 'error', plugins: null } as never).getAll().plugins).toEqual({});
+    expect(createConfigStore({ logLevel: 'error', plugins: null } as never).getAll().plugins).toEqual({});
   });
 
   it.each(wrong)('插件段是%s：读入时报错点名那一段', (_, section, kind) => {
-    expect(() => createConfigStore({ name: 'T', logLevel: 'error', plugins: { a: section } } as never)).toThrow(
+    expect(() => createConfigStore({ logLevel: 'error', plugins: { a: section } } as never)).toThrow(
       `配置文档里的 plugins.a 不是映射（得到 ${kind}）`,
     );
   });
 
   it('plugins 本身是数组：读入时报错', () => {
-    expect(() => createConfigStore({ name: 'T', logLevel: 'error', plugins: [] } as never)).toThrow(
+    expect(() => createConfigStore({ logLevel: 'error', plugins: [] } as never)).toThrow(
       '配置文档里的 plugins 不是映射（得到 array）',
     );
   });
 
   it('热重载推来的插件段是数组：处理器拒收，文档不动', () => {
-    const { store, push } = watched({ name: 'T', logLevel: 'error', plugins: { a: { v: 1 } } });
-    expect(() => push({ name: 'T', logLevel: 'error', plugins: { a: [1, 2] } } as never)).toThrow('plugins.a');
+    const { store, push } = watched({ logLevel: 'error', plugins: { a: { v: 1 } } });
+    expect(() => push({ logLevel: 'error', plugins: { a: [1, 2] } } as never)).toThrow('plugins.a');
     expect(store.getAll().plugins).toEqual({ a: { v: 1 } });
   });
 
@@ -704,7 +703,7 @@ describe('disabledPlugins 须为字符串列表', () => {
   // 停用名单是实例 id 的列表。留空（YAML 解析成 null）读入即 []；写成字符串、映射或列表里混了别的值是写错了，
   // 与插件段不是映射同一处置：读入时报错点名（启动失败，热重载搁置这次变更）。照收的话，字符串按子串判停用
   // （写 "@aalis/plugin-cli" 时 plugin-cli、cli 都算停用），启停开关与写成映射时的读取直接抛 TypeError
-  const doc = (disabledPlugins: unknown) => ({ name: 'T', logLevel: 'error', plugins: {}, disabledPlugins }) as never;
+  const doc = (disabledPlugins: unknown) => ({ logLevel: 'error', plugins: {}, disabledPlugins }) as never;
 
   it('留空读入即 []，启停照常', () => {
     const store = createConfigStore(doc(null));
@@ -723,7 +722,7 @@ describe('disabledPlugins 须为字符串列表', () => {
   });
 
   it('热重载推来的 disabledPlugins 是字符串：处理器拒收，文档不动', () => {
-    const { store, push } = watched({ name: 'T', logLevel: 'error', plugins: {}, disabledPlugins: ['a'] });
+    const { store, push } = watched({ logLevel: 'error', plugins: {}, disabledPlugins: ['a'] });
     expect(() => push(doc('a'))).toThrow('disabledPlugins');
     expect(store.getAll().disabledPlugins).toEqual(['a']);
     expect(store.isPluginDisabled('a')).toBe(true);

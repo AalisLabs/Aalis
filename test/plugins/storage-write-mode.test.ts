@@ -26,7 +26,7 @@ describe('storage.writeFile 权限位（真 fs）', () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-wmode-'));
     ws = join(base, 'ws');
     mkdirSync(ws, { recursive: true });
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     provideHostPaths(app, base);
     await app.plugin(storageLocal, {
       roots: [

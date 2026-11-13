@@ -61,7 +61,7 @@ describe('金丝雀密钥不进主配置文件', () => {
     dirs.push(home);
     const configPath = join(home, 'aalis.config.yaml');
     const secretsPath = join(home, 'secrets.yaml');
-    writeFileSync(configPath, 'name: T\nlogLevel: error\nplugins:\n  p:\n    apiKey: CANARY-1-PLACEHOLDER\n');
+    writeFileSync(configPath, 'logLevel: error\nplugins:\n  p:\n    apiKey: CANARY-1-PLACEHOLDER\n');
     writeFileSync(secretsPath, '', { mode: 0o600 });
 
     const seen: string[] = [];
@@ -84,7 +84,7 @@ describe('金丝雀密钥不进主配置文件', () => {
     const { config: doc, provider } = createFsYamlConfigProvider(configPath);
     const secrets = createFsSecretsProvider(secretsPath);
     const store = createConfigStore(doc, provider, secrets);
-    const app = new App({ name: store.get('name'), logLevel: store.get('logLevel') as LogLevel, logger: silent });
+    const app = new App({ logLevel: store.get('logLevel') as LogLevel, logger: silent });
     apps.push(app);
     installHostConfig(app, store);
     const discovery = createPluginDiscovery(app, loader, store, withPluginConfigSync(app, store));

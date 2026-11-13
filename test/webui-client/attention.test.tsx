@@ -7,7 +7,6 @@ import { FakeWebSocket } from '../helpers/fake-websocket.js';
 import {
   type FakeRest,
   type Harness,
-  INIT,
   installDialog,
   language,
   lists,
@@ -21,7 +20,7 @@ import { JOBS, SETTINGS_PAGE } from './pages.js';
 // ════════════════════════════════════════════════════════════
 // 「需要处理」：GET /api/attention 一个列表（推出未结的审批、插件故障、插件的提示），收到 attention.changed 或管理连接重连后
 // 重取。首页（手机上是第一层顶部）的摘要最多五条，标题写总数，「全部」链到运行状况，空了整条不出现；插件详情头部之后
-// 是这个插件的提示；标签页标题是这个数加「我的」区完成未读的会话数，都为 0 时只有应用名。跳转按钮由宿主推出
+// 是这个插件的提示；标签页标题是这个数加「我的」区完成未读的会话数，都为 0 时只有 Aalis。跳转按钮由宿主推出
 // ════════════════════════════════════════════════════════════
 
 let app: Harness | undefined;
@@ -501,22 +500,21 @@ describe('插件详情', () => {
 });
 
 describe('标签页标题', () => {
-  it('握手给的应用名，前面是「需要处理」的数加「我的」区完成未读的会话数（不在会话区时也算）；都为 0 时只有应用名', async () => {
+  it('产品名前面是「需要处理」的数加「我的」区完成未读的会话数（不在会话区时也算）；都为 0 时只有产品名', async () => {
     let items = ITEMS;
     const mine = [summary('s1', { unread: true }), summary('s2'), summary('s3', { unread: true })];
     app = await renderApp(
       '/plugins',
       {
-        initialize: () => ({ ...INIT, appName: '<应用名>' }),
         'sessions/list': lists(p => (p.section === 'owner' ? mine : [])),
       },
       rest(() => ({ items })),
     );
-    await vi.waitFor(() => expect(document.title).toBe('(9) <应用名>'));
+    await vi.waitFor(() => expect(document.title).toBe('(9) Aalis'));
 
     items = [];
     act(() => FakeWebSocket.at('/admin').push({ type: 'attention.changed' }));
-    await vi.waitFor(() => expect(document.title).toBe('(2) <应用名>'));
+    await vi.waitFor(() => expect(document.title).toBe('(2) Aalis'));
 
     act(() =>
       server().notify('sessions/changed', {
@@ -525,6 +523,6 @@ describe('标签页标题', () => {
         groups: [],
       }),
     );
-    expect(document.title).toBe('<应用名>');
+    expect(document.title).toBe('Aalis');
   });
 });

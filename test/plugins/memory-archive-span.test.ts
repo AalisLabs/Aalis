@@ -102,7 +102,7 @@ const BACKENDS: Array<[string, Open]> = [
   [
     'inmemory',
     async opts => {
-      const app = new App({ name: 'T', logLevel: 'error' });
+      const app = new App({ logLevel: 'error' });
       await app.plugin(memoryInMemory, opts);
       await app.plugins.idle();
       const mem = app.bind({ services }).services.use.get(memory);

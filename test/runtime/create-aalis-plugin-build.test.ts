@@ -97,7 +97,7 @@ for (const desc of await loader.discover()) {
   const errors = [];
   const logger = { debug: quiet, info: quiet, warn: quiet, error: (...args) => errors.push(args.map(String).join(' ')) };
   logger.child = () => logger;
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   const host = app.bind({ provide, tools, sessionManager, sessionSettings, i18n: optional(i18n) });
   host.provide.use(memory, {
     listMetadata: async () => [],

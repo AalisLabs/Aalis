@@ -30,7 +30,7 @@ function world() {
     error() {},
     child: () => logger,
   };
-  const app = new App({ name: 'close-plan-overlap', logger, disposeTimeoutMs: 2000 });
+  const app = new App({ logger, disposeTimeoutMs: 2000 });
   apps.push(app);
   return { app, trace, cycles };
 }

@@ -66,7 +66,7 @@ afterEach(async () => {
 });
 
 async function navigate(config: Record<string, unknown> = {}) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   apps.push(app);
   const host = app.bind({ provide });

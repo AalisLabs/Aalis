@@ -893,7 +893,7 @@ export function renderConfig(
   const plugins: Record<string, Record<string, string | readonly string[]>> = languages
     ? { ...settings, [I18N]: { language: languages } }
     : settings;
-  const lines = ['name: Aalis', 'logLevel: info'];
+  const lines = ['logLevel: info'];
   const configured = Object.keys(plugins);
   if (configured.length > 0) {
     lines.push('plugins:');

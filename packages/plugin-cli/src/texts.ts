@@ -21,7 +21,7 @@ const SOURCE = {
   viewLogs: '日志',
   viewStatus: '状态',
   viewHelp: '帮助',
-  welcome: '欢迎使用 {name}。按 {key} 查看快捷键。',
+  welcome: '欢迎使用 Aalis。按 {key} 查看快捷键。',
   unreadyDoctor: '有 {count, number} 个插件无法启动，输入 {command} 查看原因与修法',
   unreadyLogs: '有 {count, number} 个插件无法启动，按 {key} 看日志',
   settledApproved: '审批 {tool}：已批准',

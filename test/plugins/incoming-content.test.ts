@@ -106,7 +106,7 @@ describe('归档', () => {
   });
 
   async function archiveService() {
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     await registerHubs(app);
     await app.plugins.register(memoryInMemory, {});
     await app.plugins.register(messageArchivePlugin, { debugLogs: false });

@@ -8,7 +8,7 @@ import { fixedRef, ref } from '../fixtures/service-ref.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
 
 // 宿主配置：GET /api/config 给出文档里写了的核心键、它们的 schema、要重启才生效的键与数据目录。
-// PUT /api/config 只收 CORE_CONFIG_SCHEMA 的键（name / logLevel / slowThresholdMs）。别的顶层键回 400 并点名，什么都不写——
+// PUT /api/config 只收 CORE_CONFIG_SCHEMA 的键（logLevel / slowThresholdMs）。别的顶层键回 400 并点名，什么都不写——
 // 不能静默丢弃却回复「已保存」（文档曾把 commandPrefix 记成顶层字段，用户照抄后 API 回 ok 但什么都没发生）。
 // PUT 只保存、不重启，改了要重启的键时回执写明，由前端出「重启以生效」；重启走 POST /api/restart。
 // 路由注册器只调用 app.<method>(path, ...handlers)，这里用记录处理器的假 app 直接调用，不监听端口。
@@ -25,7 +25,6 @@ function stub<T>(instance: unknown): ServiceSelection<T> {
 
 function setup(opts: { save?: () => Promise<void>; restart?: () => void } = {}) {
   const store: Record<string, unknown> = {
-    name: 'Aalis',
     logLevel: 'info',
     plugins: { '@aalis/plugin-x': { a: 1 } },
     disabledPlugins: [],
@@ -81,7 +80,7 @@ describe('GET /api/config', () => {
     const r = await get();
     expect(r.status).toBe(200);
     expect(r.body).toEqual({
-      config: { name: 'Aalis', logLevel: 'info' },
+      config: { logLevel: 'info' },
       schema: toSource(CORE_CONFIG_SCHEMA),
       restartKeys: ['logLevel', 'slowThresholdMs'],
       dataDir: '/srv/zz-bot/data',
@@ -93,7 +92,7 @@ describe('PUT /api/config 只收核心键', () => {
   it.each([
     ['写错了位置的插件配置', { commandPrefix: '!' }],
     ['与核心键混在一起', { logLevel: 'debug', disabledPlugins: ['@aalis/plugin-x'] }],
-    ['整份配置文档', { name: 'Bot', logLevel: 'warn', plugins: { '@aalis/plugin-x': { a: 0 } }, disabledPlugins: [] }],
+    ['整份配置文档', { logLevel: 'warn', plugins: { '@aalis/plugin-x': { a: 0 } }, disabledPlugins: [] }],
   ])('别的顶层键（%s）→ 400 点名，什么都不写、不落盘', async (_label, body) => {
     const { store, calls, put } = setup();
     const before = structuredClone(store);
@@ -101,7 +100,7 @@ describe('PUT /api/config 只收核心键', () => {
     expect(r.status).toBe(400);
     const foreign = Object.keys(body).filter(key => !Object.hasOwn(CORE_CONFIG_SCHEMA, key));
     const list = (items: string[]) => new Intl.ListFormat('zh-CN', { style: 'narrow' }).format(items);
-    expect(r.body).toEqual({ error: `只能改核心键（name、logLevel、slowThresholdMs），不收：${list(foreign)}` });
+    expect(r.body).toEqual({ error: `只能改核心键（logLevel、slowThresholdMs），不收：${list(foreign)}` });
     expect(store).toEqual(before);
     expect(calls).toEqual([]);
   });
@@ -116,16 +115,7 @@ describe('PUT /api/config 只收核心键', () => {
 });
 
 describe('PUT /api/config 要不要重启', () => {
-  // logLevel 与 slowThresholdMs 只在启动时读取；name 只是显示用的应用名称，保存即生效
-  it('只改 name → 保存即生效，回执写明不用重启', async () => {
-    const { store, calls, put } = setup();
-    const r = await put({ name: 'Bot' });
-    expect(r.status).toBe(200);
-    expect(r.body).toEqual({ ok: true, message: '全局配置已更新并保存', restartNeeded: false });
-    expect(store.name).toBe('Bot');
-    expect(calls).toEqual(['save']);
-  });
-
+  // logLevel 与 slowThresholdMs 只在启动时读取
   it('改 slowThresholdMs → 写入并保存，回执写明重启后生效，不自己重启', async () => {
     const { store, calls, put } = setup();
     const r = await put({ slowThresholdMs: 30000 });
@@ -138,7 +128,7 @@ describe('PUT /api/config 要不要重启', () => {
   it('清空 slowThresholdMs（提交 null）→ 从文档删掉这个键、回到默认值，重启后生效', async () => {
     const { store, put } = setup();
     store.slowThresholdMs = 30000;
-    const r = await put({ name: 'Aalis', logLevel: 'info', slowThresholdMs: null });
+    const r = await put({ logLevel: 'info', slowThresholdMs: null });
     expect(r.status).toBe(200);
     expect((r.body as { restartNeeded: boolean }).restartNeeded).toBe(true);
     expect(store.slowThresholdMs).toBeUndefined();
@@ -146,7 +136,7 @@ describe('PUT /api/config 要不要重启', () => {
 
   it('文档里本来就没有 slowThresholdMs 时提交 null：不算改动，不用重启', async () => {
     const { store, put } = setup();
-    const r = await put({ name: 'Aalis', logLevel: 'info', slowThresholdMs: null });
+    const r = await put({ logLevel: 'info', slowThresholdMs: null });
     expect(r.status).toBe(200);
     expect((r.body as { restartNeeded: boolean }).restartNeeded).toBe(false);
     expect('slowThresholdMs' in store).toBe(false);
@@ -154,29 +144,27 @@ describe('PUT /api/config 要不要重启', () => {
 
   it('把文档里缺省的 slowThresholdMs 按默认值回传：不算改动，不写进文档、不用重启', async () => {
     const { store, put } = setup();
-    const r = await put({ name: 'Bot', logLevel: 'info', slowThresholdMs: 60000 });
+    const r = await put({ logLevel: 'info', slowThresholdMs: 60000 });
     expect(r.status).toBe(200);
-    expect(store.name).toBe('Bot');
     expect('slowThresholdMs' in store).toBe(false);
     expect((r.body as { restartNeeded: boolean }).restartNeeded).toBe(false);
   });
 
-  it('name 与 logLevel 一起改 → 重启后生效', async () => {
-    const { store, put } = setup();
-    const r = await put({ name: 'Bot', logLevel: 'debug' });
-    expect(r.status).toBe(200);
-    expect(r.body).toEqual({ ok: true, message: '全局配置已保存，重启后生效', restartNeeded: true });
-    expect(store).toMatchObject({ name: 'Bot', logLevel: 'debug' });
-  });
-
   it('要重启才生效的键取自 schema-config 的 CORE_RESTART_KEYS：换掉那一份的内容，GET 与 PUT 的回执跟着变', async () => {
     const keys = CORE_RESTART_KEYS as string[];
-    const saved = keys.splice(0, keys.length, 'name');
+    const saved = keys.splice(0, keys.length, 'logLevel');
     try {
-      const { get, put } = setup();
-      expect(((await get()).body as { restartKeys: string[] }).restartKeys).toEqual(['name']);
-      expect((await put({ name: 'Bot' })).body).toMatchObject({ restartNeeded: true });
-      expect((await put({ logLevel: 'debug' })).body).toMatchObject({ restartNeeded: false });
+      const { store, get, put } = setup();
+      expect(((await get()).body as { restartKeys: string[] }).restartKeys).toEqual(['logLevel']);
+      // 不在这一份里的键：保存即生效，回执写明不用重启
+      expect((await put({ slowThresholdMs: 30000 })).body).toEqual({
+        ok: true,
+        message: '全局配置已更新并保存',
+        restartNeeded: false,
+      });
+      expect(store.slowThresholdMs).toBe(30000);
+      // 与要重启的键一起改：重启后生效
+      expect((await put({ logLevel: 'debug', slowThresholdMs: 20000 })).body).toMatchObject({ restartNeeded: true });
     } finally {
       keys.splice(0, keys.length, ...saved);
     }
@@ -223,21 +211,11 @@ describe('PUT /api/config 值校验', () => {
     expect(calls).toEqual([]);
   });
 
-  it('类型不符 → 400，不落盘', async () => {
+  it('加了引号的数字照收，文档里存换算后的值（启动时直接读这几个键）', async () => {
     const { store, calls, put } = setup();
-    const r = await put({ name: true });
-    expect(r.status).toBe(400);
-    expect((r.body as { error: string }).error).toMatch(/name/);
-    expect(store.name).toBe('Aalis');
-    expect(calls).toEqual([]);
-  });
-
-  it('加了引号的数字与写成数字的名称照收，文档里存换算后的值（启动时直接读这几个键）', async () => {
-    const { store, calls, put } = setup();
-    const r = await put({ slowThresholdMs: ' 30000 ', name: 5 });
+    const r = await put({ slowThresholdMs: ' 30000 ' });
     expect(r.status).toBe(200);
     expect(store.slowThresholdMs).toBe(30000);
-    expect(store.name).toBe('5');
     expect(calls).toEqual(['save']);
   });
   it('宿主拒写 → 409、撤回文档里的改动（返回时已落盘的契约在消费侧兑现）', async () => {
@@ -261,10 +239,10 @@ describe('PUT /api/config 值校验', () => {
         throw new Error('disk full');
       },
     });
-    const out = await put({ name: 'Bot', logLevel: 'debug' });
+    const out = await put({ logLevel: 'debug' });
     expect(out.status).toBe(500);
     expect((out.body as { error: string }).error).toBe('未写入配置文件（disk full），本次修改已撤回');
-    expect(store).toMatchObject({ name: 'Aalis', logLevel: 'info' });
+    expect(store).toMatchObject({ logLevel: 'info' });
     expect(calls).not.toContain('restart');
   });
 });

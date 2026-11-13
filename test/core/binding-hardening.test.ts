@@ -32,7 +32,6 @@ function world() {
     child: () => logger,
   };
   const app = createInspectableApp({
-    name: 'H',
     logLevel: 'error',
     logger,
   });

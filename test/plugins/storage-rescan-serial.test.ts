@@ -154,7 +154,7 @@ describe('persona / skills 的目录重扫', () => {
 
   async function bootWith(fake: ReturnType<typeof gatedStorage>): Promise<void> {
     logs = [];
-    app = new App({ name: 'T', logLevel: 'debug', logger: recordingLogger(logs) });
+    app = new App({ logLevel: 'debug', logger: recordingLogger(logs) });
     await registerHubs(app);
     app.bind({ provide }).provide.use(storage, fake.service as never);
   }

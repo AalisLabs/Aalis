@@ -46,7 +46,7 @@ afterEach(async () => {
 });
 
 async function inMemory(): Promise<{ app: App; mem: MemoryService }> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   await app.plugin(memoryInMemory);

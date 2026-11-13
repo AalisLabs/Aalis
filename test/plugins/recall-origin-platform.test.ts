@@ -87,7 +87,7 @@ function requireActive(app: App, name: string): void {
 
 describe('memory-history：按群判', () => {
   async function setup() {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     const host = app.bind({ provide, services });
@@ -163,7 +163,7 @@ describe('memory-vector：platform 范围按出生平台', () => {
   }
 
   async function setup() {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     const host = app.bind({ provide });
@@ -252,7 +252,7 @@ describe('memory-vector：platform 范围按出生平台', () => {
 
 describe('session-history：按出生平台判', () => {
   async function setup() {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     const host = app.bind({ provide });

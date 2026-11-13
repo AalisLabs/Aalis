@@ -10,7 +10,7 @@ function quietApp(): App {
     error() {},
     child: () => logger,
   };
-  return new App({ name: 'shutdown-regressions', logger, disposeTimeoutMs: 2_000 });
+  return new App({ logger, disposeTimeoutMs: 2_000 });
 }
 
 async function within<T>(work: Promise<T>, ms = 1_000, label = '操作'): Promise<T> {

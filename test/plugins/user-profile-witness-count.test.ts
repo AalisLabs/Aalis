@@ -17,7 +17,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 const PROFILE_NS = 'user:profile';
 
 async function setup(config: Record<string, unknown>) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, events, memory: memoryService });
   host.provide.use(llm, { chat: async () => ({ content: '' }) } as never);

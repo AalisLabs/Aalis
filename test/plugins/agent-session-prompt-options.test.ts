@@ -46,7 +46,7 @@ describe('会话级提示选项：真实回合与 token:request 快照', () => {
   let app: App;
 
   const boot = async (trimThresholdRatio: number) => {
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     await registerHubs(app);
     provideHostPaths(app, base);
     await app.plugin(storageLocalPlugin, {});

@@ -143,7 +143,7 @@ describe('没有能看图的模型', () => {
 
   it('存档：附件清单带上落盘后的地址，正文只有一行「无法查看」', async () => {
     const written = landInMemory();
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     await app.plugins.register(memoryInMemory, {});
@@ -297,7 +297,7 @@ async function bootWithDoctor() {
       files.set(uri, Buffer.from(data));
     },
   } as unknown as StorageService;
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, services });

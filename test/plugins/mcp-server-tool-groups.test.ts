@@ -38,7 +38,7 @@ afterEach(async () => {
 async function start(toolGroups: unknown, port?: number) {
   const listenPort = port ?? (await freePort());
   const { logger, errors, infos } = captureLogger();
-  const app = new App({ name: 'T', logLevel: 'error', logger });
+  const app = new App({ logLevel: 'error', logger });
   apps.push(app);
   app.bind({ provide }).provide.use(tools, {
     getAll: () => [],

@@ -49,7 +49,7 @@ async function fileGroups(memory: MemoryService, groups: Record<string, string>)
  * 与 agent 组装器在生产里拿到的同一份视图。
  */
 async function boot(smConfig: Record<string, unknown> = {}) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ services, contributions, logger });
   await app.plugin(memoryInMemory);

@@ -27,7 +27,7 @@ describe('指令执行途中被中止', () => {
       },
       child: () => logger,
     };
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     const registry = new CommandRegistry(logger as never, ref(), ref());
     app.bind({ provide }).provide.use(commands, registry);

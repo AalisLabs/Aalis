@@ -54,7 +54,7 @@ const owner = definePlugin({
 
 async function get(path: string): Promise<unknown> {
   const port = await freePort();
-  const { app } = hostedApp({ name: 'N' }, { logger: silent });
+  const { app } = hostedApp({}, { logger: silent });
   apps.push(app);
   await registerHubs(app);
   await app.plugin(toolsPlugin, {});

@@ -180,7 +180,7 @@ export function isDataDirInitialized(paths: HostPaths): boolean {
 }
 
 /**
- * 建数据目录：目录 0700，写默认主配置与空的密钥文件（0600），建布局里的子目录。主配置只有名字、日志级别与空的插件段。
+ * 建数据目录：目录 0700，写默认主配置与空的密钥文件（0600），建布局里的子目录。主配置只有日志级别与空的插件段。
  * 已初始化时拒绝，不覆盖任何文件。目录已存在时只接受空目录，或只有布局自己条目的目录（上次初始化中途失败），
  * 沿用并收紧为 0700：`--data ~ --init` 这类笔误不能把用户主目录改成 0700、再往里铺一层布局。
  */
@@ -204,8 +204,8 @@ export function initDataDir(paths: HostPaths): void {
   // 密钥文件先建：主配置是初始化的判据，最后写，中途失败时下次仍能重新初始化
   if (existsSync(paths.secrets)) chmodSync(paths.secrets, 0o600);
   else writeFileSync(paths.secrets, '', { mode: 0o600, flag: 'wx' });
-  const { name, logLevel } = defaultsFrom(CORE_CONFIG_SCHEMA);
-  writeFileSync(paths.config, stringifyYaml({ name, logLevel, plugins: {} }), {
+  const { logLevel } = defaultsFrom(CORE_CONFIG_SCHEMA);
+  writeFileSync(paths.config, stringifyYaml({ logLevel, plugins: {} }), {
     mode: 0o600,
     flag: 'wx',
   });

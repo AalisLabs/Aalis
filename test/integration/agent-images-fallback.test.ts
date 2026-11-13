@@ -41,7 +41,7 @@ async function loadStack(
   recorder: ChatModelRequest[],
   opts: { media?: boolean; storage?: boolean; storageRoots?: string; vision?: boolean } = {},
 ) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, agent: agentService });
   await app.plugin(createMockLLMPlugin({ responses: [{ content: 'ok' }], recorder, vision: opts.vision ?? true }));

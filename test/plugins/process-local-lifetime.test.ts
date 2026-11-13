@@ -133,7 +133,7 @@ describe('process-local 子进程生命周期', () => {
 
   it.skipIf(!posix)('宿主停机：登记在册的存活子进程被杀', async () => {
     const marker = mark('dispose');
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     await app.plugin(processLocal);
     await app.plugins.idle();
     const host = app.bind({ services });
@@ -148,7 +148,7 @@ describe('process-local 子进程生命周期', () => {
 
   it.skipIf(!posix)('停机先整组 SIGTERM 让子进程收尾，忽略的宽限后整组 SIGKILL，停机等到收完', async () => {
     const marker = mark('graceful');
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     await app.plugin(processLocal);
     await app.plugins.idle();
     const service = app.bind({ services }).services.use.get(processService);
@@ -174,7 +174,7 @@ describe('process-local 子进程生命周期', () => {
   it.skipIf(!posix)(
     '停机：用 process 服务的插件先在自己的收尾里按自己的方式停下子进程，本插件之后才收剩下的',
     async () => {
-      const app = new App({ name: 'T', logLevel: 'error' });
+      const app = new App({ logLevel: 'error' });
       let ended: Promise<ExecResult> | undefined;
       const consumer = definePlugin({
         name: 'zz-quit-consumer',
@@ -202,7 +202,7 @@ describe('process-local 子进程生命周期', () => {
   it.skipIf(!posix)(
     '本插件被 bounce：它启动的进程组随它的清理收掉，先整组 SIGTERM、等它收尾退出，重启完成时组里已没有进程',
     async () => {
-      const app = new App({ name: 'T', logLevel: 'error' });
+      const app = new App({ logLevel: 'error' });
       let run: SpawnHandle | undefined;
       let applied = 0;
       const consumer = definePlugin({

@@ -20,7 +20,7 @@ describe('插件的私有目录 storage.own', () => {
 
   beforeEach(async () => {
     home = realpathSync(mkdtempSync(join(tmpdir(), 'aalis-storage-own-')));
-    app = new App({ name: 'T', logLevel: 'error', logger: silent });
+    app = new App({ logLevel: 'error', logger: silent });
     provideHostPaths(app, home);
     await app.plugin(storageLocal, { roots: [] });
   });

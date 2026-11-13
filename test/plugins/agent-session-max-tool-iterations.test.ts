@@ -45,7 +45,7 @@ async function boot(calls = 1): Promise<{
   warns: string[];
 }> {
   const warns: string[] = [];
-  const app = new App({ name: 'E2E', logger: recordingLogger(warns) });
+  const app = new App({ logger: recordingLogger(warns) });
   await registerHubs(app);
   const toolCall: ChatResponse = {
     content: null,

@@ -35,7 +35,7 @@ function makeApp(disposeTimeoutMs?: number) {
     error: () => {},
     child: () => logger,
   };
-  const app = new App({ name: 'T', logLevel: 'error', logger, disposeTimeoutMs });
+  const app = new App({ logLevel: 'error', logger, disposeTimeoutMs });
   apps.push(app);
   return { app, warnings, host: app.bind({ provide }) };
 }

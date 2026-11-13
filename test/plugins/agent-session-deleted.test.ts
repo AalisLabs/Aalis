@@ -76,7 +76,7 @@ type After = (app: App) => Promise<unknown>;
 /** 只有会话管理与 agent 的一套：模型立即作答，记下各轮的输入与结局；给了 logger 时日志交给它 */
 async function bootDirect({ logger, after }: { logger?: Logger; after?: After } = {}) {
   const model = new StepModel((_request, n) => ({ content: `回${n}` }));
-  const app = new App({ name: 'T', logLevel: logger ? 'info' : 'error', logger });
+  const app = new App({ logLevel: logger ? 'info' : 'error', logger });
   apps.push(app);
   await registerHubs(app);
   await app.plugin(stepModelPlugin(model));
@@ -109,7 +109,7 @@ const GROUP = 'onebot:10000:group:20001';
 /** 会话管理、网关与 agent 的一套：onebot 的群经网关入站；记下各轮的输入与结局 */
 async function bootGateway({ after }: { after?: After } = {}) {
   const model = new StepModel((_request, n) => ({ content: `回${n}` }));
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   for (const plugin of [stepModelPlugin(model), memoryInMemoryPlugin, sessionManagerPlugin, gatewayPlugin]) {
@@ -171,7 +171,7 @@ describe('删除会话时停掉它在跑的回合', () => {
     const held = heldModel(() => {
       if (++inflight === 2) wake();
     });
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     await app.plugin(held.plugin);

@@ -32,7 +32,7 @@ describe('storage-local 日志根 logs', () => {
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'aalis-logs-root-'));
     warns = [];
-    app = new App({ name: 'T', logLevel: 'debug', logger: recordingLogger(warns) });
+    app = new App({ logLevel: 'debug', logger: recordingLogger(warns) });
     provideHostPaths(app, home);
   });
 

@@ -54,7 +54,7 @@ describe('子任务上下文与 create_subtask 的说明', () => {
 
 describe('office 的工具说明写子任务怎么用文档', () => {
   async function descriptions(): Promise<Map<string, string>> {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     const host = app.bind({ provide });
     const out = new Map<string, string>();

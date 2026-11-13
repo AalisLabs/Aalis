@@ -70,7 +70,7 @@ describe('scheduler 动态任务：加载失败后拒绝整表回写', () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-sched-load-'));
     mkdirSync(join(base, 'state'), { recursive: true });
     mkdirSync(join(base, 'workspace'), { recursive: true });
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     provideEvents(app);
     provideHostPaths(app, base);
   });
@@ -167,7 +167,7 @@ describe('scheduler 动态任务：加载失败后拒绝整表回写', () => {
 
     await app.stop();
     rmSync(join(base, jobsFile));
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     provideEvents(app);
     provideHostPaths(app, base);
     await registerStorage();

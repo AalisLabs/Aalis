@@ -27,7 +27,6 @@ export const INIT: SessionMethodResult<'initialize'> = {
   identity: { platform: 'webui', userId: 'console' },
   surface: 'webui',
   features: { send: true, rewind: true, compress: true, settings: true },
-  appName: 'Aalis',
 };
 
 /** 层表：session/config/layers 回包的 order，与会话服务给的同一份（称呼按原文渲染） */

@@ -925,12 +925,12 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(problems).toEqual([]);
   }, 60_000);
 
-  it('最少插件组合：「需要处理」为空，首页摘要不出现、标签页标题只有应用名，运行状况没有角标；没有计划标签、回滚、压缩与压缩线，用量拆分表的行名照样出现、没有「用量统计」页，没有页面时图标栏只有宿主项（手机上第一层没有固定的页面，入口是运行状况、插件、设置）、右侧面板没有「+」，也没有空着的区域与框架；没有可转后台的工具与派生子会话的插件，模型拿到的工具里没有后台任务工具，没有「后台」标签，头部、左栏与运行状况都没有后台工作，会话行没有子任务展开', async () => {
+  it('最少插件组合：「需要处理」为空，首页摘要不出现、标签页标题只有 Aalis，运行状况没有角标；没有计划标签、回滚、压缩与压缩线，用量拆分表的行名照样出现、没有「用量统计」页，没有页面时图标栏只有宿主项（手机上第一层没有固定的页面，入口是运行状况、插件、设置）、右侧面板没有「+」，也没有空着的区域与框架；没有可转后台的工具与派生子会话的插件，模型拿到的工具里没有后台任务工具，没有「后台」标签，头部、左栏与运行状况都没有后台工作，会话行没有子任务展开', async () => {
     const stack = await startStack({ 你好: '好的。' });
     const { page, problems } = await openPage(stack, viewport);
     await page.waitForNetworkIdle({ idleTime: 300 });
-    // 应用名是宿主配置的 name；列表为空也就没有 MCP 的提示
-    await page.waitForFunction(() => document.title === 'T');
+    // 列表为空也就没有 MCP 的提示
+    await page.waitForFunction(() => document.title === 'Aalis');
     expect(await page.$$(aria('需要处理', 'region'))).toHaveLength(0);
     const attention = await fetch(`${stack.origin}/api/attention`, {
       headers: { Cookie: `aalis_webui_token=${TOKEN}` },
@@ -1226,7 +1226,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
       ['要配置的探针', '待配置：endpoint', '去配置'],
       ['2 张工单待处理', '提示的探针 · 最早的一张已等 3 天', '打开工单队列'],
     ]);
-    await page.waitForFunction(() => document.title === '(2) T');
+    await page.waitForFunction(() => document.title === '(2) Aalis');
     const entry = `${phone ? '[aria-label="入口"]' : '.shell-rail'} a[href="/health"]`;
     expect(await page.$eval(`${entry} .badge`, badge => badge.textContent)).toBe('2');
     if (!phone) {
@@ -1240,7 +1240,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
       NEEDS_CONFIG,
     );
     await stack.app.plugins.updateConfig(NEEDS_CONFIG, { endpoint: 'http://upstream.invalid' });
-    await page.waitForFunction(() => document.title === '(1) T');
+    await page.waitForFunction(() => document.title === '(1) Aalis');
 
     await page.goto(`${stack.origin}/plugins/${NOTICE_PROBE}`);
     const block = `main ${aria('需要处理', 'region')}`;

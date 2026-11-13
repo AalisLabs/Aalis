@@ -151,7 +151,7 @@ describe('workflow：once 记录读不出时不安排 once', () => {
   const runsPath = () => join(base, 'state', 'workflow-runs.json');
 
   const boot = async (enableTools = false): Promise<WorkflowService> => {
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     await registerHubs(app);
     pages = pageHost();
     app.bind({ provide }).provide.use(webuiServer, pages.service);
@@ -335,7 +335,7 @@ describe('workflow 路径配置只接受 storage URI', () => {
     logHub.onEntry(entry => {
       if (entry.level === 'error') errors.push(entry.message);
     });
-    app = new App({ name: 'T', logLevel: 'error', logHub });
+    app = new App({ logLevel: 'error', logHub });
     await registerHubs(app);
     app.bind({ provide }).provide.use(storageService, memoryStorage(new Map()));
     await app.plugin(cronEnginePlugin, {});

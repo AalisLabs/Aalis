@@ -42,7 +42,7 @@ function world() {
     error: (...a: unknown[]) => void warnings.push(a.map(String).join(' ')),
     child: () => logger,
   };
-  const app = createInspectableApp({ name: 'T', logLevel: 'error', logger });
+  const app = createInspectableApp({ logLevel: 'error', logger });
   apps.push(app);
   return { app, log, saved, warnings, host: app.bind({ provide }).provide };
 }

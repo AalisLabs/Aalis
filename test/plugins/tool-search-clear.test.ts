@@ -34,7 +34,7 @@ afterEach(async () => {
 });
 
 async function world() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   await app.plugin(toolSearch, { maxDirectTools: 1 });

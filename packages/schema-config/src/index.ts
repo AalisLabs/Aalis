@@ -343,18 +343,12 @@ export type SessionFieldsOf<S extends ConfigSchema> = Flatten<
 >;
 
 /**
- * core 基础设施配置（name / logLevel / slowThresholdMs）的表单描述。
+ * core 基础设施配置（logLevel / slowThresholdMs）的表单描述。
  *
  * core 自身不持有任何 schema——这份呈现层描述由本包代管，
  * 渲染宿主（webui-server 设置页）从这里取。
  */
 export const CORE_CONFIG_SCHEMA: ConfigSchema = {
-  name: {
-    type: 'string',
-    label: t('nameLabel'),
-    description: t('nameDescription'),
-    default: 'Aalis',
-  },
   logLevel: {
     type: 'select',
     label: t('logLevelLabel'),
@@ -378,7 +372,7 @@ export const CORE_CONFIG_SCHEMA: ConfigSchema = {
 
 /**
  * 宿主配置里只在启动时读、改了要重启才生效的核心键：runtime 启动时读它们交给 core，WebUI 设置页据此标「重启后生效」。
- * runtime 改了哪些键只在启动时读，同步改这一份。name 只是显示用的应用名称，保存即生效
+ * runtime 改了哪些键只在启动时读，同步改这一份
  */
 export const CORE_RESTART_KEYS: readonly string[] = ['logLevel', 'slowThresholdMs'];
 

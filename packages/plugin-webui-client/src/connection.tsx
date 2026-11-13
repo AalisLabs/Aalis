@@ -9,10 +9,13 @@ import type { ConnectionState } from './protocol/socket';
 // 页面的两条连接：会话协议与管理面。整页只开一次，由入口创建后交给这里；在场上报跟着会话连接。
 // 服务端关闭时管理连接先收到 server.closing、随后断开，重连上以后页面整页重新加载（前端可能换了新版本）；
 // client.reload 表示活跃的前端换了，立即重新加载。
-// 功能位取自握手与 features/changed，应用名取自握手（握手之前是页面自带的标题）。推给这条连接、还没结算的审批按 id
+// 功能位取自握手与 features/changed。推给这条连接、还没结算的审批按 id
 // 记着：服务端只把结算推给拿到过审批的连接，所以连接断开时清空，重连并重报在场后服务端会再推
 
 export type Approval = SessionNotificationParams<'approval/requested'>['approval'];
+
+/** 产品名：标签页标题与房间里她的回复用它 */
+export const PRODUCT = 'Aalis';
 
 interface Connection {
   session: SessionClient;
@@ -23,8 +26,6 @@ interface Connection {
   features: Features;
   /** 握手完成过（之后断线重连也算） */
   ready: boolean;
-  /** 标签页标题与房间里她的回复用它 */
-  appName: string;
   /** 推给这条连接、还没结算的审批 */
   approvals: ReadonlyMap<string, Approval>;
 }
@@ -69,17 +70,13 @@ export function ConnectionProvider({
 }) {
   const [serverClosed, setServerClosed] = useState(false);
   const [features, setFeatures] = useState<Features>();
-  const [appName, setAppName] = useState(() => document.title);
   const [approvals, setApprovals] = useState<ReadonlyMap<string, Approval>>(new Map());
 
   useEffect(() => trackPresence(session), [session]);
 
   useEffect(() => {
     const offs = [
-      session.onReady(init => {
-        setFeatures(init.features);
-        setAppName(init.appName);
-      }),
+      session.onReady(init => setFeatures(init.features)),
       session.on('features/changed', ({ features: next }) => setFeatures(next)),
       session.on('approval/requested', ({ approval }) => setApprovals(map => new Map(map).set(approval.id, approval))),
       session.on('approval/settled', ({ approvalId }) =>
@@ -121,7 +118,6 @@ export function ConnectionProvider({
         serverClosed,
         features: features ?? NO_FEATURES,
         ready: features !== undefined,
-        appName,
         approvals,
       }}
     >

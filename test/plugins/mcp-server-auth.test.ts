@@ -38,7 +38,7 @@ async function start(config: Record<string, unknown>) {
     error: record('error'),
     child: () => logger,
   };
-  const app = new App({ name: 'T', logLevel: 'error', logger });
+  const app = new App({ logLevel: 'error', logger });
   apps.push(app);
   const calls: unknown[] = [];
   app.bind({ provide }).provide.use(tools, {

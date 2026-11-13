@@ -54,7 +54,7 @@ const untilAborted = (signal: AbortSignal | undefined, error: () => unknown) =>
  * 中止信号
  */
 async function boot(plugin: PluginDefinition, config: Record<string, unknown>, hang?: string) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   cleanups.push(() => app.stop());
   const host = app.bind({ provide, asr });
   const execs: Array<{ cmd: string; signal?: AbortSignal }> = [];

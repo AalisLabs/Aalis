@@ -63,7 +63,7 @@ afterEach(async () => {
 
 /** withI18n 为假时没有 i18n 服务；llm 给了就装上这个模型插件，不给时一个模型都没有 */
 async function setup({ withI18n = true, llm }: { withI18n?: boolean; llm?: PluginDefinition } = {}) {
-  const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+  const app = new App({ logLevel: 'error', logger: silent });
   apps.push(app);
   const home = mkdtempSync(join(tmpdir(), 'aalis-chat-replies-i18n-'));
   homes.push(home);

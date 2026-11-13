@@ -25,7 +25,7 @@ afterEach(async () => {
 async function world() {
   const base = mkdtempSync(join(tmpdir(), 'aalis-clear-tags-'));
   cleanups.push(() => rmSync(base, { recursive: true, force: true }));
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   cleanups.push(() => app.stop());
   await registerHubs(app);
   provideHostPaths(app, base);

@@ -13,7 +13,7 @@ afterEach(async () => {
 });
 
 function world(options: Partial<AppOptions> = {}) {
-  const app = new App({ name: 'T', logLevel: 'error', ...options });
+  const app = new App({ logLevel: 'error', ...options });
   apps.push(app);
   return app;
 }

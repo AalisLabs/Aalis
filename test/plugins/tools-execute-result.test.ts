@@ -10,7 +10,7 @@ import { toolRequest } from '../fixtures/tool-call.js';
 // 调用方（agent / mcp-server / workflow）不必再区分。
 
 async function withTools(fn: (svc: ToolService) => Promise<void>): Promise<void> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   await app.plugins.register(toolsPlugin, {});
   await app.plugins.idle();
@@ -83,7 +83,7 @@ describe('执行层的结局日志按 toolFailed 记', () => {
       error: (...args: unknown[]) => void lines.push(`error ${args.map(String).join(' ')}`),
       child: () => logger,
     };
-    const app = new App({ name: 'T', logger });
+    const app = new App({ logger });
     provideEvents(app);
     try {
       await app.plugins.register(toolsPlugin, {});

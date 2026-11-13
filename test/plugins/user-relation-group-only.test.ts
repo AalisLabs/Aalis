@@ -33,7 +33,7 @@ afterEach(async () => {
 
 /** 装上关系图插件（只开注入、仅群聊），会话表里是这些记录；会话管理不装时 sessions 为 undefined */
 async function boot(sessions: readonly Record<string, unknown>[] | undefined) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   await app.plugin(memoryInMemory);

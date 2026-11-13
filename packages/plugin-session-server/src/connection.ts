@@ -108,9 +108,6 @@ const compatOf = (version: string): string => {
   return major === '0' ? `${major}.${minor}` : major;
 };
 
-/** 握手回应里随时会变的两项：当前的功能位与应用名 */
-type ServerState = () => Pick<SessionMethodResult<'initialize'>, 'features' | 'appName'>;
-
 /** 设置行的 actual：只有取值与可选的称呼 */
 const isActual = (parent: Readonly<Record<string, unknown>>) =>
   Object.keys(parent).every(key => key === 'value' || key === 'label');
@@ -142,7 +139,8 @@ export const raw: LocalizeSkip = (key, parent) => {
 
 export function createSessionServer(
   handlers: MethodHandlers,
-  state: ServerState,
+  /** 当前的功能位：握手回应里随时会变的一项 */
+  features: () => SessionMethodResult<'initialize'>['features'],
   logger: Logger,
   i18n: Pick<ServiceSelection<I18nService>, 'present' | 'use'>,
   isOwner: IsOwner,
@@ -229,7 +227,7 @@ export function createSessionServer(
         server: { name: SERVER_NAME },
         identity: peer.identity,
         surface: peer.surface.name,
-        ...state(),
+        features: features(),
       };
     };
 

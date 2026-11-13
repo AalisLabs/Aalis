@@ -25,7 +25,7 @@ interface Captured {
 /** 装载插件、用桩 tools 提供者收下它登记的全部工具 */
 async function collectTools(): Promise<Captured[]> {
   const captured: Captured[] = [];
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, services });
   host.provide.use(tools, {

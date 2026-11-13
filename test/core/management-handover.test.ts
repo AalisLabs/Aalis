@@ -29,7 +29,6 @@ function capturing(disposeTimeoutMs?: number) {
     child: () => logger,
   };
   const app = new App({
-    name: 't',
     logLevel: 'error',
     logger,
     disposeTimeoutMs,
@@ -39,7 +38,7 @@ function capturing(disposeTimeoutMs?: number) {
 }
 
 function world(disposeTimeoutMs?: number) {
-  const app = new App({ name: 't', logLevel: 'error', disposeTimeoutMs });
+  const app = new App({ logLevel: 'error', disposeTimeoutMs });
   apps.push(app);
   return app;
 }

@@ -87,7 +87,7 @@ const adapterPlugin = (name: string, adapter: Partial<PlatformAdapter>) =>
  * 记下调用，按用例给结果。slowHistory 为真时读历史要等 releaseHistory 放行。
  */
 async function setup({ slowHistory = false }: { slowHistory?: boolean } = {}) {
-  const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+  const app = new App({ logLevel: 'error', logger: silent });
   apps.push(app);
   provideHome(app);
   await registerHubs(app);
@@ -2229,7 +2229,7 @@ describe('回合控制', () => {
   });
 
   it('没有 agent、检查点、待办服务时，对应的方法回 unsupported', async () => {
-    const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+    const app = new App({ logLevel: 'error', logger: silent });
     apps.push(app);
     provideHome(app);
     await registerHubs(app);
@@ -2254,7 +2254,7 @@ describe('回合控制', () => {
   });
 
   it('功能位：握手回发送、回滚、压缩、会话设置四项，各看对话、检查点、压缩、会话设置服务在不在；服务上下线时推 features/changed', async () => {
-    const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+    const app = new App({ logLevel: 'error', logger: silent });
     apps.push(app);
     provideHome(app);
     await registerHubs(app);
@@ -2330,7 +2330,7 @@ async function startAgent(
   /** 会话 S 的创建来源：不给即没有（受众判为 internal） */
   creation?: Pick<SessionCreation, 'createdFrom'>,
 ) {
-  const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+  const app = new App({ logLevel: 'error', logger: silent });
   apps.push(app);
   provideHome(app);
   await registerHubs(app);

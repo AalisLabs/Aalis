@@ -34,7 +34,7 @@ describe('plugin-cli 非 TTY', () => {
     const entries: LogEntry[] = [];
     const offLog = LogHub.default.onEntry(e => entries.push(e));
 
-    const app = new App({ name: 'T', logLevel: 'info' });
+    const app = new App({ logLevel: 'info' });
     provideEvents(app);
     // 宿主侧按根激活取绑定接口：事件订阅与平台枚举都走公开门面
     const host = app.bind({ events, platform });

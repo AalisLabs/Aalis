@@ -35,7 +35,7 @@ afterEach(async () => {
 });
 async function mk(): Promise<{ app: App; log: ReturnType<typeof recording> }> {
   const log = recording();
-  const app = new App({ name: 'S4', logger: log });
+  const app = new App({ logger: log });
   apps.push(app);
   await app.plugins.idle();
   return { app, log };
@@ -188,7 +188,7 @@ describe('配置不是纯对象：register 与 updateConfig 一样拒收', () =>
 
 describe('登记收下的是拷贝', () => {
   it('登记后调用方改它的配置对象：重启后的 config.use 与 getPlugin 仍是登记时的值', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     const seen: unknown[] = [];
     const cfg = { a: 1, nested: { list: [[1]] } };

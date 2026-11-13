@@ -43,7 +43,7 @@ async function waitFor(pred: () => boolean, label: string): Promise<void> {
 
 /** 模型第一次调用卡住的工具，之后一律回文字；卡住的工具等到放行或本回合中止 */
 async function boot() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   await app.plugin(createMockLLMPlugin({ responses: [callHold, { content: '好' }] }));

@@ -70,7 +70,7 @@ beforeAll(async () => {
     throw Object.assign(new Error(`getaddrinfo ENOTFOUND ${host}`), { code: 'ENOTFOUND' });
   }) as never);
 
-  app = new App({ name: 'T', logLevel: 'error' });
+  app = new App({ logLevel: 'error' });
   provideEvents(app);
   const host = app.bind({ provide, events });
   host.provide.use(tools, {

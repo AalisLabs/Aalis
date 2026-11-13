@@ -29,7 +29,7 @@ const IMG = 'data:image/png;base64,iVBORw0KGgo=';
 const SESSION = 'test:tool-images';
 
 async function runTurn(vision: boolean) {
-  const app = new App({ name: 'E2E', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({
     tools,

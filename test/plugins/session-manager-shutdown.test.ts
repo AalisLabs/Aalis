@@ -13,7 +13,7 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 describe('关停：active 会话自行收口落盘', () => {
   it('stop() 时 active 会话被收口落盘，waiting 不动', async () => {
     const store = fakeMemory();
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     await registerHubs(app);
     const host = app.bind({ provide, sessionManager });
     host.provide.use(memory, store as never);

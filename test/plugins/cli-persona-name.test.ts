@@ -9,7 +9,7 @@ import { provideEvents } from '../fixtures/hubs.js';
 import { fakeTty } from '../helpers/tty.js';
 
 // ════════════════════════════════════════════════════════════
-// 终端显示的人设名按终端会话取：人设服务按 { sessionId, platform: 'cli' } 取这个会话的卡，欢迎行、头部与回复前的署名都写
+// 终端显示的人设名按终端会话取：人设服务按 { sessionId, platform: 'cli' } 取这个会话的卡，头部与回复前的署名都写
 // 这张卡的名字，与回合同一口径，不是人设服务的主卡。会话设置或宿主配置变了时立即按新的名字重绘。启动真 TUI（假 TTY，收集
 // stdout 帧），人设服务是按会话给名字的替身
 // ════════════════════════════════════════════════════════════
@@ -33,7 +33,7 @@ describe('终端显示的人设名', () => {
       return true;
     });
     cleanups.push(fakeTty(30, 120).restore);
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     provideEvents(app);
     cleanups.push(() => app.stop());
     const host = app.bind({ provide, events });
@@ -58,21 +58,20 @@ describe('终端显示的人设名', () => {
     return { frame, asked, emit: host.events.use.emit };
   }
 
-  it('按终端会话取卡：欢迎行、头部与回复的署名写这个会话的卡的名字', async () => {
+  it('按终端会话取卡：头部与回复的署名写这个会话的卡的名字，欢迎行不带人设名', async () => {
     const { frame, asked } = await terminal(options =>
       options?.sessionId === 'cli-default' && options.platform === 'cli' ? '<会话的卡的名字>' : '<主卡的名字>',
     );
     expect(frame()).toContain('✦ <会话的卡的名字>');
-    expect(frame()).toContain('欢迎使用 <会话的卡的名字>。');
+    expect(frame()).toContain('欢迎使用 Aalis。');
     expect(frame()).toContain('Aalis · <会话的卡的名字>');
     expect(frame()).not.toContain('<主卡的名字>');
     expect(asked.every(options => options?.sessionId === 'cli-default' && options.platform === 'cli')).toBe(true);
   });
 
-  it('会话用的卡没取名（名字是空串）：欢迎行与署名写 Aalis，头部写 -', async () => {
+  it('会话用的卡没取名（名字是空串）：署名写 Aalis，头部写 -', async () => {
     const { frame } = await terminal(() => '');
     expect(frame()).toContain('✦ Aalis');
-    expect(frame()).toContain('欢迎使用 Aalis。');
     expect(frame()).toContain('Aalis · -');
   });
 

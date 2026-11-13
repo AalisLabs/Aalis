@@ -126,7 +126,7 @@ describe('onebot 入站附件落进自己的子目录', () => {
       });
     });
 
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     cleanups.push(() => app.stop());
     await registerHubs(app);
     provideHostPaths(app, base);
@@ -220,7 +220,7 @@ describe('/clear 的附件清理归写入方', () => {
       `images/${OTHER_DIR}/zz-third/y.png`,
     ])
       seed(state, path);
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     cleanups.push(() => app.stop());
     await registerHubs(app);
     provideHostPaths(app, base);

@@ -31,7 +31,7 @@ describe('persona 合成回合的会话类型取会话记下的聊天窗口', ()
   let svc: PersonaService;
 
   const boot = async (): Promise<void> => {
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     await registerHubs(app);
     host = app.bind(hostUses);
     host.provide.use(memory, fakeMemory({ [GROUP]: storedRoom(GROUP), [PRIVATE]: storedRoom(PRIVATE) }) as never);

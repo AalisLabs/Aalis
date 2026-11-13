@@ -74,7 +74,7 @@ async function runWithWinnerSwitch(opts: {
   reply: unknown;
   speaker: string;
 }): Promise<{ first: StubMemory; second: StubMemory }> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events });

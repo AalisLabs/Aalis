@@ -319,7 +319,7 @@ async function setup({
     error: quiet,
     child: () => logger,
   };
-  const app = new App({ name: 'T', logLevel: 'info', logger });
+  const app = new App({ logLevel: 'info', logger });
   if (!withHubs) provideEvents(app);
   apps.push(app);
   const frameModule = framePackage();
@@ -524,16 +524,16 @@ describe('配置表单、校验问题与插件状态的原因按全局层的语�
     const { request, setLanguage } = await setup({ language: ['en'] });
     const labels = async () => {
       const { schema } = await json(request('/api/config'));
-      return [schema.name.label, schema.logLevel.label, schema.slowThresholdMs.label];
+      return [schema.logLevel.label, schema.slowThresholdMs.label];
     };
-    expect(await labels()).toEqual(['App name', 'Log level', 'Slow operation threshold (ms)']);
+    expect(await labels()).toEqual(['Log level', 'Slow operation threshold (ms)']);
     const refused = await request('/api/config', { method: 'PUT', body: JSON.stringify({ logLevel: 'loud' }) });
     expect([refused.status, await refused.json()]).toEqual([
       400,
       { error: 'logLevel: not one of the options ("debug", "info", "warn", "error")' },
     ]);
     setLanguage(['zh-CN']);
-    expect(await labels()).toEqual(['应用名称', '日志等级', '慢操作阈值（毫秒）']);
+    expect(await labels()).toEqual(['日志等级', '慢操作阈值（毫秒）']);
   });
 
   it('动作的输入字段与没过校验时的说明按全局层的语言', async () => {

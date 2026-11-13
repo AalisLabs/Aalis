@@ -100,7 +100,7 @@ describe('persona 角色卡载入（真 storage-local）', () => {
       definition: storageLocal,
       config: { roots: [root('workspace', join(base, 'workspace'))] },
     };
-    app = new App({ name: 'T', logLevel: logHub ? 'warn' : 'error', logHub });
+    app = new App({ logLevel: logHub ? 'warn' : 'error', logHub });
     provideHostPaths(app, base);
     await app.pluginAll([
       ...HUB_PLUGINS.map(definition => ({ definition })),

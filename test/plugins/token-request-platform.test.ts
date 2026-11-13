@@ -42,7 +42,7 @@ function requireActive(...names: string[]): void {
 }
 
 async function boot() {
-  app = new App({ name: 'T', logLevel: 'error' });
+  app = new App({ logLevel: 'error' });
   await registerHubs(app);
   const mockLLM = createMockLLMPlugin({});
   await app.plugin(mockLLM);
@@ -103,7 +103,7 @@ describe('token 日志节流状态随会话删除清理', () => {
     logHub.onEntry(e => {
       if (e.message.includes('[token-usage:')) lines.push(e.message);
     });
-    app = new App({ name: 'T', logLevel: 'info', logHub });
+    app = new App({ logLevel: 'info', logHub });
     await registerHubs(app);
     const mockLLM = createMockLLMPlugin({});
     await app.plugin(mockLLM);

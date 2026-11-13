@@ -46,7 +46,7 @@ function fakeStorage(listError: string) {
 /** 启动一次 workflow 插件再停掉（dispose 等落盘），返回 runsFile 里的 once 记录 */
 async function bootOnce(listError: string): Promise<Record<string, number>> {
   const store = fakeStorage(listError);
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   // 宿主侧提供桩 storage：只实现本用例走到的那几个方法
   app.bind({ provide }).provide.use(storage, store.service as never);

@@ -30,7 +30,7 @@ const UNREACHABLE = 'http://127.0.0.1:1/nope.png';
 const WAV_1B = 'data:audio/wav;base64,UklGRg==';
 
 async function makeModel(): Promise<LLMModel> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   // 启动时的模型发现与能力探测答空，不连本机的 Ollama
   vi.stubGlobal(
@@ -140,7 +140,7 @@ describe('Ollama 图片获取失败的两种语义', () => {
 describe('media 视觉识别的接线', () => {
   it('describe 调用向 model 声明了 requireImages', async () => {
     let seen: Record<string, unknown> | undefined;
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     const host = app.bind({ provide, llm, logger });
     host.provide.use(llm, {
       id: 'fake/vision',
@@ -168,7 +168,7 @@ describe('media 视觉识别的接线', () => {
 // ════════════════════════════════════════════════════════════
 describe('识别失败的如实上报', () => {
   it('失败写进描述位，且 successCount 不增', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     await registerHubs(app);
     const host = app.bind({ provide, services });
     host.provide.use(llm, {

@@ -174,7 +174,6 @@ const methodSamples: MethodSamples = {
         identity: { platform: 'webui', userId: 'console' },
         surface: 'webui',
         features: { send: true, rewind: false, compress: true, settings: true },
-        appName: 'Aalis',
       },
       invalid: {
         protocolVersion: SESSION_PROTOCOL_VERSION,

@@ -24,7 +24,7 @@ afterEach(async () => {
 });
 async function makeApp() {
   const logger: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => logger };
-  const app = new App({ name: 'T', logLevel: 'error', logger });
+  const app = new App({ logLevel: 'error', logger });
   apps.push(app);
   await registerHubs(app);
   return app;

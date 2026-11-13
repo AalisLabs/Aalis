@@ -98,7 +98,6 @@ export function createWorld(seed: number, profile: Profile) {
     return { debug() {}, info() {}, warn, error: warn, child: capture };
   };
   const app = createInspectableApp({
-    name: 'fuzz',
     logger: capture('app'),
     disposeTimeoutMs: TIMEOUT,
     slowThresholdMs: 60,

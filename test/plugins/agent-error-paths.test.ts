@@ -59,7 +59,7 @@ async function bootAgentStack(app: App, llmPlugin: PluginDefinition, withTools: 
 
 describe('agent 错误路径：流结束标记与坏工具参数', () => {
   it('普通异常分支先发 outbound:stream done 再发 [错误] 消息', async () => {
-    const app = new App({ name: 'E2E', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     await bootAgentStack(app, createMockLLMPlugin({ throwOnce: new Error('模型炸了') }), false);
     const host = app.bind({ events, agent });
 
@@ -84,7 +84,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
   });
 
   it('坏 JSON 参数：跳过执行，tool 结果带原 tool_call_id 并把错误交给模型下一轮', async () => {
-    const app = new App({ name: 'E2E', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     const recorder: ChatModelRequest[] = [];
     const badCall: ChatResponse = {
       content: null,
@@ -135,7 +135,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
   });
 
   it('坏参数不原样重放：存档与下一次请求里那次调用的 arguments 换成 {}，原文截断到 200 字放进回给模型的错误；同批好的调用不动', async () => {
-    const app = new App({ name: 'E2E', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     const recorder: ChatModelRequest[] = [];
     const raw = `{"a": "${'x'.repeat(300)}`;
     const calls: ChatResponse = {
@@ -185,7 +185,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
     ['[1,2]', '数组'],
     ['42', 'number'],
   ])('arguments 是合法 JSON 但不是对象（%s）：同坏 JSON 一样不执行，回给模型重新生成', async (raw, kind) => {
-    const app = new App({ name: 'E2E', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     const recorder: ChatModelRequest[] = [];
     const call: ChatResponse = {
       content: null,
@@ -229,7 +229,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
   });
 
   it('流式生成工具调用：进度带上这次调用的 callId，执行时用同一个；同一调用的几次进度 callId 不变', async () => {
-    const app = new App({ name: 'E2E', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     const calls: ChatResponse = {
       content: null,
       toolCalls: [
@@ -276,7 +276,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
   });
 
   it('有调用没报过生成进度：报过的用那时的 callId，没报过的另行生成，不按位置串到别的调用上', async () => {
-    const app = new App({ name: 'E2E', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     const calls: ChatResponse = {
       content: null,
       toolCalls: [
@@ -320,7 +320,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
   });
 
   it('agent:llm:after 钩子删掉了一个调用：生成卡不借给别的工具', async () => {
-    const app = new App({ name: 'E2E', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     const calls: ChatResponse = {
       content: null,
       toolCalls: [
@@ -371,7 +371,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
   });
 
   it('arguments 为空串的无参工具照常执行（空串不是坏 JSON）', async () => {
-    const app = new App({ name: 'E2E', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     const emptyCall: ChatResponse = {
       content: null,
       toolCalls: [{ id: 'call-empty', type: 'function', function: { name: 'probe', arguments: '' } }],
@@ -404,7 +404,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
   });
 
   it('工具调用上下文带回合中止信号：agent.abort 后工具看到 signal.aborted', async () => {
-    const app = new App({ name: 'E2E', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     const call: ChatResponse = {
       content: null,
       toolCalls: [{ id: 'call-sig', type: 'function', function: { name: 'probe', arguments: '{}' } }],
@@ -470,7 +470,7 @@ describe('agent 错误路径：回合结束带出错原因', () => {
   }
 
   it('模型调用抛错：结局 error，原因是发到会话的 [错误] 那句，它带这一轮的 turnId；正常回复的一轮不带原因', async () => {
-    const app = new App({ name: 'E2E', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     await bootAgentStack(app, createMockLLMPlugin({ throwOnce: new Error('<模型炸了>') }), false);
     const { ends, sent, turns, send } = observe(app);
 
@@ -484,7 +484,7 @@ describe('agent 错误路径：回合结束带出错原因', () => {
   });
 
   it('解析不出模型：结局 error，原因是发到会话的 [系统] 那句，交出的是文字对象，它带这一轮的 turnId', async () => {
-    const app = new App({ name: 'E2E', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     await registerHubs(app);
     await use(app, memoryInMemoryPlugin);
     await use(app, messageArchivePlugin, { debugLogs: false });
@@ -513,7 +513,7 @@ describe('agent 错误路径：并行工具批次里单点异常不连坐', () =
   };
 
   async function runBatch(sessionId: string, arrange: (host: ReturnType<typeof bindHost>) => void) {
-    const app = new App({ name: 'E2E', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     const recorder: ChatModelRequest[] = [];
     await bootAgentStack(app, createMockLLMPlugin({ responses: [batch, { content: '好的' }], recorder }), true);
     const host = bindHost(app);
@@ -633,7 +633,7 @@ describe('agent 错误路径：调试日志序列化不了工具参数', () => {
       logs.push(message);
     };
     const logger = { debug: push, info: push, warn: push, error: push, child: () => logger } as unknown as Logger;
-    const app = new App({ name: 'E2E', logLevel: 'debug', logger });
+    const app = new App({ logLevel: 'debug', logger });
     const recorder: ChatModelRequest[] = [];
     const call: ChatResponse = {
       content: null,

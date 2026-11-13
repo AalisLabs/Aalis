@@ -5,7 +5,7 @@ import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import { type EvidenceRef, RelationService, RelationStore } from '../../packages/plugin-user-relation/src/index.js';
 
 async function makeService() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   const host = app.bind({ memory });
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();

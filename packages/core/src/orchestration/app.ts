@@ -21,8 +21,6 @@ import { DefaultLogger, type Logger, LogHub, type LogLevel, quietLogger } from '
  * 选项全部可省。
  */
 export interface AppOptions {
-  /** 应用名，只用于启动横幅；缺省 'Aalis' */
-  name?: string;
   /** 默认 Logger 的级别；缺省 'info'。注入了 `logger` 时不用 */
   logLevel?: LogLevel;
   /**
@@ -58,7 +56,7 @@ export interface AppOptions {
    */
   logger?: Logger;
   /**
-   * 内核版本号，仅用于启动 banner 展示（如 `Aalis Core 0.6.0 - <name>`）。
+   * 内核版本号，仅用于启动 banner 展示（如 `Aalis Core 0.6.0`）。
    * core 环境无关、零依赖，不能自读 package.json；由宿主（@aalis/runtime）读取
    * `@aalis/core` 的实际版本注入。
    * 缺省时 banner 省略版本段（嵌入 / 测试场景无宿主注入）。
@@ -90,7 +88,7 @@ function singleFlight(publish: (done: Promise<void>) => void, run: () => Promise
  *
  * @example
  * // 浏览器/嵌入式：插件与各自的配置由宿主直接交给 core
- * const app = new App({ name: 'embedded' });
+ * const app = new App({});
  * await app.pluginAll([{ definition: memoryPlugin, config: { maxItems: 100 } }, { definition: agentPlugin }]);
  *
  * // Node 宿主由 @aalis/runtime 提供插件发现、配置文档与 fs/yaml/spawn 实现
@@ -147,7 +145,7 @@ export class App {
 
     // 版本由宿主注入（core 不自读 package.json）；未注入时省略版本段。
     const versionSeg = options.version ? ` Core ${options.version}` : ' Core';
-    this.logger.info(`Aalis${versionSeg} - ${options.name ?? 'Aalis'}`);
+    this.logger.info(`Aalis${versionSeg}`);
   }
 
   /**

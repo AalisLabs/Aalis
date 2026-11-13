@@ -117,7 +117,6 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
   it('首启（文件此前不存在）也给出真绝对路径，而不是把 URI 重复一遍', async () => {
     const lines: string[] = [];
     const app = new App({
-      name: 'T',
       logLevel: 'debug',
       logger: makeCapturingLogger(lines),
     });
@@ -148,7 +147,6 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
   it('写入失败时不宣称「已写入」，而是指路手工登录', async () => {
     const lines: string[] = [];
     const app = new App({
-      name: 'T',
       logLevel: 'debug',
       logger: makeCapturingLogger(lines),
     });
@@ -195,7 +193,7 @@ describe('停机等本实例自己发起的写盘落定', () => {
 
   /** 启动本插件并等到监听之后（access.txt 此时已开始写）；不给 initial 时本插件在没有存储的情况下启动，存储由用例之后再提供 */
   async function start(tokenMode: 'ephemeral' | 'persist', initial?: StorageService) {
-    const app = new App({ name: 'T', logLevel: 'error', logger: makeCapturingLogger([]) });
+    const app = new App({ logLevel: 'error', logger: makeCapturingLogger([]) });
     provideEvents(app);
     apps.push(app);
     if (initial) app.bind({ provide }).provide.use(storage, initial);

@@ -15,7 +15,7 @@ afterEach(async () => {
 });
 
 async function start(plugin: typeof codeRunner | typeof toolSystem | typeof draw, config: Record<string, unknown>) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   const host = app.bind({ provide });
   const registry = makeToolRegistry(app.logger);

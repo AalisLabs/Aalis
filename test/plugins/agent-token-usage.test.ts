@@ -37,7 +37,7 @@ async function boot(llm: MockLLMOptions = {}) {
   const logs: string[] = [];
   const logHub = new LogHub();
   logHub.onEntry(entry => void logs.push(entry.message));
-  const app = new App({ name: 'T', logLevel: 'info', logHub });
+  const app = new App({ logLevel: 'info', logHub });
   apps.push(app);
   await registerHubs(app);
   const recorder: ChatModelRequest[] = [];

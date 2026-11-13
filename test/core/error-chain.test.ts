@@ -179,7 +179,7 @@ describe('PluginEntry.error 的因果链摘要', () => {
     hub.onEntry(e => {
       if (e.level === 'error') errors.push(e.message);
     });
-    const app = new App({ name: 'T', logHub: hub });
+    const app = new App({ logHub: hub });
     apps.push(app);
     await app.plugin(
       definePlugin({
@@ -317,7 +317,7 @@ describe('PluginEntry.error 的因果链摘要', () => {
     hub.onEntry(e => {
       if (e.level === 'error') errors.push(e.message);
     });
-    const app = new App({ name: 'T', logHub: hub });
+    const app = new App({ logHub: hub });
     apps.push(app);
     const definition = {
       name: 'odd-uses',
@@ -333,7 +333,7 @@ describe('PluginEntry.error 的因果链摘要', () => {
 
 describe('core 错误类带名称', () => {
   it('ServiceUnavailableError 的 name 与 stack 首行都是类名', async () => {
-    const app = new App({ name: 'T', logHub: new LogHub() });
+    const app = new App({ logHub: new LogHub() });
     const missing = defineService<{ ping(): void }>('error-chain-missing');
     let unavailable: unknown;
     try {

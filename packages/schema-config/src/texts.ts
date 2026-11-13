@@ -3,8 +3,6 @@ import { defineTexts } from '@aalis/schema-i18n';
 import en from './locales/en.js';
 
 const SOURCE = {
-  nameLabel: '应用名称',
-  nameDescription: '应用显示名称，用于启动日志和界面展示',
   logLevelLabel: '日志等级',
   logLevelDescription: '日志输出等级',
   slowThresholdLabel: '慢操作阈值（毫秒）',

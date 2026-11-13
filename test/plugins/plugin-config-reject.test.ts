@@ -34,7 +34,7 @@ async function activate(plugin: PluginDefinition, config: Record<string, unknown
       return Response.json({ data: [{ id: 'm' }], embeddings: [[1]], choices: [] });
     }),
   );
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   apps.push(app);
   const registry = makeToolRegistry(app.logger);

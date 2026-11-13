@@ -22,7 +22,7 @@ function provider(name: string, entries: string[] = [name], priority?: number) {
 }
 
 async function world(...definitions: Array<ReturnType<typeof provider>>) {
-  const app = new App({ name: 'T', logHub: new LogHub() });
+  const app = new App({ logHub: new LogHub() });
   const host = app.bind({ provide, services, svc });
   await app.pluginAll(definitions.map(definition => ({ definition })));
   await app.plugins.idle();

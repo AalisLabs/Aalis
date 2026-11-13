@@ -79,7 +79,7 @@ let call: Call;
 
 /** 启动一份浏览器工具，返回按名调用工具、解析文本结果的函数（未接 storage：截图不落盘，随 images 交出） */
 async function startBrowserTools(defaultTimeout: number): Promise<{ app: App; call: Call }> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   const host = app.bind({ provide });
   const handlers: Record<string, Handler> = {};

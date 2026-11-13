@@ -43,7 +43,7 @@ describe('绘图产物 → OneBot WebSocket 前的出站编码链路', () => {
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-draw-chain-'));
     for (const d of ['state', 'tmp']) mkdirSync(join(base, d), { recursive: true });
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     provideEvents(app);
     provideHostPaths(app, base);
     await app.plugin(storageLocal, {});

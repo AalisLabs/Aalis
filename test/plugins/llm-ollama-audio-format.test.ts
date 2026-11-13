@@ -28,7 +28,7 @@ async function start(): Promise<{ model: LLMModel; sent: Array<{ messages: Array
     sent.push(JSON.parse(String(init?.body)));
     return Response.json({ choices: [{ message: { content: '听到了' }, finish_reason: 'stop' }] });
   }) as typeof fetch;
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   apps.push(app);
   await app.plugin(ollamaPlugin, { baseUrl: 'http://127.0.0.1:11434' });

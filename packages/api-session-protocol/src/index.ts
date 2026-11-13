@@ -26,7 +26,7 @@ import { asText, isTextRef, type TextRef } from '@aalis/schema-i18n';
 import { z } from 'zod';
 
 /** 协议版本（0.x 三段，见文件头）：握手时比的部分不同即断开。0.20 那一代报两段的 1.0 */
-export const SESSION_PROTOCOL_VERSION = '0.2.0';
+export const SESSION_PROTOCOL_VERSION = '0.3.0';
 
 /** 给人看的文字：服务端交出字符串或文字对象，发出前按全局层的语言渲染成字符串 */
 const TextSchema = z.union([z.string(), z.custom<TextRef>(isTextRef)]);
@@ -141,8 +141,6 @@ export const InitializeResultSchema = z.object({
   /** 这条连接所在审批面的登记名（webui、cli）；审计记的是登记身份 */
   surface: z.string(),
   features: FeaturesSchema,
-  /** 应用名：宿主配置里的 name，每次握手现读，改名之后新的连接就拿到新名字；没有宿主配置时是 Aalis */
-  appName: z.string(),
 });
 
 // ════════════════════════════════════════════════════════════

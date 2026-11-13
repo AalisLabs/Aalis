@@ -45,7 +45,7 @@ const job = (name: string) => ({
 
 /** 启动一个实例：真 tools 与 scheduler、内存 storage（slowWrites 时每次写盘慢 WRITE_MS）、假 cron-engine */
 async function start(slowWrites = false) {
-  app = new App({ name: 'T', logLevel: 'error' });
+  app = new App({ logLevel: 'error' });
   provideEvents(app);
   const mem = memoryStorage();
   const service = slowWrites

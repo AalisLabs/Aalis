@@ -473,9 +473,8 @@ describe('时间线', () => {
     expect(log.queryAllByRole('button', { name: '回滚这一轮' })).toHaveLength(0);
   });
 
-  it('驱动别人的房间时顶部有提示条；房间里逐条写说话人（她的回复写握手给的应用名），没发出的回复写明原因', async () => {
+  it('驱动别人的房间时顶部有提示条；房间里逐条写说话人（她的回复写产品名），没发出的回复写明原因', async () => {
     app = await renderApp('/s/s1', {
-      initialize: () => ({ ...INIT, appName: '<应用名>' }),
       'session/subscribe': () =>
         snapshot(
           [
@@ -494,7 +493,7 @@ describe('时间线', () => {
     expect(log.getByText('小林')).toBeTruthy();
     expect(log.getByText('你')).toBeTruthy();
     const reply = log.getByText('不客气').closest('.message') as HTMLElement;
-    expect(within(reply).getByText('<应用名>')).toBeTruthy();
+    expect(within(reply).getByText('Aalis')).toBeTruthy();
     expect(log.getByText('没有发出：这一轮静默结束')).toBeTruthy();
   });
 

@@ -145,7 +145,7 @@ async function advance(ms: number): Promise<void> {
 }
 
 async function setup(opts: SetupOptions = {}): Promise<Harness> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   booted.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, hooks, gateway, flowControl });

@@ -25,7 +25,7 @@ it('热重载里配置同步补回的默认值随这次读入落盘，保存不�
   const dir = mkdtempSync(join(tmpdir(), 'aalis-hot-sync-save-'));
   dirs.push(dir);
   const path = join(dir, 'aalis.config.yaml');
-  writeFileSync(path, 'name: T\nlogLevel: error\nplugins:\n  zz-p:\n    a: 1\n    b: 2\n');
+  writeFileSync(path, 'logLevel: error\nplugins:\n  zz-p:\n    a: 1\n    b: 2\n');
   const warnings: string[] = [];
   const logger: Logger = {
     debug() {},
@@ -36,7 +36,7 @@ it('热重载里配置同步补回的默认值随这次读入落盘，保存不�
   };
   const { config, provider } = createFsYamlConfigProvider(path);
   const store = createConfigStore(config, provider);
-  const app = new App({ name: 'T', logLevel: 'error', logger });
+  const app = new App({ logLevel: 'error', logger });
   apps.push(app);
   installHostConfig(app, store);
   const definition = definePlugin({
@@ -50,7 +50,7 @@ it('热重载里配置同步补回的默认值随这次读入落盘，保存不�
   await settle();
 
   // 手改删掉 b：热重载按 schema 补回 b 的默认值并落盘
-  atomicWrite(path, 'name: T\nlogLevel: error\nplugins:\n  zz-p:\n    a: 5\n');
+  atomicWrite(path, 'logLevel: error\nplugins:\n  zz-p:\n    a: 5\n');
   expect(await waitFor(() => /b: 2/.test(readFileSync(path, 'utf-8')))).toBe(true);
   expect(readFileSync(path, 'utf-8')).toContain('a: 5');
   expect(warnings.filter(line => line.includes('未落盘'))).toEqual([]);

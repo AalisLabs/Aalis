@@ -31,7 +31,7 @@ vi.mock('node:fs', async importOriginal => {
   };
 });
 
-const A = 'name: T\nlogLevel: info\nplugins:\n  llm-openai:\n    model: x\n  cli: {}\n';
+const A = 'logLevel: info\nplugins:\n  llm-openai:\n    model: x\n  cli: {}\n';
 const B = A.replace('model: x\n', 'model: x\n    apiKey: sk-PLACEHOLDER\n');
 
 /** `ConfigProvider.save` 在契约上可选；缺失时立刻抛，免得用例退化成恒真。 */
@@ -65,7 +65,7 @@ describe('save 写前比对磁盘实况', () => {
     writeFileSync(path, B);
     let err: unknown;
     try {
-      saveOf(provider)({ name: 'T', logLevel: 'info', plugins: {} });
+      saveOf(provider)({ logLevel: 'info', plugins: {} });
     } catch (e) {
       err = e;
     }
@@ -97,10 +97,10 @@ describe('save 写前比对磁盘实况', () => {
     stop = provider.watch?.(() => {});
     await settle();
 
-    const draft = 'name: T\nplugins:\n  a:\n    x: 1\n   apiKey: sk-PLACEHOLDER\n';
+    const draft = 'logLevel: info\nplugins:\n  a:\n    x: 1\n   apiKey: sk-PLACEHOLDER\n';
     writeFileSync(path, draft);
     await sleep(900);
-    expect(() => saveOf(provider)({ name: 'T', logLevel: 'info', plugins: {} })).toThrow(/外部修改/);
+    expect(() => saveOf(provider)({ logLevel: 'info', plugins: {} })).toThrow(/外部修改/);
     expect(readFileSync(path, 'utf-8')).toBe(draft);
   });
 
@@ -137,7 +137,7 @@ describe('save 写前比对磁盘实况', () => {
     writeFileSync(path, `${A}  broken: [\n`);
     await quiet(); // 解析失败，本次变更被搁置
     // 调用方的文档已改（logLevel: debug），落盘被拒：文档从此领先于文件
-    expect(() => saveOf(provider)({ name: 'T', logLevel: 'debug', plugins: {} })).toThrow(ConfigSaveRefusedError);
+    expect(() => saveOf(provider)({ logLevel: 'debug', plugins: {} })).toThrow(ConfigSaveRefusedError);
     writeFileSync(path, A); // 原样恢复：内容与最后生效的那份逐字节相同
     expect(await waitFor(() => seen.length >= 1), '原样恢复被当成空变更跳过，文档与运行态不会回到文件').toBe(true);
     expect(seen[0].logLevel).toBe('info');
@@ -164,8 +164,8 @@ describe('save 写前比对磁盘实况', () => {
     writeFileSync(path, A);
     const { provider } = createFsYamlConfigProvider(path);
     const save = saveOf(provider);
-    save({ name: 'T', logLevel: 'debug', plugins: {} });
-    save({ name: 'T', logLevel: 'warn', plugins: {} });
+    save({ logLevel: 'debug', plugins: {} });
+    save({ logLevel: 'warn', plugins: {} });
 
     const seen: AalisConfig[] = [];
     stop = provider.watch?.(c => seen.push(c));

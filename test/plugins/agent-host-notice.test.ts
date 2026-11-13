@@ -68,7 +68,7 @@ function promptProbe(name: string, id: string, anchor: string, out: string) {
 }
 
 async function boot(opts: { probes?: boolean } = {}) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const recorder: ChatModelRequest[] = [];

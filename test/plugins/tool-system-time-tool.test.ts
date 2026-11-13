@@ -17,7 +17,7 @@ afterEach(async () => {
 
 describe('system_time', () => {
   it('人设开了时间注入时照样登记', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     const registry = makeToolRegistry(app.logger);

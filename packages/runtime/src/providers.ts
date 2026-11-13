@@ -30,10 +30,7 @@ import { openYamlFile } from './yaml-file.js';
  * 透传其余顶层字段（业务字段，宿主不解释）。
  */
 function buildSaveYaml(config: AalisConfig): string {
-  const obj: Record<string, unknown> = {
-    name: config.name,
-    logLevel: config.logLevel,
-  };
+  const obj: Record<string, unknown> = { logLevel: config.logLevel };
 
   obj.plugins = config.plugins;
 
@@ -86,9 +83,9 @@ export function createFsYamlConfigProvider(absPath: string): FsYamlConfigProvide
     serialize: buildSaveYaml,
     missing: () => {
       logger.warn(`配置文件不存在（${absPath}），使用内存默认配置启动`);
-      // 名称与日志等级取 CORE_CONFIG_SCHEMA 的默认值，与配置文档补缺省同一来源
-      const { name, logLevel } = defaultsFrom(CORE_CONFIG_SCHEMA);
-      return { name: name as string, logLevel: logLevel as string, plugins: {} };
+      // 日志等级取 CORE_CONFIG_SCHEMA 的默认值，与配置文档补缺省同一来源
+      const { logLevel } = defaultsFrom(CORE_CONFIG_SCHEMA);
+      return { logLevel: logLevel as string, plugins: {} };
     },
   });
   return { config: file.initial, provider: { save: config => file.save(config), watch: file.watch } };

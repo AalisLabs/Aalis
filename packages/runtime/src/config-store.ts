@@ -693,7 +693,6 @@ function copyOwnSafeStringDict(input: unknown): Record<string, string> {
  * 原样透传
  */
 export const CORE_TOP_LEVEL_KEYS: ReadonlySet<string> = new Set([
-  'name',
   'logLevel',
   'plugins',
   'disabledPlugins',
@@ -705,7 +704,6 @@ function normalize(input: Partial<AalisConfig>): AalisConfig {
   // 核心字段的缺省值取自 CORE_CONFIG_SCHEMA，与 WebUI 设置页显示、比较用的默认值同一来源
   const coreDefaults = defaultsFrom(CORE_CONFIG_SCHEMA);
   const merged: AalisConfig = {
-    name: (input.name as string) ?? (coreDefaults.name as string),
     logLevel: (input.logLevel as string) ?? (coreDefaults.logLevel as string),
     // 键与值都过闸：JSON 解出的 plugins.__proto__ / 插件配置里的 __proto__ 都不能当自有键留下
     plugins: pluginSections(input.plugins),

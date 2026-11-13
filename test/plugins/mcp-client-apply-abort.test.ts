@@ -83,7 +83,7 @@ describe('plugin-mcp-client 握手与列工具随 lifecycle.signal 中止', () =
   ])('%s挂起时停用：apply 在宽限内落定，不记连接失败，条目转 disabled，transport 被关', async (_step, method, closedBy) => {
     fake.hang = method;
     const { logger, lines } = recorder();
-    const app = new App({ name: 'T', logger, disposeTimeoutMs: GRACE_MS });
+    const app = new App({ logger, disposeTimeoutMs: GRACE_MS });
     apps.push(app);
     app.bind({ provide }).provide.use(tools, makeToolRegistry(logger));
     const registering = app.plugin(mcpClient, SERVERS);

@@ -63,7 +63,7 @@ async function setup(
     error() {},
     child: () => logger,
   };
-  const app = new App({ name: 'T', logLevel: 'error', logger });
+  const app = new App({ logLevel: 'error', logger });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, hooks, sessionManager });

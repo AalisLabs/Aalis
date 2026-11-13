@@ -49,7 +49,7 @@ const usage: TokenUsageEvent = {
 
 describe('prompt_budget_info 的 top3 与 advice', () => {
   it('top3 只含数值桶且等于真实前三；advice 不再教模型调 memory.compress', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     provideEvents(app);
     await app.plugin(toolsPlugin, {});
     await app.plugin(promptBudget, {});

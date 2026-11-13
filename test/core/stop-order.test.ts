@@ -5,7 +5,7 @@ import { App, definePlugin, LogHub, lifecycle } from '../../packages/core/src/in
 
 describe('停机次序：无依赖时后注册的先关', () => {
   it('先登记的 A 重启过之后停机：仍是 B 先收尾、先清理，A 在后', async () => {
-    const app = new App({ name: 'T', logHub: new LogHub() });
+    const app = new App({ logHub: new LogHub() });
     const trail: string[] = [];
     const plugin = (name: string) =>
       definePlugin({

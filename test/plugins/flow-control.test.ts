@@ -38,7 +38,7 @@ describe('flow-control 按会话的参数', () => {
   });
 
   it('激活后只管生效范围内的房间：WebUI 会话回复后不进冷却，群照常', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     try {
       await registerHubs(app);
       const host = app.bind({ events, provide, services });

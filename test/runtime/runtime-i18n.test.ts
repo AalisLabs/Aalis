@@ -53,12 +53,12 @@ describe('拒写说明', () => {
     const dir = mkdtempSync(join(tmpdir(), 'aalis-runtime-i18n-'));
     dirs.push(dir);
     const file = join(dir, name);
-    writeFileSync(file, 'name: a\n');
+    writeFileSync(file, 'mark: a\n');
     const { provider } = open(file);
-    writeFileSync(file, 'name: b\n');
+    writeFileSync(file, 'mark: b\n');
     let thrown: unknown;
     try {
-      provider.save?.({ name: 'c', logLevel: 'info', plugins: {} });
+      provider.save?.({ logLevel: 'info', plugins: {} });
     } catch (err) {
       thrown = err;
     }
@@ -107,7 +107,7 @@ describe('配置文档的报错与诊断项', () => {
   it('读入的插件段不是映射：英文读者看到英文，中文读者看到原文', () => {
     let thrown: unknown;
     try {
-      createConfigStore({ name: 'T', logLevel: 'error', plugins: { a: [1] } } as never);
+      createConfigStore({ logLevel: 'error', plugins: { a: [1] } } as never);
     } catch (err) {
       thrown = err;
     }
@@ -124,7 +124,7 @@ describe('配置文档的报错与诊断项', () => {
     for (const [disabledPlugins, expected] of english) {
       let thrown: unknown;
       try {
-        createConfigStore({ name: 'T', logLevel: 'error', plugins: {}, disabledPlugins } as never);
+        createConfigStore({ logLevel: 'error', plugins: {}, disabledPlugins } as never);
       } catch (err) {
         thrown = err;
       }

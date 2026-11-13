@@ -84,7 +84,7 @@ describe('transformModelImages：附件引用不得流向 provider', () => {
 
 describe('agent:llm:before 中间件：describe 模式也必须过形态闸', () => {
   it('describe 模式下末条 user 的附件引用不会原样送到 provider（现场 400 的那条路径）', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     await registerHubs(app);
     const host = app.bind({ provide, hooks });
     // media 把 process / storage 声明为 required：不放桩它就停在 pending，中间件根本没挂上。
@@ -113,7 +113,7 @@ describe('agent:llm:before 中间件：describe 模式也必须过形态闸', ()
   });
 
   it('同一轮两条带图的 user 消息（插进来的输入各带各的图）：每条都规范化，不只末条', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     await registerHubs(app);
     const host = app.bind({ provide, hooks });
     host.provide.use(processService, {} as never);

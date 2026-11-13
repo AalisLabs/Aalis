@@ -43,7 +43,7 @@ describe('persona 会话环境按出生平台', () => {
   let svc: PersonaService;
 
   const boot = async ({ withSessionManager = true } = {}): Promise<void> => {
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     await registerHubs(app);
     host = app.bind(hostUses);
     const rooms = [GROUP, PRIVATE, CHANNEL, OTHER_ACCOUNT_GROUP, FORUM_ROOM];

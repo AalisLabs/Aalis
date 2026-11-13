@@ -53,7 +53,7 @@ describe('连对话回滚只删这一轮的消息', () => {
   it('这一轮的输入、工具调用组、回复与带它回合 id 的记录删掉；期间别人的消息留着', async () => {
     const base = mkdtempSync(join(tmpdir(), 'aalis-cp-turn-'));
     dirs.push(base);
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     provideHostPaths(app, base);
@@ -136,7 +136,7 @@ describe('连对话回滚只删这一轮的消息', () => {
   it('没有回复的一轮的回合记录（只带记录的事件标记）随这一轮一起删', async () => {
     const base = mkdtempSync(join(tmpdir(), 'aalis-cp-turn-'));
     dirs.push(base);
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     provideHostPaths(app, base);
@@ -173,7 +173,7 @@ describe('停机时还在跑的回合', () => {
   it('memory 提供者与 checkpoint 经 optional 依赖成环且先关：提交照样记下这一轮的消息时间戳', async () => {
     const base = mkdtempSync(join(tmpdir(), 'aalis-cp-turn-'));
     dirs.push(base);
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     provideHostPaths(app, base);
@@ -215,7 +215,7 @@ describe('停机时还在跑的回合', () => {
   it('收尾之后、撤回钩子之前才开始的一轮：清理时照样提交', async () => {
     const base = mkdtempSync(join(tmpdir(), 'aalis-cp-turn-'));
     dirs.push(base);
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     provideHostPaths(app, base);

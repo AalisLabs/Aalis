@@ -242,10 +242,10 @@ describe('initDataDir', () => {
 
   it('已初始化时拒绝，不碰现有文件', () => {
     const paths = derivePaths(tmp(), '/app');
-    writeFileSync(paths.config, 'name: mine\n');
+    writeFileSync(paths.config, 'logLevel: warn\n');
     writeFileSync(paths.secrets, 'k: v\n');
     expect(() => initDataDir(paths)).toThrow('already initialized');
-    expect(readFileSync(paths.config, 'utf-8')).toBe('name: mine\n');
+    expect(readFileSync(paths.config, 'utf-8')).toBe('logLevel: warn\n');
     expect(readFileSync(paths.secrets, 'utf-8')).toBe('k: v\n');
   });
 
@@ -266,7 +266,7 @@ describe('initDataDir', () => {
   it('主配置只写名字、日志级别与空的插件段，不写平台档', () => {
     const paths = derivePaths(join(tmp(), 'h'), join(tmp(), 'app'));
     initDataDir(paths);
-    expect(parseYaml(readFileSync(paths.config, 'utf-8'))).toEqual({ name: 'Aalis', logLevel: 'info', plugins: {} });
+    expect(parseYaml(readFileSync(paths.config, 'utf-8'))).toEqual({ logLevel: 'info', plugins: {} });
   });
 
   it('不读安装集的 package.json：它坏了也照常初始化', () => {

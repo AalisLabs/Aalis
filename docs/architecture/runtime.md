@@ -79,7 +79,7 @@ WebUI 的历史分页与 CLI 的启动恢复都依赖这一点。
 
 profile 只由 `--profile` 与 `AALIS_PROFILE` 给出：经 `--data` 或 `AALIS_DATA` 选中的数据目录没有 profile，不论它叫什么，插件按 profile 派生的名字（如 MongoDB 记忆库的库名）也按没有 profile 算，要固定就在插件配置里写明（如 memory-mongodb 的 `database`）。数据目录初始化之后，交给插件的路径取真实路径：符号链接、大小写与末尾分隔符不同的写法指向同一个目录时，插件拿到的是同一个字符串。
 
-数据目录没有初始化（里面没有 `aalis.config.yaml`）就拒绝启动，只提示怎样初始化，不会静默创建一个空的家。在启动命令里加上 `--init` 运行一次即可初始化：建目录（0700）、建布局里的子目录（含默认工作区 `workspace`）、写空的 `secrets.yaml` 与默认的 `aalis.config.yaml`（0600），然后退出；主配置最后写，它是初始化的判据。默认配置只有名字、日志级别与空的插件段，不写平台档，与 `npm create aalis` 生成的一致：工具分组哪一层都没设时，在本机（WebUI、终端）建的会话开全部分组，别的会话不开（plugin-tools 按根会话的创建来源判，见 [plugin-tools](../plugins/plugin-tools.md)）。插件段为空，不写语言列表：`--init` 不看系统语言，装了 `@aalis/plugin-i18n` 时按它的默认英文显示，要改在设置里改。目标目录已存在时，里面只能有 `--init` 自己会建的条目（上次初始化中途失败留下的：`state`、`logs`、`cache`、`run`、`tmp`、`self`、`workspace`、`secrets.yaml`）与 macOS 的 `.DS_Store`，有其它内容（包括已初始化的数据目录里的 `aalis.config.yaml`）就拒绝，不覆盖任何文件；已有的 `secrets.yaml` 保留，权限收紧为 0600。
+数据目录没有初始化（里面没有 `aalis.config.yaml`）就拒绝启动，只提示怎样初始化，不会静默创建一个空的家。在启动命令里加上 `--init` 运行一次即可初始化：建目录（0700）、建布局里的子目录（含默认工作区 `workspace`）、写空的 `secrets.yaml` 与默认的 `aalis.config.yaml`（0600），然后退出；主配置最后写，它是初始化的判据。默认配置只有日志级别与空的插件段，不写平台档，与 `npm create aalis` 生成的一致：工具分组哪一层都没设时，在本机（WebUI、终端）建的会话开全部分组，别的会话不开（plugin-tools 按根会话的创建来源判，见 [plugin-tools](../plugins/plugin-tools.md)）。插件段为空，不写语言列表：`--init` 不看系统语言，装了 `@aalis/plugin-i18n` 时按它的默认英文显示，要改在设置里改。目标目录已存在时，里面只能有 `--init` 自己会建的条目（上次初始化中途失败留下的：`state`、`logs`、`cache`、`run`、`tmp`、`self`、`workspace`、`secrets.yaml`）与 macOS 的 `.DS_Store`，有其它内容（包括已初始化的数据目录里的 `aalis.config.yaml`）就拒绝，不覆盖任何文件；已有的 `secrets.yaml` 保留，权限收紧为 0600。
 
 宿主参数（`--data`、`--profile`、`--init`、`--service`）只认命令行开头的那一段，要写在子命令之前，如 `node index.mjs --data <目录> status`；写在子命令之后的归子命令，宿主不处理。开头那一段里的 `--` 跳过（`pnpm dev -- --init` 会把它原样传进来）；开头那一段里不认识的 `--` 参数报错退出（退出码 2），不当成子命令：当成子命令会在缺省的数据目录上读写，打错参数时就进了不该进的实例。经 `npm start` 启动时，额外参数要放在 `--` 之后才会传给入口：`npm start -- --data <目录>`、`npm start -- --init`。
 
@@ -144,7 +144,7 @@ profile 只由 `--profile` 与 `AALIS_PROFILE` 给出：经 `--data` 或 `AALIS_
 0. **数据目录与安装集**：解析数据目录（见「数据目录」），处理 `--init`，没初始化就退出；没传插件加载器而安装集里没有 `package.json` 时也退出。
 1. **实例锁**：守护模式取实例锁（见「实例锁」），被占用就退出。之后才装日志 sink、写日志：第二个实例不会把正在用的 `latest.log` 轮转走。
 2. **文档与密钥**：`createFsYamlConfigProvider(<数据目录>/aalis.config.yaml)` 读 YAML，`createFsSecretsProvider(<数据目录>/secrets.yaml)` 读密钥，`createConfigStore(config, provider, secrets)` 建配置文档。任一文件写坏或读不了时一行报错退出（exit 1），报错不含文件内容。
-3. **App**：`new App({ name, logLevel, slowThresholdMs, version })`，`name`、`logLevel` 与 `slowThresholdMs` 取自文档，后两个按 `CORE_CONFIG_SCHEMA` 判定、不合法的告警后交给 core 默认。
+3. **App**：`new App({ logLevel, slowThresholdMs, version })`，`logLevel` 与 `slowThresholdMs` 取自文档，按 `CORE_CONFIG_SCHEMA` 判定、不合法的告警后交给 core 默认。
 4. **host-paths、host-logs、host-restart 与 host-config**：在根上独占提供 `host-paths` 与 `host-logs`（`createHostLogs`：历史读本轮的 `logs/latest.log`，实时接默认日志中枢；子命令模式不写文件日志，没有历史）；守护模式再独占提供 `host-restart`（`createHostRestart`，带 `--service` 时用服务形态的策略，否则用进程重生的策略；子命令模式不提供）；然后 `installHostConfig(app, store, opts.configSync)`。文档里的服务偏好在全部提供者上线之前生效。
 5. **加载政策**：`withPluginConfigSync(app, store, opts.configSync)` 建配置同步。
 6. **发现**：`createPluginDiscovery(app, loader, store, <配置同步>)` 建发现驱动（加载器缺省 `createNodeModulesPluginLoader(<安装集>)`，配置同步经 `prepare` 挂上），`startAalis` 以它的 `rescan` 与 `loaded` 在根上独占提供 `plugin-source`；守护模式在 `loadAll()` 之前挂上终止信号与输出断开的处理器，此后收到的都走完停机；`loadAll()` 整批登记全部插件，首批规范化结果在登记前落盘一次。子命令模式在此分发并退出，否则 `app.start()`；加载或启动期间已开始停机的，不再往下走（不向父进程报就绪、不接热重载）。
@@ -163,7 +163,7 @@ profile 只由 `--profile` 与 `AALIS_PROFILE` 给出：经 `--data` 或 `AALIS_
 
 ## 怎么为别的环境写宿主
 
-core 的 `App` 构造只接收环境无关的选项（`name` / `logLevel` /
+core 的 `App` 构造只接收环境无关的选项（`logLevel` /
 `version` / `logHub` / `logger` / `disposeTimeoutMs` / `slowThresholdMs`，全部可省），插件发现、配置文档与重启都不经它注入。
 `startAalis` 从配置文件顶层读 `slowThresholdMs` 注入（改了要重启），其余时长用 core 默认值。
 `@aalis/runtime` 的包入口会引入 Node 模块，非 Node 宿主不能直接复用，要用该环境的 API 自备以下几样：

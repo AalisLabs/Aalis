@@ -73,7 +73,7 @@ async function start(hub = new LogHub()) {
   mkdirSync(join(home, 'logs'));
   const file = join(home, 'logs', 'latest.log');
   writeFileSync(file, HISTORY.map(formatLogLine).join(''));
-  const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+  const app = new App({ logLevel: 'warn', logHub: hub });
   provideEvents(app);
   apps.push(app);
   provideHostPaths(app, home);

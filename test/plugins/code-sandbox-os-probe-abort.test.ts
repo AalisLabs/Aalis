@@ -149,7 +149,7 @@ describe('code-sandbox-os 探测随 lifecycle.signal 中止', () => {
     async () => {
       const { service, calls } = fakeProcess({ wait: hangUntilAbort });
       const { logger, lines } = recorder();
-      const app = new App({ name: 'T', logger, disposeTimeoutMs: GRACE_MS });
+      const app = new App({ logger, disposeTimeoutMs: GRACE_MS });
       apps.push(app);
       app.bind({ provide }).provide.use(processService, service);
       const registering = app.plugin(codeSandboxOs);
@@ -293,7 +293,7 @@ describe('code-sandbox-os 探测失败与后端选择', () => {
 describe('doctor 的「代码沙箱」项', () => {
   async function check(behaviour: Behaviour): Promise<CheckResult | undefined> {
     const { service } = fakeProcess(behaviour);
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     const host = app.bind({ provide, services });

@@ -9,7 +9,7 @@ import { Disclosure } from '../components/Disclosure';
 import { Menu } from '../components/Menu';
 import { StatusText } from '../components/StatusText';
 import { useToast } from '../components/Toast';
-import { type Approval, useConnection, useFeatures, useSessionClient } from '../connection';
+import { type Approval, PRODUCT, useFeatures, useSessionClient } from '../connection';
 import { clockTime, compactNumber, speakerName } from '../format';
 import { text, tr } from '../language';
 import { Markdown } from '../markdown/Markdown';
@@ -429,7 +429,6 @@ interface AgentMessageProps {
 }
 
 function AgentMessage({ item, room, sessionId, streaming }: AgentMessageProps) {
-  const { appName } = useConnection();
   const { model, promptTokens, completionTokens } = item.model ?? {};
   const meta = [
     model,
@@ -446,7 +445,7 @@ function AgentMessage({ item, room, sessionId, streaming }: AgentMessageProps) {
     >
       {room && (
         <p className="message-head">
-          <span className="message-speaker">{appName}</span>
+          <span className="message-speaker">{PRODUCT}</span>
           <time>{clockTime(item.at)}</time>
         </p>
       )}

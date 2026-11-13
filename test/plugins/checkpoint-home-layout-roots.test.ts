@@ -26,7 +26,7 @@ describe('checkpoint × 数据目录布局的内部根', () => {
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-cp-layout-'));
     mkdirSync(join(base, 'ws'), { recursive: true });
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     await registerHubs(app);
     provideHostPaths(app, base);
     await app.plugins.register(storageLocalPlugin, {

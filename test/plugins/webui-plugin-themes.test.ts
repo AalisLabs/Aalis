@@ -73,7 +73,7 @@ async function setup(options: { hub?: boolean } = {}) {
     error() {},
     child: () => logger,
   };
-  const app = new App({ name: 'T', logLevel: 'warn', logger });
+  const app = new App({ logLevel: 'warn', logger });
   provideEvents(app);
   apps.push(app);
   provideHostPaths(app, home);

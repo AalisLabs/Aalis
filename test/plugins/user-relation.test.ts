@@ -47,7 +47,7 @@ afterEach(async () => {
 });
 
 async function makeService() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await app.plugin(memoryInMemory);
   await app.plugins.idle();

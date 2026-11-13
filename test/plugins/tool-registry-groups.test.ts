@@ -12,7 +12,7 @@ import { provideEvents } from '../fixtures/hubs.js';
 async function withRegistry(
   fn: (names: (f?: { groups?: string[] }) => string[], summaries: (f?: { groups?: string[] }) => string[]) => void,
 ): Promise<void> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   await app.plugins.register(toolsPlugin, {});
   await app.plugins.idle();

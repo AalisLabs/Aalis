@@ -53,7 +53,7 @@ async function setup() {
   const home = mkdtempSync(join(tmpdir(), 'aalis-session-file-'));
   homes.push(home);
   const port = await freePort();
-  const app = new App({ name: 'T', logLevel: 'error', logger: quiet });
+  const app = new App({ logLevel: 'error', logger: quiet });
   apps.push(app);
   const paths = provideHostPaths(app, home);
   await registerHubs(app);

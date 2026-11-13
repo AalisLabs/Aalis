@@ -103,7 +103,7 @@ async function startBrowserTools(
   appOptions: AppOptions = {},
   allowedHosts: string[] = [],
 ): Promise<{ app: App; handlers: Record<string, Handler> }> {
-  const app = new App({ name: 'T', logLevel: 'error', ...appOptions });
+  const app = new App({ logLevel: 'error', ...appOptions });
   provideEvents(app);
   const host = app.bind({ provide });
   const handlers: Record<string, Handler> = {};

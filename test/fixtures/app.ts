@@ -39,17 +39,17 @@ export function tempConfig(yaml: string): TempConfigHandle {
 
 /**
  * 带配置文档的 App：与 startAalis 同一装配（文档 → App → installHostConfig），供要用 host-config 的测试。
- * 文档缺省为 `{ name: 'T', logLevel: 'error', plugins: {} }`；`provider` 接落盘与外部变更；
+ * 文档缺省为 `{ logLevel: 'error', plugins: {} }`；`provider` 接落盘与外部变更；
  * `secrets` 给出宿主的密钥存储（不给时没有密钥存储，密钥照旧以明文留在文档里）。
  * 登记插件时 core 不再读文档：要按文档登记，用 {@link registerFromDoc}。
  */
 export function hostedApp(
   doc: Partial<AalisConfig> = {},
-  options: Omit<AppOptions, 'name' | 'logLevel'> & { provider?: ConfigProvider; secrets?: SecretStoreInit } = {},
+  options: Omit<AppOptions, 'logLevel'> & { provider?: ConfigProvider; secrets?: SecretStoreInit } = {},
 ): { app: App; store: ConfigStore } {
   const { provider, secrets, ...appOptions } = options;
-  const store = createConfigStore({ name: 'T', logLevel: 'error', plugins: {}, ...doc }, provider, secrets);
-  const app = new App({ name: store.get('name'), logLevel: store.get('logLevel') as LogLevel, ...appOptions });
+  const store = createConfigStore({ logLevel: 'error', plugins: {}, ...doc }, provider, secrets);
+  const app = new App({ logLevel: store.get('logLevel') as LogLevel, ...appOptions });
   installHostConfig(app, store);
   return { app, store };
 }

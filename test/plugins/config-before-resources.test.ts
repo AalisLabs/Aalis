@@ -30,7 +30,7 @@ afterEach(async () => {
 });
 
 async function activate(plugin: PluginDefinition, config: Record<string, unknown>) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   apps.push(app);
   const calls: string[] = [];

@@ -71,7 +71,7 @@ async function boot() {
     error() {},
     child: () => logger,
   } as unknown as Logger;
-  const app = new App({ name: 'T', logLevel: 'error', logger });
+  const app = new App({ logLevel: 'error', logger });
   cleanups.push(() => app.stop());
   await registerHubs(app);
   const host = app.bind({ provide, events });

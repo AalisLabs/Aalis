@@ -70,7 +70,7 @@ function extractNow(extractor: RelationExtractor, sessionId: string): Promise<vo
 }
 
 async function setup(llmContent: string | ChatResponse[], cfg: Partial<ExtractorConfig> = {}) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   const host = bindHost(app);
   await app.plugins.register(memoryInMemory, {});
@@ -270,7 +270,7 @@ describe('plugin-user-relation: extractor', () => {
         return new Promise<ChatResponse>(r => setTimeout(() => r({ content: '{}' }), 30));
       },
     } as unknown as LLMModel;
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     const host = bindHost(app);
     await app.plugins.register(memoryInMemory, {});
     await app.plugins.idle();
@@ -750,7 +750,7 @@ describe('plugin-user-relation: extractor 随停用中止', () => {
     hub.onEntry(entry => {
       if (entry.level === 'warn') warns.push(entry.message);
     });
-    const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+    const app = new App({ logLevel: 'warn', logHub: hub });
     provideEvents(app);
     const host = bindHost(app);
     await app.plugins.register(memoryInMemory, {});
@@ -795,7 +795,7 @@ describe('plugin-user-relation: 淘汰前的整理随停用中止', () => {
     hub.onEntry(entry => {
       if (entry.level === 'warn') warns.push(entry.message);
     });
-    const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+    const app = new App({ logLevel: 'warn', logHub: hub });
     provideEvents(app);
     const host = bindHost(app);
     await app.plugins.register(memoryInMemory, {});

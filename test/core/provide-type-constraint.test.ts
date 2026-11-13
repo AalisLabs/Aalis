@@ -128,7 +128,6 @@ definePlugin({
 
     const { logger, warns } = capturingLogger();
     const app = new App({
-      name: 'T',
       logLevel: 'error',
       logger,
     });

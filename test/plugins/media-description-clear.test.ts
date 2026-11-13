@@ -71,7 +71,7 @@ function fakeStorage(seed: Record<string, string>, { readError, readGate, writeG
 
 async function boot(seed: Record<string, string>, opts: StorageOpts = {}) {
   const store = fakeStorage(seed, opts);
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, hooks, media: mediaService, services });

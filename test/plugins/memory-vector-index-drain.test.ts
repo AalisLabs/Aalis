@@ -30,7 +30,7 @@ const archived = (content: string, timestamp: number) => ({
 
 describe('memory-vector 停用时等排着与在途的收录', () => {
   it('一条在途、一条排着时停用：停用落定时两条都写进了向量库', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     const host = app.bind({ provide, events, hooks, contributions });

@@ -51,7 +51,7 @@ afterEach(async () => {
 
 /** backend：换用给定的记忆后端（不装 memory-inmemory），info 及以上的日志记进 logHub */
 async function world(backend?: { memory: MemoryService; logHub: LogHub }) {
-  const app = new App({ name: 'T', logLevel: backend ? 'info' : 'error', logHub: backend?.logHub });
+  const app = new App({ logLevel: backend ? 'info' : 'error', logHub: backend?.logHub });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, services, commands: commandsService });

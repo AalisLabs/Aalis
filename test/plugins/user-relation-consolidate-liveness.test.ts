@@ -24,7 +24,7 @@ import { ref } from '../fixtures/service-ref.js';
 // ════════════════════════════════════════════════════════════
 
 async function makeService(logger?: Logger) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   const host = app.bind({ memory });
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();

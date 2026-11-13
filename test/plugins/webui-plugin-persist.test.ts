@@ -83,8 +83,8 @@ function world(
   const { app, store } = provideDoc
     ? hostedApp(config, { logger: silent, provider, ...timing })
     : {
-        app: new App({ name: 'T', logLevel: 'error', logger: silent, ...timing }),
-        store: createConfigStore({ name: 'T', logLevel: 'error', plugins: {}, ...config }, provider),
+        app: new App({ logLevel: 'error', logger: silent, ...timing }),
+        store: createConfigStore({ logLevel: 'error', plugins: {}, ...config }, provider),
       };
   apps.push(app);
   const { expressApp, invoke } = captureRoutes();
@@ -180,7 +180,7 @@ async function restartFrom(saved: AalisConfig[], definition: PluginDefinition) {
 
 describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', () => {
   it('禁用、启用、改配置各落盘一次，按落盘文档重建的 App 恢复同一状态', async () => {
-    const w = world({ name: 'T', logLevel: 'error', plugins: { target: { v: 1 } } });
+    const w = world({ logLevel: 'error', plugins: { target: { v: 1 } } });
     await w.boot(target);
 
     expect((await w.disable('target')).status).toBe(200);
@@ -204,7 +204,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
   });
 
   it('PUT 到已禁用的插件：换上新配置、保持禁用，写入文档并落盘，启用时按新配置激活', async () => {
-    const w = world({ name: 'T', logLevel: 'error', plugins: { target: { v: 1 } } });
+    const w = world({ logLevel: 'error', plugins: { target: { v: 1 } } });
     const applied: unknown[] = [];
     await w.boot(
       definePlugin({
@@ -237,10 +237,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
   });
 
   it('停用时插件超过宽限仍未停下：写进了配置文件就回 200，message 说明它还没停下；文档记为禁用并落盘', async () => {
-    const w = world(
-      { name: 'T', logLevel: 'error', plugins: {} },
-      { timing: { slowThresholdMs: 20, disposeTimeoutMs: 20 } },
-    );
+    const w = world({ logLevel: 'error', plugins: {} }, { timing: { slowThresholdMs: 20, disposeTimeoutMs: 20 } });
     const gate = deferred();
     try {
       await w.boot(definePlugin({ name: 'deaf', apply: () => gate.promise }));
@@ -271,7 +268,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
   });
 
   it('启用后激活失败、以 error 收场：写进了配置文件就回 200，message 按实际状态说明；文档记为启用并落盘', async () => {
-    const w = world({ name: 'T', logLevel: 'error', plugins: { keyed: {} }, disabledPlugins: ['keyed'] });
+    const w = world({ logLevel: 'error', plugins: { keyed: {} }, disabledPlugins: ['keyed'] });
     await w.boot(keyed);
     expect(w.app.plugins.getPlugin('keyed')?.state).toBe('disabled');
 
@@ -287,7 +284,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
   });
 
   it('改配置后重新激活失败、以 error 收场：配置写进了文件就回 200，message 按实际状态说明；新配置写入文档并落盘', async () => {
-    const w = world({ name: 'T', logLevel: 'error', plugins: { keyed: { apiKey: 'sk-PLACEHOLDER' } } });
+    const w = world({ logLevel: 'error', plugins: { keyed: { apiKey: 'sk-PLACEHOLDER' } } });
     await w.boot(keyed);
     expect(w.app.plugins.getPlugin('keyed')?.state).toBe('active');
 
@@ -316,7 +313,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
   });
 
   it('建实例后激活失败、以 error 收场：写进了配置文件就回 200，message 按实际状态说明；实例与配置写入文档并落盘', async () => {
-    const w = world({ name: 'T', logLevel: 'error', plugins: {} });
+    const w = world({ logLevel: 'error', plugins: {} });
     await w.boot(fragile);
 
     const reply = await w.createInstance('fragile', 'x', { bad: true });
@@ -333,10 +330,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
   });
 
   it('激活失败且落盘被拒：回 409 + applied，回执先说明激活失败，再说明未写入文件', async () => {
-    const w = world(
-      { name: 'T', logLevel: 'error', plugins: { keyed: {} }, disabledPlugins: ['keyed'] },
-      { rejectSave: true },
-    );
+    const w = world({ logLevel: 'error', plugins: { keyed: {} }, disabledPlugins: ['keyed'] }, { rejectSave: true });
     await w.boot(keyed, fragile);
 
     const enabled = await w.enable('keyed');
@@ -359,7 +353,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
 
   it('重新激活失败或停用超时且写入失败：回 500 + applied，回执先说明插件状态，再说明写入失败', async () => {
     const w = world(
-      { name: 'T', logLevel: 'error', plugins: { keyed: { apiKey: 'sk-PLACEHOLDER' } } },
+      { logLevel: 'error', plugins: { keyed: { apiKey: 'sk-PLACEHOLDER' } } },
       { failSave: true, timing: { slowThresholdMs: 20, disposeTimeoutMs: 20 } },
     );
     const gate = deferred();
@@ -430,7 +424,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
   }
 
   it('启用、改配置、建实例撞上在飞的重算：等它落定再读状态，报出之后的激活失败', async () => {
-    const w = world({ name: 'T', logLevel: 'error', plugins: { keyed: {} }, disabledPlugins: ['keyed'] });
+    const w = world({ logLevel: 'error', plugins: { keyed: {} }, disabledPlugins: ['keyed'] });
     await w.boot(keyed, fragile);
 
     expect(await replyDuringFlight(w.app, 'zz-hold-enable', () => w.enable('keyed'))).toEqual({
@@ -461,7 +455,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
 
   it('落定后仍在后台激活、或缺 required 依赖：回 200，如实说明尚未激活，缺什么、在等谁', async () => {
     const w = world(
-      { name: 'T', logLevel: 'error', plugins: {}, disabledPlugins: ['deaf', 'needy', 'listener'] },
+      { logLevel: 'error', plugins: {}, disabledPlugins: ['deaf', 'needy', 'listener'] },
       { timing: { slowThresholdMs: 20 } },
     );
     const gate = deferred();
@@ -500,7 +494,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
 
   it('动作之后没有进入预期状态、写入又失败：回执开头先说明状态，再说明写入失败', async () => {
     const w = world(
-      { name: 'T', logLevel: 'error', plugins: { target: { v: 1 } }, disabledPlugins: ['target', 'needy', 'multi:x'] },
+      { logLevel: 'error', plugins: { target: { v: 1 } }, disabledPlugins: ['target', 'needy', 'multi:x'] },
       { failSave: true },
     );
     await w.boot(target, needy, multi);
@@ -534,7 +528,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
 
   it('建实例沿用文档里残留的禁用标记并写入配置落盘，删实例移除文档键并落盘', async () => {
     // 文档里残留一条实例的禁用标记（手改配置文件留下的）
-    const w = world({ name: 'T', logLevel: 'error', plugins: {}, disabledPlugins: ['multi:x'] });
+    const w = world({ logLevel: 'error', plugins: {}, disabledPlugins: ['multi:x'] });
     await w.boot(multi);
 
     const created = await w.createInstance('multi', 'x', { v: 3 });
@@ -559,7 +553,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
   });
 
   it('停用过的实例删除后同名重建：删除时清掉禁用标记，重建以启用态登记', async () => {
-    const w = world({ name: 'T', logLevel: 'error', plugins: {} });
+    const w = world({ logLevel: 'error', plugins: {} });
     await w.boot(multi);
     expect((await w.createInstance('multi', 'x', { v: 3 })).status).toBe(200);
     expect((await w.disable('multi:x')).status).toBe(200);
@@ -575,7 +569,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
   });
 
   it('停机进行中建实例：内核拒绝登记，回 409，配置不写入文档也不落盘', async () => {
-    const w = world({ name: 'T', logLevel: 'error', plugins: {} });
+    const w = world({ logLevel: 'error', plugins: {} });
     await w.boot(multi);
     const stopping = w.app.stop();
     try {
@@ -590,7 +584,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
   });
 
   it('落盘被拒：启停、改配置、建实例都回 409 + applied，说明已在运行态生效、未写入文件', async () => {
-    const w = world({ name: 'T', logLevel: 'error', plugins: { target: { v: 1 } } }, { rejectSave: true });
+    const w = world({ logLevel: 'error', plugins: { target: { v: 1 } } }, { rejectSave: true });
     await w.boot(target, multi);
     const expectApplied = (reply: { status: number; body?: unknown }, reconcile: string) => {
       expect(reply.status).toBe(409);
@@ -615,7 +609,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
   });
 
   it('落盘写入失败（非拒写）：回 500 + applied，改动留在文档里，下一次成功保存时一并写入', async () => {
-    const w = world({ name: 'T', logLevel: 'error', plugins: { target: { v: 1 } } }, { failSave: true });
+    const w = world({ logLevel: 'error', plugins: { target: { v: 1 } } }, { failSave: true });
     await w.boot(target, multi);
     const expectKept = (reply: { status: number; body?: unknown }) => {
       expect(reply.status).toBe(500);
@@ -640,7 +634,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
   });
 
   it('删实例先落盘：被拒回 409、写入失败回 500，都不卸载，文档里的配置段与禁用标记还原', async () => {
-    const w = world({ name: 'T', logLevel: 'error', plugins: { 'multi:x': { v: 3 } }, disabledPlugins: ['multi:x'] });
+    const w = world({ logLevel: 'error', plugins: { 'multi:x': { v: 3 } }, disabledPlugins: ['multi:x'] });
     await w.boot(multi);
     await registerFromDoc(w.app, w.store, multi, 'multi:x');
     expect(w.app.plugins.getPlugin('multi:x')?.state).toBe('disabled');
@@ -668,7 +662,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
   });
 
   it('删实例落盘后卸载失败：回 500 JSON，说明已从配置文件删除、卸载失败', async () => {
-    const w = world({ name: 'T', logLevel: 'error', plugins: { 'multi:x': { v: 3 } } });
+    const w = world({ logLevel: 'error', plugins: { 'multi:x': { v: 3 } } });
     await w.boot(multi);
     await registerFromDoc(w.app, w.store, multi, 'multi:x');
     w.faults.unload = new Error('zz-卸载失败');
@@ -682,7 +676,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
   });
 
   it('删实例时实例已被别处卸掉（内核返回 false、条目已不在）：照常回已删除，不说停机中', async () => {
-    const w = world({ name: 'T', logLevel: 'error', plugins: { 'multi:x': { v: 3 } } });
+    const w = world({ logLevel: 'error', plugins: { 'multi:x': { v: 3 } } });
     await w.boot(multi);
     await registerFromDoc(w.app, w.store, multi, 'multi:x');
     w.faults.unloadedElsewhere = true;
@@ -694,7 +688,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
   });
 
   it('停机进行中删实例：内核拒绝卸载，配置段照样从文件删掉，回 200 并注明没卸载运行中的实例', async () => {
-    const w = world({ name: 'T', logLevel: 'error', plugins: { 'multi:x': { v: 3 } } });
+    const w = world({ logLevel: 'error', plugins: { 'multi:x': { v: 3 } } });
     await w.boot(multi);
     await registerFromDoc(w.app, w.store, multi, 'multi:x');
     const stopping = w.app.stop();
@@ -714,7 +708,6 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     // provider:x 是 zz-s 的首选提供者，删除时 dependent 在卸载收尾的重算里改接主实例；让它的 apply 一直阻塞，
     // 热重载就能落进这段重算（没有真实的异步工作时窗口只有微任务长）
     const initial: Partial<AalisConfig> = {
-      name: 'T',
       logLevel: 'error',
       plugins: { provider: { who: 'main' }, 'provider:x': { who: 'x' } },
       servicePreferences: { 'zz-s': 'provider:x' },
@@ -762,13 +755,13 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     await entered.promise;
     expect(w.app.plugins.getPlugin('provider:x'), '前提：已离开注册表、重算仍在途').toBeUndefined();
     // 外部改了配置文件的别处：盘上是最后一次落盘的内容（从没落过盘就是初始内容）
-    w.external({ ...structuredClone((w.saved.at(-1) ?? initial) as AalisConfig), name: 'T2' });
+    w.external({ ...structuredClone((w.saved.at(-1) ?? initial) as AalisConfig), logLevel: 'warn' });
     release.resolve();
     expect((await deleting).status).toBe(200);
     await reloaded.promise;
     await w.app.plugins.idle();
 
-    expect(w.store.get('name'), '前提：热重载已按外部改动换了文档').toBe('T2');
+    expect(w.store.get('logLevel'), '前提：热重载已按外部改动换了文档').toBe('warn');
     expect({
       registered: w.app.plugins.getPlugin('provider:x') !== undefined,
       inDoc: Object.hasOwn(w.store.getAll().plugins, 'provider:x'),
@@ -777,7 +770,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
   });
 
   it('写入失败后原样重试插件配置：不再重建插件，但补写进文件，重启后仍是新配置', async () => {
-    const w = world({ name: 'T', logLevel: 'error', plugins: { target: { v: 1 } } }, { failSave: true });
+    const w = world({ logLevel: 'error', plugins: { target: { v: 1 } } }, { failSave: true });
     let applies = 0;
     const counted = definePlugin({
       name: 'target',
@@ -810,7 +803,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
   });
 
   it('全局配置落盘被拒：返回 409 并撤回文档里的改动，免得下一次保存把它写进文件', async () => {
-    const w = world({ name: 'T', logLevel: 'error', plugins: {} }, { rejectSave: true });
+    const w = world({ logLevel: 'error', plugins: {} }, { rejectSave: true });
     await w.boot();
     const reply = await w.putGlobal({ logLevel: 'debug' });
     expect(reply.status).toBe(409);
@@ -820,7 +813,7 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
   });
 
   it('全局配置落盘写入失败：返回 500，同样撤回文档里的改动', async () => {
-    const w = world({ name: 'T', logLevel: 'error', plugins: {} }, { failSave: true });
+    const w = world({ logLevel: 'error', plugins: {} }, { failSave: true });
     await w.boot();
     const reply = await w.putGlobal({ logLevel: 'debug' });
     expect(reply.status).toBe(500);

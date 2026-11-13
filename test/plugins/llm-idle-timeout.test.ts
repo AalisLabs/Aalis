@@ -183,7 +183,7 @@ async function start(wire: Wire, timeout: number) {
   hub.onEntry(entry => {
     if (entry.level === 'warn') warns.push(entry.message);
   });
-  const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+  const app = new App({ logLevel: 'warn', logHub: hub });
   provideEvents(app);
   apps.push(app);
   await app.plugin(wire.plugin, { ...wire.config(baseUrl), timeout });

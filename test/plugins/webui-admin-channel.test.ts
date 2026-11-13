@@ -67,8 +67,7 @@ async function start(app: App, setup?: (app: App) => Promise<void>) {
   return port;
 }
 
-const quietApp = (options: Partial<AppOptions> = {}) =>
-  new App({ name: 'T', logLevel: 'error', logger: silent, ...options });
+const quietApp = (options: Partial<AppOptions> = {}) => new App({ logLevel: 'error', logger: silent, ...options });
 
 /** 一条 /admin 连接：收到的事件按到达顺序留存 */
 async function openAdmin(port: number) {
@@ -104,7 +103,7 @@ describe('/admin 管理面推送', () => {
     hub.onEntry(e => {
       if (e.level === 'warn' && e.message.startsWith('WebUI /admin')) warns.push(e.message);
     });
-    const port = await start(new App({ name: 'T', logLevel: 'warn', logHub: hub }));
+    const port = await start(new App({ logLevel: 'warn', logHub: hub }));
     const probe = new DefaultLogger('admin-probe', 'info');
     const a = await openAdmin(port);
     const b = await openAdmin(port);

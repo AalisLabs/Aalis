@@ -34,7 +34,7 @@ describe('plugin-asr-openai: 请求必须带超时', () => {
 
   /** 装载插件并捞出它 provide 的 asr 服务；激活闸会把没激活的插件静静留在 pending，故先核状态 */
   async function bootOpenai(config: Record<string, unknown>): Promise<App> {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await app.plugin(asrOpenai, config);
     await app.plugins.idle();

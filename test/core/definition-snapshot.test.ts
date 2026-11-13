@@ -18,7 +18,7 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop().catch(() => {});
 });
 function makeApp(): App {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   return app;
 }
@@ -100,7 +100,7 @@ describe('定义登记时取定', () => {
       error() {},
       child: () => logger,
     };
-    const app = new App({ name: 'T', logger });
+    const app = new App({ logger });
     apps.push(app);
     const real = defineService<{ v: number }>('snapshot-real');
     const withdraw = app.bind({ provide }).provide.use(real, { v: 1 });

@@ -82,20 +82,20 @@ afterEach(() => {
 
 describe('配置文件原子写', () => {
   it('保存后不残留临时文件，内容可回读', () => {
-    writeFileSync(cfgPath, 'name: Aalis\nlogLevel: info\nplugins: {}\n', 'utf-8');
+    writeFileSync(cfgPath, 'logLevel: info\nplugins: {}\n', 'utf-8');
     const { provider } = createFsYamlConfigProvider(cfgPath);
-    save(provider, { name: 'Aalis', logLevel: 'debug', plugins: {} });
+    save(provider, { logLevel: 'debug', plugins: {} });
 
     expect(readFileSync(cfgPath, 'utf-8')).toContain('logLevel: debug');
     expect(readdirSync(dir), '临时文件必须被 rename 掉，不能留在配置目录里').toEqual(['aalis.config.yaml']);
   });
 
   it('是原子替换而非原地截断——inode 必须变', () => {
-    writeFileSync(cfgPath, 'name: Aalis\nplugins: {}\n', 'utf-8');
+    writeFileSync(cfgPath, 'logLevel: info\nplugins: {}\n', 'utf-8');
     const before = statSync(cfgPath).ino;
 
     const { provider } = createFsYamlConfigProvider(cfgPath);
-    save(provider, { name: 'Aalis', logLevel: 'info', plugins: {} });
+    save(provider, { logLevel: 'info', plugins: {} });
 
     // writeFileSync 原地覆盖走 O_CREAT|O_TRUNC，inode 不变——截断先发生、写入后失败时
     // 盘上就留下 0 字节或半截 YAML。tmp+rename 则是换 inode 的原子替换，不存在中间态。
@@ -115,9 +115,9 @@ describe('临时文件建出时即是收紧的权限', () => {
   }
 
   it('原文件是 600：临时文件建出那一刻就是 600，不先以 644 存在', () => {
-    writeFileSync(cfgPath, 'name: Aalis\nplugins: {}\n', { encoding: 'utf-8', mode: 0o600 });
+    writeFileSync(cfgPath, 'logLevel: info\nplugins: {}\n', { encoding: 'utf-8', mode: 0o600 });
     const { provider } = createFsYamlConfigProvider(cfgPath);
-    withUmask(0o022, () => save(provider, { name: 'Aalis', logLevel: 'info', plugins: {} }));
+    withUmask(0o022, () => save(provider, { logLevel: 'info', plugins: {} }));
 
     expect(tmpCreated.mode, '按默认 umask 建出的临时文件是 644，含密钥').toBe(0o600);
     expect(statSync(cfgPath).mode & 0o777).toBe(0o600);
@@ -125,7 +125,7 @@ describe('临时文件建出时即是收紧的权限', () => {
 
   it('原文件不存在：按 600 建，保存出来的配置文件也是 600，不留临时文件', () => {
     const { provider } = createFsYamlConfigProvider(cfgPath);
-    withUmask(0o022, () => save(provider, { name: 'Aalis', logLevel: 'info', plugins: {} }));
+    withUmask(0o022, () => save(provider, { logLevel: 'info', plugins: {} }));
 
     expect(tmpCreated.mode).toBe(0o600);
     expect(statSync(cfgPath).mode & 0o777).toBe(0o600);
@@ -133,10 +133,10 @@ describe('临时文件建出时即是收紧的权限', () => {
   });
 
   it('umask 比原文件权限更严：建出时更窄，改名前仍对齐回原文件的权限位', () => {
-    writeFileSync(cfgPath, 'name: Aalis\nplugins: {}\n', 'utf-8');
+    writeFileSync(cfgPath, 'logLevel: info\nplugins: {}\n', 'utf-8');
     chmodSync(cfgPath, 0o640);
     const { provider } = createFsYamlConfigProvider(cfgPath);
-    withUmask(0o077, () => save(provider, { name: 'Aalis', logLevel: 'info', plugins: {} }));
+    withUmask(0o077, () => save(provider, { logLevel: 'info', plugins: {} }));
 
     expect(tmpCreated.mode, '建出时受 umask 收窄').toBe(0o600);
     expect(statSync(cfgPath).mode & 0o777, '保存不改变用户设定的权限位').toBe(0o640);
@@ -148,12 +148,12 @@ describe('写入或改名失败时删掉临时文件', () => {
     ['写临时文件写到一半失败（磁盘写满）', 'write', /ENOSPC/],
     ['改名失败', 'rename', /EPERM/],
   ] as const)('%s：原错误照常抛出，目录里不留临时文件，原配置不动', (_label, fault, error) => {
-    const original = 'name: Aalis\nlogLevel: info\nplugins: {}\n';
+    const original = 'logLevel: info\nplugins: {}\n';
     writeFileSync(cfgPath, original, 'utf-8');
     const { provider } = createFsYamlConfigProvider(cfgPath);
 
     fsFault[fault] = true;
-    expect(() => save(provider, { name: 'Aalis', logLevel: 'debug', plugins: {} })).toThrow(error);
+    expect(() => save(provider, { logLevel: 'debug', plugins: {} })).toThrow(error);
     fsFault[fault] = false;
 
     expect(fsFault.tmp, '前置：失败发生在临时文件建出之后').toContain('.tmp.');

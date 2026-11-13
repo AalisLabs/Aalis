@@ -334,7 +334,7 @@ describe('WebUI 插件列表按 instanceId 归属工具与指令', () => {
   });
 
   it('宿主不提供配置文档：给运行态配置，去掉密钥字段（运行态里是原值）', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await app.plugin(definePlugin({ name: 'secret-probe', configSchema: SECRET_SCHEMA, apply() {} }), {
       apiKey: 'sk-PLACEHOLDER-TOP',

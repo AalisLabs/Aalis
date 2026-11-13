@@ -42,7 +42,7 @@ describe('WebUI 媒体路由', () => {
     // 根外的一张真图：路径穿越真的读到它时会以图片回 200
     writeFileSync(join(base, 'outside.png'), PNG);
     port = await freePort();
-    app = new App({ name: 'media route test', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     provideEvents(app);
     provideHostPaths(app, base);
     await app.pluginAll([

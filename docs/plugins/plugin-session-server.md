@@ -9,7 +9,6 @@
 owner 的客户端经传输层（WebUI 的 WebSocket 端点 `/session`，见 [plugin-webui-server](./plugin-webui-server.md#session-会话协议)）接到 `sessionProtocol.connect`，本插件处理这条连接上的帧：握手、按方法表校验参数并分派、写错误帧、推送增量。会话本身都在 [session-manager](./plugin-session-manager.md) 里，本插件只做投影与转发，只认宿主契约、不认具体插件（守卫见 [plugin-webui-server](./plugin-webui-server.md#概述)）：
 
 - **功能位**：握手回发送、回滚、压缩、设置四项，分别看对话（`agent`）、检查点（`checkpoint`）、压缩（`compression`）、会话设置（`session-settings`）服务在不在。这几个服务可能变了（各自选择层的 `watch`）、功能位变了时给每条连接推 `features/changed`；握手时现取，不用推过的那份。
-- **应用名**：握手另回宿主配置文档里的 `name`（`host-config` 服务），每次握手现读，改名之后新的连接就拿到新名字；没有宿主配置时是 `Aalis`。
 - **握手时协议版本不兼容**：回 `unsupported` 的说明按读者的语言写，随后断开，断开的原因取它的原文。
 - **出帧的文字**：读者与原样数据见 [api-session-protocol 的「文字与语言」](../api/api-session-protocol.md#握手)。全部出帧（回应、错误、推送与等快照时暂存的）经同一个渲染函数：一次推送只渲染一次，各连接共用这一份；每次推送现按全局层的语言渲染，全局语言改了之后的推送就是新的语言。i18n 渲染抛错时这一帧按原文发出，每个实例只告警一次。
 - **会话列表**：把会话表投影成摘要，按根会话的种类（`SessionInfo.kind`）分「我的」与房间两区，房间按接管它的适配器实例（`SessionInfo.originInstance`）分组，标出需要我处理（本会话或各级子会话有推出、还没结的审批）、出错、完成未读、运行中。缺省不列已归档的，`archived` 只列已归档的；`instance`、`platform` 只列一组房间。组名是实例的显示名：插件定义的 `displayName`（没有时用包名），非默认实例（`<包名>:<实例名>`）另带实例名，如「OneBot 适配器（work）」；插件已不在的用实例 id，没有实例的组用平台名。排序、搜索、分页与分组的规则见契约页。
@@ -58,7 +57,6 @@ definePlugin({
     authority: optional(authority),
     tools: optional(tools),
     backgroundTasks: optional(backgroundTasks),
-    hostConfig: optional(hostConfig),
   },
   apply: run,
 })
@@ -76,7 +74,6 @@ definePlugin({
 - `authority`：判说话人与结算的应答人是不是 owner；缺席时都不是。审批谁能批由发起方给（第一方的执行守卫用权限服务判）。
 - `tools`：工具定义上声明的展示种类；缺席时工具卡与后台任务都没有 `display`，审批卡逐字列出全部参数。
 - `backgroundTasks`：后台任务的列表、增量、取输出与停止，摘要里在跑的后台任务数，工具卡的 `taskId`；缺席时摘要只按子会话的回合算 `background`，`background/list`、`output`、`stop` 回 `unsupported`。
-- `hostConfig`：握手回应里的应用名；缺席时是 `Aalis`。
 
 没有配置项。
 

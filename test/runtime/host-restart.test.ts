@@ -37,7 +37,7 @@ afterEach(async () => {
 
 function world(strategy: RestartStrategy) {
   const log = recordingLogger();
-  const app = new App({ name: 'T', logLevel: 'error', logger: log });
+  const app = new App({ logLevel: 'error', logger: log });
   apps.push(app);
   const restart = createHostRestart(app, strategy);
   return { app, log, restart };

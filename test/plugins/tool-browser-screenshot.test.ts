@@ -94,7 +94,7 @@ beforeAll(async () => {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   port = (server.address() as { port: number }).port;
 
-  app = new App({ name: 'T', logLevel: 'error' });
+  app = new App({ logLevel: 'error' });
   provideEvents(app);
   provideHostPaths(app, base);
   // tmp 是 storage-local 的内部根，映射到数据目录的 tmp/

@@ -37,7 +37,7 @@ describe('skills updateSkill frontmatter 合并（真 fs）', () => {
     mkdirSync(join(base, 'self', 'skills', 'zz-demo'), { recursive: true });
     writeFileSync(join(base, 'self', 'skills', 'zz-demo', 'SKILL.md'), SKILL_MD);
 
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     await registerHubs(app);
     provideHostPaths(app, base);
     await app.plugins.register(storageLocal, {});

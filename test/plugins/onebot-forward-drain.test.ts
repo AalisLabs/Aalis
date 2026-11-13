@@ -57,7 +57,7 @@ async function receiveForward(memoryDouble: Record<string, unknown>): Promise<Ap
     });
   });
 
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   cleanups.push(() => app.stop());
   await registerHubs(app);
   const host = app.bind({ provide, events });

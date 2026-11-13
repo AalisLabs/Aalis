@@ -61,7 +61,7 @@ async function withScheduler(
   const off = hub.onEntry((e: LogEntry) => {
     if (e.level === 'warn') warns.push(e.message);
   });
-  const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+  const app = new App({ logLevel: 'warn', logHub: hub });
   provideEvents(app);
   const host = app.bind(uses);
   const store = memoryStorage();
@@ -445,7 +445,7 @@ describe('行上的动作', () => {
 
 describe('激活中的页面', () => {
   it('持久化文件读完之前页面不登记；读完后表格同时有配置文件与持久化文件里的任务', async () => {
-    const app = new App({ name: 'T', logLevel: 'warn' });
+    const app = new App({ logLevel: 'warn' });
     provideEvents(app);
     const host = app.bind(uses);
     const store = memoryStorage({

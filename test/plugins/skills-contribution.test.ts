@@ -135,7 +135,7 @@ function createMemoryStorage(): MemoryStorage {
 }
 
 async function setup(config: Record<string, unknown> = {}) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, services, contributions, logger, hooks });
   const store = createMemoryStorage();

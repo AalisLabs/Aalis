@@ -390,7 +390,7 @@ class CliTui {
     input.resume();
     process.once('exit', this.restoreOnExit);
 
-    const welcome = t('welcome', { name: this.personaName() ?? 'Aalis', key: chalk.cyan('Ctrl+G') });
+    const welcome = t('welcome', { key: chalk.cyan('Ctrl+G') });
     this.log.append([chalk.gray(this.formatCont()) + chalk.gray(this.localize(welcome))]);
     void this.pointToUnready();
     // 她的输出取会话协议里本会话的条目：会话服务在就接上，换提供者时断开旧的、接上新的
@@ -477,11 +477,15 @@ class CliTui {
       : undefined;
   }
 
+  /** 她的回复前的标签：人设的名字，没有人设服务或卡没取名时写产品名 */
+  private assistantLabel(): string {
+    return `✦ ${this.personaName() ?? 'Aalis'}`;
+  }
+
   /** 所有标签对齐到同一列宽，确保 │ 竖线垂直对齐 */
   private labelCol(): number {
-    const persona = this.personaName() ?? 'Aalis';
     return Math.max(
-      visibleLen(`✦ ${persona}`), // assistant
+      visibleLen(this.assistantLabel()), // assistant
       visibleLen(`❯ ${this.config.prompt}`), // user
       visibleLen('◆ System'), // system
       visibleLen('∘'), // welcome
@@ -501,8 +505,7 @@ class CliTui {
   }
 
   private formatAssistantBlock(content: string): string[] {
-    const persona = this.personaName() ?? 'Aalis';
-    const firstHead = this.formatHead(chalk.green(`✦ ${persona}`));
+    const firstHead = this.formatHead(chalk.green(this.assistantLabel()));
     const contHead = this.formatCont();
     return content.split('\n').map((line, i) => (i === 0 ? firstHead : contHead) + line);
   }

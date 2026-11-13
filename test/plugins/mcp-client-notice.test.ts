@@ -51,7 +51,7 @@ describe('plugin-mcp-client 连不上时发提示', () => {
       child: () => logger,
     };
     const host = pageHost();
-    const app = new App({ name: 'T', logLevel: 'error', logger });
+    const app = new App({ logLevel: 'error', logger });
     apps.push(app);
     const registry = makeToolRegistry(logger);
     app.bind({ provide }).provide.use(tools, registry);

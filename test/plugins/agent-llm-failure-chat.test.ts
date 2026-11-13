@@ -43,7 +43,7 @@ async function use(app: App, module: PluginDefinition, config?: Record<string, u
 
 describe('LLM 全部激活失败：发回会话的提示只点名实例', () => {
   it('点名每个出错的实例并指向 /doctor，不带 error 原文', async () => {
-    const app = new App({ name: 'E2E', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     const instances = ['zz-broken-llm', 'zz-broken-llm:b', 'zz-broken-llm:c', 'zz-broken-llm:d'];

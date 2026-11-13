@@ -11,7 +11,7 @@ import { toolRequest } from '../fixtures/tool-call.js';
 // ════════════════════════════════════════════════════════════
 
 async function setup() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   await app.plugins.register(toolsPlugin, {});
   await app.plugins.idle();

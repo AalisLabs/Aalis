@@ -22,7 +22,7 @@ afterEach(async () => {
 });
 
 async function world(showToolNames = true, firstGroupTools = 0, maxSearchResults = 10) {
-  const app = new App({ name: 'tool-search-catalog', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   await app.plugin(toolsPlugin);

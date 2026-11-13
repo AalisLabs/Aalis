@@ -26,7 +26,7 @@ describe('webui-server：监听端口被占', () => {
     logHub.onEntry(e => {
       if (e.level === 'error') errors.push(e.message);
     });
-    const app = new App({ name: 'T', logLevel: 'warn', logHub });
+    const app = new App({ logLevel: 'warn', logHub });
     provideEvents(app);
     try {
       await app.pluginAll([{ definition: webuiServerPlugin, config: { port, host: '127.0.0.1', autoOpen: false } }]);

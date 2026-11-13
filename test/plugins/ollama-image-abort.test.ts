@@ -41,7 +41,7 @@ async function boot() {
   hub.onEntry(entry => {
     if (entry.level === 'warn') warns.push(entry.message);
   });
-  const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+  const app = new App({ logLevel: 'warn', logHub: hub });
   provideEvents(app);
   cleanups.push(() => app.stop());
   // 启动时的模型发现与能力探测答空，不连本机的 Ollama；装好之后换回真的 fetch，图片下载打到上游桩

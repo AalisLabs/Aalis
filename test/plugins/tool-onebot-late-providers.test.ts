@@ -28,7 +28,7 @@ function adapter(name: string): PlatformAdapter {
 
 /** 真实 App；tools 由宿主提供桩实现，记下注册的工具名与注册调用次数 */
 async function setup() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   booted.push(app);
   const host = app.bind({ provide });

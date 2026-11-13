@@ -9,7 +9,7 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop().catch(() => {});
 });
 function world(): App {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   return app;
 }

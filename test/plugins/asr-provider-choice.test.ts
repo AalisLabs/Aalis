@@ -22,7 +22,7 @@ afterEach(async () => {
 
 /** 登记这几个插件，返回 asr 服务的提供者按解析先后的实例 id */
 async function boot(plugins: Array<[typeof asrOpenai | typeof asrWhisper, Record<string, unknown>]>) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   const host = app.bind({ provide, services });
   host.provide.use(processService, {} as never);
@@ -50,7 +50,7 @@ describe('asr-openai 的 baseUrl', () => {
     ['末尾单个问号', 'https://example.test/v1?'],
     ['带片段', 'https://example.test/v1#frag'],
   ])('%s：读配置时报错，不注册服务', async (_form, baseUrl) => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     const host = app.bind({ provide, services });
     host.provide.use(processService, {} as never);

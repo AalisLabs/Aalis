@@ -20,7 +20,7 @@ describe('管理页不随事件总线下线', () => {
 
   it('停用 plugin-events：本插件仍是 active，端口照常应答', async () => {
     const port = await freePort();
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     cleanups.push(() => app.stop());
     await registerHubs(app);
     await app.pluginAll([{ definition: webuiServerPlugin, config: { port, host: '127.0.0.1', autoOpen: false } }]);
@@ -34,7 +34,7 @@ describe('管理页不随事件总线下线', () => {
   });
 
   it('停用 plugin-events：plugin-i18n 仍是 active', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     cleanups.push(() => app.stop());
     await registerHubs(app);
     await app.pluginAll([{ definition: i18nPlugin }]);

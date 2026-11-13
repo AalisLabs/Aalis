@@ -49,7 +49,7 @@ async function start() {
     child: () => logger,
   };
   const port = await freePort();
-  const app = new App({ name: 'T', logLevel: 'warn', logger });
+  const app = new App({ logLevel: 'warn', logger });
   provideEvents(app);
   apps.push(app);
   const peers: SessionPeer[] = [];

@@ -27,7 +27,7 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop().catch(() => {});
 });
 function world(logger?: Logger): App {
-  const app = new App({ name: 'T', logLevel: 'error', logger });
+  const app = new App({ logLevel: 'error', logger });
   apps.push(app);
   return app;
 }

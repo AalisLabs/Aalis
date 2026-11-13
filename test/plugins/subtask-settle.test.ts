@@ -30,7 +30,7 @@ afterEach(async () => {
 });
 
 async function setup() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, hooks, sessionManager });

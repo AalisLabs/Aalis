@@ -346,7 +346,7 @@ describe('重载', () => {
   });
 
   it('已停用的插件不重载（409，说明先启用）；不存在的回 404', async () => {
-    const w = world({ name: 'T', logLevel: 'error', plugins: { 'zz-off': {} }, disabledPlugins: ['zz-off'] });
+    const w = world({ logLevel: 'error', plugins: { 'zz-off': {} }, disabledPlugins: ['zz-off'] });
     await w.boot(definePlugin({ name: 'zz-off', apply() {} }));
     const off = await w.reload('zz-off');
     expect(off.status).toBe(409);

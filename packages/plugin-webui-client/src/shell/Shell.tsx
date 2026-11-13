@@ -16,7 +16,7 @@ import {
 } from 'react';
 import { Link, matchPath, Outlet, useLocation, useNavigate } from 'react-router';
 import { Badge } from '../components/Badge';
-import { useConnection } from '../connection';
+import { PRODUCT } from '../connection';
 import { useAttention } from '../health/attention';
 import { shortcutLabel, shortcutOf } from '../keys';
 import { text, tr } from '../language';
@@ -113,7 +113,6 @@ export function Shell() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const { appName } = useConnection();
   const attention = useAttention().items?.length ?? 0;
   const countOf = useEntryCounts();
   const unread = useMine().sessions?.filter(session => session.unread).length ?? 0;
@@ -163,11 +162,11 @@ export function Shell() {
     [drawer, toggle, change, widths, save],
   );
 
-  // 标签页标题前的数：「需要处理」加「我的」区完成未读的会话，都为 0 时只有应用名
+  // 标签页标题前的数：「需要处理」加「我的」区完成未读的会话，都为 0 时只有产品名
   const count = attention + unread;
   useEffect(() => {
-    document.title = count > 0 ? `(${count}) ${appName}` : appName;
-  }, [count, appName]);
+    document.title = count > 0 ? `(${count}) ${PRODUCT}` : PRODUCT;
+  }, [count]);
 
   // 抽屉里的左栏点了会话、换了地址就收回
   useEffect(() => setDrawer(current => (current === 'left' ? undefined : current)), [location.key]);

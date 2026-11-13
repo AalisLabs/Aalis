@@ -67,7 +67,7 @@ const SQLITE = '@aalis/plugin-memory-sqlite';
 
 /** 两个 SQLite 实例开同一个文件，交出后激活那个的失败 */
 async function sqliteClash() {
-  const app = new App({ name: 'T', logger: silent });
+  const app = new App({ logger: silent });
   apps.push(app);
   const roots = [{ name: 'data', readable: true, writable: true, deletable: true }] as unknown as StorageRootInfo[];
   app.bind({ provide }).provide.use(storage, {
@@ -149,7 +149,7 @@ describe('Ollama 嵌入的诊断项：包装句按读者的语言，上游原话
   async function check(mode: Mode): Promise<CheckResult> {
     stubFetch(mode);
     const specs: CheckSpec[] = [];
-    const app = new App({ name: 'T', logger: silent });
+    const app = new App({ logger: silent });
     apps.push(app);
     app.bind({ provide }).provide.use(doctor, {
       registerCheck: (spec: CheckSpec) => {

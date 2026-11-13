@@ -65,7 +65,7 @@ async function setup(options: { home?: string; pluginPages?: number; panelPages?
     error() {},
     child: () => logger,
   };
-  const app = new App({ name: 'T', logLevel: 'warn', logger });
+  const app = new App({ logLevel: 'warn', logger });
   provideEvents(app);
   apps.push(app);
   const paths = provideHostPaths(app, home);

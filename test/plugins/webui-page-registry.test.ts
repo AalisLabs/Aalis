@@ -234,7 +234,7 @@ describe('绑定门面', () => {
         return () => calls.push(`notice- ${instance} ${notice.id} ${notice.title}`);
       },
     };
-    const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+    const app = new App({ logLevel: 'error', logger: silent });
     app.bind({ provide }).provide.use(webuiServer, service);
     let webui: BoundWebui | undefined;
     const owner = definePlugin({

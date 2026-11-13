@@ -26,7 +26,7 @@ function makeFact(id: string, text: string, category?: string, updatedAt = TS) {
 }
 
 async function setup(config: Record<string, unknown> = {}) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   // 组装器只要两样能力：agent:prompt 的枚举与日志；provide / memory 供本测试自己种数据。
   const host = app.bind({ provide, contributions, logger, memory: memoryService });

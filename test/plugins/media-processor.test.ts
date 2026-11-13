@@ -227,7 +227,7 @@ describe('MediaService LLM processor 缓存跟随 llm 偏好切换', () => {
     });
 
   it('偏好切到 B 后，prefer 留空的自动选择跟着换到 B', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     try {
       await app.plugin(llmProvider('zz-llm-a'));
       await app.plugin(llmProvider('zz-llm-b'));

@@ -96,7 +96,7 @@ function run(cwd: string, argv: string[], env: Record<string, string> = {}, time
 
 function makeProject(): string {
   const dir = mkdtempSync(join(tmpdir(), 'aalis-subcommand-e2e-'));
-  writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+  writeFileSync(join(dir, 'aalis.config.yaml'), 'logLevel: info\nplugins: {}\n');
   mkdirSync(join(dir, 'logs'));
   writeFileSync(join(dir, 'logs', 'latest.log'), SENTINEL);
   return dir;
@@ -133,7 +133,7 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     const dir = project();
     writeFileSync(
       join(dir, 'aalis.config.yaml'),
-      'name: e2e\nlogLevel: info\nplugins:\n  e2e-probe:\n    known: 2\n    unknown: true\n    nested:\n      typo: 1\n',
+      'logLevel: info\nplugins:\n  e2e-probe:\n    known: 2\n    unknown: true\n    nested:\n      typo: 1\n',
     );
     const r = await run(dir, ['probe']);
     expect(r.code).toBe(0);
@@ -150,10 +150,7 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     // 每次运行一个新目录：夹具的代数护栏只放行每个目录的第一次启动
     const runWith = (value: string) => {
       const dir = project();
-      writeFileSync(
-        join(dir, 'aalis.config.yaml'),
-        `name: e2e\nlogLevel: info\nslowThresholdMs: ${value}\nplugins: {}\n`,
-      );
+      writeFileSync(join(dir, 'aalis.config.yaml'), `logLevel: info\nslowThresholdMs: ${value}\nplugins: {}\n`);
       return run(dir, ['probe'], { AALIS_E2E_APPLY_MS: '400' });
     };
     const applied = await runWith('50');
@@ -182,7 +179,7 @@ describe('startAalis 子命令模式（真实子进程）', () => {
 
   it('配置文件顶层的 logLevel 写成不可选的值：告警并按默认级别输出，不按 debug 全量输出', async () => {
     const dir = project();
-    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: warning\nplugins: {}\n');
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'logLevel: warning\nplugins: {}\n');
     const r = await run(dir, [], { AALIS_E2E_MODE: 'daemon' });
     expect(r.code).toBe(0);
     const warning =
@@ -231,7 +228,7 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     const dir = project();
     writeFileSync(
       join(dir, 'aalis.config.yaml'),
-      'name: e2e\nlogLevel: info\nplugins:\n  e2e-probe:\n    known: 3\n    stale: 1\nservicePreferences:\n  commands: e2e-probe\n',
+      'logLevel: info\nplugins:\n  e2e-probe:\n    known: 3\n    stale: 1\nservicePreferences:\n  commands: e2e-probe\n',
     );
     // argv 非空但宿主显式传了 []：不分发、进守护——空 argv 与 [] 重合时测不出这条优先级
     const r = await run(dir, ['probe'], { AALIS_E2E_MODE: 'daemon' });
@@ -337,7 +334,7 @@ describe('startAalis 子命令模式（真实子进程）', () => {
 
   it('守护路径：启动收敛后的告警把缺的沿链追到根，仍在后台激活的插件所提供的服务报成等待，只在等的不告警', async () => {
     const dir = project();
-    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nslowThresholdMs: 50\nplugins: {}\n');
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'logLevel: info\nslowThresholdMs: 50\nplugins: {}\n');
     // e2e-slow 激活 1500ms，超过 50ms 阈值转入后台，它的 e2e-slow-svc 在完成前不对外
     const r = await run(dir, [], { AALIS_E2E_MODE: 'daemon', AALIS_E2E_APPLY_MS: '1500' });
     expect(r.signal).toBeNull();
@@ -391,7 +388,6 @@ describe('startAalis 数据目录（真实子进程）', () => {
     expect(statSync(join(dataDir, 'secrets.yaml')).mode & 0o777).toBe(0o600);
     expect(readFileSync(join(dataDir, 'secrets.yaml'), 'utf-8')).toBe('');
     expect(parse(readFileSync(join(dataDir, 'aalis.config.yaml'), 'utf-8'))).toEqual({
-      name: 'Aalis',
       logLevel: 'info',
       plugins: {},
     });
@@ -429,20 +425,17 @@ describe('startAalis 数据目录（真实子进程）', () => {
 
   it('--init 遇到已初始化的数据目录：拒绝并 exit 1，不覆盖', async () => {
     const dir = tempDir();
-    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: mine\nlogLevel: info\nplugins: {}\n');
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'logLevel: warn\nplugins: {}\n');
     const r = await run(dir, ['--init']);
     expect(r.code).toBe(1);
     expect(r.stderr).toContain('already initialized');
-    expect(readFileSync(join(dir, 'aalis.config.yaml'), 'utf-8')).toBe('name: mine\nlogLevel: info\nplugins: {}\n');
+    expect(readFileSync(join(dir, 'aalis.config.yaml'), 'utf-8')).toBe('logLevel: warn\nplugins: {}\n');
   });
 
   it('--data 写在子命令之前：压过 AALIS_DATA，相对路径按启动时的 cwd 解析', async () => {
     const dir = tempDir();
     mkdirSync(join(dir, 'other'));
-    writeFileSync(
-      join(dir, 'other', 'aalis.config.yaml'),
-      'name: e2e\nlogLevel: info\nplugins:\n  e2e-probe:\n    known: 5\n',
-    );
+    writeFileSync(join(dir, 'other', 'aalis.config.yaml'), 'logLevel: info\nplugins:\n  e2e-probe:\n    known: 5\n');
     const r = await run(dir, ['--data', 'other', 'probe', 'x'], { AALIS_DATA: join(dir, 'missing') });
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('probe ok x');
@@ -462,7 +455,7 @@ describe('startAalis 数据目录（真实子进程）', () => {
 
   it('默认加载器的安装集里没有 package.json：说明 appDir 要指向哪里后 exit 1，不带着零个插件启动', async () => {
     const dir = tempDir();
-    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'logLevel: info\nplugins: {}\n');
     const app = join(dir, 'install');
     mkdirSync(app);
     const r = await run(dir, ['probe'], { AALIS_E2E_MODE: 'default-loader', AALIS_E2E_APP_DIR: app });
@@ -496,7 +489,7 @@ describe('startAalis 数据目录（真实子进程）', () => {
 
   it('实例锁被活着的实例占着：报占用者后 exit 1，不轮转、不写正在用的日志', async () => {
     const dir = tempDir();
-    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'logLevel: info\nplugins: {}\n');
     mkdirSync(join(dir, 'logs'));
     writeFileSync(join(dir, 'logs', 'latest.log'), SENTINEL);
     liveLock(dir);
@@ -514,7 +507,7 @@ describe('startAalis 数据目录（真实子进程）', () => {
 
   it('以 --service 启动而锁被占：写一行说明后 exit 0，服务管理器不会反复重新启动进程', async () => {
     const dir = tempDir();
-    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'logLevel: info\nplugins: {}\n');
     liveLock(dir);
     const r = await run(dir, ['--service']);
     expect(r.code).toBe(0);
@@ -528,7 +521,7 @@ describe('startAalis 数据目录（真实子进程）', () => {
     '取不了实例锁（run/ 写不进去）：一行说明后 exit 1，不往下启动',
     async () => {
       const dir = tempDir();
-      writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+      writeFileSync(join(dir, 'aalis.config.yaml'), 'logLevel: info\nplugins: {}\n');
       mkdirSync(join(dir, 'run'), { mode: 0o500 });
       try {
         const r = await run(dir, [], { AALIS_E2E_MODE: 'daemon' });
@@ -543,7 +536,7 @@ describe('startAalis 数据目录（真实子进程）', () => {
 
   it('子命令不取实例锁：守护进程在跑时照常执行，不碰它的锁', async () => {
     const dir = tempDir();
-    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'logLevel: info\nplugins: {}\n');
     liveLock(dir);
     const before = readFileSync(join(dir, 'run', 'instance.4.lock'), 'utf-8');
     const r = await run(dir, ['probe']);
@@ -555,7 +548,7 @@ describe('startAalis 数据目录（真实子进程）', () => {
 
   it('/restart 经重启策略交接实例锁：第二代接手、令牌不留在环境里，第一代退出后只剩第二代持锁', async () => {
     const dir = tempDir();
-    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'logLevel: info\nplugins: {}\n');
     // 第一代请求重启、启动第二代进程（继承本测试给的管道，run 会等到两代都退出）
     const r = await run(dir, [], { AALIS_E2E_MODE: 'restart' }, 30_000);
     expect(r.code).toBe(0);
@@ -570,7 +563,7 @@ describe('startAalis 数据目录（真实子进程）', () => {
 
   it('以 --service 运行时 /restart 交给服务管理器：停掉后以 75 退出、放掉锁，不自行启动新进程', async () => {
     const dir = tempDir();
-    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'logLevel: info\nplugins: {}\n');
     const r = await run(dir, ['--service'], { AALIS_E2E_MODE: 'restart' });
     expect(r.code).toBe(75);
     expect(readFileSync(join(dir, 'gen.txt'), 'utf-8').trim()).toBe('1');
@@ -581,7 +574,7 @@ describe('startAalis 数据目录（真实子进程）', () => {
 
   it('前台 /restart 已启动第二代、它还在启动时第一代收到 SIGTERM：第二代也停下，不留在后台', async () => {
     const dir = tempDir();
-    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'logLevel: info\nplugins: {}\n');
     // 两代的启动都被慢插件拖住 3 秒：第一代等第二代的插件开始激活（已接上信号处理、还没报就绪）才给自己发信号
     const r = await run(
       dir,
@@ -603,7 +596,7 @@ describe('startAalis 数据目录（真实子进程）', () => {
     '%s时 /restart 的停机途中收到 SIGTERM：停下，不启动第二代，exit 0',
     async (_label, argv) => {
       const dir = tempDir();
-      writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+      writeFileSync(join(dir, 'aalis.config.yaml'), 'logLevel: info\nplugins: {}\n');
       const r = await run(
         dir,
         [...argv],
@@ -620,7 +613,7 @@ describe('startAalis 数据目录（真实子进程）', () => {
 
   it('respawn 交接：令牌对得上就接手活着的锁；令牌随即从环境里删掉，退出时放掉自己这一代', async () => {
     const dir = tempDir();
-    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'logLevel: info\nplugins: {}\n');
     liveLock(dir, 'handoff-token');
     const r = await run(dir, [], { AALIS_E2E_MODE: 'daemon', AALIS_LOCK_HANDOFF: 'handoff-token' });
     expect(r.code).toBe(0);
@@ -636,7 +629,7 @@ describe('startAalis 数据目录（真实子进程）', () => {
     const dir = tempDir();
     for (const name of ['data', 'data-e2e']) {
       mkdirSync(join(dir, name));
-      writeFileSync(join(dir, name, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+      writeFileSync(join(dir, name, 'aalis.config.yaml'), 'logLevel: info\nplugins: {}\n');
     }
     symlinkSync(join(dir, 'data-e2e'), join(dir, 'link'));
     const seen = async (argv: string[]) => {
@@ -657,8 +650,8 @@ describe('startAalis 数据目录（真实子进程）', () => {
       ['secrets.yaml', 'secrets file'],
     ] as const) {
       const dir = tempDir();
-      writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
-      writeFileSync(join(dir, file), 'name: e2e\ntoken: "PLACEHOLDER-NOT-SHOWN\n');
+      writeFileSync(join(dir, 'aalis.config.yaml'), 'logLevel: info\nplugins: {}\n');
+      writeFileSync(join(dir, file), 'logLevel: info\ntoken: "PLACEHOLDER-NOT-SHOWN\n');
       const r = await run(dir, ['probe']);
       expect(r.code, file).toBe(1);
       expect(r.stderr).toMatch(
@@ -672,7 +665,7 @@ describe('startAalis 数据目录（真实子进程）', () => {
 
   it('插件配置段写成数组：一行报错点名那一段后 exit 1，不带调用栈，文件不改；留空的段照常启动', async () => {
     const dir = tempDir();
-    const text = 'name: e2e\nlogLevel: info\nplugins:\n  e2e-probe: [1, 2]\n';
+    const text = 'logLevel: info\nplugins:\n  e2e-probe: [1, 2]\n';
     writeFileSync(join(dir, 'aalis.config.yaml'), text);
     const r = await run(dir, ['probe']);
     expect(r.code, r.stderr).toBe(1);
@@ -681,7 +674,7 @@ describe('startAalis 数据目录（真实子进程）', () => {
     expect(readFileSync(join(dir, 'aalis.config.yaml'), 'utf8')).toBe(text);
 
     const empty = tempDir();
-    writeFileSync(join(empty, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins:\n  e2e-probe:\n');
+    writeFileSync(join(empty, 'aalis.config.yaml'), 'logLevel: info\nplugins:\n  e2e-probe:\n');
     const ok = await run(empty, ['probe']);
     expect(ok.code, ok.stderr).toBe(0);
   }, 30_000);
@@ -690,7 +683,7 @@ describe('startAalis 数据目录（真实子进程）', () => {
     const dir = tempDir();
     writeFileSync(
       join(dir, 'aalis.config.yaml'),
-      'name: e2e\nlogLevel: info\nplugins:\n  e2e-probe:\n    token: TOK-PLACEHOLDER\n',
+      'logLevel: info\nplugins:\n  e2e-probe:\n    token: TOK-PLACEHOLDER\n',
     );
     const r = await run(dir, ['probe']);
     expect(r.code, r.stderr).toBe(0);
@@ -704,7 +697,7 @@ describe('startAalis 数据目录（真实子进程）', () => {
 
   it('同时给了 profile 与 AALIS_DATA：报冲突、exit 2，不静默挑一个', async () => {
     const dir = tempDir();
-    writeFileSync(join(dir, 'aalis.config.yaml'), 'name: e2e\nlogLevel: info\nplugins: {}\n');
+    writeFileSync(join(dir, 'aalis.config.yaml'), 'logLevel: info\nplugins: {}\n');
     const r = await run(dir, ['--profile', 'test', 'probe']);
     expect(r.code).toBe(2);
     expect(r.stderr).toContain('Both AALIS_DATA and --profile are set');

@@ -12,7 +12,7 @@ import { fakeMemory } from '../fixtures/session-memory.js';
 // 契约：父档缺失时先 ensureSession 兜底建档，再挂子会话。
 
 async function setup() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, events, sessionManager });
   host.provide.use(memory, fakeMemory() as never);

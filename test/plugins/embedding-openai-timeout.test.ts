@@ -87,7 +87,7 @@ describe('plugin-embedding-openai: 请求自带超时', () => {
       const fake = await startStalling();
       servers.push(fake.server);
 
-      const app = new App({ name: 'T', logLevel: 'error' });
+      const app = new App({ logLevel: 'error' });
       apps.push(app);
       const host = app.bind({ services });
 
@@ -115,7 +115,7 @@ describe('plugin-embedding-openai: 请求自带超时', () => {
   it('调用方 signal 会关闭在飞请求，且同一实例随后仍能正常 embed', async () => {
     const fake = await startControlled();
     servers.push(fake.server);
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     const host = app.bind({ services });
     await app.plugins.register(embeddingOpenai, {
@@ -145,7 +145,7 @@ describe('plugin-embedding-openai: 请求自带超时', () => {
   it('调用方没给信号，embed 途中停用插件：在飞请求随之关闭，以中止原因拒绝', async () => {
     const fake = await startControlled();
     servers.push(fake.server);
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     const host = app.bind({ services });
     await app.plugins.register(embeddingOpenai, {

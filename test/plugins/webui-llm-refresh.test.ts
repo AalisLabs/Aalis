@@ -87,7 +87,7 @@ async function thinkingOptions(port: number, dependency?: string): Promise<{ sta
 /** 启动 webui-server 与两个模型提供者：zz-dynamic 带 refresh、m1 能调思考，zz-static 不带 refresh、不能调思考 */
 async function boot(): Promise<{ app: App; port: number }> {
   const port = await freePort();
-  const { app } = hostedApp({ name: 'N' }, { logger: silent });
+  const { app } = hostedApp({}, { logger: silent });
   provideEvents(app);
   apps.push(app);
   await app.plugin(provider('zz-dynamic', ['m1', 'm2'], true, { m1: DEEP, m2: SWITCH }), {});

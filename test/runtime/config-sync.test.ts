@@ -404,7 +404,7 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
     installConfigHotReload(app, store, createPluginDiscovery(app, NO_PLUGINS, store));
 
     // 模拟外部把 schema 外字段写进配置文件
-    pushSnapshot?.({ name: 'T', logLevel: 'error', plugins: { p1: { known: 2, sneaky: true } } });
+    pushSnapshot?.({ logLevel: 'error', plugins: { p1: { known: 2, sneaky: true } } });
     // watch 回调同步进入 handleConfigChanged；bounce 在首个 await 前已抬 suspendDepth，idle 等到重建落定
     await app.plugins.idle();
 
@@ -457,7 +457,7 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
     store.watch(() => {
       reloading = handleConfigChanged(app, store, discovery);
     });
-    push?.({ name: 'T', logLevel: 'error', plugins: { p1: { known: 2 } }, disabledPlugins: ['p1'] });
+    push?.({ logLevel: 'error', plugins: { p1: { known: 2 } }, disabledPlugins: ['p1'] });
     await reloading;
     await app.plugins.idle();
 
@@ -510,7 +510,6 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
 
     // 模拟外部编辑：给已登记的 reusable 模块加一个只写了半块嵌套组的实例
     push?.({
-      name: 'T',
       logLevel: 'error',
       plugins: { multi: store.getPluginConfig('multi'), 'multi:b': { server: {} } },
     });
@@ -563,8 +562,7 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
       const discovery = createPluginDiscovery(app, NO_PLUGINS, store);
       const rounds: Promise<void>[] = [];
       store.watch(() => void rounds.push(handleConfigChanged(app, store, discovery)));
-      const edit = (next: Record<string, Record<string, unknown>>) =>
-        push?.({ name: 'T', logLevel: 'error', plugins: next });
+      const edit = (next: Record<string, Record<string, unknown>>) => push?.({ logLevel: 'error', plugins: next });
       async function settled() {
         await Promise.all(rounds);
         await app.plugins.idle();
@@ -700,7 +698,7 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
       {
         provider: {
           watch: cb => {
-            push = () => cb({ name: 'T', logLevel: 'error', plugins: {} });
+            push = () => cb({ logLevel: 'error', plugins: {} });
             return () => {
               stops++;
             };
@@ -732,7 +730,7 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
         logger,
         provider: {
           watch: cb => {
-            push = () => cb({ name: 'T', logLevel: 'error', plugins: {} });
+            push = () => cb({ logLevel: 'error', plugins: {} });
             return () => {};
           },
         },
@@ -772,8 +770,8 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
   });
 
   it('热重载与发现时的配置同步共用一份宿主根绑定：根激活名下的登记不随次数增长', async () => {
-    const store = createConfigStore({ name: 'T', logLevel: 'error', plugins: {} });
-    const app = createInspectableApp({ name: 'T', logLevel: 'error' });
+    const store = createConfigStore({ logLevel: 'error', plugins: {} });
+    const app = createInspectableApp({ logLevel: 'error' });
     const discovery = createPluginDiscovery(app, NO_PLUGINS, store);
     const held = () => rootActivation(app).resources.withdrawals.labels().length;
     await handleConfigChanged(app, store, discovery);

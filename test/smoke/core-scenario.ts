@@ -44,7 +44,7 @@ export async function smoke(core: typeof Core): Promise<SmokeResult> {
       warnings.push(`${entry.level} ${entry.scope} ${entry.message}`);
     }
   });
-  const app = new App({ name: 'smoke', logHub: hub, slowThresholdMs: LIMIT_MS, disposeTimeoutMs: LIMIT_MS });
+  const app = new App({ logHub: hub, slowThresholdMs: LIMIT_MS, disposeTimeoutMs: LIMIT_MS });
 
   /** apply 走完的先后（各插件在 apply 末尾记一笔），与每个插件 apply 过几次 */
   const loaded: string[] = [];

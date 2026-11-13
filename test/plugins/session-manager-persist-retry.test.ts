@@ -23,7 +23,7 @@ const session = (id: string) => ({
 type Persistable = { persist(): Promise<void> };
 
 async function setup(store: ReturnType<typeof fakeMemory>) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, sessionManager });
   host.provide.use(memory, store as never);

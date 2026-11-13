@@ -120,7 +120,7 @@ afterEach(async () => {
 
 /** 真实 file-reader 的预处理器，存储换成内存桩；writeGate 设上后存盘在它落定前不返回 */
 async function fileReaderPreprocessor() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   booted.push(app);
   await registerHubs(app);
   const host = app.bind({ provide });

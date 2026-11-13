@@ -53,7 +53,7 @@ function stubProvider(chatBody: string): void {
 }
 
 async function loadModel(plugin: PluginDefinition, config: Record<string, unknown>, hub?: LogHub): Promise<LLMModel> {
-  const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+  const app = new App({ logLevel: 'warn', logHub: hub });
   provideEvents(app);
   apps.push(app);
   const host = app.bind({ llm });

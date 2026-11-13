@@ -195,7 +195,7 @@ describe('host-config:changed', () => {
       'zz-key': { v: 1 },
     });
     w.host.set('zz-key', { v: 1 });
-    w.host.set('name', 'T');
+    w.host.set('logLevel', 'error');
     w.host.setPluginConfig('p', { known: 1 });
     w.host.removePluginConfig('zz-absent');
     w.host.setServicePreference('zz-svc', 'a');
@@ -323,7 +323,7 @@ describe('热重载', () => {
       reloading = handleConfigChanged(w.app, w.store, discovery, undefined, previous);
     });
     const reload = async (next: Partial<AalisConfig>) => {
-      push({ name: 'T', logLevel: 'error', plugins: {}, ...next } as AalisConfig);
+      push({ logLevel: 'error', plugins: {}, ...next } as AalisConfig);
       await reloading;
       await w.app.plugins.idle();
     };
@@ -357,7 +357,7 @@ describe('热重载', () => {
 
   // 独有的是 installConfigHotReload 接上真实文件监听这一段；解析失败不投递本身由 config-provider-parse-guard 守着
   it('经文件监听：配置文件解析失败、文档没换时不发；改对之后发', async () => {
-    const temp = tempConfig('name: T\nlogLevel: error\nplugins:\n  p: { known: 1 }\n');
+    const temp = tempConfig('logLevel: error\nplugins:\n  p: { known: 1 }\n');
     temps.push(temp);
     const w = world(temp.config, temp.provider);
     installConfigHotReload(w.app, w.store, createPluginDiscovery(w.app, NO_PLUGINS, w.store));
@@ -368,14 +368,14 @@ describe('热重载', () => {
     await settle();
 
     try {
-      writeFileSync(temp.path, 'name: T\nplugins: [unclosed\n');
+      writeFileSync(temp.path, 'logLevel: info\nplugins: [unclosed\n');
       // 坏内容确实被监听到、处理过（告警之后这次变更不再投递），再断言没发
       expect(await waitFor(() => warns.some(m => m.includes('解析失败')))).toBe(true);
       expect(w.changes).toEqual([]);
     } finally {
       off();
     }
-    writeFileSync(temp.path, 'name: T\nlogLevel: error\nplugins:\n  p: { known: 2 }\n');
+    writeFileSync(temp.path, 'logLevel: error\nplugins:\n  p: { known: 2 }\n');
     expect(await waitFor(() => w.changes.length > 0)).toBe(true);
     expect(w.changes).toEqual([{ document: true }]);
   });

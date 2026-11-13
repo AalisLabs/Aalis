@@ -183,7 +183,7 @@ afterAll(async () => {
 async function startBrowserTools(
   config: Record<string, unknown>,
 ): Promise<{ app: App; handlers: Record<string, Handler> }> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   const host = app.bind({ provide });
   const handlers: Record<string, Handler> = {};

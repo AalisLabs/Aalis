@@ -35,7 +35,7 @@ interface Harness {
 }
 
 async function boot(): Promise<Harness> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   booted.push(app);
   await registerHubs(app);
   const host = app.bind({ contributions, logger });

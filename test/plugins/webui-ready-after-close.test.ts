@@ -50,7 +50,7 @@ describe('webui-server：就绪回调等待期间被关掉的实例醒来不再�
     logHub.onEntry(e => {
       if (e.level === 'warn' || e.level === 'error') logs.push(e.message);
     });
-    const app = new App({ name: 'T', logLevel: 'warn', logHub });
+    const app = new App({ logLevel: 'warn', logHub });
     provideEvents(app);
     cleanups.push(() => app.stop());
     provideHostPaths(app, home);
@@ -111,7 +111,7 @@ describe('webui-server：就绪回调等待期间被关掉的实例醒来不再�
       if (e.level === 'warn' || e.level === 'error') logs.push(e.message);
     });
     // 宽限给短：互等时停用到宽限就放弃，用例不必等满默认值
-    const app = new App({ name: 'T', logLevel: 'warn', logHub, disposeTimeoutMs: 500 });
+    const app = new App({ logLevel: 'warn', logHub, disposeTimeoutMs: 500 });
     cleanups.push(() => app.stop());
     let release!: () => void;
     const gate = new Promise<void>(r => {

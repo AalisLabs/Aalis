@@ -5,7 +5,7 @@ import plugin from '../../packages/plugin-package-manager/src/index.js';
 
 // 包管理往宿主的安装集里装包，安装集只来自 host-paths：宿主不提供时不激活，不回落到工作目录操作包
 it('宿主不提供 host-paths 时不激活，不回落到工作目录操作包', async () => {
-  const app = new App({ name: 'config-test', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   const caps = app.bind({ provide, services });
   const execFile = vi.fn();
   const readExternalFile = vi.fn();

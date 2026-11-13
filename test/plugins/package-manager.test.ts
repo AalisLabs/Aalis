@@ -1304,7 +1304,7 @@ describe('自锁闸：生产接线算出的撤销通道名单', () => {
   async function bootWithChannels() {
     const { App, definePlugin, defineService, provide, services } = await import('../../packages/core/src/index.js');
     const packageManagerPlugin = (await import('../../packages/plugin-package-manager/src/index.js')).default;
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
 
     /** 提供单个服务的桩插件：实例 id = 包名，于是 contextId 也是包名（与真实加载器一致）。 */
     const stubPlugin = (pkg: string, service: string) => {
@@ -1549,7 +1549,7 @@ describe('生产接线：装卸按插件名（即包名），卸载清理全部�
     const CONSUMER = 'audit-pm-consumer';
     const PAGE = '/abs-pm-dependents';
     const dep = defineService<object>('audit-pm-dep');
-    const { app } = hostedApp({ name: 'PM' });
+    const { app } = hostedApp();
     productionApps.push(app);
     const host = app.bind({ provide, services });
 
@@ -1599,7 +1599,7 @@ describe('生产接线：装卸按插件名（即包名），卸载清理全部�
     const upstream = defineService<object>('audit-pm-upstream');
     const dep = defineService<object>('audit-pm-waiting-dep');
     const gate = deferred<void>();
-    const { app } = hostedApp({ name: 'PM' }, { slowThresholdMs: 20 });
+    const { app } = hostedApp({}, { slowThresholdMs: 20 });
     productionApps.push(app);
     try {
       const host = app.bind({ provide, services });
@@ -1676,7 +1676,7 @@ describe('生产接线：装卸按插件名（即包名），卸载清理全部�
       };
       place('zz-pm-holder', 'zz-pm-holder');
 
-      const { app, store } = hostedApp({ name: 'PM' });
+      const { app, store } = hostedApp();
       productionApps.push(app);
       const host = app.bind({ provide, services });
       const discovery = createPluginDiscovery(app, createNodeModulesPluginLoader(proj), store);
@@ -1737,7 +1737,7 @@ describe('生产接线：装卸按插件名（即包名），卸载清理全部�
       );
       writeFileSync(join(dir, 'index.mjs'), `export default { name: "${pkg}", apply() {} };\n`);
 
-      const { app, store } = hostedApp({ name: 'PM', plugins: { [pkg]: { token: 'keep-me' } } });
+      const { app, store } = hostedApp({ plugins: { [pkg]: { token: 'keep-me' } } });
       productionApps.push(app);
       const host = app.bind({ provide, services });
       await app.plugin(definePlugin({ name: pkg, apply() {} }), { token: 'keep-me' });
@@ -1797,7 +1797,7 @@ describe('生产接线：装卸按插件名（即包名），卸载清理全部�
         `export default { name: "${pkg}", apply() { throw new Error("缺少配置项 apiKey"); } };\n`,
       );
 
-      const { app, store } = hostedApp({ name: 'PM' });
+      const { app, store } = hostedApp();
       productionApps.push(app);
       const host = app.bind({ provide, services });
       const discovery = createPluginDiscovery(app, createNodeModulesPluginLoader(proj), store);
@@ -1865,7 +1865,7 @@ describe('生产接线：装卸按插件名（即包名），卸载清理全部�
 
   it('宿主不提供重启服务：更新装完，回执写明原因，包管理照常可用', async () => {
     const ROOT_DIR = '/abs-pm-norestart';
-    const { app } = hostedApp({ name: 'PM' });
+    const { app } = hostedApp();
     productionApps.push(app);
     const host = app.bind({ provide, services });
     host.provide.use(
@@ -1892,7 +1892,7 @@ describe('生产接线：装卸按插件名（即包名），卸载清理全部�
 
   it('宿主提供重启服务：更新装完后请它重启一次，带上回滚凭据（来由、要还原的文件、还原后的安装命令）', async () => {
     const ROOT_DIR = '/abs-pm-restart';
-    const { app } = hostedApp({ name: 'PM' });
+    const { app } = hostedApp();
     productionApps.push(app);
     const host = app.bind({ provide, services });
     const asked: Array<{ rollback?: RestartRollback } | undefined> = [];
@@ -2320,7 +2320,7 @@ describe('停用、重启与停机时打断在途的 npm（中止信号接本插
       appOptions: Parameters<typeof hostedApp>[1] = {},
       setup?: (app: App) => void,
     ) {
-      const { app } = hostedApp({ name: 'PM' }, appOptions);
+      const { app } = hostedApp({}, appOptions);
       productionApps.push(app);
       const host = app.bind({ provide, services });
       host.provide.use(defineService<object>('process'), fake.proc);

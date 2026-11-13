@@ -14,7 +14,6 @@
 
 ```ts
 interface AalisConfig {
-  name: string;
   logLevel: string;
   plugins: Record<string, Record<string, unknown>>;
   /** 被禁用的插件实例 id；宿主登记插件时据此以禁用态登记 */

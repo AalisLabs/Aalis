@@ -172,7 +172,7 @@ const ACTIVE_IDS = [
 ];
 
 async function loadStack(replies: ProbeReply[]): Promise<Stack> {
-  const app = new App({ name: 'PP', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ events, memory, agent });
   const recorder: Message[][] = [];

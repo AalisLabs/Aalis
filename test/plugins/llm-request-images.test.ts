@@ -45,7 +45,7 @@ function stub(modelId: string): unknown[][] {
 }
 
 async function modelOf(plugin: PluginDefinition): Promise<LLMModel> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   apps.push(app);
   await app.plugin(plugin, { apiKey: 'test-key' });

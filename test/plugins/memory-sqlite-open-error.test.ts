@@ -57,7 +57,7 @@ function recordingLogger(): Logger & { errors: unknown[][] } {
 
 async function activate(path = join(dir, 'aalis.db'), resolveError?: Error, config: Record<string, unknown> = {}) {
   const logger = recordingLogger();
-  const app = new App({ name: 'T', logger });
+  const app = new App({ logger });
   apps.push(app);
   app.bind({ provide }).provide.use(storage, fakeStorage(path, resolveError));
   await app.plugins.register(memorySqlite, config);

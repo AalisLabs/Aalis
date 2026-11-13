@@ -56,7 +56,7 @@ async function setup(opts: SetupOptions = {}) {
   hub.onEntry(entry => {
     if (entry.level === 'warn') warns.push(entry.message);
   });
-  const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+  const app = new App({ logLevel: 'warn', logHub: hub });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, hooks, memory, messageArchive });

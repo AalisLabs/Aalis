@@ -357,7 +357,7 @@ export function registerPluginRoutes(expressApp: express.Express, caps: PluginRo
       res.status(400).json({ error: issuesText(invalid) });
       return;
     }
-    // 写进文档的是按词汇换算后的值（加了引号的数字转成数字、写成数字的名称转成字符串）：runtime 启动时
+    // 写进文档的是按词汇换算后的值（加了引号的数字转成数字）：runtime 启动时
     // 直接读这几个键，不经 parseConfig
     const values = parseConfig(CORE_CONFIG_SCHEMA, picked);
     const previous = Object.fromEntries(changed.map(k => [k, current[k]]));

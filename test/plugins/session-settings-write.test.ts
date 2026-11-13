@@ -367,7 +367,7 @@ describe('存放', () => {
 
   it('宿主没有提供配置文档：平台档与平台类型档为空，写全局层与这两层被拒，场所与本会话照写', async () => {
     const a = fieldsPlugin('zz-a', SCHEMA);
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     const host = app.bind({ provide, sessionManager, sessionSettings });

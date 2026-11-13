@@ -167,9 +167,7 @@ describe('webui-server 前端偏好切换：重挂不依赖落盘成功', () => 
   });
 
   it('宿主没提供配置文档：POST/DELETE prefer 都回 503，偏好与静态目录都不动', async () => {
-    const { host, dirA, home, prefer, unprefer } = await boot(
-      new App({ name: 'T', logLevel: 'error', logger: silentLogger() }),
-    );
+    const { host, dirA, home, prefer, unprefer } = await boot(new App({ logLevel: 'error', logger: silentLogger() }));
     const res = await prefer();
     expect(res.status).toBe(503);
     expect(host.webuiClient.use.getClientDir(), '改了却存不下：运行态不动').toBe(dirA);

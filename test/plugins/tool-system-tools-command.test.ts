@@ -22,7 +22,7 @@ afterEach(async () => {
 
 describe('/tools', () => {
   it('shell 开着但没有 process 服务：照列 shell', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     const host = app.bind({ provide, commands: commandsService });

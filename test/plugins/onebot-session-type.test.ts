@@ -79,7 +79,7 @@ async function boot(protocol: 'v11' | 'v12') {
     error() {},
     child: () => logger,
   };
-  const app = new App({ name: 'T', logLevel: 'error', logger });
+  const app = new App({ logLevel: 'error', logger });
   cleanups.push(() => app.stop());
   await registerHubs(app);
   const host = app.bind({ provide, events, sessionManager });

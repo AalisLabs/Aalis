@@ -83,7 +83,7 @@ afterEach(async () => {
 async function boot(
   decide: (request: ChatModelRequest, n: number) => ChatResponse = (_r, n) => ({ content: `<答${n}>` }),
 ) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const model = new StepModel(decide, 4096);

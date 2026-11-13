@@ -26,7 +26,7 @@ afterEach(async () => {
 });
 function world(doc: Partial<AalisConfig> = {}, logger?: Logger) {
   const store = createConfigStore(doc);
-  const app = new App({ name: 'T', logLevel: 'error', logger });
+  const app = new App({ logLevel: 'error', logger });
   apps.push(app);
   return { app, store, discovery: (loader: PluginLoader) => createPluginDiscovery(app, loader, store) };
 }

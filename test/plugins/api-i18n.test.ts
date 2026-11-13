@@ -86,7 +86,7 @@ describe('outputLanguageFor', () => {
   });
 
   it('i18n 在场：取读者语言链的第一项，写成「自称（标签）」；没有语言包的语言照取', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     provideEvents(app);
     apps.push(app);
     const setLanguage = provideHostLanguage(app, ['ja-JP', 'zh-CN']);

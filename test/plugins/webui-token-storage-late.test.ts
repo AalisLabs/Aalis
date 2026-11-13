@@ -85,7 +85,7 @@ describe('webui-server 的 token 与访问凭据文件', () => {
     mkdirSync(join(base, 'state'), { recursive: true });
     mkdirSync(join(base, 'workspace'), { recursive: true });
     port = await freePort();
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     provideEvents(app);
     provideHostPaths(app, base);
   });

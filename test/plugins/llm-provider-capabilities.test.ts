@@ -34,7 +34,7 @@ async function capabilitiesOf(
   config: Record<string, unknown>,
 ): Promise<Record<string, string[]>> {
   stubModels(ids);
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   const host = app.bind({ llm });
   await app.plugin(plugin, config);

@@ -1,13 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  App,
-  type AppOptions,
-  definePlugin,
-  defineService,
-  type Logger,
-  lifecycle,
-  provide,
-} from '../../packages/core/src/index.js';
+import { App, definePlugin, defineService, type Logger, lifecycle, provide } from '../../packages/core/src/index.js';
 
 // App 外壳的可观测行为：构造选项、注入的 logger 出错、启动横幅，以及启动与停机互斥。
 
@@ -29,8 +21,6 @@ function recordingLogger(): Logger & { messages(level: Level): string[] } {
   return logger;
 }
 
-const base = (name = 'T'): Pick<AppOptions, 'name' | 'logLevel'> => ({ name, logLevel: 'error' });
-
 const apps: App[] = [];
 afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop().catch(() => {});
@@ -41,13 +31,13 @@ function track<T extends App>(app: T): T {
 }
 
 describe('构造选项', () => {
-  it('名称、注入的 logger 与版本号都生效', async () => {
+  it('注入的 logger 与版本号都生效', async () => {
     const log = recordingLogger();
-    const app = track(new App({ ...base('Factory'), logger: log, version: '0.0.0-test' }));
+    const app = track(new App({ logger: log, version: '0.0.0-test' }));
 
     app.logger.warn('经 app.logger 写入');
     expect(log.messages('warn')).toEqual(['经 app.logger 写入']);
-    expect(log.messages('info')[0]).toBe('Aalis Core 0.0.0-test - Factory');
+    expect(log.messages('info')[0]).toBe('Aalis Core 0.0.0-test');
 
     // 注册即激活，停机走完整路径
     const applied: string[] = [];
@@ -78,7 +68,7 @@ describe('注入的 logger 出错', () => {
           throw new Error('child failed');
         },
       };
-      const app = track(new App({ name: 'T', logger }));
+      const app = track(new App({ logger }));
       const dep = defineService<object>('zz-quiet-logger-dep');
       let disposed = 0;
       const plugin = definePlugin({
@@ -117,26 +107,20 @@ describe('注入的 logger 出错', () => {
 describe('启动横幅', () => {
   it('宿主注入 version：横幅带「Core <版本>」段', () => {
     const log = recordingLogger();
-    track(new App({ ...base('Banner'), logger: log, version: '1.2.3' }));
-    expect(log.messages('info')).toEqual(['Aalis Core 1.2.3 - Banner']);
+    track(new App({ logger: log, version: '1.2.3' }));
+    expect(log.messages('info')).toEqual(['Aalis Core 1.2.3']);
   });
 
   it('未注入 version：横幅省略版本段，只留「Core」', () => {
     const log = recordingLogger();
-    track(new App({ ...base('Banner'), logger: log }));
-    expect(log.messages('info')).toEqual(['Aalis Core - Banner']);
-  });
-
-  it('未注入 name：横幅用默认名 Aalis', () => {
-    const log = recordingLogger();
     track(new App({ logger: log }));
-    expect(log.messages('info')).toEqual(['Aalis Core - Aalis']);
+    expect(log.messages('info')).toEqual(['Aalis Core']);
   });
 });
 
 describe('启动与停机互斥', () => {
   it('重复调用 start 返回同一个 Promise，就绪回调只跑一次', async () => {
-    const app = track(new App(base()));
+    const app = track(new App({ logLevel: 'error' }));
     let ready = 0;
     app.bind({ lifecycle }).lifecycle.use.onReady(() => void ready++);
     const first = app.start();
@@ -147,7 +131,7 @@ describe('启动与停机互斥', () => {
 
   it('停机开始后调 start：记 warn 后直接返回，不跑启动', async () => {
     const log = recordingLogger();
-    const app = track(new App({ ...base(), logger: log }));
+    const app = track(new App({ logger: log }));
     await app.stop();
     await app.start();
     expect(log.messages('warn')).toEqual(['应用已开始停机，忽略 start()']);

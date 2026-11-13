@@ -80,7 +80,7 @@ async function boot() {
       if (req.echo) ws.send(JSON.stringify({ status: 'ok', retcode: 0, data: { user_id: SELF }, echo: req.echo }));
     });
   });
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   cleanups.push(() => app.stop());
   await registerHubs(app);
   const host = app.bind({ provide, events, messageArchive });

@@ -27,7 +27,7 @@ afterEach(async () => {
 });
 
 async function boot() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   const pages = pageHost();
   running.push({ app, pages });
   app.bind({ provide }).provide.use(webuiServer, pages.service);
@@ -195,7 +195,7 @@ describe('关系图原始数据页', () => {
 
 describe('关系图的疏密配置', () => {
   async function spacingWith(config: Record<string, unknown>) {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     const pages = pageHost();
     running.push({ app, pages });
     await registerHubs(app);

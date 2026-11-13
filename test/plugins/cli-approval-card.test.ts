@@ -83,7 +83,7 @@ async function setup({ tty = true, startupView = 'chat', owner = isOwner }: Setu
   }
   const home = mkdtempSync(join(tmpdir(), 'aalis-cli-approvals-'));
   cleanups.push(() => rmSync(home, { recursive: true, force: true }));
-  const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+  const app = new App({ logLevel: 'error', logger: silent });
   cleanups.push(() => app.stop());
   await registerHubs(app);
   await app.plugin(memoryInMemoryPlugin);

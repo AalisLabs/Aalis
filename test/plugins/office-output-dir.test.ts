@@ -21,7 +21,7 @@ async function activate(outputDir: string) {
   logHub.onEntry(entry => {
     if (entry.level === 'error') errors.push(entry.message);
   });
-  const app = new App({ name: 'T', logLevel: 'error', logHub });
+  const app = new App({ logLevel: 'error', logHub });
   apps.push(app);
   const host = app.bind({ provide });
   host.provide.use(tools, {

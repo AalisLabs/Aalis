@@ -58,7 +58,7 @@ describe('重启之后的后台任务', () => {
     ];
     /** 起一个应用。archive 给了就用它当存档（前一个应用留下的那一份），不给就装内存记忆插件 */
     const boot = async (archive?: MemoryService) => {
-      const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+      const app = new App({ logLevel: 'error', logger: silent });
       apps.push(app);
       provideHostPaths(app, home);
       await registerHubs(app);

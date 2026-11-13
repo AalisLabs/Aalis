@@ -80,7 +80,7 @@ function stubFetch(probe: Probe): void {
 }
 
 async function bootAsr(plugin: PluginDefinition, config: Record<string, unknown>, probe: Probe): Promise<ASRService> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   const host = app.bind({ provide, asr });
   host.provide.use(processService, {

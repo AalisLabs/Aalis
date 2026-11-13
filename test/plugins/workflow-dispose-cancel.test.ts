@@ -58,7 +58,7 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
    * onIngress：网关替身收到 agent 节点的指令时调
    */
   async function boot(testTools: TestTool[], onIngress?: () => void): Promise<WorkflowService> {
-    app = new App({ name: 'T', logLevel: 'error', disposeTimeoutMs: GRACE_MS });
+    app = new App({ logLevel: 'error', disposeTimeoutMs: GRACE_MS });
     await registerHubs(app);
     provideHostPaths(app, base);
     await app.plugin(storageLocalPlugin, {

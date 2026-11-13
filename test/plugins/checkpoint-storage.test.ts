@@ -40,7 +40,7 @@ describe('checkpoint × storage (真 fs)', () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-cp-'));
     ws = join(base, 'ws');
     mkdirSync(ws, { recursive: true });
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     await registerHubs(app);
     provideHostPaths(app, base);
     await app.plugins.register(storageLocalPlugin, {
@@ -386,7 +386,7 @@ describe('checkpoint rootDir 配置', () => {
   });
 
   it('真实 App 激活在注册 checkpoint 服务前拒绝错误 rootDir', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     try {
       await registerHubs(app);
       app.bind({ provide }).provide.use(storageService, {} as never);

@@ -32,7 +32,6 @@ function capturingApp(opts?: { disposeTimeoutMs?: number }): { app: App; lines: 
   const { logger, lines } = capturingLogger();
   return {
     app: new App({
-      name: 'T',
       logLevel: 'error',
       logger,
       disposeTimeoutMs: opts?.disposeTimeoutMs,
@@ -179,7 +178,7 @@ describe('App.stop() 单飞与停机窗口', () => {
       // 错误实现重新进入 runStop 时只记录，不再次递归，以免击穿 worker 栈。
       if (calls === 1) nested = app.stop();
     };
-    app = new App({ name: 'T', logLevel: 'error', logger });
+    app = new App({ logLevel: 'error', logger });
     apps.push(app);
     const stopping = app.stop();
     await stopping;
@@ -197,7 +196,7 @@ describe('App.stop() 单飞与停机窗口', () => {
   });
 
   it('已静置时 Promise.resolve().then(bounce) 与 stop() 并行：bounce=false 且停机后 disposed', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await app.plugin(
       definePlugin({

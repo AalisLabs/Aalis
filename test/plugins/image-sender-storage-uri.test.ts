@@ -53,7 +53,7 @@ describe('send_attachment 的 storage_uri', () => {
     writeFileSync(join(base, 'state', 'images', 'onebot_x_group_2', 'other.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0]));
     mkdirSync(join(base, 'state', 'secret'), { recursive: true });
     writeFileSync(join(base, 'state', 'secret', 'config.yaml'), 'token: PLACEHOLDER\n');
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     provideEvents(app);
     handlers = {};
     const host = app.bind({ provide, events });

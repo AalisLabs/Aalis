@@ -9,7 +9,7 @@
 ```typescript
 import { App } from '@aalis/core';
 
-const app = new App({ name: 'demo', logLevel: 'info' });
+const app = new App({ logLevel: 'info' });
 ```
 
 core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念，也不持有配置文档。插件从哪里来、配置存在哪里由宿主负责：
@@ -20,7 +20,6 @@ Node 宿主 `@aalis/runtime` 的做法见文末与 [运行态与配置文档](co
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `name` | `string` | 应用名，只用于启动横幅；缺省 `'Aalis'` |
 | `logLevel` | `LogLevel` | 默认 Logger 的级别；缺省 `'info'`。注入了 `logger` 时不用 |
 | `logHub` | `LogHub` | 自定义日志通道；缺省=`LogHub.default`（进程级共享）。注入了 `logger` 时不用 |
 | `logger` | `Logger` | 自定义 Logger 实现；缺省=`DefaultLogger`（写入 logHub）。注入的与缺省的都由 App 包一层再用：日志方法抛错或返回被拒的 Promise 不传进 core 与插件，`child` 派生失败（抛错，或派生出的不是日志器）时沿用上一层，`app.logger` 也是包过的这层。插件管理器（作用域 `plugins`）的日志推迟一个微任务交给它，彼此先后不变：日志回调里发起的管理动作或 `stop()` 看到的是改完之后的状态；插件自己的日志不推迟。要按 App 固定日志时间戳，注入 `new DefaultLogger('aalis', level, hub, now)` |
@@ -35,7 +34,7 @@ Node 宿主 `@aalis/runtime` 的做法见文末与 [运行态与配置文档](co
 - 初始化服务容器、logger 及根激活
 - 创建 `ActivationHost`：直接登记 `provide` 的提供者来自举，再由根激活经 `provide` 独占登记其余四项基础服务
 - 创建 `PluginManager`，由根激活经 `provide` 独占登记 `appService` / `pluginsService`：`appService` 在容器里是只有 `stop` 的对象，`pluginsService` 在容器里是按调用方的激活交出门面的函数，门面上只有契约列出的方法；App / PluginManager 本体不外露；`getPlugin` 交出调用时刻的浅快照，不含内部激活记录
-- 打印启动横幅（`name` 与宿主注入的 `version`）
+- 打印启动横幅（带宿主注入的 `version`）
 
 配置文档与其中的服务偏好由宿主接入，不在构造时处理：runtime 的 `installHostConfig` 在登记任何插件之前应用偏好。
 

@@ -77,7 +77,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
   });
 
   async function world() {
-    const app = new App({ name: 'T', logLevel: 'error', logger: silentLogger() });
+    const app = new App({ logLevel: 'error', logger: silentLogger() });
     apps.push(app);
     const host = app.bind({ provide });
     const reg = makeToolRegistry(silentLogger());
@@ -185,7 +185,6 @@ describe('tools 绑定：同名替换与整体重挂', () => {
   function warningWorld() {
     const warnings: string[] = [];
     const app = new App({
-      name: 'T',
       logLevel: 'error',
       logger: {
         ...silentLogger(),
@@ -295,7 +294,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
 
 describe('agent 预处理器退订按条目身份', () => {
   it('同名替换后，旧退订闭包只摘自己的中间件，不删新登记的条目', async () => {
-    const app = new App({ name: 'T', logLevel: 'error', logger: silentLogger() });
+    const app = new App({ logLevel: 'error', logger: silentLogger() });
     await registerHubs(app);
     await app.plugins.register(agentPlugin, {});
     await app.plugins.idle();

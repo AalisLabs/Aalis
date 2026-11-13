@@ -45,7 +45,7 @@ describe('workflow once 触发器只触发一次（真 fs 持久化）', () => {
 
   /** workspaceDeletable=false：定义目录所在根不可删，删除定义文件必然失败 */
   const boot = async (workspaceDeletable = true): Promise<{ app: App; svc: WorkflowService }> => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     provideHostPaths(app, base);

@@ -59,7 +59,7 @@ afterEach(async () => {
 
 /** 经插件开临时目录下的 aalis.db */
 async function activate(): Promise<{ app: App; mem: SQLiteMemoryService }> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   const roots = [{ name: 'data', readable: true, writable: true, deletable: true }] as unknown as StorageRootInfo[];
   app.bind({ provide }).provide.use(storage, {

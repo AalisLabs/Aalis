@@ -25,7 +25,7 @@ interface Captured {
 }
 
 async function runInbound(message: Record<string, unknown>): Promise<Captured> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   await app.plugin(gatewayPlugin);
   await app.plugin(commandsPlugin);

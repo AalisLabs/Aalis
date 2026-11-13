@@ -83,7 +83,7 @@ afterEach(async () => {
 });
 
 function newApp(): App {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   return app;
 }

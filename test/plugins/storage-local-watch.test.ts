@@ -40,7 +40,7 @@ describe('storage-local watch', () => {
     // data 根是插件内部根，映射到数据目录的 state/
     mkdirSync(join(base, 'state', 'notes'), { recursive: true });
     writeFileSync(join(base, 'state', 'notes', 'a.txt'), 'v0');
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     provideHostPaths(app, base);
     await app.plugin(storageLocal, {});
     await app.plugins.idle();

@@ -56,7 +56,7 @@ function stubFetch(models: Record<string, { capabilities: string[] | null; reply
 
 async function start(models: Parameters<typeof stubFetch>[0]): Promise<(id: string) => LLMModel> {
   stubFetch(models);
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   apps.push(app);
   await app.plugin(ollamaPlugin, { baseUrl: 'http://127.0.0.1:11434' });

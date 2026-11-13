@@ -39,7 +39,7 @@ async function setup(early: (probe: DefaultLogger) => void) {
   hub.onEntry(entry => appendFileSync(file, formatLogLine(entry)));
   const probe = new DefaultLogger('aalis:zz-probe', 'info', hub);
   early(probe);
-  const app = new App({ name: 'T', logLevel: 'error', logHub: hub });
+  const app = new App({ logLevel: 'error', logHub: hub });
   provideEvents(app);
   cleanups.push(() => app.stop());
   provideHostLogs(app, { hub, file });

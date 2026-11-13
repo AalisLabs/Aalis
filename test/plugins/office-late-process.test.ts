@@ -18,7 +18,7 @@ afterEach(async () => {
 
 describe('office：process 晚于本插件上线', () => {
   it('pdf_convert 调到之后上线的 process 服务', async () => {
-    const app = new App({ name: 'T', logLevel: 'error', logHub: new LogHub() });
+    const app = new App({ logLevel: 'error', logHub: new LogHub() });
     apps.push(app);
     const host = app.bind({ provide });
     let convert: Omit<RegisteredTool, 'pluginName'> | undefined;

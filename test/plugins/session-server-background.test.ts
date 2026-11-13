@@ -83,7 +83,7 @@ function registerBackgroundTool(host: { tools: { use: { register(tool: never): u
  * 并以 aborted 结束这个会话未结束的回合。registry 为假时不装工具注册表（没有后台任务登记）
  */
 async function setup({ registry = true }: { registry?: boolean } = {}) {
-  const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+  const app = new App({ logLevel: 'error', logger: silent });
   apps.push(app);
   const home = mkdtempSync(join(tmpdir(), 'aalis-session-background-'));
   homes.push(home);
@@ -510,7 +510,7 @@ describe('没有后台任务登记', () => {
  * 不为起标题调模型）与一条握过手的连接
  */
 async function setupWithAgent(responses: ChatResponse[]) {
-  const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+  const app = new App({ logLevel: 'error', logger: silent });
   apps.push(app);
   const home = mkdtempSync(join(tmpdir(), 'aalis-session-background-'));
   homes.push(home);

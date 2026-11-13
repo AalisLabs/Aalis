@@ -99,7 +99,7 @@ async function startSidecar(speak: boolean) {
 }
 
 async function setup(opts: { speak: boolean; flow?: Record<string, unknown> }) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   booted.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, hooks, gateway, messageArchive });

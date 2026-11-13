@@ -53,7 +53,7 @@ async function start(config: Record<string, unknown>) {
   hub.onEntry(entry => {
     if (entry.level === 'warn') warns.push(entry.message);
   });
-  const app = new App({ name: 'T', logLevel: 'info', logHub: hub });
+  const app = new App({ logLevel: 'info', logHub: hub });
   provideEvents(app);
   apps.push(app);
   await app.plugin(llmOpenai, config);

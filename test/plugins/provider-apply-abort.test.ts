@@ -58,7 +58,7 @@ function world() {
     error: record('error'),
     child: () => logger,
   };
-  const app = new App({ name: 'T', logger, disposeTimeoutMs: GRACE_MS });
+  const app = new App({ logger, disposeTimeoutMs: GRACE_MS });
   provideEvents(app);
   apps.push(app);
   return { app, lines };

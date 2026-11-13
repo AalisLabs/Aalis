@@ -81,7 +81,6 @@ const off = definePlugin({ name: 'off', apply() {} });
 describe('停机中的启用、禁用、改配置', () => {
   it('插件还在注册表里：回 409，说明被拒、配置未更改，文档与文件都不动', async () => {
     const w = world({
-      name: 'T',
       logLevel: 'error',
       plugins: { target: { v: 1 }, off: {} },
       disabledPlugins: ['off'],
@@ -104,7 +103,7 @@ describe('停机中的启用、禁用、改配置', () => {
   });
 
   it('插件不存在：仍回 404', async () => {
-    const w = world({ name: 'T', logLevel: 'error', plugins: {} });
+    const w = world({ logLevel: 'error', plugins: {} });
     await w.boot();
     for (const reply of [await w.enable('ghost'), await w.disable('ghost'), await w.put('ghost', {})]) {
       expect(reply.status).toBe(404);

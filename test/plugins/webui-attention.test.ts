@@ -166,7 +166,7 @@ const approval = (id: string, sessionId: string): Approval => ({
 });
 
 async function start(extra: Parameters<App['plugin']>[0][] = [], options: { slowThresholdMs?: number } = {}) {
-  const app = new App({ name: 'T', logLevel: 'error', logger: silent, ...options });
+  const app = new App({ logLevel: 'error', logger: silent, ...options });
   provideEvents(app);
   apps.push(app);
   const port = await freePort();

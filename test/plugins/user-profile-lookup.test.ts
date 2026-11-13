@@ -14,7 +14,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 const TS = Date.UTC(2026, 0, 15, 8, 0, 0);
 
 async function setup() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, memory });
   host.provide.use(llm, { chat: async () => ({ content: '' }) } as never);

@@ -29,7 +29,6 @@ describe('排队的服务下线变化', () => {
   beforeEach(async () => {
     releases = [];
     app = new App({
-      name: 'queued-services',
       logLevel: 'error',
       logHub: new LogHub(),
     });

@@ -18,7 +18,7 @@ function world(): { app: App; warns: string[] } {
     error() {},
     child: () => logger,
   };
-  const app = new App({ name: 'T', logger });
+  const app = new App({ logger });
   apps.push(app);
   return { app, warns };
 }
@@ -95,7 +95,7 @@ describe('撤回链取走之后经 track 登记：就地执行', () => {
 
 describe('钉住的句柄经 binder 的 track 登记的清理', () => {
   it('提供者撤下、跟随的清理落定后，这项清理当场执行，不等消费者关闭', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     type Holder = { hold(off: () => void): () => void };
     const holder = defineService<{ v: number }, Holder>('zz-pin-track', port => ({ hold: off => port.track(off) }));

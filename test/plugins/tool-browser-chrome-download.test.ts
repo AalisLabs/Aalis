@@ -103,7 +103,7 @@ async function start(proc: object, disposeTimeoutMs?: number, config: Record<str
     if (entry.level === 'debug') debugs.push(entry.message);
     if (entry.level === 'error') errors.push(entry.message);
   });
-  const app = new App({ name: 'T', logLevel: 'debug', logHub: hub, disposeTimeoutMs });
+  const app = new App({ logLevel: 'debug', logHub: hub, disposeTimeoutMs });
   provideEvents(app);
   apps.push(app);
   const host = app.bind({ provide });

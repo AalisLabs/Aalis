@@ -75,7 +75,7 @@ afterEach(() => {
 /** 按给定优先级提供各 memory 后登记 session-manager：apply 等读表（含重试）结束，推进 advanceMs 后再等登记返回 */
 async function setup(stores: Array<[ReturnType<typeof fakeMemory>, number]>, advanceMs: number) {
   const logger = recordingLogger();
-  const app = new App({ name: 'T', logger });
+  const app = new App({ logger });
   await registerHubs(app);
   const host = app.bind({ provide, sessionManager });
   for (const [store, priority] of stores) host.provide.use(memory, store as never, { priority });
@@ -120,7 +120,7 @@ describe('session-manager 会话表加载失败', () => {
   it('重试间隔中停机：不等间隔走完就停下，不再读表、不写后端，也不再发布服务与登记', async () => {
     const store = failing(fakeMemory({ 'old-1': original }), Number.POSITIVE_INFINITY);
     const logger = recordingLogger();
-    const app = new App({ name: 'T', logger });
+    const app = new App({ logger });
     await registerHubs(app);
     app.bind({ provide }).provide.use(memory, store as never);
     const registered = app.plugin(sessionManagerPlugin, {});
@@ -152,7 +152,7 @@ describe('session-manager 会话表加载失败', () => {
       });
     };
     const logger = recordingLogger();
-    const app = new App({ name: 'T', logger });
+    const app = new App({ logger });
     await registerHubs(app);
     app.bind({ provide }).provide.use(memory, store as never);
     const registered = app.plugin(sessionManagerPlugin, {});

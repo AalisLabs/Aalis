@@ -20,7 +20,7 @@ afterEach(async () => {
 });
 
 async function world() {
-  const app = new App({ name: 'preference-unchanged', logLevel: 'error', logHub: new LogHub() });
+  const app = new App({ logLevel: 'error', logHub: new LogHub() });
   apps.push(app);
   const host = app.bind({ provide, services, store: optional(store) });
   await app.plugins.idle();

@@ -2,8 +2,6 @@ import { defineLocale } from '@aalis/schema-i18n';
 import type { Source } from '../texts.js';
 
 export default defineLocale<Source>()({
-  nameLabel: 'App name',
-  nameDescription: 'Display name of the app, used in startup logs and the interface',
   logLevelLabel: 'Log level',
   logLevelDescription: 'Log output level',
   slowThresholdLabel: 'Slow operation threshold (ms)',

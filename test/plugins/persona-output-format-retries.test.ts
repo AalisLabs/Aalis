@@ -27,7 +27,7 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
   /** 选中的卡写成主卡 default.yaml */
   const boot = async (name: string): Promise<void> => {
     writeFileSync(join(base, 'self', 'persona', 'default.yaml'), CARDS[name]);
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     await registerHubs(app);
     provideHostPaths(app, base);
     // storage 先装：persona 的 storage 是可选依赖，缺席时它照样激活，只是一张卡都读不到

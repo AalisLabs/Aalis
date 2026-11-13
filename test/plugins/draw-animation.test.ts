@@ -76,7 +76,7 @@ describe('draw 动画（真浏览器 + 真 ffmpeg）', () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-draw-anim-'));
     mkdirSync(join(base, 'ws'), { recursive: true });
     mkdirSync(join(base, 'tmp'), { recursive: true });
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     provideHostPaths(app, base);
     await app.plugin(storageLocal, {
       roots: [
@@ -144,7 +144,7 @@ describe('draw_animation 工具全流（真运行时：检查帧落盘）', () =
     mkdirSync(join(base2, 'ws'), { recursive: true });
     mkdirSync(join(base2, 'tmp'), { recursive: true });
     mkdirSync(join(base2, 'state'), { recursive: true });
-    const app2 = new App({ name: 'T', logLevel: 'error' });
+    const app2 = new App({ logLevel: 'error' });
     try {
       provideHostPaths(app2, base2);
       await app2.plugin(storageLocal, {});
@@ -186,7 +186,7 @@ describe('draw_animation 工具全流（真运行时：检查帧落盘）', () =
   it('降级引导：结果 message 引导直接发送，不把自检设为默认路径（延迟根因治理）', async () => {
     const base4 = mkdtempSync(join(tmpdir(), 'aalis-draw-msg-'));
     for (const d of ['state', 'tmp']) mkdirSync(join(base4, d), { recursive: true });
-    const app4 = new App({ name: 'T', logLevel: 'error' });
+    const app4 = new App({ logLevel: 'error' });
     try {
       provideHostPaths(app4, base4);
       await app4.plugin(storageLocal, {});
@@ -220,7 +220,7 @@ describe('draw_animation 工具全流（真运行时：检查帧落盘）', () =
   it('draw_image：结果里的宽高是画布的 CSS 尺寸，落盘的 PNG 像素 = 宽高×scale', async () => {
     const base5 = mkdtempSync(join(tmpdir(), 'aalis-draw-png-'));
     for (const d of ['state', 'tmp']) mkdirSync(join(base5, d), { recursive: true });
-    const app5 = new App({ name: 'T', logLevel: 'error' });
+    const app5 = new App({ logLevel: 'error' });
     try {
       provideHostPaths(app5, base5);
       await app5.plugin(storageLocal, {});
@@ -248,7 +248,7 @@ describe('draw_animation 工具全流（真运行时：检查帧落盘）', () =
   it('source 超字节上限：handler 拒绝、不触发渲染（删掉检查→此锚红）', async () => {
     const base3 = mkdtempSync(join(tmpdir(), 'aalis-draw-cap-'));
     for (const d of ['state', 'tmp']) mkdirSync(join(base3, d), { recursive: true });
-    const app3 = new App({ name: 'T', logLevel: 'error' });
+    const app3 = new App({ logLevel: 'error' });
     try {
       provideHostPaths(app3, base3);
       await app3.plugin(storageLocal, {});

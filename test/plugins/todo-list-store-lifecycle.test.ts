@@ -18,7 +18,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 type ToolHandler = (args: Record<string, unknown>, ctx: unknown) => Promise<string>;
 
 async function boot() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   await app.plugins.register(memoryInMemory, {});
   const host = app.bind({ provide, services, hooks, events });

@@ -100,7 +100,7 @@ describe('flow-control 禁言表持久化', () => {
       JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: Date.now() + 3600_000 } }),
     );
 
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     await registerHubs(app);
     provideHostPaths(app, base);
     await app.pluginAll([storageLocal()]);
@@ -114,7 +114,7 @@ describe('flow-control 禁言表持久化', () => {
   });
 
   it('storage 下线：本插件随之停下、不再提供服务；重新上线后重新激活，从文件读回禁言', async () => {
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     await registerHubs(app);
     provideHostPaths(app, base);
     await app.pluginAll([storageLocal(), { definition: gatewayPlugin, config: {} }]);
@@ -139,7 +139,7 @@ describe('flow-control 禁言表持久化', () => {
       JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: Date.now() + 3600_000 } }),
     );
 
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     await registerHubs(app);
     provideHostPaths(app, base);
     await app.pluginAll([storageLocal(), { definition: gatewayPlugin, config: {} }]);
@@ -168,7 +168,7 @@ describe('flow-control 禁言表持久化', () => {
   // 自然次序收尾，经 services 现查到它调 setMuted，这笔写排在收尾的等待之后。清理也要等它落完（storage 等本插件关完才收尾）
   it('收尾之后、撤回之前才排上的写：清理等它落完，停机返回时已写进 storage', async () => {
     const p = provider();
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     await registerHubs(app);
     await app.plugin(
       definePlugin({
@@ -217,7 +217,7 @@ describe('flow-control 禁言表持久化', () => {
   // 关停只放行被 optional 边挡着的收尾，flow-control 经 required 边照样整个关完 storage 才收尾
   it('storage 提供者与 flow-control 经 optional 依赖成环：停机前排着的禁言照样写进 storage', async () => {
     const p = provider();
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     await registerHubs(app);
     await app.plugin(flowControlPlugin, {});
     await app.plugin(
@@ -252,7 +252,7 @@ describe('flow-control 禁言表持久化', () => {
     const until = Date.now() + 3600_000;
     writeFileSync(join(base, 'state', MUTES), JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: until } }));
 
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     await registerHubs(app);
     provideHostPaths(app, base);
     await app.pluginAll([
@@ -280,7 +280,7 @@ describe('flow-control 禁言表持久化', () => {
     const settle = () => new Promise(r => setTimeout(r, 150));
     const mutesPath = () => join(base, 'state', MUTES);
     const bootStorageFirst = async () => {
-      app = new App({ name: 'T', logLevel: 'error' });
+      app = new App({ logLevel: 'error' });
       await registerHubs(app);
       provideHostPaths(app, base);
       await app.pluginAll([

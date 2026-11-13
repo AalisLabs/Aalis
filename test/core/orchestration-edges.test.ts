@@ -35,7 +35,7 @@ function world() {
     error: record('error'),
     child: () => logger,
   };
-  const app = createInspectableApp({ name: 'T', logLevel: 'debug', logger });
+  const app = createInspectableApp({ logLevel: 'debug', logger });
   apps.push(app);
   const at = (level: 'debug' | 'info' | 'warn' | 'error') =>
     lines.filter(line => line.level === level).map(line => line.text);

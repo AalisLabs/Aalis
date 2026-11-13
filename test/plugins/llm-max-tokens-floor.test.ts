@@ -52,7 +52,7 @@ async function start(plugin: PluginDefinition, config: Record<string, unknown>) 
     'fetch',
     vi.fn(async () => Response.json({})),
   );
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide });

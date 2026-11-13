@@ -30,7 +30,7 @@ async function runTurn(
   incoming: IncomingMessage,
   probe: { groups?: string[]; recorder?: ChatModelRequest[] } = {},
 ): Promise<ToolCallContext | undefined> {
-  const app = new App({ name: 'E2E', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ tools, agent: agentService });
   const toolCallResponse: ChatResponse = {

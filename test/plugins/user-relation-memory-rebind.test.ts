@@ -57,7 +57,7 @@ afterEach(async () => {
 
 describe('plugin-user-relation: memory 换胜者后读写跟随当前胜者', () => {
   it('偏好切到另一个提供者后，新写入落到新胜者，插件不重启', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     const low = new StubMemory();

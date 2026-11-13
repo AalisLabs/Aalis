@@ -71,7 +71,7 @@ async function boot() {
   writeFileSync(join(cardsDir, 'default.yaml'), 'name: 主卡名\nnick_name: [主卡昵称]\ndescription: d\nprompt: p\n');
   writeFileSync(join(cardsDir, 'bob.yaml'), 'name: 副卡名\nnick_name: [副卡昵称]\ndescription: d\nprompt: p\n');
 
-  app = new App({ name: 'T', logLevel: 'error' });
+  app = new App({ logLevel: 'error' });
   provideHostPaths(app, base);
   await app.pluginAll([
     ...HUB_PLUGINS.map(definition => ({ definition })),

@@ -64,7 +64,7 @@ describe('合并转发媒体落盘按 URI 路由（真实 storage-local 多根�
       writable: true,
       deletable: true,
     });
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     provideHostPaths(app, base);
     // workspace 排第一：与默认配置同序，胜者即 workspace；data、tmp 是内部根（data 映射到数据目录的 state/），排在用户根之后
     await app.plugins.register(storageLocalPlugin, { roots: [root('workspace')] });

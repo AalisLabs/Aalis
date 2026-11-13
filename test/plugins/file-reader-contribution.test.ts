@@ -182,7 +182,7 @@ async function setup(
     owners?: Array<{ platform: string; userId: string }>;
   } = {},
 ): Promise<Fixture> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, services, events, contributions, logger });
   const store = createMemoryStorage();

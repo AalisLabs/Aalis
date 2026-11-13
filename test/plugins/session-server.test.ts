@@ -4,12 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { events } from '../../packages/api-events/src/index.js';
 import { type HookContextMap, hooks } from '../../packages/api-hooks/src/index.js';
-import {
-  type AalisConfig,
-  ConfigSaveRefusedError,
-  hostConfig,
-  saveFailureText,
-} from '../../packages/api-host-config/src/index.js';
+import { type AalisConfig, ConfigSaveRefusedError, saveFailureText } from '../../packages/api-host-config/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { type PlatformAdapter, platform } from '../../packages/api-platform/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
@@ -22,7 +17,7 @@ import {
 } from '../../packages/api-session-protocol/src/index.js';
 import { SESSION_LAYERS } from '../../packages/api-session-settings/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
-import { App, definePlugin, type Logger, provide, services } from '../../packages/core/src/index.js';
+import { type App, definePlugin, type Logger, provide, services } from '../../packages/core/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import sessionServerPlugin from '../../packages/plugin-session-server/src/index.js';
 import sessionSettingsPlugin from '../../packages/plugin-session-settings/src/index.js';
@@ -122,7 +117,7 @@ async function setup({
   apps.push(app);
   provideHome(app);
   await registerHubs(app);
-  const host = app.bind({ provide, events, hooks, services, sessionManager, sessionProtocol, hostConfig });
+  const host = app.bind({ provide, events, hooks, services, sessionManager, sessionProtocol });
   host.provide.use(memory, fakeMemory(stored) as never);
   const disk = memoryStorage(files);
   const readFile = disk.readFile.bind(disk);
@@ -188,29 +183,8 @@ describe('握手', () => {
       identity: { platform: 'webui', userId: 'console' },
       surface: 'webui',
       features: { send: false, rewind: false, compress: false, settings: true },
-      appName: 'T',
     });
     expect(c.disconnects).toEqual([]);
-  });
-
-  it('应用名取宿主配置的 name，每次握手现读：改名之后新连接拿到新名字，不用重启', async () => {
-    const { server, host } = await setup();
-    host.hostConfig.use.set('name', '<新名字>');
-    expect((await client(server()).init()).appName).toBe('<新名字>');
-  });
-
-  it('没有宿主配置时应用名是 Aalis', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
-    apps.push(app);
-    provideHome(app);
-    await registerHubs(app);
-    const host = app.bind({ provide, sessionProtocol });
-    host.provide.use(memory, fakeMemory({}) as never);
-    host.provide.use(storage, memoryStorage(new Map()));
-    await app.plugin(sessionManagerPlugin);
-    await app.plugin(sessionServerPlugin, {});
-    await app.plugins.idle();
-    expect((await client(host.sessionProtocol.use).init()).appName).toBe('Aalis');
   });
 
   it('0.x 的协议号比前两段：前两段不同回 unsupported 并断开，原因写明两边的版本，之后的帧不再处理；只差第三段照常握手', async () => {

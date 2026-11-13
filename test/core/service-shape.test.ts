@@ -63,7 +63,7 @@ function world() {
     error() {},
     child: () => logger,
   };
-  const app = new App({ name: 'shape', logger });
+  const app = new App({ logger });
   apps.push(app);
   const host = app.bind({ provide, services });
   const give = (tag: string, priority = 0) => host.provide.use(kv, impl(tag), { priority, entryId: tag });

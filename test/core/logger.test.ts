@@ -179,7 +179,6 @@ describe('AppOptions.logger 注入（Logger 接口化）', () => {
     hub.onEntry(e => hubEntries.push(e));
 
     const app = new App({
-      name: 'InjectTest',
       logLevel: 'debug',
       logger: make('custom'),
       logHub: hub,
@@ -207,7 +206,7 @@ describe('AppOptions.logger 注入（Logger 接口化）', () => {
       error: m => lines.push(`error|${m}`),
       child: child as never,
     };
-    const app = new App({ name: 'NoChild', logger: root });
+    const app = new App({ logger: root });
     await app.plugin(
       definePlugin({ name: 'p', uses: { logger }, apply: ({ logger }) => logger.use.error('插件自己的错误') }),
     );

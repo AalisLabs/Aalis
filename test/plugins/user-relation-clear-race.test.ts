@@ -24,7 +24,7 @@ afterEach(async () => {
  * 也可在 commitMetadata 执行前 / 执行后、返回前插入动作（让清空停在指定阶段）
  */
 async function makeWorld() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   const host = app.bind({ memory });
   await app.plugins.register(memoryInMemory, {});

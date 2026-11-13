@@ -74,7 +74,7 @@ async function start(home: string, config: Record<string, unknown> = {}) {
     error: (...args: unknown[]) => void warnings.push(args.map(String).join(' ')),
     child: () => logger,
   };
-  const app = new App({ name: 'T', logLevel: 'warn', logger });
+  const app = new App({ logLevel: 'warn', logger });
   provideEvents(app);
   apps.push(app);
   provideHostPaths(app, home);

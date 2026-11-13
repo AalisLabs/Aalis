@@ -161,7 +161,7 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     uri: string,
     extraArgs: Record<string, unknown> = {},
   ) {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     provideEvents(app);
     // 工具经宿主根激活的绑定门面登记，落进 plugin-tools 的真实注册表
     const host = app.bind({ services, tools, memory, events });
@@ -303,7 +303,7 @@ describe('analyze_image：存储里的图先过媒体判据、读一次、核文
     image: string,
     opts: { delivery: 'passthrough' | 'describe'; call?: ToolCallRequest; sessions?: SessionInfo[]; owner?: boolean },
   ) {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     provideEvents(app);
     const host = app.bind({ services, tools, memory, events });
     await app.plugin(toolsPlugin);
@@ -453,7 +453,7 @@ describe('analyze_image：存储里的图先过媒体判据、读一次、核文
 
 describe('update_image_description：只改调用所在会话', () => {
   it('传 session_id 被参数校验拒；不传时改调用所在会话', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     provideEvents(app);
     const updates: Array<[string, string, string]> = [];
     const history: Message[] = [{ role: 'user', content: '[图片 | ref:data:/images/s/a.png]', timestamp: 1 }];

@@ -138,7 +138,7 @@ async function setup(opts: SetupOptions) {
   const logHub = new LogHub();
   const logs: LogEntry[] = [];
   logHub.onEntry(e => logs.push(e));
-  const app = new App({ name: 'T', logLevel: 'debug', logHub });
+  const app = new App({ logLevel: 'debug', logHub });
   booted.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, gateway, flowControl, sessionManager });

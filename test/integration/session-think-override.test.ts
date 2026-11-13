@@ -78,7 +78,7 @@ function models(sent: Sent[]) {
 }
 
 async function loadStack(sent: Sent[]) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   // 指令判门槛要权限服务：u1 是 owner，项与层的门槛都过
   app.bind({ provide }).provide.use(authority, {

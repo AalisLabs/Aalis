@@ -80,7 +80,7 @@ function stubOllama(reason: string | undefined): void {
 }
 
 async function modelOf(plugin: PluginDefinition, config: Record<string, unknown>): Promise<LLMModel> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   apps.push(app);
   await app.plugin(plugin, config);

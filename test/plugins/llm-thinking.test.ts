@@ -65,7 +65,7 @@ async function start(
 ) {
   const sent: Array<{ path: string; body: Body }> = [];
   stubFetch(models, sent);
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   apps.push(app);
   await app.plugin(plugin, config);

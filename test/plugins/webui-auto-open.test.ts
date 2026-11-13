@@ -56,7 +56,7 @@ async function opensOverStartAndBounce(
     },
   } as unknown as StorageService;
 
-  const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+  const app = new App({ logLevel: 'error', logger: silent });
   provideEvents(app);
   apps.push(app);
   const host = app.bind({ provide });

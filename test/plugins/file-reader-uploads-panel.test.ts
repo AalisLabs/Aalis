@@ -41,7 +41,7 @@ interface BootOptions {
 
 /** `files` 是盘上内容，测试可以直接改 */
 async function boot({ refuse, seed = {}, config = {} }: BootOptions = {}) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   const pages = pageHost({ sessions: id => sessionInfoOf(id) });
   running.push({ app, pages });
   await registerHubs(app);

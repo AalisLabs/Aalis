@@ -30,7 +30,6 @@ core 只持运行态，不持配置文档。运行态有三样：各实例的配
 ```typescript
 // @aalis/api-host-config
 interface AalisConfig {
-  name: string;                    // 应用名
   logLevel: string;                // 默认日志级别
   slowThresholdMs?: number;        // core 慢操作阈值（毫秒），启动时注入 AppOptions.slowThresholdMs
   plugins: Record<string, Record<string, unknown>>;   // 各实例配置，键为实例 id；指令前缀、agent 参数等都在这里
@@ -67,7 +66,7 @@ import { hostConfig } from '@aalis/api-host-config';
 const doc = hostConfig.use;
 
 // 读取
-doc.get('name')                        // 顶层字段
+doc.get('logLevel')                    // 顶层字段
 doc.getAll()                           // 完整文档
 doc.getPluginConfig(instanceId)        // 插件配置（键是实例 id；密钥字段上是引用，不是原值）
 doc.isPluginDisabled(instanceId)       // 是否在禁用名单
@@ -141,7 +140,7 @@ import {
 const paths = derivePaths('/srv/aalis/home', '/srv/aalis/app');
 const { config, provider } = createFsYamlConfigProvider(paths.config);
 const store = createConfigStore(config, provider, createFsSecretsProvider(paths.secrets)); // 不给第三个参数则没有密钥存储
-const app = new App({ name: store.get('name'), logLevel: store.get('logLevel') as LogLevel });
+const app = new App({ logLevel: store.get('logLevel') as LogLevel });
 app.bind({ provide }).provide.use(hostPaths, paths, { exclusive: true }); // 先 host-paths
 installHostConfig(app, store); // 再 host-config
 // 登记插件时按 store.resolvePluginConfig 解析出的配置与 { disabled } 登记（createPluginDiscovery 即如此）
@@ -207,10 +206,9 @@ plugins:
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `name` | string | 'Aalis' | 机器人名称 |
 | `logLevel` | select | 'info' | 日志等级 |
 | `slowThresholdMs` | number（≥0） | 60000 | 慢操作阈值（毫秒）：插件激活超过这个时长仍未完成时告警，转入后台继续；单个就绪回调超时也告警，不再等它。0 表示不设限，重启生效（见 [App](app.md) 的 `AppOptions.slowThresholdMs`） |
 
 `logLevel` 与 `slowThresholdMs` 只在启动时读取，改了要重启；`startAalis` 按 `CORE_CONFIG_SCHEMA` 逐个判定，与 WebUI 设置页同一套规则：留空（YAML 空键）当作未配置，不合法的写法（`logLevel` 不是可选值、`slowThresholdMs` 不是非负有限数）记一条告警，同样按默认值处理。runtime 的重启策略等新实例报就绪（默认 30 秒）才判定接管成功，`slowThresholdMs` 低于它时，新实例会带着仍在后台激活的插件报就绪，更新失败的回滚不再兜住卡住的激活。转入后台的插件，它提供的服务在激活完成前不对依赖方开放（见 [插件管理](plugin.md#慢激活转入后台)）；就绪回调指 `lifecycle.onReady` 登记的回调。
 
-指令前缀不是顶层字段，写在 `plugins["@aalis/plugin-commands"].commandPrefix`（默认 `/`）；写到顶层不会生效。WebUI 的 `PUT /api/config` 只收上表三个键，请求体里有别的顶层键时回 400 并点名，什么都不写。
+指令前缀不是顶层字段，写在 `plugins["@aalis/plugin-commands"].commandPrefix`（默认 `/`）；写到顶层不会生效。WebUI 的 `PUT /api/config` 只收上表两个键，请求体里有别的顶层键时回 400 并点名，什么都不写。

@@ -7,7 +7,7 @@ import { App, config, definePlugin, LogHub, lifecycle, type PluginDefinition } f
 // register / unload 与 App.plugin 的转发。
 
 function silentApp(): App {
-  return new App({ name: 'T', logLevel: 'error' });
+  return new App({ logLevel: 'error' });
 }
 
 const plugin = (name: string, extra: Partial<Pick<PluginDefinition, 'reusable'>> = {}): PluginDefinition =>
@@ -15,7 +15,7 @@ const plugin = (name: string, extra: Partial<Pick<PluginDefinition, 'reusable'>>
 
 describe('register 的返回值', () => {
   it('注册为 disabled 态也是登记（true）', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     expect(await app.plugins.register(plugin('p'), undefined, undefined, { disabled: true })).toBe(true);
     expect(app.plugins.getPlugin('p')?.state).toBe('disabled');
     await app.stop();
@@ -32,7 +32,7 @@ describe('register 的返回值', () => {
     const hub = new LogHub();
     const lines: string[] = [];
     hub.onEntry(e => lines.push(`${e.level}:${e.message}`));
-    const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+    const app = new App({ logLevel: 'warn', logHub: hub });
 
     // 手写对象绕过 definePlugin：类型上缺 name，运行期必须拒登记
     expect(await app.plugins.register({ apply() {} } as unknown as PluginDefinition)).toBe(false);
@@ -62,7 +62,7 @@ describe('register 的返回值', () => {
     const hub = new LogHub();
     const lines: string[] = [];
     hub.onEntry(e => lines.push(`${e.level}:${e.message}`));
-    const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+    const app = new App({ logLevel: 'warn', logHub: hub });
     const reusable = plugin('q', { reusable: true });
 
     expect(await app.plugins.register(reusable, {}, '')).toBe(false);
@@ -84,7 +84,7 @@ describe('register 的返回值', () => {
     const hub = new LogHub();
     const lines: string[] = [];
     hub.onEntry(e => lines.push(`${e.level}:${e.message}`));
-    const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+    const app = new App({ logLevel: 'warn', logHub: hub });
 
     expect(
       await app.plugins.register({
@@ -107,7 +107,7 @@ describe('register 被拒时的日志级别', () => {
     const hub = new LogHub();
     const lines: string[] = [];
     hub.onEntry(e => lines.push(`${e.level}:${e.message}`));
-    const app = new App({ name: 'T', logLevel: 'debug', logHub: hub });
+    const app = new App({ logLevel: 'debug', logHub: hub });
     const cyclic: Record<string, unknown> = {};
     cyclic.self = cyclic;
     expect(await app.plugins.register(plugin('p'))).toBe(true);
@@ -162,7 +162,7 @@ describe('enable / disable / bounce 的 false 分支（口径句里点名的「�
     const hub = new LogHub();
     const lines: string[] = [];
     hub.onEntry(e => lines.push(`${e.level}:${e.message}`));
-    const app = new App({ name: 'T', logLevel: 'debug', logHub: hub });
+    const app = new App({ logLevel: 'debug', logHub: hub });
     expect(await app.plugins.enable('nobody')).toBe(false);
     expect(await app.plugins.disable('nobody')).toBe(false);
     expect(await app.plugins.bounce('nobody')).toBe(false);
@@ -183,7 +183,7 @@ describe('enable / disable / bounce 的 false 分支（口径句里点名的「�
     const hub = new LogHub();
     const warns: string[] = [];
     hub.onEntry(e => void (e.level === 'warn' && warns.push(e.message)));
-    const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+    const app = new App({ logLevel: 'warn', logHub: hub });
     const seen: unknown[] = [];
     await app.plugins.register(
       definePlugin({ name: 'p', uses: { config }, apply: ({ config }) => void seen.push(config.use.v) }),
@@ -266,7 +266,7 @@ describe('拒收日志的错误', () => {
     const calls: Array<{ message: string; args: unknown[] }> = [];
     const record = (message: string, ...args: unknown[]) => void calls.push({ message, args });
     const logger = { debug: record, info: record, warn: record, error: record, child: () => logger };
-    const app = new App({ name: 'T', logger });
+    const app = new App({ logger });
     const definitionError = new Error('uses 读取失败');
     const configError = new Error('配置读取失败');
     const throwing = (error: Error) => ({

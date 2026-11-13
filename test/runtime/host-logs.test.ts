@@ -39,7 +39,7 @@ function world(snapshot: boolean) {
     write(taken ?? unwritten.splice(0));
   };
   const log = new DefaultLogger('aalis:zz-probe', 'debug', hub);
-  const app = new App({ name: 'T', logLevel: 'error', logHub: hub });
+  const app = new App({ logLevel: 'error', logHub: hub });
   apps.push(app);
   app.bind({ provide }).provide.use(hostLogs, createHostLogs(hub, { path, flush }, app.logger), { exclusive: true });
   return { app, log, release: gate.resolve };

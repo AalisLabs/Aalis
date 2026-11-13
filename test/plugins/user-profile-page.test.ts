@@ -41,7 +41,7 @@ const fact = (id: string, text: string, updatedAt: number, extra: Record<string,
 
 /** extract 是事实提取时模型回的 JSON；给了就每条消息都提取一次 */
 async function setup(extract?: unknown) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   await app.plugin(memoryInMemory);

@@ -100,7 +100,7 @@ describe('工具插件甲给人看的出口按读者的语言', () => {
   it.each(
     Object.entries(CASES),
   )('%s：浏览器页关闭不存在的页面的报错，关闭全部页面的回执', async (language, expected) => {
-    const app = new App({ name: 'T', logger: silent });
+    const app = new App({ logger: silent });
     provideEvents(app);
     apps.push(app);
     const pages = pageHost();

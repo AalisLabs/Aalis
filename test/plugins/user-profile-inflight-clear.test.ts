@@ -78,7 +78,7 @@ afterEach(async () => {
 });
 
 async function setup(config: Record<string, unknown>, reply: unknown) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, hooks, memory });

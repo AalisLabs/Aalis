@@ -37,8 +37,8 @@ describe('storage-local 宿主控制文件兜底', () => {
     mkdirSync(join(base, 'other'), { recursive: true });
     mkdirSync(home);
     writeFileSync(join(home, 'secrets.yaml'), 'key: SECRET-VALUE\n');
-    writeFileSync(join(home, 'aalis.config.yaml'), 'name: T\n');
-    app = new App({ name: 'T', logLevel: 'error' });
+    writeFileSync(join(home, 'aalis.config.yaml'), 'logLevel: info\n');
+    app = new App({ logLevel: 'error' });
     provideHostPaths(app, home);
     await app.plugin(storageLocal, {
       roots: [
@@ -66,14 +66,14 @@ describe('storage-local 宿主控制文件兜底', () => {
   });
 
   it('主配置可以读、不能写；密钥文件也不能写', async () => {
-    expect(await storage.readFile('everything:/aalis.config.yaml', 'utf-8')).toBe('name: T\n');
+    expect(await storage.readFile('everything:/aalis.config.yaml', 'utf-8')).toBe('logLevel: info\n');
     await expect(storage.writeFile('everything:/aalis.config.yaml', 'x')).rejects.toThrow(
       '不能经存储修改宿主的主配置（只经宿主修改）',
     );
     await expect(storage.writeFile('everything:/secrets.yaml', 'x')).rejects.toThrow(
       '不能经存储修改宿主的密钥文件（只经宿主读写）',
     );
-    expect(readFileSync(join(home, 'aalis.config.yaml'), 'utf-8')).toBe('name: T\n');
+    expect(readFileSync(join(home, 'aalis.config.yaml'), 'utf-8')).toBe('logLevel: info\n');
     expect(readFileSync(join(home, 'secrets.yaml'), 'utf-8')).toBe('key: SECRET-VALUE\n');
   });
 
@@ -109,7 +109,7 @@ describe('storage-local 宿主控制文件兜底', () => {
   it.skipIf(process.platform !== 'darwin' || !existsSync('/System/Volumes/Data/private'))(
     '经 macOS 的 firmlink（同一个目录的另一条路径）删数据目录也拒绝：子树按目录身份比',
     async () => {
-      const other = new App({ name: 'T2', logLevel: 'error' });
+      const other = new App({ logLevel: 'error' });
       provideHostPaths(other, home);
       await other.plugin(storageLocal, { roots: [{ name: 'alias', path: `/System/Volumes/Data${base}`, ...rw }] });
       await other.plugins.idle();

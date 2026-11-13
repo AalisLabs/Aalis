@@ -29,7 +29,7 @@ afterEach(async () => {
 
 /** sessionId 是指令所在的会话；sessions 是会话管理里的记录（只用 getSession），不给时不装会话管理 */
 async function setup(sessionId = 'onebot:10000:group:20001', sessions?: SessionInfo[]) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, commands: commandsService });
@@ -206,7 +206,7 @@ describe('/maimai 与工具共用处理函数：指令交出文字对象，工�
 
   /** 工具与指令都装上：tool 返回工具结果，command 返回指令回复按 languages 渲染的结果 */
   async function setupBoth() {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     const host = app.bind({ provide, commands: commandsService, tools });

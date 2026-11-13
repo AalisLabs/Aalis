@@ -180,7 +180,7 @@ async function setup({ withStorage = true } = {}) {
     error: (...args: unknown[]) => void logs.push(`error ${args.map(String).join(' ')}`),
     child: () => logger,
   };
-  const app = new App({ name: 'T', logLevel: 'info', logger });
+  const app = new App({ logLevel: 'info', logger });
   provideEvents(app);
   apps.push(app);
   provideHostPaths(app, home);

@@ -933,7 +933,7 @@ describe('外观', () => {
 
 describe('系统', () => {
   const SCHEMA = {
-    name: { type: 'string', label: '应用名称', default: 'Aalis' },
+    'zz-text': { type: 'string', label: '示例文本', default: 'Aalis' },
     logLevel: {
       type: 'select',
       label: '日志等级',
@@ -959,7 +959,7 @@ describe('系统', () => {
   const settingRow = (label: string) => within(section().getByRole('group', { name: label }));
 
   function systemRest(extra: FakeRest = {}) {
-    let config: Record<string, unknown> = { name: 'Bot' };
+    let config: Record<string, unknown> = { 'zz-text': 'Bot' };
     return settingsRest({
       '/api/config': (request: FakeRequest) => {
         if (request.method === 'PUT') {
@@ -983,10 +983,10 @@ describe('系统', () => {
 
   it('宿主配置每行写生效值、来源（配置文件、默认）与要重启的键；数据目录写出来', async () => {
     app = await renderApp('/settings/system', {}, systemRest());
-    await section().findByRole('group', { name: '应用名称' });
-    expect(settingRow('应用名称').getByText('Bot')).toBeTruthy();
-    expect(settingRow('应用名称').getByText('配置文件')).toBeTruthy();
-    expect(settingRow('应用名称').queryByText('重启后生效')).toBeNull();
+    await section().findByRole('group', { name: '示例文本' });
+    expect(settingRow('示例文本').getByText('Bot')).toBeTruthy();
+    expect(settingRow('示例文本').getByText('配置文件')).toBeTruthy();
+    expect(settingRow('示例文本').queryByText('重启后生效')).toBeNull();
     expect(settingRow('日志等级').getByText('info')).toBeTruthy();
     expect(settingRow('日志等级').getByText('默认')).toBeTruthy();
     expect(settingRow('日志等级').getByText('重启后生效')).toBeTruthy();
@@ -995,13 +995,13 @@ describe('系统', () => {
 
   it('英文界面：目录、宿主配置的来源与生效时机、数据目录按英文', async () => {
     app = await renderApp('/settings/system', {}, systemRest(language(['en'])));
-    await section().findByRole('group', { name: '应用名称' });
+    await section().findByRole('group', { name: '示例文本' });
     expect(
       within(screen.getByRole('navigation', { name: 'Settings' }))
         .getAllByRole('link')
         .map(link => link.textContent),
     ).toEqual(['Session defaults', '权限', '技能', 'Appearance', 'System']);
-    expect(settingRow('应用名称').getByText('Config file')).toBeTruthy();
+    expect(settingRow('示例文本').getByText('Config file')).toBeTruthy();
     expect(settingRow('日志等级').getByText('Default')).toBeTruthy();
     expect(settingRow('日志等级').getByText('Applies after restart')).toBeTruthy();
     expect(section().getByRole('region', { name: 'Data directory' })).toBeTruthy();
@@ -1009,12 +1009,14 @@ describe('系统', () => {
 
   it('改要重启的键：只送这一个键，保存后出「重启以生效」与重启按钮；改别的键不出；恢复默认与选空的一项送 null', async () => {
     app = await renderApp('/settings/system', {}, systemRest());
-    await section().findByRole('group', { name: '应用名称' });
-    fireEvent.click(settingRow('应用名称').getByRole('button', { name: /应用名称/ }));
-    const box = settingRow('应用名称').getByRole('textbox', { name: '应用名称' });
+    await section().findByRole('group', { name: '示例文本' });
+    fireEvent.click(settingRow('示例文本').getByRole('button', { name: /示例文本/ }));
+    const box = settingRow('示例文本').getByRole('textbox', { name: '示例文本' });
     fireEvent.change(box, { target: { value: 'Aalis Two' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await vi.waitFor(() => expect(calls('/api/config', 'PUT').map(call => call.body)).toEqual([{ name: 'Aalis Two' }]));
+    await vi.waitFor(() =>
+      expect(calls('/api/config', 'PUT').map(call => call.body)).toEqual([{ 'zz-text': 'Aalis Two' }]),
+    );
     expect(section().queryByRole('button', { name: '重启' })).toBeNull();
 
     fireEvent.click(settingRow('日志等级').getByRole('button', { name: /日志等级/ }));
@@ -1024,8 +1026,8 @@ describe('系统', () => {
     fireEvent.click(section().getByRole('button', { name: '重启' }));
     await vi.waitFor(() => expect(calls('/api/restart', 'POST')).toHaveLength(1));
 
-    fireEvent.click(settingRow('应用名称').getByRole('button', { name: '恢复默认' }));
-    await vi.waitFor(() => expect(calls('/api/config', 'PUT').at(-1)?.body).toEqual({ name: null }));
+    fireEvent.click(settingRow('示例文本').getByRole('button', { name: '恢复默认' }));
+    await vi.waitFor(() => expect(calls('/api/config', 'PUT').at(-1)?.body).toEqual({ 'zz-text': null }));
 
     // 选空的一项与「恢复默认」一样写 null
     await vi.waitFor(() => expect(settingRow('日志等级').getByText('debug')).toBeTruthy());
@@ -1084,7 +1086,7 @@ describe('系统', () => {
     );
     fail = false;
     fireEvent.click(within(alert).getByRole('button', { name: '重试' }));
-    expect(await section().findByRole('group', { name: '应用名称' })).toBeTruthy();
+    expect(await section().findByRole('group', { name: '示例文本' })).toBeTruthy();
   });
   it('服务列表没取到：写明原因，可以重试，「查看日志」链到提供界面的实例的日志', async () => {
     let fail = true;
@@ -1123,9 +1125,9 @@ describe('系统', () => {
         },
       },
     );
-    await section().findByRole('group', { name: '应用名称' });
-    fireEvent.click(settingRow('应用名称').getByRole('button', { name: /应用名称/ }));
-    const box = settingRow('应用名称').getByRole('textbox', { name: '应用名称' });
+    await section().findByRole('group', { name: '示例文本' });
+    fireEvent.click(settingRow('示例文本').getByRole('button', { name: /示例文本/ }));
+    const box = settingRow('示例文本').getByRole('textbox', { name: '示例文本' });
     fireEvent.change(box, { target: { value: 'Aalis Two' } });
     fireEvent.keyDown(box, { key: 'Enter' });
     const alert = await section().findByRole('alert');
@@ -1135,7 +1137,7 @@ describe('系统', () => {
     );
     failGet = false;
     fireEvent.click(within(alert).getByRole('button', { name: '重试' }));
-    await vi.waitFor(() => expect(settingRow('应用名称').getByText('Aalis Two')).toBeTruthy());
+    await vi.waitFor(() => expect(settingRow('示例文本').getByText('Aalis Two')).toBeTruthy());
     expect(section().queryByRole('alert')).toBeNull();
   });
 });

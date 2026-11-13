@@ -30,7 +30,7 @@ interface FakeFlow {
 
 /** global 是全局层的参数，sessions 是各会话自己设的（会话 id → 值）；调度器按会话现读 */
 function setup(global: Record<string, unknown>, sessions: Record<string, Record<string, unknown>> = {}) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   const bound = app.bind({ logger });
   const flow: FakeFlow = { muted: new Set(), cooling: new Set(), limited: new Set() };
   const trigger = { active: true };

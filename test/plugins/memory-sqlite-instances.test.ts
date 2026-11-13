@@ -111,7 +111,7 @@ afterEach(async () => {
 
 async function start(instances: Array<[string, Record<string, unknown>]>) {
   const logger = recordingLogger();
-  const app = new App({ name: 'T', logger });
+  const app = new App({ logger });
   apps.push(app);
   app.bind({ provide }).provide.use(storage, fakeStorage());
   const register = async (id: string, config: Record<string, unknown>) => {

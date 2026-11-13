@@ -29,7 +29,7 @@ describe('storage-local 内部路由根', () => {
       error() {},
       child: () => logger,
     } as unknown as Logger;
-    app = new App({ name: 'T', logLevel: 'debug', logger });
+    app = new App({ logLevel: 'debug', logger });
     provideHostPaths(app, home);
   });
 

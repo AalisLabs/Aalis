@@ -13,21 +13,20 @@ const shared = defineService<{ v: number }>('shared');
 
 describe('App 生命周期', () => {
   it('App 仅靠最小选项可构造；配置文档由宿主接上，裸 core 上没有', () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     expect(app.plugins).toBeDefined();
     expect(app.bind({ hostConfig }).hostConfig.present).toBe(false);
     expect(hostedApp().app.bind({ hostConfig }).hostConfig.present).toBe(true);
   });
 
   it('host-config get 读取文档顶层字段', () => {
-    const { app } = hostedApp({ name: 'MyApp', logLevel: 'warn' });
+    const { app } = hostedApp({ logLevel: 'warn' });
     const host = app.bind({ hostConfig });
-    expect(host.hostConfig.use.get('name')).toBe('MyApp');
     expect(host.hostConfig.use.get('logLevel')).toBe('warn');
   });
 
   it('app.stop 关闭根激活：先收尾（此刻 App.stopping 已是 true）、再清理', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     const host = app.bind({ lifecycle });
     const seen: string[] = [];
     host.lifecycle.use.onDrain(() => {
@@ -42,19 +41,19 @@ describe('App 生命周期', () => {
   });
 
   it('两个并存 App 实例互不干扰（service 与配置文档都隔离）', () => {
-    const appA = hostedApp({ name: 'A' }).app;
-    const appB = hostedApp({ name: 'B' }).app;
+    const appA = hostedApp({ logLevel: 'warn' }).app;
+    const appB = hostedApp({ logLevel: 'debug' }).app;
     const hostA = appA.bind({ provide, shared, hostConfig });
     const hostB = appB.bind({ shared, hostConfig });
     hostA.provide.use(shared, { v: 1 });
     expect(hostA.shared.present).toBe(true);
     expect(hostB.shared.present).toBe(false);
-    expect(hostA.hostConfig.use.get('name')).toBe('A');
-    expect(hostB.hostConfig.use.get('name')).toBe('B');
+    expect(hostA.hostConfig.use.get('logLevel')).toBe('warn');
+    expect(hostB.hostConfig.use.get('logLevel')).toBe('debug');
   });
 
   it('hostConfig.setPluginConfig + save() 把更改写回 yaml', async () => {
-    const cfg = tempConfig('name: T\nlogLevel: error\nplugins: {}\n');
+    const cfg = tempConfig('logLevel: error\nplugins: {}\n');
     try {
       const { app } = hostedApp(cfg.config, { provider: cfg.provider });
       const host = app.bind({ hostConfig });
@@ -70,7 +69,7 @@ describe('App 生命周期', () => {
   });
 
   it('内置 app / plugins 服务经描述符可取', () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     const host = app.bind({ appService, pluginsService });
     expect(host.appService.present).toBe(true);
     expect(host.pluginsService.present).toBe(true);

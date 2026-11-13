@@ -24,7 +24,7 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
  */
 
 async function loadStack(opts: { responses: ChatResponse[]; recorder?: ChatModelRequest[] }) {
-  const app = new App({ name: 'E2E', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ events, agent: agentService, memory: memoryService, llm: llmService });
 

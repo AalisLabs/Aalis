@@ -24,7 +24,7 @@ function track(app: App): App {
 describe('绑定口的 all()', () => {
   it('必需口与 optional 口都按胜者次序列出全部提供者的登记视图', async () => {
     const svc = defineService<{ id: string }>('__t:surface-all');
-    const app = track(new App({ name: 'T', logLevel: 'error' }));
+    const app = track(new App({ logLevel: 'error' }));
     const host = app.bind({ provide });
     host.provide.use(svc, { id: 'low' }, { entryId: 'root/low' });
     host.provide.use(svc, { id: 'high' }, { priority: 5, entryId: 'root/high' });
@@ -66,7 +66,7 @@ describe('provide 的登记日志', () => {
     hub.onEntry(entry => {
       if (entry.level === 'debug' && entry.message.startsWith('服务已注册')) registered.push(entry.message);
     });
-    const app = track(new App({ name: 'T', logLevel: 'debug', logHub: hub }));
+    const app = track(new App({ logLevel: 'debug', logHub: hub }));
     const svc = defineService<{ id: string }>('__t:surface-log');
     await app.pluginAll([
       {
@@ -100,7 +100,7 @@ describe('provide 的登记日志', () => {
 
 describe('插件管理服务的快照', () => {
   it('getPlugin 查不到的实例返回 undefined，不抛', () => {
-    const app = track(new App({ name: 'T', logLevel: 'error' }));
+    const app = track(new App({ logLevel: 'error' }));
     const { plugins } = app.bind({ plugins: pluginsService });
     expect(plugins.use.getPlugin('nope')).toBeUndefined();
   });

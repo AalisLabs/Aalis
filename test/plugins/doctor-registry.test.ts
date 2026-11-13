@@ -72,7 +72,7 @@ async function boot(
   options: { slowThresholdMs?: number; disposeTimeoutMs?: number; before?: PluginDefinition[] } = {},
 ) {
   const { before = [], ...appOptions } = options;
-  const app = new App({ name: 'T', logLevel: 'error', ...appOptions });
+  const app = new App({ logLevel: 'error', ...appOptions });
   provideEvents(app);
   const host = app.bind({ provide, services });
   const recordedCommands: Array<{ name: string; description?: string }> = [];

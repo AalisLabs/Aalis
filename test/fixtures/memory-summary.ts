@@ -84,7 +84,7 @@ export async function setupSummary(
   model: LLMModel = fakeSummaryLLM().model,
   logger?: Logger,
 ) {
-  const app = new App({ name: 'T', logLevel: 'error', logger });
+  const app = new App({ logLevel: 'error', logger });
   await registerHubs(app);
   const host = app.bind({ provide, services, hooks, events });
   await app.plugin(memoryInMemory);

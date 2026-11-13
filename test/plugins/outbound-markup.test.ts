@@ -450,7 +450,7 @@ describe('onebot：她回复里媒体标记的网址先经 safeFetch 取下来',
 
 describe('发出方：只有 agent 的回复设 markup', () => {
   async function bootAgent(withModel: boolean) {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     cleanups.push(() => app.stop());
     await registerHubs(app);
     const plugins = [

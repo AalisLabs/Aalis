@@ -49,9 +49,9 @@ describe('storage-local 宿主控制文件兜底：超过 2^53 的文件 ID', ()
     mkdirSync(join(base, 'other', 'sub'), { recursive: true });
     mkdirSync(home);
     writeFileSync(join(home, 'secrets.yaml'), 'key: SECRET-VALUE\n');
-    writeFileSync(join(home, 'aalis.config.yaml'), 'name: T\n');
+    writeFileSync(join(home, 'aalis.config.yaml'), 'logLevel: info\n');
     writeFileSync(join(base, 'other', 'notes.txt'), 'hello');
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     provideHostPaths(app, home);
     await app.plugin(storageLocal, { roots: [{ name: 'other', path: join(base, 'other'), ...rw }] });
     await app.plugins.idle();

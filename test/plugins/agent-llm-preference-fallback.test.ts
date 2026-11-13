@@ -42,7 +42,7 @@ async function boot(responses: string[]) {
     error() {},
     child: () => logger,
   };
-  const app = new App({ name: 'T', logLevel: 'error', logger });
+  const app = new App({ logLevel: 'error', logger });
   apps.push(app);
   await registerHubs(app);
   await use(app, createMockLLMPlugin({ responses: responses.map(content => ({ content })) }));

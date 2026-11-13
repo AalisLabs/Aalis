@@ -104,7 +104,7 @@ async function setup() {
   /** 记下的 info 日志 */
   const infos: string[] = [];
   const logger: Logger = { ...silent, info: message => void infos.push(message), child: () => logger };
-  const app = new App({ name: 'T', logLevel: 'error', logger });
+  const app = new App({ logLevel: 'error', logger });
   apps.push(app);
   await registerHubs(app);
   await app.plugin(memoryInMemoryPlugin);

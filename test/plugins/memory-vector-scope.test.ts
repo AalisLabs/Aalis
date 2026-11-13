@@ -40,7 +40,7 @@ afterEach(async () => {
 
 /** sessions 给出时装会话设置的替身，按会话 id 交本会话层的值 */
 async function setup(crossSessionMode: string, sessions?: Record<string, Record<string, unknown>>) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide });

@@ -111,7 +111,7 @@
 
 ## 5. `AalisConfig`（配置 schema 业务字段）
 
-宿主配置文档的字段表。`@aalis/api-host-config` 只声明宿主层字段（`name` / `logLevel` / `plugins` / `disabledPlugins` / `servicePreferences`），
+宿主配置文档的字段表。`@aalis/api-host-config` 只声明宿主层字段（`logLevel` / `plugins` / `disabledPlugins` / `servicePreferences`），
 业务字段由 `-api` 包通过 declaration merging 注入。core 不持配置文档。
 
 **位置**：`packages/api-host-config/src/index.ts`（`interface AalisConfig`；增广写 `declare module '@aalis/api-host-config'`）。表单描述 `CORE_CONFIG_SCHEMA` 在

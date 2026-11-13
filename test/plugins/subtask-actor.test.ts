@@ -27,7 +27,7 @@ async function setup(): Promise<{
   handlers: Map<string, Handler>;
   inbound: IncomingMessage[];
 }> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, services, events });
   const handlers = new Map<string, Handler>();

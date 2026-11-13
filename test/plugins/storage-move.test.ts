@@ -24,7 +24,7 @@ describe('storage.move (真 fs)', () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-move-'));
     ws = join(base, 'ws'); // 绝对根路径（root.path 相对数据目录解析，这里直接给临时目录下的绝对路径）
     mkdirSync(ws, { recursive: true });
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     provideHostPaths(app, base);
     await app.plugin(storageLocal, {
       roots: [

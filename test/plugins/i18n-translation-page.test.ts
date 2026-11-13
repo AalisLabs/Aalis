@@ -43,7 +43,7 @@ afterEach(async () => {
 });
 
 async function boot(): Promise<PageHost> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   const host = pageHost();
   hosts.push(host);

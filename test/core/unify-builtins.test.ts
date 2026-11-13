@@ -24,7 +24,7 @@ afterEach(async () => {
 });
 function makeApp() {
   const logger: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => logger };
-  const app = new App({ name: 'T', logLevel: 'error', logger });
+  const app = new App({ logLevel: 'error', logger });
   apps.push(app);
   return app;
 }
@@ -84,7 +84,7 @@ describe('内置能力', () => {
 
   it('provide 的 entryId：条目取给定的逻辑身份（如托管的前端包名，core 不检查格式），清理仍归登记它的激活', async () => {
     const face = defineService<{ dir: string }>('__t:face');
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await app.plugin(
       definePlugin({
@@ -125,7 +125,7 @@ describe('同名服务的描述符', () => {
       error() {},
       child: () => logger,
     };
-    const app = new App({ name: 'T', logLevel: 'error', logger });
+    const app = new App({ logLevel: 'error', logger });
     apps.push(app);
     const shared = defineService<{ from: string }>('__t:same-name');
     const copy = defineService<{ from: string }>('__t:same-name');

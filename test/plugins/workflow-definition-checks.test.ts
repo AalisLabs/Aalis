@@ -63,7 +63,7 @@ const workspaceFile = (...path: string[]) => join(base, 'workspace', ...path);
 const defsDir = () => workspaceFile('workflows');
 
 async function boot(): Promise<WorkflowService> {
-  app = new App({ name: 'T', logLevel: 'error' });
+  app = new App({ logLevel: 'error' });
   await registerHubs(app);
   pages = pageHost();
   app.bind({ provide }).provide.use(webuiServer, pages.service);

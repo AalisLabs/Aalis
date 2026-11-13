@@ -17,7 +17,7 @@ import { ref } from '../fixtures/service-ref.js';
 // ════════════════════════════════════════════════════════════
 
 async function makeService() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await app.plugin(memoryInMemory);
   await app.plugins.idle();
   // 激活闸下「没激活」不报错，核一下状态，别让空存储伪装成绿

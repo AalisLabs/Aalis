@@ -87,7 +87,7 @@ describe('agent 定稿：空流重试与可见正文落库（outputFormat 人设
 
   const boot = async (card: string, responses: ChatResponse[]) => {
     writeFileSync(join(base, 'self', 'persona', 'default.yaml'), CARDS[card]);
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     await registerHubs(app);
     provideHostPaths(app, base);
     await app.plugin(storageLocalPlugin, {});

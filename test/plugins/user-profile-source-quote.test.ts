@@ -49,7 +49,7 @@ async function extract(history: Message[], reply: unknown, facts?: Array<{ id: s
     error() {},
     child: () => logger,
   };
-  const app = new App({ name: 'T', logLevel: 'error', logger });
+  const app = new App({ logLevel: 'error', logger });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, memory });

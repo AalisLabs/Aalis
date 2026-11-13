@@ -55,9 +55,9 @@ async function boot(source: { path: string } | { doc: Partial<AalisConfig>; prov
   const { config, provider } =
     'path' in source
       ? createFsYamlConfigProvider(source.path)
-      : { config: { name: 'T', logLevel: 'error', plugins: {}, ...source.doc }, provider: source.provider };
+      : { config: { logLevel: 'error', plugins: {}, ...source.doc }, provider: source.provider };
   const store = createConfigStore(config, provider);
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   installHostConfig(app, store);
   const selections: Record<string, ServiceSelection<Who>> = {};
@@ -88,7 +88,7 @@ describe('本插件偏好的持久化', () => {
     const dir = mkdtempSync(join(tmpdir(), 'aalis-plugin-prefs-'));
     dirs.push(dir);
     const path = join(dir, 'aalis.config.yaml');
-    writeFileSync(path, 'name: T\nlogLevel: error\nplugins: {}\n');
+    writeFileSync(path, 'logLevel: error\nplugins: {}\n');
 
     const first = await boot({ path });
     first.doc.setServicePreference('zz-svc', 'zz-b', { for: 'zz-picky' });
@@ -118,7 +118,7 @@ describe('本插件偏好的持久化', () => {
         return () => {};
       },
     };
-    const base = { name: 'T', logLevel: 'error', plugins: {} };
+    const base = { logLevel: 'error', plugins: {} };
     const { app, store, chosen } = await boot({
       doc: { pluginServicePreferences: { 'zz-picky': { 'zz-svc': 'zz-b' } } },
       provider,

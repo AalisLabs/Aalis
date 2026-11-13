@@ -35,7 +35,6 @@ function world(options: Partial<AppOptions> = {}) {
     child: () => logger,
   };
   const app = createInspectableApp({
-    name: 'T',
     logLevel: 'error',
     logger,
     disposeTimeoutMs: 0,

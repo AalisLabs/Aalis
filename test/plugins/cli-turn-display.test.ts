@@ -83,7 +83,7 @@ async function setup(decide: (n: number) => ChatResponse, { rows = 40, columns =
   cleanups.push(fakeTty(rows, columns).restore);
   const home = mkdtempSync(join(tmpdir(), 'aalis-cli-turn-'));
   cleanups.push(() => rmSync(home, { recursive: true, force: true }));
-  const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+  const app = new App({ logLevel: 'error', logger: silent });
   cleanups.push(() => app.stop());
   await registerHubs(app);
   const model: StepModel = new StepModel(

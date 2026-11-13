@@ -30,7 +30,7 @@ async function setup(places: Record<string, Record<string, unknown>> = {}) {
   const warns: string[] = [];
   const logHub = new LogHub();
   logHub.onEntry(entry => void (entry.level === 'warn' && warns.push(entry.message)));
-  const app = new App({ name: 'T', logLevel: 'warn', logHub });
+  const app = new App({ logLevel: 'warn', logHub });
   apps.push(app);
   await registerHubs(app);
   const order: string[] = [];

@@ -44,7 +44,7 @@ function member(name: string, trail: string[], tags: string[] = [name]) {
 }
 
 async function world() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ hooks, events });
@@ -158,7 +158,7 @@ describe('提供者按（位次，登记序）排', () => {
 
 describe('绑定口的 seat', () => {
   it('根激活是空串，插件激活是它的实例 id', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     const seats = defineService<object, { seat: string }>('zz-seat-probe', port => ({ seat: port.seat }));
     const host = app.bind({ provide, seats });

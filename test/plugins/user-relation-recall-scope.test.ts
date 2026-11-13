@@ -37,7 +37,7 @@ afterEach(async () => {
 
 /** 装上关系图插件（只开注入），备好图，跑一次当前群里 u1 的注入，返回注入块正文 */
 async function inject(pluginConfig: Record<string, unknown> = {}, sessions?: Record<string, Record<string, unknown>>) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   await app.plugin(memoryInMemory);
@@ -141,7 +141,7 @@ describe('plugin-user-relation：关系图范围', () => {
  * u1、u2、u3、u5 一起在本群开黑，u1、u2、u4 一起私聊约饭，u3 → u4 是朋友：u1 到 u4 的最短路经私聊约饭，只走本群的要经 u3
  */
 async function relationTools(sessions: Record<string, Record<string, unknown>>) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   await app.plugin(memoryInMemory);
@@ -270,7 +270,7 @@ const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: ()
  * 事件 id。u1 参与本群开黑与私聊约饭、与 u2 是朋友；本群孤立、私聊孤立两件事、u3 与孤立游戏都不挂边
  */
 async function relationCommands(sessions: Record<string, Record<string, unknown>>) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   await app.plugin(memoryInMemory);
@@ -342,7 +342,7 @@ describe('plugin-user-relation：/relation 指令的关系图范围', () => {
 describe('plugin-user-relation：关系图范围的登记', () => {
   /** 按这份配置装上关系图插件，返回它有没有向会话设置登记按会话字段 */
   async function registers(config: Record<string, unknown>): Promise<boolean> {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     await app.plugin(memoryInMemory);

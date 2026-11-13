@@ -44,7 +44,7 @@ async function setup(
   archive: Record<string, unknown[]> = {},
   places: Record<string, unknown> = {},
 ) {
-  const app = new App({ name: 'T', logLevel: 'error', logger });
+  const app = new App({ logLevel: 'error', logger });
   apps.push(app);
   const home = mkdtempSync(join(tmpdir(), 'aalis-bad-data-'));
   homes.push(home);

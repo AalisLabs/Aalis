@@ -34,7 +34,7 @@ async function withCmdApp(
     unload: (id: string) => Promise<void>;
   }) => Promise<void>,
 ): Promise<void> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   const r = new CommandRegistry(makeLogger(), ref(), ref());
   app.bind({ provide }).provide.use(commands, r);
   const load = async (id: string, register: (bound: BoundCommands) => void): Promise<void> => {

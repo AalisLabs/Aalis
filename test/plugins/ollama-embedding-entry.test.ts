@@ -29,7 +29,7 @@ function stubOllama(caps: Record<string, string[] | null>): void {
 
 async function registeredEntries(caps: Record<string, string[] | null>, config: Record<string, unknown> = {}) {
   stubOllama(caps);
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   const host = app.bind({ llm });
   await app.plugin(ollama, { baseUrl: 'http://127.0.0.1:11434', ...config });

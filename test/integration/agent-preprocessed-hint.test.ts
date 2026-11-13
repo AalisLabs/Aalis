@@ -24,7 +24,7 @@ afterEach(async () => {
 
 async function send(message: IncomingMessage): Promise<ChatModelRequest> {
   const recorder: ChatModelRequest[] = [];
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ agent: agentService });

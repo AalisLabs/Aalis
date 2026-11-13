@@ -169,7 +169,7 @@ describe('合并转发摘要在长度上限处停下', () => {
   });
 
   it('全局层设 en：标记按 host 读者的语言', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     provideEvents(app);
     apps.push(app);
     provideHostLanguage(app, ['en']);

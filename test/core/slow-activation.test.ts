@@ -85,7 +85,7 @@ function world(options: Partial<AppOptions> = {}) {
     error: record('error'),
     child: () => logger,
   };
-  const app = createInspectableApp({ name: 'T', logger, slowThresholdMs: 30, disposeTimeoutMs: 30, ...options });
+  const app = createInspectableApp({ logger, slowThresholdMs: 30, disposeTimeoutMs: 30, ...options });
   apps.push(app);
   const host = app.bind({ lifecycle, services, provide });
   /** 每次服务变更记 `~服务名`（core 内部的同步观察口，逐次都记），每轮重算收敛记 `changed` */
@@ -370,7 +370,7 @@ describe('慢激活转入后台', () => {
         error: (...args: unknown[]) => void errors.push(args.map(String).join(' ')),
         child: () => logger,
       };
-      const app = createInspectableApp({ name: 'T', logger, slowThresholdMs: 20, disposeTimeoutMs: 20 });
+      const app = createInspectableApp({ logger, slowThresholdMs: 20, disposeTimeoutMs: 20 });
       apps.push(app);
       const changed: string[] = [];
       app.plugins.watch(() => void changed.push('changed'));

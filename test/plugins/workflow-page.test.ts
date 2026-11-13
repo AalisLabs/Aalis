@@ -74,7 +74,7 @@ const storedRun = (runId: string, status: WorkflowRun['status']): WorkflowRun =>
 };
 
 async function boot(config: Record<string, unknown> = {}): Promise<WorkflowService> {
-  app = new App({ name: 'T', logLevel: 'error' });
+  app = new App({ logLevel: 'error' });
   await registerHubs(app);
   pages = pageHost();
   app.bind({ provide }).provide.use(webuiServer, pages.service);

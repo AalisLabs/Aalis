@@ -23,7 +23,7 @@ afterEach(async () => {
 
 describe('历史消息的时间标注', () => {
   it('发给模型的历史带时间标注，存着的用户消息不带', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     const recorder: ChatModelRequest[] = [];

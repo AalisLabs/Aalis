@@ -22,7 +22,7 @@ afterEach(async () => {
 });
 
 async function start(roots: unknown) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   provideHostPaths(app, home);
   await app.plugin(storageLocal, { roots });
@@ -54,7 +54,7 @@ describe('plugin-storage-local roots 配置', () => {
       error() {},
       child: () => logger,
     };
-    const app = new App({ name: 'T', logger });
+    const app = new App({ logger });
     apps.push(app);
     provideHostPaths(app, home);
     await app.plugin(storageLocal, { roots: [{ name: 'bad/name', path: '/private/canary', readable: true }] });
@@ -70,7 +70,7 @@ describe('plugin-storage-local roots 配置', () => {
   describe('workspace 根：没写 path 时指向宿主给的默认工作区目录，写了以用户的为准', () => {
     /** 默认工作区放在数据目录里别的名字下：存储插件只认 host-paths 给的位置，不自己拼 <数据目录>/workspace */
     async function startElsewhere(config: Record<string, unknown>) {
-      const app = new App({ name: 'T', logLevel: 'error' });
+      const app = new App({ logLevel: 'error' });
       apps.push(app);
       const real = realpathSync(home);
       const workspace = join(real, 'zz-workspace');

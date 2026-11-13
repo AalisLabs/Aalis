@@ -95,7 +95,7 @@ it('X16：停机时消费者现选的非胜者不会先于消费者收尾', asyn
       });
     },
   });
-  const app = new App({ name: 'x16', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await app.pluginAll([
     { definition: provider, instanceId: 'zz-x16-prov:a' },
     { definition: provider, instanceId: 'zz-x16-prov:b' },

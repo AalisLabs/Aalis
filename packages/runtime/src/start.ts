@@ -293,7 +293,6 @@ export async function startAalis(opts: StartAalisOptions): Promise<App> {
   /** 终止信号（或输出断开）发起停机时 abort。交给重启策略：重启途中收到的就此停下，不启动新进程，也不改退出码 */
   const terminating = new AbortController();
   const app = new App({
-    name: store.get('name'),
     logLevel: startup.logLevel as LogLevel | undefined,
     slowThresholdMs: startup.slowThresholdMs as number | undefined,
     // 宿主读取 @aalis/core 的实际版本注入启动 banner——core 环境无关、不自读 package.json。

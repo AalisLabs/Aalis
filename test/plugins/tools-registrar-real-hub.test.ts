@@ -21,7 +21,7 @@ afterEach(async () => {
 });
 
 function world() {
-  const app = new App({ name: 'tools-real-hub', logger: silent });
+  const app = new App({ logger: silent });
   apps.push(app);
   return { app, provide: app.bind({ provide }).provide.use };
 }

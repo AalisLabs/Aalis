@@ -100,7 +100,7 @@ async function boot() {
       provide.use(llm, metered(model, events.use), { entryId: 'fake-host/seer' });
     },
   });
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const usages: LLMUsageEvent[] = [];

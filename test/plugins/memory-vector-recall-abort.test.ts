@@ -20,7 +20,7 @@ async function setup() {
     error: () => {},
     child: () => logger,
   } as unknown as Logger;
-  const app = new App({ name: 'T', logger });
+  const app = new App({ logger });
   await registerHubs(app);
   const host = app.bind({ provide });
   host.provide.use(embedding, {

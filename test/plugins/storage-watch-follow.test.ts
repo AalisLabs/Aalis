@@ -72,7 +72,7 @@ describe('skills / persona 的目录监听跟随 storage 提供者', () => {
 
   /** 同批登记：消费者排在 storage-local 前面（与按字母序加载的实际顺序一致） */
   async function boot(): Promise<void> {
-    app = new App({ name: 'T', logLevel: 'debug', logger: recordingLogger(logs) });
+    app = new App({ logLevel: 'debug', logger: recordingLogger(logs) });
     provideHostPaths(app, base);
     await app.pluginAll([
       ...HUB_PLUGINS.map(definition => ({ definition })),
@@ -124,7 +124,7 @@ describe('skills / persona 的目录监听跟随 storage 提供者', () => {
   it('storage 在就绪之后才上线：已有的技能与人设被扫到，之后的变化也被感知', async () => {
     writeSkill(skillsDir(), 'zz-pre');
     writeCard(cardsDir(), 'zzpre');
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     provideHostPaths(app, base);
     await app.pluginAll([...HUB_PLUGINS.map(definition => ({ definition })), ...consumers()]);
     await app.plugins.idle();

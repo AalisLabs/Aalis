@@ -42,7 +42,7 @@ afterEach(async () => {
  * 贡献根本不会登记。所以这里总是先备齐服务，再装插件并核激活。
  */
 async function setup() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   started.push(app);
   const host = app.bind({ provide, services });

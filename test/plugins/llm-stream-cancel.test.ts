@@ -16,7 +16,7 @@ import { provideEvents } from '../fixtures/hubs.js';
 const apps: App[] = [];
 
 async function makeModel(): Promise<LLMModel> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   apps.push(app);
   // 启动时的模型发现与能力探测答空，不连本机的 Ollama

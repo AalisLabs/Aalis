@@ -34,7 +34,7 @@ describe('WebUI 的文档级安全', () => {
     writeFileSync(join(dist, 'index.html'), INDEX);
     writeFileSync(join(dist, 'assets', 'app.js'), 'console.log(1)');
     port = await freePort();
-    app = new App({ name: 'document security test', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     provideEvents(app);
     provideHostPaths(app, base);
     app.bind({ provide }).provide.use(webuiClient, { getClientDir: () => dist });

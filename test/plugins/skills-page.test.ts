@@ -53,7 +53,7 @@ async function boot(): Promise<SkillsService> {
     '---\nname: zz-demo\ndescription: 演示技能\ntriggers:\n  - 演示\nlicense: MIT\n---\n# 用法\n\n照做即可\n',
   );
   writeFileSync(join(base, 'self', 'skills', 'zz-demo', 'scripts', 'run.sh'), 'echo hi');
-  app = new App({ name: 'T', logLevel: 'error' });
+  app = new App({ logLevel: 'error' });
   await registerHubs(app);
   provideHostPaths(app, base);
   pages = pageHost();

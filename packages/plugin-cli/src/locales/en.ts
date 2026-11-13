@@ -21,7 +21,7 @@ export default defineLocale<Source>()({
   viewLogs: 'Logs',
   viewStatus: 'Status',
   viewHelp: 'Help',
-  welcome: 'Welcome to {name}. Press {key} to see the shortcuts.',
+  welcome: 'Welcome to Aalis. Press {key} to see the shortcuts.',
   unreadyDoctor:
     '{count, plural, one {# plugin did not start} other {# plugins did not start}}; type {command} to see why and how to fix it',
   unreadyLogs:

@@ -320,8 +320,8 @@ describe('插件拿到的 setPluginConfig 只收文档形态', () => {
     const host = w.host();
     expect(() => host.set('plugins', { p: { apiKey: 'sk-PLACEHOLDER' } })).toThrow('plugins 不能整块替换');
     expect(w.store.getPluginConfig('p')).toEqual({ apiKey: { $secret: 'k' } });
-    host.set('name', 'renamed');
-    expect(w.store.get('name')).toBe('renamed');
+    host.set('logLevel', 'debug');
+    expect(w.store.get('logLevel')).toBe('debug');
   });
 });
 
@@ -381,7 +381,6 @@ describe('孤儿键', () => {
     expect(w.savedSecrets.at(-1)).toEqual({ old: 'o', 'p.conns.token': 'typed' });
     // 修好之后按文件核对：文档回到引用 old
     w.emit.config?.({
-      name: 'T',
       logLevel: 'error',
       plugins: { p: { conns: [{ url: 'a', token: { $secret: 'old' } }] } },
     });
@@ -393,7 +392,7 @@ describe('孤儿键', () => {
   it('手改配置文件去掉引用（经 watch 整份替换）不触发删除', async () => {
     const w = world({ plugins: { p: { apiKey: { $secret: 'k' } } } }, { k: 'v' });
     w.store.watch(() => {});
-    w.emit.config?.({ name: 'T', logLevel: 'error', plugins: { p: {} } });
+    w.emit.config?.({ logLevel: 'error', plugins: { p: {} } });
     await w.host().save();
     expect(w.savedSecrets).toEqual([]);
   });
@@ -426,7 +425,7 @@ describe('孤儿键', () => {
     gate.resolve();
     await saving;
     // 修好之后按文件核对：文档回到没有 q 的那一份，k 没人引用了
-    w.emit.config?.({ name: 'T', logLevel: 'error', plugins: { p: { apiKey: { $secret: 'old' } } } });
+    w.emit.config?.({ logLevel: 'error', plugins: { p: { apiKey: { $secret: 'old' } } } });
     w.failConfigSave.on = false;
     await w.store.persist();
     expect(w.savedSecrets.at(-1)).toEqual({ old: 'o' });
@@ -605,7 +604,7 @@ describe('登记、同步与热重载', () => {
     installConfigHotReload(h.app, h.store, discovery);
     h.failSecretsSave.times = 1;
     h.failSecretsSave.refused = false;
-    h.emit.config?.({ name: 'T', logLevel: 'error', plugins: { p: { apiKey: 'sk-PLACEHOLDER-NEW' } } });
+    h.emit.config?.({ logLevel: 'error', plugins: { p: { apiKey: 'sk-PLACEHOLDER-NEW' } } });
     await new Promise(resolve => setTimeout(resolve, 10));
     await h.app.plugins.idle();
     expect(h.savedConfigs).toEqual([]);
@@ -699,7 +698,7 @@ describe('登记、同步与热重载', () => {
     [
       '读入（手改配置文件）',
       async (w: ReturnType<typeof world>) => {
-        w.emit.config?.({ name: 'T', logLevel: 'error', plugins: { p: { model: 'm2' }, q: { model: 'm1' } } });
+        w.emit.config?.({ logLevel: 'error', plugins: { p: { model: 'm2' }, q: { model: 'm1' } } });
         await new Promise(resolve => setTimeout(resolve, 10));
       },
     ],
@@ -723,7 +722,7 @@ describe('登记、同步与热重载', () => {
 
   it('配置不落盘的宿主：密钥文件拒写之后修好，只作废没写成的密钥，文档不动（没有文件上的那一份可退）', async () => {
     let emitSecrets: ((next: Record<string, unknown>) => void) | undefined;
-    const store = createConfigStore({ name: 'T', logLevel: 'error', plugins: { p: {} } }, undefined, {
+    const store = createConfigStore({ logLevel: 'error', plugins: { p: {} } }, undefined, {
       values: {},
       provider: {
         save: () => {
@@ -738,10 +737,10 @@ describe('登记、同步与热重载', () => {
     store.watch(() => {});
     store.commitSecrets(new Map([['p.apiKey', 'typed-PLACEHOLDER']]));
     store.setPluginConfig('p', { apiKey: { $secret: 'p.apiKey' } });
-    store.set('name', 'renamed');
+    store.set('logLevel', 'debug');
     await expect(store.persist()).rejects.toSatisfy(isConfigSaveRefused);
     emitSecrets?.({ other: 'x' });
-    expect(store.get('name')).toBe('renamed');
+    expect(store.get('logLevel')).toBe('debug');
     expect(store.getPluginConfig('p')).toEqual({ apiKey: { $secret: 'p.apiKey' } });
     expect(store.resolvePluginConfig('p', SCHEMA).dangling, '没写成的密钥作废').toHaveLength(1);
   });
@@ -755,9 +754,9 @@ describe('登记、同步与热重载', () => {
     await w.host().applyPluginConfig('p', { apiKey: 'typed-PLACEHOLDER' });
     await w.host().save();
     expect(w.savedSecrets.at(-1)).toEqual({ other: 'x', 'p.apiKey': 'typed-PLACEHOLDER' });
-    w.host().set('name', 'renamed');
+    w.host().set('logLevel', 'debug');
     w.emit.secrets?.({ other: 'x', 'p.apiKey': 'typed-PLACEHOLDER', added: 'y' });
-    expect(w.store.get('name')).toBe('renamed');
+    expect(w.store.get('logLevel')).toBe('debug');
     expect(w.store.getPluginConfig('p')).toEqual({ apiKey: { $secret: 'p.apiKey' } });
   });
 
@@ -768,7 +767,7 @@ describe('登记、同步与热重载', () => {
     await discovery.loadAll();
     installConfigHotReload(w.app, w.store, discovery);
 
-    w.emit.config?.({ name: 'T', logLevel: 'error', plugins: { p: { apiKey: 'new-PLACEHOLDER', model: 'm1' } } });
+    w.emit.config?.({ logLevel: 'error', plugins: { p: { apiKey: 'new-PLACEHOLDER', model: 'm1' } } });
     await new Promise(resolve => setTimeout(resolve, 10));
     await w.app.plugins.idle();
     expect(w.store.getPluginConfig('p')).toEqual({ apiKey: { $secret: 'k' }, model: 'm1' });
@@ -786,7 +785,7 @@ describe('登记、同步与热重载', () => {
     await w.app.plugins.unload('p');
     installConfigHotReload(w.app, w.store, discovery);
 
-    w.emit.config?.({ name: 'T', logLevel: 'error', plugins: { 'p:b': {}, 'p:c': { apiKey: 'sk-PLACEHOLDER-C' } } });
+    w.emit.config?.({ logLevel: 'error', plugins: { 'p:b': {}, 'p:c': { apiKey: 'sk-PLACEHOLDER-C' } } });
     await new Promise(resolve => setTimeout(resolve, 10));
     await w.app.plugins.idle();
     expect(w.store.getPluginConfig('p:c')).toEqual({ apiKey: { $secret: 'p:c.apiKey' }, model: 'm1' });

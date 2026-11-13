@@ -93,7 +93,7 @@ async function setup(opts: SetupOptions = {}) {
   const logHub = new LogHub();
   const logs: LogEntry[] = [];
   logHub.onEntry(e => logs.push(e));
-  const app = new App({ name: 'T', logLevel: 'debug', logHub });
+  const app = new App({ logLevel: 'debug', logHub });
   booted.push(app);
   const plugins: Array<[typeof triggerPolicyPlugin | typeof layaPlugin, Record<string, unknown>]> = [];
   if (opts.policy !== false) plugins.push([triggerPolicyPlugin, opts.policy ?? {}]);

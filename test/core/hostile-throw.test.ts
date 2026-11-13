@@ -5,7 +5,7 @@ import { App, definePlugin, LogHub } from '../../packages/core/src/index.js';
 
 describe('apply 抛出怪值', () => {
   it('读原型就抛错的对象（getPrototypeOf 陷阱抛错的 Proxy）：归因不抛，插件进 error，idle 落定', async () => {
-    const app = new App({ name: 'T', logHub: new LogHub() });
+    const app = new App({ logHub: new LogHub() });
     const hostile = new Proxy(new Error('x'), {
       getPrototypeOf() {
         throw new Error('trap');

@@ -44,7 +44,7 @@ afterEach(async () => {
 
 describe('合并转发摘要的提示词', () => {
   it('全局层设 ja-JP：system 写 日本語 (日本)（ja-JP），user 的目标长度按字符', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     provideEvents(app);
     apps.push(app);
     provideHostLanguage(app, ['ja-JP']);

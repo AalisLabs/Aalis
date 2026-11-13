@@ -352,7 +352,7 @@ describe('送达失败的原因', () => {
   async function failingTerminal(subscribed = false) {
     cleanups.push(fakeTty(20, 100).restore);
     vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     // 接会话服务时事件由它装的枢纽提供
     if (!subscribed) provideEvents(app);
     cleanups.push(() => app.stop());

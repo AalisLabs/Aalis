@@ -25,7 +25,7 @@ afterEach(async () => {
 
 describe('plugin-user-profile: 事实的语言', () => {
   it('全局层设 ja-JP：system 写「一句简洁的 日本語 (日本)（ja-JP）」，上限按字符', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     const host = app.bind({ provide, events, memory });
@@ -65,7 +65,7 @@ describe('plugin-user-profile: 事实的语言', () => {
 
   /** 装上档案插件，存一条目标用户的话与她的一条回复，触发一次提取，交回提取请求的 system 与 user */
   async function extractOnce(personaName?: () => string) {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     const host = app.bind({ provide, events, memory });

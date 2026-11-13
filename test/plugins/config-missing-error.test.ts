@@ -36,7 +36,7 @@ function world() {
   hub.onEntry(entry => {
     if (entry.level === 'error') errors.push(entry.message);
   });
-  const app = new App({ name: 'T', logLevel: 'info', logHub: hub });
+  const app = new App({ logLevel: 'info', logHub: hub });
   provideEvents(app);
   apps.push(app);
   // whisper.cpp 的 process / storage 是 required：给桩，让它走到 apply 里的配置检查

@@ -292,7 +292,7 @@ describe('onebot_get_forward_msg 过规则', () => {
 
 describe('跨会话历史过规则', () => {
   async function setup(config: Record<string, unknown> = {}) {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     const host = app.bind({ provide, services });

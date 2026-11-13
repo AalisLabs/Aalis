@@ -42,7 +42,7 @@ async function headlessCli(run: (cli: Cli) => Promise<void>, before?: (app: App)
   vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
   const entries: LogEntry[] = [];
   const offLog = LogHub.default.onEntry(e => entries.push(e));
-  const app = new App({ name: 'T', logLevel: 'info' });
+  const app = new App({ logLevel: 'info' });
   provideEvents(app);
   const host = bindHost(app);
   const delivered: OutgoingMessage[] = [];
@@ -245,7 +245,7 @@ describe('plugin-cli 附件', () => {
       return true;
     });
     const home = mkdtempSync(join(tmpdir(), 'aalis-cli-attachments-'));
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     // 接会话服务时事件由它装的枢纽提供
     if (!subscribed) provideEvents(app);
     const host = app.bind({ events });

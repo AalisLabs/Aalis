@@ -32,7 +32,7 @@ async function framesAroundKey(
     writes.push(String(chunk));
     return true;
   });
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   try {
     await app.plugin(cliPlugin, { startupView });

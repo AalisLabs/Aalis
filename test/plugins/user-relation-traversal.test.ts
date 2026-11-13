@@ -15,7 +15,7 @@ afterEach(async () => {
 });
 
 async function setup() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   booted.push(app);
   await app.plugin(memoryInMemory);
   await app.plugins.idle();

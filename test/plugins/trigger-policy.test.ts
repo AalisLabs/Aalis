@@ -170,7 +170,7 @@ async function setupPolicy(
   personas: PersonaService[] = [],
   sessions?: Record<string, Record<string, unknown>>,
 ) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, hooks });
   host.provide.use(gateway, {} as never); // 满足 required 依赖；相位判定本身不经过 gateway
@@ -396,7 +396,7 @@ describe('trigger-policy inbound:trigger（判定日志）', () => {
     logHub.onEntry(e => {
       if (e.message.startsWith('[trigger] 判定')) lines.push(e);
     });
-    const app = new App({ name: 'T', logLevel: 'debug', logHub });
+    const app = new App({ logLevel: 'debug', logHub });
     await registerHubs(app);
     const host = app.bind({ provide, hooks });
     host.provide.use(gateway, {} as never);

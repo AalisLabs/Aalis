@@ -26,7 +26,6 @@ import { t } from './texts.js';
  * `[key: string]: unknown` 兜底：没做 declaration merging 的插件也能读到自己的顶层字段（类型为 unknown）。
  */
 export interface AalisConfig {
-  name: string;
   logLevel: string;
   plugins: Record<string, Record<string, unknown>>;
   /** 被禁用的插件实例 id；宿主登记插件时据此以禁用态登记 */

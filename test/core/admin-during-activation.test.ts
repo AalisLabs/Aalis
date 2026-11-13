@@ -35,7 +35,7 @@ afterEach(async () => {
 
 function makeWorld() {
   const trace: string[] = [];
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   // 测试枢纽由根提供：插件在 apply 里登记，拆卸后登记表里不得留下幽灵条目
   app.bind({ provide }).provide.use(hub, new HubRegistry());
@@ -273,7 +273,7 @@ describe('disable 撞 activating 且 apply 抛错：catch 段接管让位', () =
   });
 
   it('拆卸等 apply 超过时限、关完之后 apply 才抛错：终态仍锁 disabled，不写 error', async () => {
-    const app = new App({ name: 'T', logLevel: 'error', disposeTimeoutMs: 20 });
+    const app = new App({ logLevel: 'error', disposeTimeoutMs: 20 });
     apps.push(app);
     app.bind({ provide }).provide.use(hub, new HubRegistry());
     const { definition, entered, release } = makeGatedPlugin([], { failAfterGate: true });
@@ -463,7 +463,7 @@ describe('updateConfig 撞上 activating 窗口', () => {
 
 describe('管理动作排定关闭计划后，仍在初始化的激活当即 abort', () => {
   it('停用提供者：初始化中的依赖方先被 abort，另一个依赖方的收尾才开始', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     const svc = defineService<{ v: number }>('zz-abort-order');
     const order: string[] = [];

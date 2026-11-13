@@ -566,7 +566,7 @@ describe('plugin-memory-summary: 挑原文的提示词', () => {
 describe('plugin-memory-summary: 落定期间插进一条', () => {
   it('写摘要之后、归档之前，一条晚到的消息时间戳插进了归档段：不归档，摘要回滚到写入前，保留的工具组没被拆开', async () => {
     const store = new SQLiteMemoryService(new DatabaseSync(':memory:'), { logger: { warn() {} } });
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     const host = app.bind({ provide, events, compression });

@@ -17,7 +17,7 @@ export function provideHostLanguage(
   let current = language;
   const sections = (): Record<string, Record<string, unknown>> => ({ ...plugins, [I18N]: { language: [...current] } });
   app.bind({ provide }).provide.use(hostConfig, {
-    getAll: () => ({ name: 'T', logLevel: 'info', plugins: sections() }),
+    getAll: () => ({ logLevel: 'info', plugins: sections() }),
     getPluginConfig: (id: string) => sections()[id] ?? {},
   } as unknown as HostConfig);
   return next => {

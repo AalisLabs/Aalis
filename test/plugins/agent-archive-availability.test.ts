@@ -21,7 +21,7 @@ async function boot() {
   hub.onEntry(entry => {
     if (entry.level === 'warn' && entry.message.includes('message-archive')) warnings.push(entry.message);
   });
-  const app = new App({ logHub: hub, name: 'archive-test', logLevel: 'warn' });
+  const app = new App({ logHub: hub, logLevel: 'warn' });
   apps.push(app);
   await registerHubs(app);
   await app.plugin(memoryPlugin);

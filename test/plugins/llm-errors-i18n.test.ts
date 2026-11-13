@@ -43,7 +43,7 @@ function stubFetch(discovery: 'ok' | 'html', chat: () => Response) {
 }
 
 async function start(plugin: PluginDefinition, config: Record<string, unknown>): Promise<App> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   apps.push(app);
   await app.plugin(plugin, config);

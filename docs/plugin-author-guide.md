@@ -215,7 +215,7 @@ import hooksPlugin from '@aalis/plugin-hooks';
 import myPlugin from './src/index.js';
 
 it('required 依赖到场后激活', async () => {
-  const app = new App({ name: 'test', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   // 事件、钩子与贡献点由插件提供：插件用到它们时，测试里要一并登记三个默认提供者（部署里由宿主随其他插件整批发现登记）
   await app.pluginAll([{ definition: eventsPlugin }, { definition: hooksPlugin }, { definition: contributionsPlugin }]);
   await app.plugin(fakeDepProvider);

@@ -159,7 +159,7 @@ describe('mcp-client 自服务开关落盘', () => {
 
   it('宿主没提供 host-config：直接返回失败，运行态配置不变，也不 bounce', async () => {
     // 不经 hostedApp：宿主不装配置文档，插件的 host-config 可选依赖为空；plugins 服务照常在场
-    const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+    const app = new App({ logLevel: 'error', logger: silent });
     apps.push(app);
     const host = app.bind({ provide });
     const registry = makeToolRegistry(silent);

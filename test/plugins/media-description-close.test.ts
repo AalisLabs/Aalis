@@ -22,7 +22,7 @@ afterEach(async () => {
 /** 装上真插件：存储是只记写入的替身，读盘由 readFile 定；交回 App 与写过的地址 */
 async function boot(readFile: (uri: string) => Promise<unknown>) {
   const writes: string[] = [];
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide });

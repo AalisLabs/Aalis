@@ -68,7 +68,7 @@ describe('模型调用的用途与会话', () => {
   it('对话、子任务、摘要、识图都记进账本，带用途、会话与调用方', async () => {
     const home = mkdtempSync(join(tmpdir(), 'aalis-usage-purposes-'));
     homes.push(home);
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     provideHostPaths(app, home);

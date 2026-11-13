@@ -57,7 +57,7 @@ async function start(plugin: PluginDefinition, config: Record<string, unknown>) 
     if (entry.level === 'warn') warns.push(entry.message);
     if (entry.level === 'error') errors.push(entry.message);
   });
-  const app = new App({ name: 'T', logLevel: 'info', logHub: hub });
+  const app = new App({ logLevel: 'info', logHub: hub });
   provideEvents(app);
   apps.push(app);
   await app.plugin(plugin, config);

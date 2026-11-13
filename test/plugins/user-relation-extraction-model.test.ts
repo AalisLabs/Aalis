@@ -22,7 +22,7 @@ afterEach(async () => {
 
 /** 两家提供者：p-low/a（优先级低）与 p-high/b（优先级高，没指定时挑它）。跑一轮提取，返回被调的模型 */
 async function extractWith(extractionModel: Record<string, unknown>): Promise<string[]> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, memory });

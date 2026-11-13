@@ -30,7 +30,7 @@ function hits(): VectorSearchResult[] {
 }
 
 async function setup(crossSessionMode: string) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide });
   host.provide.use(embedding, {

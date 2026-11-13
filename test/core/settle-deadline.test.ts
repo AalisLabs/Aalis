@@ -24,7 +24,7 @@ function world() {
     error() {},
     child: () => logger,
   };
-  const app = new App({ name: 'settle-deadline', logger, disposeTimeoutMs: 100 });
+  const app = new App({ logger, disposeTimeoutMs: 100 });
   apps.push(app);
   return { app, warnings };
 }

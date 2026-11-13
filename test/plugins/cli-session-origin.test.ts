@@ -55,7 +55,7 @@ async function setup(stored: Record<string, Record<string, unknown>> = {}, sessi
     error() {},
     child: () => logger,
   };
-  const app = new App({ name: 'T', logLevel: 'error', logger });
+  const app = new App({ logLevel: 'error', logger });
   cleanups.push(() => app.stop());
   await registerHubs(app);
   const host = app.bind({ provide, events, sessionManager });

@@ -64,7 +64,7 @@ afterEach(async () => {
 async function boot(
   options: { hubs?: boolean; language?: unknown; sessions?: Record<string, Record<string, unknown>> } = {},
 ): Promise<{ app: App; svc: I18nService }> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   if (options.hubs) await registerHubs(app);
   else provideEvents(app);
@@ -199,7 +199,7 @@ describe('render', () => {
   });
 
   it('语言包与贡献点一致：同一轮里晚于 i18n 激活的包，后面的插件在 apply 里就用得上', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     let seen: string | undefined;
@@ -232,7 +232,7 @@ describe('render', () => {
   });
 
   it('访问时抛错的语言包跳过，不影响 i18n 与别的包', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     const broken = { id: 'broken', language: 'ja' } as LanguagePack;

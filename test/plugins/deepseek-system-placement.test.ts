@@ -169,7 +169,7 @@ describe('chat 出口接线', () => {
       );
     }) as typeof fetch;
 
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     provideEvents(app);
     await app.plugin(deepseek, { apiKey: 'test-key' });
     await app.plugins.idle();

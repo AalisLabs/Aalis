@@ -42,7 +42,7 @@ async function withEngine(startWall: number, fn: (h: Harness) => Promise<void> |
   const off = hub.onEntry((e: LogEntry) => {
     if (e.level === 'warn') warns.push(e.message);
   });
-  const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+  const app = new App({ logLevel: 'warn', logHub: hub });
   await app.plugin(cronEnginePlugin, {});
   await app.plugins.idle();
   if (app.plugins.getPlugin(cronEnginePlugin.name)?.state !== 'active')
@@ -175,7 +175,7 @@ describe('cron-engine 整分钟 tick', () => {
   });
 
   it('收尾段开始后到点的 tick 不再排下一轮：lifecycle.signal 已断', async () => {
-    const app = new App({ name: 'T', logLevel: 'warn', logHub: new LogHub() });
+    const app = new App({ logLevel: 'warn', logHub: new LogHub() });
     try {
       await app.plugin(cronEnginePlugin, {});
       await app.plugins.idle();

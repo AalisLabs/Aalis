@@ -75,7 +75,7 @@ describe('workflow：依赖晚于本插件上线或中途下线', () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-wf-late-'));
     mkdirSync(join(base, 'state'), { recursive: true });
     mkdirSync(join(base, 'workspace'), { recursive: true });
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     await registerHubs(app);
     provideHostPaths(app, base);
   });

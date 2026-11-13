@@ -29,7 +29,7 @@ afterEach(async () => {
 });
 
 async function start() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const recorder: ChatModelRequest[] = [];

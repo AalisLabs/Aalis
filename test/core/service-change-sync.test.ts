@@ -49,7 +49,7 @@ async function world(): Promise<{
   app: App;
   host: { provide: ServiceSelection<Provide>; services: ServiceSelection<Services> };
 }> {
-  const app = new App({ name: 'service-change-sync', logLevel: 'error', logHub: new LogHub() });
+  const app = new App({ logLevel: 'error', logHub: new LogHub() });
   apps.push(app);
   const host = app.bind({ provide, services });
   await app.plugins.idle();

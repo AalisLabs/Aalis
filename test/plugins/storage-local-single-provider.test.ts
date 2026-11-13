@@ -21,7 +21,7 @@ describe('storage-local 整体登记一个提供者', () => {
 
   beforeEach(() => {
     home = realpathSync(mkdtempSync(join(tmpdir(), 'aalis-single-storage-')));
-    app = new App({ name: 'T', logLevel: 'error', logger: silent });
+    app = new App({ logLevel: 'error', logger: silent });
     provideHostPaths(app, home);
   });
 

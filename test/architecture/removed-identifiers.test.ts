@@ -198,6 +198,7 @@ const REMOVED: Array<[string, string]> = [
   ['PreprocessorInfo', 'agent 服务列出已登记的预处理器，没有调用方'],
   ['rebindAlias', '指令别名：指令只剩主名一种名字'],
   ['isTimeInjectionEnabled', '人设服务报告是否注入了时间，系统工具据此不登记 system_time：现在照样登记'],
+  ['appName', '应用名称：会话协议握手回应里的字段，随配置顶层的 name 一起删掉'],
   ['BuildContextOptions', 'media 服务上转调识图上下文的 buildContext，没有调用方'],
   ['registerAccessChecker', '会话历史服务的访问检查器链，由会话管理的取别的会话的规则（canTake）取代'],
   ['AccessChecker', '会话历史服务的访问检查器链，由会话管理的取别的会话的规则（canTake）取代'],

@@ -21,7 +21,7 @@ afterEach(async () => {
 });
 
 function world(logger?: Logger): App {
-  const app = new App({ name: 'T', logLevel: 'error', logger });
+  const app = new App({ logLevel: 'error', logger });
   apps.push(app);
   return app;
 }

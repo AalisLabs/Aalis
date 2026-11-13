@@ -33,7 +33,7 @@ describe.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('skill
     writeFileSync(join(base, 'self', 'skills', 'zz-demo', 'references', 'a.md'), 'a');
     for (const dir of locked()) chmodSync(dir, 0o555);
 
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ logLevel: 'error' });
     await registerHubs(app);
     provideHostPaths(app, base);
     await app.plugins.register(storageLocal, {});

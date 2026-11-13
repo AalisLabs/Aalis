@@ -40,7 +40,7 @@ async function bootAsr(
   config: Record<string, unknown>,
   services: { process: Record<string, unknown>; storage: Record<string, unknown> },
 ): Promise<ASRService> {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   const host = app.bind({ provide, asr });
   // 桩先就位：whisper-cpp 把 process / storage 声明成 required，缺席会被激活闸挡在 pending

@@ -323,7 +323,7 @@ describe('describeImage 按字节判动图', () => {
 describe('agent:llm:before 中间件接线', () => {
   /** 装一份真 media：process / storage 是它的 required 依赖，不放桩它停在 pending、中间件不挂 */
   async function bootMedia(delivery: string, capabilities = ['chat']) {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     await registerHubs(app);
     const host = app.bind({ provide, hooks });
     host.provide.use(processService, {} as never);

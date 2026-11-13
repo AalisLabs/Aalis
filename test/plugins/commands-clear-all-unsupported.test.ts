@@ -24,7 +24,7 @@ afterEach(async () => {
 
 /** 记忆后端替身：只有 clearSession，没有 clearAll；withMemory=false 时不提供记忆服务 */
 async function world(withMemory = true) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, commands: commandsService });

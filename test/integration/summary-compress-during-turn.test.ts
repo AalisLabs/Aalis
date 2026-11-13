@@ -27,7 +27,7 @@ it('压缩期间到达的一轮落定后仍是活跃的，下一轮的上下文�
   const gate = new Promise<void>(r => (release = r));
   const recorder: ChatModelRequest[] = [];
   let replies = 0;
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   await app.plugin(

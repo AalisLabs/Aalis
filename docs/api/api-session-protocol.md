@@ -14,7 +14,7 @@ owner 的客户端（WebUI，以后还有终端）与守护进程之间的线上
 
 与 [api-platform](../services/platform.md) 的分工：平台契约管 Aalis 接入外部聊天平台（连接、账号、按会话发消息），每个 IM 适配器一个实例；会话协议管 owner 自己的客户端怎么看到和操作会话，IM 房间经平台契约产生会话，owner 经会话协议看到同一批会话。
 
-**版本**：`SESSION_PROTOCOL_VERSION` 现为 `0.2.0`，标 experimental。协议号只跟协议自己的变化走，不跟包版本：没到 1.0 写成 0.x 三段，不兼容的修改升第二位，只做加法升第三位，握手比前两段；1.0 以后不兼容的修改升第一位，握手比第一段。对象 schema 不拒多余的键，旧客户端读到新加的字段照常解析。0.20 发布的那一代报两段的 `1.0`。
+**版本**：`SESSION_PROTOCOL_VERSION` 现为 `0.3.0`，标 experimental。协议号只跟协议自己的变化走，不跟包版本：没到 1.0 写成 0.x 三段，不兼容的修改升第二位，只做加法升第三位，握手比前两段；1.0 以后不兼容的修改升第一位，握手比第一段。对象 schema 不拒多余的键，旧客户端读到新加的字段照常解析。0.20 发布的那一代报两段的 `1.0`。
 
 ## 帧
 
@@ -50,11 +50,8 @@ owner 的客户端（WebUI，以后还有终端）与守护进程之间的线上
   identity: { platform: string; userId: string };  // 传输层认证出的身份
   surface: string;                    // 这条连接所在审批面的登记名（webui、cli）
   features: { send: boolean; rewind: boolean; compress: boolean; settings: boolean };  // 功能位
-  appName: string;                    // 应用名
 }
 ```
-
-**应用名**：宿主配置文档里的 `name`（[api-host-config](./api-host-config.md)），每次握手现读，改名之后新的连接就拿到新名字，不用重启；没有宿主配置时是 `Aalis`。WebUI 的标签页标题与房间里她的回复的说话人用它。
 
 比的部分不同时回 `unsupported`，错误信息写明两边的版本，随即断开；只差第三段照常握手。`protocolVersion` 收两段或三段的写法，0.20 的客户端报的 `1.0` 照样得到这条拒绝，不按参数不合处理。握手之前的其它请求回 `invalidRequest`。
 

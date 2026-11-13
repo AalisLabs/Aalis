@@ -38,7 +38,7 @@ afterEach(async () => {
 
 /** 启动一个实例：storage 是 mem（换实例时文件留着），配置里放 jobs；返回执行过的任务名（按次）。激活落定即返回 */
 async function boot(mem: ReturnType<typeof memoryStorage>, jobs: unknown[]) {
-  app = new App({ name: 'T', logLevel: 'error' });
+  app = new App({ logLevel: 'error' });
   provideEvents(app);
   const host = app.bind({ provide, events });
   host.provide.use(cronEngine, cronEngineStub as never);

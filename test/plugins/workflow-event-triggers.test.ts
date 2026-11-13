@@ -96,7 +96,7 @@ describe('订阅不可作触发源的事件的定义', () => {
     logHub.onEntry(entry => {
       if (entry.level === 'warn') warnings.push(entry.message);
     });
-    app = new App({ name: 'T', logLevel: 'warn', logHub });
+    app = new App({ logLevel: 'warn', logHub });
     await registerHubs(app);
     pages = pageHost();
     app.bind({ provide }).provide.use(webuiServer, pages.service);

@@ -569,7 +569,7 @@ describe('固定 token 的长度', () => {
 
   /** 只激活、不启动应用：webui-server 在应用就绪时才监听，这里不占端口 */
   async function activate(fixedToken: string) {
-    const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+    const app = new App({ logLevel: 'error', logger: silent });
     provideEvents(app);
     apps.push(app);
     await app.plugin(webuiServer, { host: '127.0.0.1', autoOpen: false, tokenMode: 'fixed', fixedToken });
@@ -599,7 +599,7 @@ describe('主机白名单的每一项是主机名', () => {
 
   /** 只激活、不启动应用：webui-server 在应用就绪时才监听，这里不占端口 */
   async function activate(allowedHosts: string[]) {
-    const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+    const app = new App({ logLevel: 'error', logger: silent });
     provideEvents(app);
     apps.push(app);
     await app.plugin(webuiServer, { host: '127.0.0.1', autoOpen: false, allowedHosts });

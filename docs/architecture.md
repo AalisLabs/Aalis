@@ -15,7 +15,7 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 - 宿主入口：`app.plugin` / `app.pluginAll` / `app.bind` / `app.plugins`
 - 运行态：各实例的配置、禁用态与服务偏好。登记时交来的配置原样生效，core 不合并默认值、不读配置文档；管理动作（`plugins.enable` / `disable` / `updateConfig` / `bounce`）只改运行态，不写文档
 
-配置文档不在 core。契约在 `@aalis/api-host-config`：`HostConfig`（`host-config` 服务，文档读写加 `save()`）由宿主提供；`AalisConfig` 只声明宿主层字段（`name` / `logLevel` / `plugins` / `disabledPlugins` / `servicePreferences`）加 `[key: string]: unknown` 兜底，业务字段（owners / deniedCapabilities / authorityOverrides / confirmOverrides 等）由对应 api-* 经 declaration merging 注入。要跨重启保留管理动作的结果，调用方在动作成功后经 host-config 写文档并 `save()`。
+配置文档不在 core。契约在 `@aalis/api-host-config`：`HostConfig`（`host-config` 服务，文档读写加 `save()`）由宿主提供；`AalisConfig` 只声明宿主层字段（`logLevel` / `plugins` / `disabledPlugins` / `servicePreferences`）加 `[key: string]: unknown` 兜底，业务字段（owners / deniedCapabilities / authorityOverrides / confirmOverrides 等）由对应 api-* 经 declaration merging 注入。要跨重启保留管理动作的结果，调用方在动作成功后经 host-config 写文档并 `save()`。
 
 业务数据契约与领域类型一律不在 core：`Message` / `ContentSegment` / `ToolCall`（OpenAI 协议形状，跨载体复用）与 `getSenderLabel` / `prefixSender` / `getMessageName` 在 `@aalis/schema-message`，`ToolDefinition` / `ToolFunction` 在 `@aalis/api-tools`，`UserIdentity` 在 `@aalis/api-authority`，`ModelRef` / `resolveLLMModel` 在 `@aalis/api-llm`。
 

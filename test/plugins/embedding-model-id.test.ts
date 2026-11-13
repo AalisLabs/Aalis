@@ -33,7 +33,7 @@ describe('embedding 提供者声明 modelId', () => {
   async function modelIdOf(plugin: PluginDefinition, config: Record<string, unknown>): Promise<string | undefined> {
     const fake = await startFake();
     servers.push(fake.server);
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await app.plugins.register(plugin, { ...config, baseUrl: fake.baseUrl });
     await app.plugins.idle();

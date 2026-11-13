@@ -39,29 +39,29 @@ describe('FsYamlConfigProvider 解析守卫', () => {
   });
 
   it('语法错误：告警点名且不投递，进程继续用旧配置；改对后恢复投递', async () => {
-    writeFileSync(file, 'name: Aalis\nlogLevel: info\nplugins: {}\n', 'utf-8');
+    writeFileSync(file, 'logLevel: info\nplugins: {}\n', 'utf-8');
     const { provider } = createFsYamlConfigProvider(file);
     const received: unknown[] = [];
     unwatch = provider.watch?.(cfg => received.push(cfg)) ?? null;
     await settle();
 
-    atomicWrite(file, 'name: Aalis\n\tplugins: {}\n'); // tab 缩进
+    atomicWrite(file, 'logLevel: info\n\tplugins: {}\n'); // tab 缩进
     expect(await waitFor(() => warns.some(w => w.includes('解析失败')))).toBe(true);
     await quiet();
     expect(received).toHaveLength(0);
 
-    atomicWrite(file, 'name: Fixed\nlogLevel: info\nplugins: {}\n');
+    atomicWrite(file, 'mark: Fixed\nlogLevel: info\nplugins: {}\n');
     expect(await waitFor(() => received.length === 1)).toBe(true);
-    expect((received[0] as { name: string }).name).toBe('Fixed');
+    expect((received[0] as { mark: string }).mark).toBe('Fixed');
   });
 
   it('同一份坏内容保存两次告警两次（rawYaml 只在解析成功后推进）', async () => {
-    writeFileSync(file, 'name: Aalis\nplugins: {}\n', 'utf-8');
+    writeFileSync(file, 'logLevel: info\nplugins: {}\n', 'utf-8');
     const { provider } = createFsYamlConfigProvider(file);
     unwatch = provider.watch?.(() => {}) ?? null;
     await settle();
 
-    const bad = 'name: Aalis\n\tplugins: {}\n';
+    const bad = 'logLevel: info\n\tplugins: {}\n';
     atomicWrite(file, bad);
     expect(await waitFor(() => warns.length === 1)).toBe(true);
     atomicWrite(file, bad); // 编辑器自动保存同样的坏内容
@@ -69,7 +69,7 @@ describe('FsYamlConfigProvider 解析守卫', () => {
   });
 
   it('空文件与裸标量：同一道闸拒收（不再按默认值 bounce、不写回垃圾）', async () => {
-    writeFileSync(file, 'name: Aalis\nplugins: {}\n', 'utf-8');
+    writeFileSync(file, 'logLevel: info\nplugins: {}\n', 'utf-8');
     const { provider } = createFsYamlConfigProvider(file);
     const received: unknown[] = [];
     unwatch = provider.watch?.(cfg => received.push(cfg)) ?? null;
@@ -84,13 +84,13 @@ describe('FsYamlConfigProvider 解析守卫', () => {
   });
 
   it('解析告警不携带相邻行源文（密钥不入日志），但保留行列号', async () => {
-    writeFileSync(file, 'name: Aalis\napiKey: sk-LEAK-abc123\nplugins: {}\n', 'utf-8');
+    writeFileSync(file, 'logLevel: info\napiKey: sk-LEAK-abc123\nplugins: {}\n', 'utf-8');
     const { provider } = createFsYamlConfigProvider(file);
     unwatch = provider.watch?.(() => {}) ?? null;
     await settle();
 
     // 语法错误制造在密钥行的相邻行——yaml 完整报错会把邻近源码摘录进消息
-    atomicWrite(file, 'name: Aalis\napiKey: sk-LEAK-abc123\n\tbad: 1\n');
+    atomicWrite(file, 'logLevel: info\napiKey: sk-LEAK-abc123\n\tbad: 1\n');
     expect(await waitFor(() => warns.some(w => w.includes('解析失败')))).toBe(true);
     const msg = warns.find(w => w.includes('解析失败'));
     expect(msg).not.toContain('sk-LEAK');
@@ -120,11 +120,11 @@ describe('FsYamlConfigProvider 解析守卫', () => {
     expect(thrown?.message).toMatch(/: UNEXPECTED_TOKEN \(line 1, column \d+\)$/);
     expect(thrown?.message).not.toContain('sk-LEAK');
 
-    writeFileSync(file, 'name: Aalis\nplugins: {}\n', 'utf-8');
+    writeFileSync(file, 'logLevel: info\nplugins: {}\n', 'utf-8');
     const { provider } = createFsYamlConfigProvider(file);
     unwatch = provider.watch?.(() => {}) ?? null;
     await settle();
-    atomicWrite(file, 'name: Aalis\napiKey: >- sk-LEAK-abc123\n');
+    atomicWrite(file, 'logLevel: info\napiKey: >- sk-LEAK-abc123\n');
     expect(await waitFor(() => warns.some(w => w.includes('解析失败')))).toBe(true);
     expect(warns.find(w => w.includes('解析失败'))).not.toContain('sk-LEAK');
   });
@@ -136,7 +136,7 @@ describe('FsYamlConfigProvider 解析守卫', () => {
 
   it('启动时缺文件：warn 点名绝对路径并回落内存默认（不再无声）', () => {
     const { config } = createFsYamlConfigProvider(join(dir, 'nope.yaml'));
-    expect(config.name).toBe('Aalis');
+    expect(config.logLevel).toBe('info');
     expect(warns.some(w => w.includes('配置文件不存在') && w.includes('nope.yaml'))).toBe(true);
   });
 });

@@ -30,7 +30,7 @@ afterEach(() => {
 
 describe('scheduler 一次性任务的远期 runAt', () => {
   it('runAt = +30 天：推进 25 天不执行，到点执行一次并删除', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     provideEvents(app);
     const host = app.bind({ provide, services, events });
     host.provide.use(storage, memoryStorage().service as never);

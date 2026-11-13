@@ -74,7 +74,7 @@ async function withStub(
   extra: Record<string, unknown> = {},
   host: { storage?: unknown; media?: unknown } = {},
 ) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   cleanups.push(() => app.stop());
   await registerHubs(app);
   const call = toolRecorder(app);
@@ -422,7 +422,7 @@ async function withAdapter(
     });
   });
 
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   cleanups.push(() => app.stop());
   await registerHubs(app);
   const host = app.bind({ provide, events });

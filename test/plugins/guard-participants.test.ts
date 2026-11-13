@@ -20,7 +20,7 @@ import { provideEvents, registerHubs } from '../fixtures/hubs.js';
 
 describe('守卫上下文的参与者', () => {
   it('plugin-tools 把参与者交给守卫，platform 保持会话值', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     provideEvents(app);
     await app.plugins.register(toolsPlugin, {});
     await app.plugins.idle();
@@ -48,7 +48,7 @@ describe('守卫上下文的参与者', () => {
   });
 
   it('plugin-commands：参与者是发出者本人，没有账号的是无主体；放行不带批的人', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     await registerHubs(app);
     await app.plugin(gatewayPlugin);
     await app.plugin(commandsPlugin);

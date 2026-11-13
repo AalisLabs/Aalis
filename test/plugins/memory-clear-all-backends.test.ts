@@ -46,7 +46,7 @@ describe('clearAll 只清消息与归档', () => {
   });
 
   it('inmemory', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     await app.plugin(memoryInMemory);
     await app.plugins.idle();
     const mem = app.bind({ services }).services.use.get(memory);

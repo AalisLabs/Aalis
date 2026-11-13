@@ -60,7 +60,7 @@ const chatPlugin = (model: LLMModel) =>
 
 async function recordingApp() {
   const warns: string[] = [];
-  const app = new App({ name: 'T', logLevel: 'error', logger: recordingLogger(warns) });
+  const app = new App({ logLevel: 'error', logger: recordingLogger(warns) });
   apps.push(app);
   await registerHubs(app);
   return { app, warns, noModel: () => warns.filter(w => w.includes(NO_MODEL)) };

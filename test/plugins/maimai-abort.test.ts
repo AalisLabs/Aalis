@@ -41,7 +41,7 @@ function hangingApi(): AbortSignal[] {
 
 /** 只开工具的 maimai，返回工具注册表 */
 async function bootTools() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   apps.push(app);
   await app.plugins.register(toolsPlugin, {});
@@ -71,7 +71,7 @@ describe('maimai 查询随中止停下', () => {
 
   it('指令途中停用：交给 fetch 的信号随之断开，不按连不上回', async () => {
     const sent = hangingApi();
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     const host = app.bind({ provide, commands: commandsService });

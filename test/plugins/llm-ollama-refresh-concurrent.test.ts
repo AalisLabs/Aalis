@@ -42,7 +42,7 @@ describe('plugin-llm-ollama: 并发刷新不重复计入新增', () => {
       }),
     );
 
-    const app = new App({ name: 'T', logLevel: 'warn', logHub: new LogHub() });
+    const app = new App({ logLevel: 'warn', logHub: new LogHub() });
     provideEvents(app);
     apps.push(app);
     await app.plugin(llmOllama, { baseUrl: 'http://127.0.0.1:11434' });
@@ -84,7 +84,7 @@ describe('plugin-llm-ollama: 并发刷新不重复计入新增', () => {
       }),
     );
 
-    const app = new App({ name: 'T', logLevel: 'warn', logHub: new LogHub() });
+    const app = new App({ logLevel: 'warn', logHub: new LogHub() });
     provideEvents(app);
     apps.push(app);
     await app.plugin(llmOllama, { baseUrl: 'http://127.0.0.1:11434' });

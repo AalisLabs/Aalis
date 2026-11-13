@@ -51,7 +51,7 @@ async function agentTurn(incoming: IncomingMessage): Promise<ToolCallContext | u
 
 /** 同 agentTurn，另记下 agent:llm:before 看到的入站身份、中止信号与本会话归档的消息 */
 async function observedAgentTurn(incoming: IncomingMessage) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ tools, agent: agentService, hooks, memory });
@@ -169,7 +169,7 @@ describe('续做：工具调用上下文取发起它的那一轮（通知的 fro
 
 describe('ToolCallContext.inbound：其他调用方不填写', () => {
   it('workflow 的 tool 节点（含由调用者触发的 run）：inbound 为 undefined', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     await app.plugin(toolsPlugin, {});

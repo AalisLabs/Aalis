@@ -47,7 +47,7 @@ const parse = (out: Awaited<ReturnType<RegisteredTool['handler']>>) =>
 
 /** 只装 tool-system（storage、process 都不在）；call 直接调登记下来的工具，withdrawn 记下被撤的工具名 */
 async function boot() {
-  const app = new App({ name: 'T', logLevel: 'error', logHub: new LogHub() });
+  const app = new App({ logLevel: 'error', logHub: new LogHub() });
   apps.push(app);
   const host = app.bind({ provide });
   const registered = new Map<string, Omit<RegisteredTool, 'pluginName'>>();

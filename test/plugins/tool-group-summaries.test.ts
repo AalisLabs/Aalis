@@ -111,7 +111,7 @@ const CASES: [string, PluginDefinition, string[], Record<string, unknown>?, Arou
 
 /** 只启动这一个插件（宿主另做的见 around），交出它登记的分组 */
 async function groupsOf(definition: PluginDefinition, config: Record<string, unknown> = {}, around: Around = {}) {
-  const app = new App({ name: 'T', logger: silent });
+  const app = new App({ logger: silent });
   apps.push(app);
   await registerHubs(app);
   const registry = makeToolRegistry(silent);

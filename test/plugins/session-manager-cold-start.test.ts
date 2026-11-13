@@ -24,7 +24,7 @@ describe('session-manager 会话表跟随 memory 胜者', () => {
   it('先从空后备加载、首选后端随后上线：换成首选后端的会话表，原有会话可见且不被删', async () => {
     const fallback = fakeMemory();
     const preferred = fakeMemory({ 'old-1': oldSession });
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     await registerHubs(app);
     const host = app.bind({ provide, sessionManager });
     host.provide.use(memory, fallback as never, { priority: -100 });
@@ -44,7 +44,7 @@ describe('session-manager 会话表跟随 memory 胜者', () => {
   it('换人时先把旧表的未落盘变更写回旧后端，再以新后端的表为准', async () => {
     const fallback = fakeMemory();
     const preferred = fakeMemory({ 'old-1': oldSession });
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     await registerHubs(app);
     const host = app.bind({ provide, sessionManager });
     host.provide.use(memory, fallback as never, { priority: -100 });
@@ -80,7 +80,7 @@ describe('session-manager 会话表跟随 memory 胜者', () => {
       await gate;
       return list(namespace);
     };
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     await registerHubs(app);
     const host = app.bind({ provide, sessionManager });
     host.provide.use(memory, fallback as never, { priority: -100 });
@@ -102,7 +102,7 @@ describe('session-manager 会话表跟随 memory 胜者', () => {
 
   it('显式删除的会话仍从后端删掉', async () => {
     const store = fakeMemory({ keep: { ...oldSession, id: 'keep' }, drop: { ...oldSession, id: 'drop' } });
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     await registerHubs(app);
     const host = app.bind({ provide, sessionManager });
     host.provide.use(memory, store as never);
@@ -129,7 +129,7 @@ describe('冷启动整批登记：首选后端首轮即可见', () => {
           provide.use(memory, impl as never, { priority });
         },
       });
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     const host = app.bind({ sessionManager });
     await app.plugins.idle();
     await app.pluginAll([

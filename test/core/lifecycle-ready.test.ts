@@ -51,7 +51,7 @@ function world(options: Partial<AppOptions> = {}) {
     error() {},
     child: name => scoped(`${scope}:${name}`),
   });
-  const app = new App({ name: 'T', logger: scoped('aalis'), slowThresholdMs: 30, ...options });
+  const app = new App({ logger: scoped('aalis'), slowThresholdMs: 30, ...options });
   apps.push(app);
   return { app, warns };
 }

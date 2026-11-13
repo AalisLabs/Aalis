@@ -213,11 +213,10 @@ describe('PUT /api/plugins/:name/config 与 watch 路径对齐', () => {
 describe('PUT /api/plugins/:name/config 按宿主的裁剪政策', () => {
   it('宿主保留未知字段（trimUnknownFields=false）：WebUI 同样不裁、不附「已忽略」，原样再存判为无改动', async () => {
     const store = createConfigStore({
-      name: 'T',
       logLevel: 'error',
       plugins: { target: { apiKey: 'sk-PLACEHOLDER', timeoutMs: 30000, legacyKnob: 1 } },
     });
-    const app = new App({ name: 'T', logLevel: 'error', logger: silentLogger() });
+    const app = new App({ logLevel: 'error', logger: silentLogger() });
     apps.push(app);
     installHostConfig(app, store, { trimUnknownFields: false });
     let applies = 0;

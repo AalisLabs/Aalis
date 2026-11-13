@@ -63,7 +63,7 @@ describe('trigger-laya 配置解析', () => {
   });
 
   it('真实 App 激活在注册 trigger 服务前拒绝无效 endpoint', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     try {
       await registerHubs(app);
       await app.plugins.register(layaPlugin, { endpoint: { host: 'bad' }, sidecarDir: '/tmp/fake-sidecar' });

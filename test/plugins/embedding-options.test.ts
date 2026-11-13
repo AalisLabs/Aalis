@@ -47,7 +47,7 @@ describe('向量化提供者的模型下拉', () => {
     const ollama = await fakeServer({ ollama: ['zz-ollama-a', 'zz-ollama-b'] });
     const openai = await fakeServer({ openai: ['zz-openai-a'] });
     servers.push(ollama.server, openai.server);
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     await app.plugins.register(embeddingOllama, { baseUrl: ollama.url, model: 'zz-ollama-a', retries: 0 });
@@ -98,7 +98,7 @@ describe('向量化提供者的 baseUrl 带查询串或片段：读配置时报�
         return Response.json({ data: [{ embedding: [0.1] }], embeddings: [[0.1]] });
       }),
     );
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     await app.plugins.register(plugin, { ...extra, baseUrl });
@@ -136,7 +136,7 @@ describe('向量化提供者取模型列表随停用中止', () => {
     });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     servers.push(server);
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}${suffix}`;

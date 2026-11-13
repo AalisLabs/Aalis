@@ -31,7 +31,7 @@ function hooked(level: 'debug' | 'info' | 'warn' | 'error', needle: string, acti
 }
 
 function makeApp(logger: Logger): App {
-  const app = new App({ name: 'T', logger });
+  const app = new App({ logger });
   apps.push(app);
   return app;
 }

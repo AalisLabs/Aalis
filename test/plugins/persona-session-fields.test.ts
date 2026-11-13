@@ -59,7 +59,7 @@ async function boot(sessions: Record<string, Record<string, unknown>>) {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'default.yaml'), formatCard('主卡'));
   writeFileSync(join(dir, 'client.yaml'), formatCard('客户端卡', true));
-  app = new App({ name: 'T', logLevel: 'error' });
+  app = new App({ logLevel: 'error' });
   provideHostPaths(app, base);
   await app.pluginAll([
     ...HUB_PLUGINS.map(definition => ({ definition })),

@@ -40,7 +40,7 @@ function stubFetch(modelId: string, usage: Record<string, unknown>): void {
 
 async function chatWith(plugin: PluginDefinition, modelId: string, usage: Record<string, unknown>) {
   stubFetch(modelId, usage);
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   await app.plugins.register(plugin, { apiKey: 'test-key' });
   await app.plugins.idle();
@@ -127,7 +127,7 @@ describe('前缀缓存命中量上报', () => {
       return new Response(frames, { status: 200, headers: { 'content-type': 'text/event-stream' } });
     }) as typeof fetch;
 
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     provideEvents(app);
     await app.plugins.register(openaiPlugin, { apiKey: 'test-key' });
     await app.plugins.idle();

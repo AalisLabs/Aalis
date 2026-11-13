@@ -29,7 +29,7 @@ afterEach(async () => {
 
 /** 跑一轮提取：替身按次序回 replies（用完了回最后一条），返回它收到的请求与写下的事实 */
 async function extract(replies: ChatResponse[]) {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   await registerHubs(app);
   const host = app.bind({ provide, events, memory });

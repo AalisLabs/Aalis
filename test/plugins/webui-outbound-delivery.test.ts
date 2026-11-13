@@ -46,7 +46,7 @@ interface StartOptions {
 async function startWebui(opts: StartOptions = {}) {
   const port = await freePort();
   const token = 'outbound-delivery-test-token-0000';
-  const app = new App({ name: 'WebUI delivery test', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   provideEvents(app);
   apps.push(app);
   const host = app.bind({ provide, events });

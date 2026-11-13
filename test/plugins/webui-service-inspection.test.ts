@@ -32,8 +32,8 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
     },
   };
   // 与 startAalis 同一装配：文档 → App → installHostConfig（host-config 由宿主登记在根上）
-  const store = createConfigStore({ name: 'inspect-test', logLevel: 'error', plugins: {} });
-  const app = createInspectableApp({ name: 'inspect-test', logLevel: 'error', logger: quiet });
+  const store = createConfigStore({ logLevel: 'error', plugins: {} });
+  const app = createInspectableApp({ logLevel: 'error', logger: quiet });
   installHostConfig(app, store);
   // events / hooks / contributions 由插件提供：与宿主一样登记三个默认提供者
   await registerHubs(app);

@@ -70,7 +70,7 @@ afterEach(() => {
 describe('模型发现请求带超时', () => {
   it('Ollama /api/tags', async () => {
     const cap = captureFetch();
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     provideEvents(app);
     await load(app, ollama, { baseUrl: 'http://127.0.0.1:11434' });
     expectLiveSignal(cap.signalFor('/api/tags'), 'Ollama /api/tags');
@@ -79,7 +79,7 @@ describe('模型发现请求带超时', () => {
 
   it('OpenAI /models', async () => {
     const cap = captureFetch();
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     provideEvents(app);
     await load(app, openai, { apiKey: 'k', baseUrl: 'https://gw.invalid/v1' });
     expectLiveSignal(cap.signalFor('/models'), 'OpenAI /models');
@@ -88,7 +88,7 @@ describe('模型发现请求带超时', () => {
 
   it('DeepSeek /models', async () => {
     const cap = captureFetch();
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     provideEvents(app);
     await load(app, deepseek, { apiKey: 'k', baseUrl: 'https://gw.invalid' });
     expectLiveSignal(cap.signalFor('/models'), 'DeepSeek /models');
@@ -99,7 +99,7 @@ describe('模型发现请求带超时', () => {
 describe('serper search_images 带超时（挂起时不占死限流槽）', () => {
   it('图片搜索请求带 signal', async () => {
     const cap = captureFetch();
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     const handlers: Record<string, Handler> = {};
     app.bind({ provide }).provide.use(tools, {
       register: (t: { definition: { function: { name: string } }; handler: Handler }) => {

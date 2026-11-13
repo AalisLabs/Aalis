@@ -18,7 +18,7 @@ import { turnInput } from '../fixtures/turn-input.js';
  * 本文件只测不收窄的注入（关系图范围见 user-relation-recall-scope.test.ts，仅群聊见 user-relation-group-only.test.ts）。
  */
 async function setup() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ contributions, logger, memory });
   await app.plugins.register(memoryInMemory, {});

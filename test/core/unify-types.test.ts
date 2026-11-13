@@ -106,7 +106,7 @@ describe('uses → apply 的类型推导', () => {
         caps.provide.use(kv, { fetch: () => 1 });
       },
     });
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await app.plugin(plugin);
     await app.plugins.idle();
@@ -131,7 +131,7 @@ describe('uses → apply 的类型推导', () => {
 
   it('不声明任何能力的插件照样合法（归属与关闭由框架管理，不取决于声明了什么）', async () => {
     const bare = definePlugin({ name: 'bare', apply() {} });
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await app.plugin(bare);
     await app.plugins.idle();
@@ -219,7 +219,7 @@ describe('定义对象的 uses / apply / provides', () => {
 
   it('apply 非函数：definePlugin 抛；手写 register 返回 false 且不登记', async () => {
     expect(() => definePlugin(asDef({ name: 'no-apply' }))).toThrow('插件 "no-apply" 的 apply 必须是函数');
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     expect(await app.plugins.register(asDef({ name: 'no-apply' }))).toBe(false);
     await app.plugins.idle();

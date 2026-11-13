@@ -47,7 +47,7 @@ afterEach(async () => {
 
 describe('回复记下的自身账号随窗口', () => {
   it('多账号时群里建的子任务：回复记的是群所在的账号', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     await app.plugin(createMockLLMPlugin({ responses: [{ content: '<回复>' }] }));

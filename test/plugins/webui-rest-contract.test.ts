@@ -536,7 +536,7 @@ describe('管理面 REST 的回应与契约', () => {
     await ok('POST /api/plugins/scan', '/api/plugins/scan');
     await ok('POST /api/plugins/:name/instances', `/api/plugins/${PROBE}/instances`, { suffix: 'b' });
     await ok('DELETE /api/plugins/:instanceId/instance', `/api/plugins/${enc(`${PROBE}:b`)}/instance`);
-    await ok('PUT /api/config', '/api/config', { name: 'T2' });
+    await ok('PUT /api/config', '/api/config', { logLevel: 'warn' });
     await ok('POST /api/services/:name/prefer', '/api/services/platform/prefer', { contextId: 'zz-rest-doubles' });
     await ok('DELETE /api/services/:name/prefer', '/api/services/platform/prefer');
     const ownPrefer = `/api/plugins/${PROBE}/services/platform/prefer`;

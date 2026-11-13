@@ -335,7 +335,7 @@ describe('会话协议按全局默认层的语言渲染', () => {
   });
 
   it('i18n 的 render 抛错时不抛，只告警一次：出帧按原文发出，各连接照常收到；不再抛错之后照常渲染', async () => {
-    const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+    const app = new App({ logLevel: 'error', logger: silent });
     provideEvents(app);
     apps.push(app);
     await app.plugin(i18nPlugin);
@@ -362,7 +362,7 @@ describe('会话协议按全局默认层的语言渲染', () => {
     } as unknown as MethodHandlers;
     const server = createSessionServer(
       handlers,
-      () => ({ features: { send: false, rewind: false, compress: false, settings: false }, appName: 'T' }),
+      () => ({ send: false, rewind: false, compress: false, settings: false }),
       { ...silent, warn },
       { present: true, use: flaky },
       () => false,
@@ -466,7 +466,7 @@ describe('会话协议按全局默认层的语言渲染', () => {
   });
 
   it('业务错误的原因可以是文字对象（failure 收 TextRef），同样按全局默认层的语言渲染', async () => {
-    const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+    const app = new App({ logLevel: 'error', logger: silent });
     provideEvents(app);
     apps.push(app);
     await app.plugin(i18nPlugin);
@@ -478,7 +478,7 @@ describe('会话协议按全局默认层的语言渲染', () => {
     } as unknown as MethodHandlers;
     const server = createSessionServer(
       handlers,
-      () => ({ features: { send: false, rewind: false, compress: false, settings: false }, appName: 'T' }),
+      () => ({ send: false, rewind: false, compress: false, settings: false }),
       silent,
       app.bind({ i18n }).i18n,
       () => false,

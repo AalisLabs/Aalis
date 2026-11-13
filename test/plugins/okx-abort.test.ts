@@ -37,7 +37,7 @@ async function boot(config: Record<string, unknown> = {}, respond?: () => Promis
     }),
   );
   const registered = new Map<string, ToolSpec>();
-  const app = new App({ name: 'T', logLevel: 'error' });
+  const app = new App({ logLevel: 'error' });
   apps.push(app);
   app.bind({ provide }).provide.use(tools, {
     register(tool: ToolSpec) {

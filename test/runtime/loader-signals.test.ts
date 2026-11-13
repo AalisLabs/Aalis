@@ -340,7 +340,7 @@ describe('两份 @aalis/core', () => {
       errCaptured.push(args.map(String).join(' '));
     };
     const handle = installConsoleSink({ target: 'stderr', minLevel: 'warn' });
-    const app = new App({ name: 'T', logLevel: 'info' });
+    const app = new App({ logLevel: 'info' });
     try {
       await createPluginDiscovery(
         app,

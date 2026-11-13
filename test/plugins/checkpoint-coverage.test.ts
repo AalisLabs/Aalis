@@ -109,7 +109,7 @@ describe('默认只记受众只有 owner 的会话', () => {
 
 describe('会话管理不在', () => {
   it('判不出受众，WebUI 的一轮也不记', async () => {
-    const app = new App({ name: 'T', logLevel: 'error' });
+    const app = new App({ logLevel: 'error' });
     apps.push(app);
     await registerHubs(app);
     const store = recordingStorage();
