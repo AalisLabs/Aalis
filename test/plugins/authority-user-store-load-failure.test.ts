@@ -38,7 +38,7 @@ describe('UserStore：加载失败后拒写，不让全量快照覆盖原数据'
     await m.init();
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
     m.save();
-    await new Promise(r => setTimeout(r, 20));
+    await m.flushed();
 
     expect(await readFile(file, 'utf-8'), '坏文件不该被新快照覆盖').toBe(broken);
   });
@@ -57,7 +57,7 @@ describe('UserStore：加载失败后拒写，不让全量快照覆盖原数据'
     await m.init();
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
     m.save();
-    await new Promise(r => setTimeout(r, 20));
+    await m.flushed();
 
     expect(await readFile(file, 'utf-8'), '读不出时不该写入').toBe('{"version":5,"users":{}}');
   });
@@ -74,7 +74,7 @@ describe('UserStore：加载失败后拒写，不让全量快照覆盖原数据'
 
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
     m.save();
-    await new Promise(r => setTimeout(r, 20));
+    await m.flushed();
 
     const data = JSON.parse(await readFile(file, 'utf-8'));
     expect(data.users['onebot:newbie'].level, '重读成功后应恢复写入').toBe(3);
@@ -229,7 +229,7 @@ describe('UserStore：加载失败后拒写，不让全量快照覆盖原数据'
     await m.init();
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
     m.save();
-    await new Promise(r => setTimeout(r, 20));
+    await m.flushed();
 
     expect(JSON.parse(await readFile(file, 'utf-8')).users['onebot:newbie'].level).toBe(3);
   });
@@ -248,7 +248,7 @@ describe('UserStore：加载失败后拒写，不让全量快照覆盖原数据'
     await m.init();
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
     m.save();
-    await new Promise(r => setTimeout(r, 20));
+    await m.flushed();
 
     expect(await readFile(file, 'utf-8'), '读不出时不该写入').toBe(
       '{"version":5,"users":{"onebot:banned":{"level":-5}}}',
@@ -264,7 +264,7 @@ describe('UserStore：加载失败后拒写，不让全量快照覆盖原数据'
     await m.init();
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
     m.save();
-    await new Promise(r => setTimeout(r, 20));
+    await m.flushed();
 
     expect(await readFile(file, 'utf-8'), 'v5 坏结构不该被新快照覆盖').toBe(broken);
   });
@@ -286,7 +286,7 @@ describe('UserStore：加载失败后拒写，不让全量快照覆盖原数据'
     await m.init();
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
     m.save();
-    await new Promise(r => setTimeout(r, 20));
+    await m.flushed();
 
     expect(await readFile(file, 'utf-8'), 'v4 文件不该被新快照覆盖').toBe(legacy);
     expect(errors.some(e => e.includes('users.json') && e.includes('v5'))).toBe(true);
@@ -297,7 +297,7 @@ describe('UserStore：加载失败后拒写，不让全量快照覆盖原数据'
     await m.init();
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
     m.save();
-    await new Promise(r => setTimeout(r, 20));
+    await m.flushed();
 
     const data = JSON.parse(await readFile(join(dir, 'users.json'), 'utf-8'));
     expect(data.version).toBe(5);
