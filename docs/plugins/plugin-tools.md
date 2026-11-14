@@ -7,7 +7,9 @@
 
 AI 可调用工具的中心注册表与执行器。提供 `tools` 服务，所有插件通过 `@aalis/api-tools` 的绑定门面 `tools.use.register()` 登记工具，Agent / Commands 经业务句柄 `tools.use` 查询与执行；另提供后台任务登记 `backgroundTasks`（声明了可转后台的工具调用转到后台后登记在这里）。
 
-与 `plugin-commands` 同属中心 Registry：一张登记表（工具名全局唯一，重名警告并覆盖）、`register()` 返回 disposer、`setExecutionGuard()` 注入统一权限/安全检查钩子；另有四个自带的后台任务工具，它们的名字保留，同名登记被拒并告警。与 LLM 的多 provider 路由不同——只有这一个枢纽，不需要 `tools.list()` 枚举。
+与 `plugin-commands` 同属中心 Registry：一张登记表、`register()` 返回 disposer、`setExecutionGuard()` 注入统一权限/安全检查钩子；另有四个自带的后台任务工具，它们的名字保留，同名登记被拒并告警。与 LLM 的多 provider 路由不同——只有这一个枢纽，不需要 `tools.list()` 枚举。
+
+工具表与工具分组表按登记方的位次排：宿主的根最前，插件按实例 id 的码元序，同一登记方按登记先后。给模型的工具清单就是这个次序，不看登记发生的时刻，插件重启、装进应用的先后都不改变它。重名的几条都留着：位次靠前的那条生效，它撤回后下一条顶上；工具重名另记一条 warn。同一个插件运行中再登记同名的，旧的那条先撤回，新的一条按登记先后排在它那一段的末尾。
 
 ## 插件声明
 

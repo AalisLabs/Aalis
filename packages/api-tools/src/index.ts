@@ -247,7 +247,12 @@ export interface ToolGroupInfo {
  * 由 plugin-tools 创建 ToolRegistry 并注册为服务。
  */
 export interface ToolService {
-  register(tool: Omit<RegisteredTool, 'pluginName'>, contextId: string): () => void;
+  /**
+   * 登记一个工具。seat 是登记方的位次（宿主的根是空串，插件是它的实例 id）：工具表先比它的码元序，同一位次按登记先后，
+   * 给模型的工具清单就是这个次序，不看登记发生的时刻。重名的几条都留着，位次靠前的那条生效，它撤回后下一条顶上。
+   * contextId 记在工具的 pluginName 上。返回撤回（幂等，只撤这一条）
+   */
+  register(tool: Omit<RegisteredTool, 'pluginName'>, contextId: string, seat: string): () => void;
 
   /**
    * 获取工具定义列表
@@ -284,8 +289,8 @@ export interface ToolService {
   /** 注入执行守卫，用于能力裁决与确认；传 undefined 摘掉，需要更高等级或确认的工具退回 fail-closed */
   setExecutionGuard(guard: ExecutionGuard | undefined): void;
 
-  /** 注册工具分组 */
-  registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, contextId: string): () => void;
+  /** 注册工具分组：次序与重名的处理同 {@link ToolService.register} */
+  registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, contextId: string, seat: string): () => void;
   /** 获取所有已注册的工具分组 */
   getGroups(): ToolGroupInfo[];
 }
@@ -450,11 +455,11 @@ export const tools = defineService<ToolService, BoundTools>('tools', port => {
   // 分组归属表先建：提供者换人时分组先于工具重挂
   const groups = port.registrar<Omit<ToolGroupInfo, 'pluginName'>>({
     key: group => group.name,
-    register: (service, group) => service.registerGroup(group, port.id),
+    register: (service, group) => service.registerGroup(group, port.id, port.seat),
   });
   const entries = port.registrar<Omit<RegisteredTool, 'pluginName'>>({
     key: tool => tool.definition.function.name,
-    register: (service, tool) => service.register(tool, port.id),
+    register: (service, tool) => service.register(tool, port.id, port.seat),
   });
   return Object.assign(Object.create(port.provider) as BoundTools, {
     register: (tool: Omit<RegisteredTool, 'pluginName'>) => entries.add(tool),

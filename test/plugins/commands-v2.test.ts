@@ -7,12 +7,12 @@ import { toSource } from '../../packages/schema-i18n/src/index.js';
 import { ref } from '../fixtures/service-ref.js';
 
 // 简易 logger（仅 child + 几个等级，足以驱动 CommandRegistry）
-function makeLogger(): Logger {
+function makeLogger(warns?: string[]): Logger {
   const noop = () => undefined;
   const l: Logger = {
     debug: noop,
     info: noop,
-    warn: noop,
+    warn: warns ? (message: string) => void warns.push(message) : noop,
     error: noop,
     child: () => l,
   } as unknown as Logger;
@@ -233,31 +233,52 @@ describe('同名指令（声明栈）', () => {
   const reg = () => new CommandRegistry(makeLogger(), ref(), ref());
   const find = (r: CommandRegistry, n: string) => r.getAll().find(c => c.name === n);
 
-  it('后来者胜：栈顶决定跑谁的实现（与旧行为一致）', async () => {
+  it.each([
+    ['A', 'B'],
+    ['B', 'A'],
+  ])('位次靠前的生效：栈顶不看登记的先后，告警点名生效的与被压住的（先 %s 后 %s）', async (first, second) => {
+    const warns: string[] = [];
+    const r = new CommandRegistry(makeLogger(warns), ref(), ref());
+    for (const who of [first, second]) {
+      r.command('ping', `${who} 的`, { pluginName: who }).action(async () => `from-${who}`);
+    }
+    expect(await r.execute('ping', input([]))).toBe('from-A');
+    expect(find(r, 'ping')?.description).toBe('A 的');
+    expect(warns).toEqual(['指令 /ping 重名：A 的声明生效，B 的声明被压住（生效的卸载后顶上；权限取各层里最严的）']);
+  });
+
+  it('同一位次的两层：后登记的生效', async () => {
+    const r = reg();
+    r.command('ping', '第一次', { pluginName: 'A' }).action(async () => 'first');
+    r.command('ping', '第二次', { pluginName: 'A' }).action(async () => 'second');
+    expect(await r.execute('ping', input([]))).toBe('second');
+  });
+
+  it('没给位次的按 pluginName 排，给了的按位次：宿主的根（空串）最靠前', async () => {
     const r = reg();
     r.command('ping', 'A 的', { pluginName: 'A' }).action(async () => 'from-A');
-    r.command('ping', 'B 的', { pluginName: 'B' }).action(async () => 'from-B');
-    expect(await r.execute('ping', input([]))).toBe('from-B');
-    expect(find(r, 'ping')?.description).toBe('B 的');
+    r.command('ping', '根的', { pluginName: 'root', seat: '' }).action(async () => 'from-root');
+    expect(await r.execute('ping', input([]))).toBe('from-root');
   });
 
-  it('覆盖者卸载后，被覆盖的声明**自动复位**', async () => {
-    await withCmdApp(async ({ r, load, unload }) => {
-      await load('A', bound => void bound.command('ping', 'A 的').action(async () => 'from-A'));
-      await load('B', bound => void bound.command('ping', 'B 的').action(async () => 'from-B'));
-      await unload('B');
-      expect(find(r, 'ping'), '节点不该整个消失').toBeDefined();
-      expect(await r.execute('ping', input([]))).toBe('from-A');
-      expect(find(r, 'ping')?.pluginName).toBe('A');
-    });
-  });
-
-  it('先注册者卸载：只摘自己那层，覆盖者照常工作', async () => {
+  it('生效的那层卸载后，被压住的声明**自动复位**', async () => {
     await withCmdApp(async ({ r, load, unload }) => {
       await load('A', bound => void bound.command('ping', 'A 的').action(async () => 'from-A'));
       await load('B', bound => void bound.command('ping', 'B 的').action(async () => 'from-B'));
       await unload('A');
+      expect(find(r, 'ping'), '节点不该整个消失').toBeDefined();
       expect(await r.execute('ping', input([]))).toBe('from-B');
+      expect(find(r, 'ping')?.pluginName).toBe('B');
+    });
+  });
+
+  it('被压住的那层卸载：只摘自己那层，生效的照常工作', async () => {
+    await withCmdApp(async ({ r, load, unload }) => {
+      await load('A', bound => void bound.command('ping', 'A 的').action(async () => 'from-A'));
+      await load('B', bound => void bound.command('ping', 'B 的').action(async () => 'from-B'));
+      await unload('B');
+      expect(await r.execute('ping', input([]))).toBe('from-A');
+      expect(find(r, 'ping')?.pluginName).toBe('A');
     });
   });
 
@@ -418,95 +439,6 @@ describe('同名指令（声明栈）', () => {
     expect(find(r, 'ping')).toBeUndefined();
   });
 
-  it('别名撞名：抢占者卸载后，先注册者的别名要复位而不是被连坐删除', async () => {
-    // 与「覆盖者卸载把整个节点连根删掉」同一个病，只是从指令节点挪到了别名表。
-    await withCmdApp(async ({ r, load, unload }) => {
-      await load(
-        'A',
-        bound =>
-          void bound
-            .command('ping', 'A')
-            .alias('p')
-            .action(async () => 'a'),
-      );
-      await load(
-        'B',
-        bound =>
-          void bound
-            .command('other', 'B')
-            .alias('p')
-            .action(async () => 'b'),
-      );
-      expect(await r.execute('p', input([])), '抢占期间指向 B').toBe('b');
-      await unload('B');
-      expect(r.hasMatch('p', []), '别名不该被连坐删除').toBe(true);
-      expect(await r.execute('p', input([])), '应复位到仍声明它的 A').toBe('a');
-    });
-  });
-
-  it('同名指令栈内的别名：栈顶卸载后退回下层声明的别名', async () => {
-    await withCmdApp(async ({ r, load, unload }) => {
-      await load(
-        'A',
-        bound =>
-          void bound
-            .command('ping', 'A')
-            .alias('pa')
-            .action(async () => 'a'),
-      );
-      await load(
-        'B',
-        bound =>
-          void bound
-            .command('ping', 'B')
-            .alias('pb')
-            .action(async () => 'b'),
-      );
-      await unload('B');
-      expect(r.hasMatch('pb', []), 'B 自己的别名该消失').toBe(false);
-      expect(await r.execute('pa', input([])), 'A 的别名仍可用且指向 A').toBe('a');
-    });
-  });
-
-  it('无人再声明的别名要真的删掉（不能只重绑）', async () => {
-    await withCmdApp(async ({ r, load, unload }) => {
-      await load(
-        'A',
-        bound =>
-          void bound
-            .command('ping', 'A')
-            .alias('solo')
-            .action(async () => 'a'),
-      );
-      await unload('A');
-      expect(r.hasMatch('solo', [])).toBe(false);
-    });
-  });
-
-  it('别名随其所属声明一起回收，不误删他人的', async () => {
-    await withCmdApp(async ({ r, load, unload }) => {
-      await load(
-        'A',
-        bound =>
-          void bound
-            .command('ping', 'A')
-            .alias('pa')
-            .action(async () => 'a'),
-      );
-      await load(
-        'B',
-        bound =>
-          void bound
-            .command('other', 'B')
-            .alias('pb')
-            .action(async () => 'b'),
-      );
-      await unload('A');
-      expect(await r.execute('pb', input([])), '别人的别名不该被误删').toBe('b');
-      expect(r.hasMatch('pa', []), '自己的别名随声明一起回收').toBe(false);
-    });
-  });
-
   it('分组节点：子指令还在时父节点退回分组而非消失', () => {
     const r = reg();
     r.command('grp', '分组本体', { pluginName: 'A' }).action(async () => 'a');
@@ -560,42 +492,5 @@ describe('分组节点回收', () => {
       await unload('P');
       expect(r.getAll().map(c => c.name)).toEqual([]);
     });
-  });
-});
-
-describe('别名：底层声明的别名要能被展示', () => {
-  const reg = () => new CommandRegistry(makeLogger(), ref(), ref());
-  const find = (r: CommandRegistry, n: string) => r.getAll().find(c => c.name === n);
-
-  it('被覆盖者的别名仍列在 materialize 结果里（它本就解析得到）', () => {
-    const r = reg();
-    r.command('ping', 'A', { pluginName: 'A' })
-      .alias('pa')
-      .action(async () => 'a');
-    r.command('ping', 'B', { pluginName: 'B' })
-      .alias('pb')
-      .action(async () => 'b');
-    const cmd = find(r, 'ping');
-    // 两个别名都能解析到 ping —— 那就都该展示，否则 /help 与实际行为不一致
-    expect(cmd?.aliases.sort()).toEqual(['pa', 'pb']);
-  });
-
-  it('被别的指令抢走的别名不再展示——展示的必须敲下去真能跑到本指令', async () => {
-    // 反方向：只按「声明过」列会印出一个跑到别处的别名。`alias()` 允许抢占（只 warn），
-    // 被抢者的 Decl.aliases 里仍留着它，所以必须按别名表回查。
-    const r = reg();
-    r.command('ping', 'A', { pluginName: 'A' })
-      .alias('pa')
-      .action(async () => 'a');
-    r.command('ping', 'B', { pluginName: 'B' })
-      .alias('pb')
-      .action(async () => 'b');
-    r.command('other', 'C', { pluginName: 'C' })
-      .alias('pa')
-      .action(async () => 'c');
-
-    expect(await r.execute('pa', input([])), 'pa 已被 other 抢走').toBe('c');
-    expect(find(r, 'ping')?.aliases, 'ping 不得再声称拥有 pa').toEqual(['pb']);
-    expect(find(r, 'other')?.aliases).toEqual(['pa']);
   });
 });

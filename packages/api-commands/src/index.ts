@@ -111,8 +111,6 @@ export interface Command {
   confirm?: CapabilityConfirm;
   /** 原始风险声明（透传，含沿点路径继承）；供 authority 派生最低等级：safe 0、sensitive 1、dangerous 2 */
   risk?: CapabilityRisk;
-  /** 别名（完整点路径） */
-  aliases: string[];
   positionalArgs: PositionalArgSpec[];
   options: OptionSpec[];
   usage?: string;
@@ -158,7 +156,6 @@ export interface OptionRegisterOptions {
 }
 
 export interface CommandBuilder {
-  alias(name: string): CommandBuilder;
   /** 声明选项。`-h` 与 `--help` 是保留选项（回这条指令的用法），声明它们时抛错 */
   option(name: string, syntax: string, options?: OptionRegisterOptions): CommandBuilder;
   /** 给 DSL 里声明的位置参数加说明；名字不在 DSL 里时抛错 */
@@ -170,9 +167,14 @@ export interface CommandBuilder {
 
 // ===== 服务接口 =====
 
-/** 经 `commands` 描述符按激活绑定的门面调用 `service.command` 时携带 pluginName（激活 id）；插件侧不必传 */
+/**
+ * 经 `commands` 描述符按激活绑定的门面调用 `service.command` 时携带 pluginName（激活 id）与 seat（登记方的位次：
+ * 宿主的根是空串，插件是它的实例 id）；插件侧不必传。同名的几层声明按 seat 叠放，位次靠前的那层生效，不看登记发生的
+ * 时刻；没给 seat 时按 pluginName 排
+ */
 export interface InternalCommandMeta extends CommandMeta {
   pluginName?: string;
+  seat?: string;
 }
 
 export interface CommandService {
@@ -218,7 +220,6 @@ export interface CommandService {
 // ===== 指令 builder =====
 
 type DeferredCall =
-  | { kind: 'alias'; name: string }
   | { kind: 'option'; name: string; syntax: string; opts?: OptionRegisterOptions }
   | { kind: 'argument'; name: string; description: string | TextRef }
   | { kind: 'action'; handler: CommandHandler }
@@ -257,8 +258,7 @@ function registerEntry(svc: CommandService, entry: CommandEntry): () => void {
 }
 
 function forward(real: CommandBuilder, c: DeferredCall): void {
-  if (c.kind === 'alias') real.alias(c.name);
-  else if (c.kind === 'option') real.option(c.name, c.syntax, c.opts);
+  if (c.kind === 'option') real.option(c.name, c.syntax, c.opts);
   else if (c.kind === 'argument') real.argument(c.name, c.description);
   else if (c.kind === 'action') real.action(c.handler);
   else if (c.kind === 'usage') real.usage(c.text);
@@ -273,7 +273,6 @@ function makeBuilder(entry: CommandEntry): CommandBuilder {
     return self;
   };
   const self: CommandBuilder = {
-    alias: name => record({ kind: 'alias', name }),
     option: (name, syntax, opts) => record({ kind: 'option', name, syntax, opts }),
     argument: (name, description) => record({ kind: 'argument', name, description }),
     action: handler => record({ kind: 'action', handler }),
@@ -302,7 +301,7 @@ export const commands = defineService<CommandService, BoundCommands>('commands',
         key: name.trim().split(/\s+/)[0],
         name,
         description,
-        meta: { ...meta, pluginName: port.id },
+        meta: { ...meta, pluginName: port.id, seat: port.seat },
         calls: [],
       };
       entries.add(entry);

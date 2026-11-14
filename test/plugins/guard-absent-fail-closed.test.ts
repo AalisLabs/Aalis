@@ -65,6 +65,7 @@ function toolRegistry(): { registry: ToolRegistry; ran: string[] } {
         },
       },
       'test',
+      'test',
     );
   }
   return { registry, ran };
@@ -141,6 +142,7 @@ describe('tools：没有守卫时 fail-closed', () => {
         },
       },
       'test',
+      'test',
     );
     const inTurn = { sessionId: 's', inbound: {}, turnId: 't1', callId: 'c1' };
     const a = { platform: 'test', userId: 'a' };
@@ -168,6 +170,7 @@ describe('tools：没有守卫时 fail-closed', () => {
           return verdict.ok ? 'taken' : toSource(verdict.reason);
         },
       },
+      'test',
       'test',
     );
     const nobody = '这一轮的参与者里没有人能做这件事';

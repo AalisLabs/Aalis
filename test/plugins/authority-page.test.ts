@@ -42,7 +42,6 @@ function fakeCommandService(nodes: OpNode[], handlers: Map<string, CommandHandle
     command: (spec: string) => {
       const builder = {} as CommandBuilder;
       Object.assign(builder, {
-        alias: () => builder,
         option: () => builder,
         action: (handler: CommandHandler) => {
           handlers.set(spec.split(' ')[0], handler);

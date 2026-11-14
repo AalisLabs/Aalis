@@ -22,18 +22,18 @@
 
 ```ts
 interface ToolService {
-  register(tool: Omit<RegisteredTool, 'pluginName'>, contextId: string): () => void;
+  register(tool: Omit<RegisteredTool, 'pluginName'>, contextId: string, seat: string): () => void;
   getDefinitions(filter?: { groups?: string[] }): ToolDefinition[];
   getSummaries(filter?: { groups?: string[] }): ToolSummary[];
   getAll(): Array<{ name; description; pluginName; visibility; confirm?; risk?; groups?; display? }>;
   execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallRequest): Promise<ToolExecutionResult>;
   setExecutionGuard(guard: ExecutionGuard | undefined): void;
-  registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, contextId: string): () => void;
+  registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, contextId: string, seat: string): () => void;
   getGroups(): ToolGroupInfo[];
 }
 ```
 
-插件侧不要直接调 `ToolService.register(..., contextId)`。`contextId` 由绑定门面填本次激活 id。
+插件侧不要直接调 `ToolService.register(..., contextId, seat)`。`contextId` 由绑定门面填本次激活 id，`seat` 填登记方的位次（宿主的根是空串，插件是它的实例 id）：工具表先比位次的码元序、同一位次按登记先后，几个激活登记了同名工具时位次靠前的那条生效。
 
 `setExecutionGuard` 注入执行守卫；传 `undefined` 摘掉，需要更高等级或确认的工具退回 fail-closed。plugin-authority 激活时注入、停用时摘掉。守卫经审批放行时带回批的人，执行器把这次调用的参与者换成他：交给处理函数的与转后台登记的都是换过的上下文，它派生的（结束通知、子任务、定时任务的创建者）随之按批的人。
 

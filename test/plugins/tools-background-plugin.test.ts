@@ -229,6 +229,7 @@ describe('plugin-tools 的转后台接线', () => {
         },
       },
       'zz-test',
+      'zz-test',
     );
     await w.app.plugins.unload(toolsPlugin.name);
     const result = await registry.execute(

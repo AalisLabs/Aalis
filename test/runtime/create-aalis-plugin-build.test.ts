@@ -112,7 +112,7 @@ for (const desc of await loader.discover()) {
     command(name, description) {
       commandNames.push(name);
       descriptions.push(description);
-      const builder = { alias: () => builder, option: () => builder, argument: () => builder, action: () => builder, usage: () => builder, example: () => builder };
+      const builder = { option: () => builder, argument: () => builder, action: () => builder, usage: () => builder, example: () => builder };
       return builder;
     },
     unregister: quiet,

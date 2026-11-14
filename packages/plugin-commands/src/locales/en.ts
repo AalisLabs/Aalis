@@ -31,7 +31,6 @@ export default defineLocale<Source>()({
   options: 'Options:',
   subcommands: 'Subcommands:',
   described: '{item}: {description}',
-  aliases: 'Aliases: {names, list}',
   displayName: 'Built-in commands',
   prefixLabel: 'Command prefix',
   prefixDescription: 'Prefix that triggers commands; set it to an empty string to trigger with bare keywords',

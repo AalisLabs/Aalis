@@ -56,8 +56,9 @@ interface Caller {
  * 2. **破坏** —— 所有权被改写后，覆盖者卸载时按 `pluginName` 匹配到整个节点并删除，
  *    先注册者的指令一并消失且不会回来。
  *
- * 栈的语义：栈顶生效（**「后来者胜」**），卸载只摘自己那一层、下面的自动复位，
- * 而安全轴取全栈最严（见 `strictestPolicy`）——后来者只能收紧、不能放宽。
+ * 栈的语义：栈顶生效，卸载只摘自己那一层、下面的自动复位，而安全轴取全栈最严（见 `strictestPolicy`）——
+ * 多压一层只能收紧、不能放宽。栈按登记方的位次叠放：位次靠前的在上（宿主的根是空串，最靠前；插件按实例 id 的
+ * 码元序），同一位次后登记的在上。谁在栈顶不看登记发生的时刻，插件重启、装进应用的先后都不换人。
  */
 interface Decl {
   description?: string | TextRef;
@@ -67,7 +68,6 @@ interface Decl {
   baseConfirm?: CapabilityConfirm;
   /** 节点自身声明的原始风险（透传，未声明则继承祖先）；供 authority 区分 sensitive（等级 1）与 dangerous（等级 2） */
   baseRisk?: CapabilityRisk;
-  aliases: string[];
   positionalArgs: PositionalArgSpec[];
   options: OptionSpec[];
   usage?: string;
@@ -75,12 +75,14 @@ interface Decl {
   handler?: CommandHandler;
   /** 声明者。卸载按它精确摘层。 */
   pluginName: string;
+  /** 声明者的位次：栈里按它叠放 */
+  seat: string;
 }
 
 /**
  * 从栈里挑出**最严的那一份声明**，整份取用；不跨声明混轴。
  *
- * 栈顶决定「跑谁的实现」，但不该决定「谁能跑」——否则后注册者只要压一层就能放宽权限。
+ * 栈顶决定「跑谁的实现」，但不该决定「谁能跑」——否则位次靠前的插件只要压一层就能放宽权限。
  *
  * 注意：**必须整份取，不能逐轴取严**。visibility / confirm / risk 三轴各自独立取最严实测不单调：
  * 真正的裁决函数里 **risk 一旦存在就完全遮蔽 visibility**
@@ -89,7 +91,7 @@ interface Decl {
  * 门槛从 2 掉到 0，而 visibility 那一栏仍显示 restricted —— 提权成功且不露痕迹。
  *
  * 定级用契约包的 `capabilityMinLevel`（与 authority 实际裁决同一份实现），不自己复制一份口径。
- * 同级时取先注册者，保证结果与栈序无关（幂等）。
+ * 同级时取栈里最靠下的那层（位次最靠后的），结果只取决于在场的声明，与登记发生的时刻无关。
  */
 function strictestDecl(decls: readonly Decl[]): Decl | undefined {
   let best: Decl | undefined;
@@ -111,10 +113,10 @@ function strictestDecl(decls: readonly Decl[]): Decl | undefined {
  * `capabilityMinLevel`，而 risk 在里面会完全遮蔽 visibility，逐轴合并因此不单调。
  * confirm 不同 —— 它根本不参与定级（`capabilityMinLevel` 只读 risk 与 visibility），
  * 是 authority 的独立轴 B。让它跟着定级赢家走会出两种病，实测都能复现：
- * - 平局时先入者胜，于是 `profile.clear`（restricted，等级 2、无 confirm）压过
+ * - 平局时排在前面的那份胜，于是 `profile.clear`（restricted，等级 2、无 confirm）压过
  *   `profile.clear.nuke`（dangerous，等级同为 2、confirm=session）——「清空所有用户档案」
  *   的二次确认整条消失；
- * - 后注册者声明 `{visibility:'restricted'}`（等级 2）即可盖过既有的 `{confirm:'always'}`
+ * - 另一个登记方声明 `{visibility:'restricted'}`（等级 2）即可盖过既有的 `{confirm:'always'}`
  *   （等级 0），**抹掉别人的确认闸**；反过来单独声明 confirm 想收紧又因等级不变而无效。
  *   对 owner（等级无上限）来说前者的净效果就是「确认闸没了」。
  *
@@ -139,8 +141,6 @@ export class CommandRegistry implements CommandService {
    * 所以「存在以 `x.` 开头的节点」蕴含「`x` 在表中」，查询只需 `nodes.has`。
    */
   private readonly nodes = new Map<string, Decl[]>();
-  /** 别名映射：aliasName → realName */
-  private readonly aliases = new Map<string, string>();
   private readonly logger: Logger;
   /** 权限服务：帮助按它的 authorize 判调用者能用哪些指令，与执行守卫的等级裁决同一份 */
   private readonly authority: Pick<ServiceSelection<AuthorityService>, 'present' | 'use'>;
@@ -182,24 +182,17 @@ export class CommandRegistry implements CommandService {
     if (!stack) {
       stack = [];
       this.nodes.set(name, stack);
-    } else if (stack.length > 0) {
-      this.logger.warn(
-        `指令 ${this.prefix}${name} 已由 ${stack[stack.length - 1].pluginName} 注册，` +
-          `${meta?.pluginName ?? 'unknown'} 的声明将覆盖其行为（卸载后自动复位；权限只会更严不会更松）`,
-      );
     }
 
-    // 压栈而非就地改写：旧声明原样留着，覆盖者卸载后它自动重新生效。
+    // 压栈而非就地改写：被压住的声明原样留着，栈顶卸载后它自动重新生效。
     //
     // 为什么不做「同名直接拒绝」：**本仓没有「内置指令」这个概念**
     // ——`/status` `/shutdown` `/restart` 是 plugin-commands 自己注册的，而它恰好也提供注册表，
     // 但注册表里没有 builtin 位、没有白名单、没有保护名单。所以同名注册是**平等插件之间的
-    // 正常情况**，压栈让「谁的实现生效」有确定语义（后来者胜）且可逆（卸载复位）；改成拒绝
-    // 等于「先加载的永久赢」，赢家由加载顺序决定，反倒随意，也就没有「插件可以替换另一个
-    // 插件的指令」这个能力了。
+    // 正常情况**，压栈让「谁的实现生效」有确定语义（位次靠前的生效）且可逆（卸载复位）；改成拒绝
+    // 等于「先加载的永久赢」，赢家由加载顺序决定，反倒随意。
     //
-    // 安全性由「安全轴取全栈最严」保证——后来者只能收紧不能放宽（见 strictestDecl /
-    // strictestConfirm）。回退还要改 149 行测试（含 commands-v2 里 7 处撞名别名用例）。
+    // 安全性由「安全轴取全栈最严」保证——多压一层只能收紧不能放宽（见 strictestDecl / strictestConfirm）。
     //
     // **为什么安全轴不跟着「当前生效的实现」（栈顶）走**——这是个合理的疑问，答案在于两个
     // 方向的失败代价不对等：
@@ -216,14 +209,24 @@ export class CommandRegistry implements CommandService {
       baseVisibility: meta?.visibility ?? riskDefaults(meta?.risk).visibility,
       baseConfirm: meta?.confirm ?? riskDefaults(meta?.risk).confirm,
       baseRisk: meta?.risk,
-      aliases: [],
       positionalArgs,
       options: [],
       usage: meta?.usage,
       examples: meta?.examples ? [...meta.examples] : [],
       pluginName: meta?.pluginName ?? 'unknown',
+      seat: meta?.seat ?? meta?.pluginName ?? 'unknown',
     };
-    stack.push(decl);
+    const rival = stack[stack.length - 1];
+    let at = stack.length;
+    while (at > 0 && stack[at - 1].seat < decl.seat) at--;
+    stack.splice(at, 0, decl);
+    if (rival) {
+      const top = stack[stack.length - 1];
+      this.logger.warn(
+        `指令 ${this.prefix}${name} 重名：${top.pluginName} 的声明生效，${(top === decl ? rival : decl).pluginName} 的声明被压住` +
+          '（生效的卸载后顶上；权限取各层里最严的）',
+      );
+    }
 
     this.logger.debug(`注册指令: ${this.prefix}${name} (来自 ${decl.pluginName})`);
 
@@ -233,17 +236,6 @@ export class CommandRegistry implements CommandService {
   /** builder 写入**自己那一层声明**（闭包持有，无需每次查表）。 */
   private makeBuilder(name: string, decl: Decl): CommandBuilder {
     const self: CommandBuilder = {
-      alias: (aliasName: string) => {
-        const segs = aliasName.split('.');
-        for (const s of segs) validateNameSegment(s);
-        const existing = this.aliases.get(aliasName);
-        if (existing && existing !== name) {
-          this.logger.warn(`别名 ${this.prefix}${aliasName} 已指向 ${existing}，将改指 ${name}`);
-        }
-        this.aliases.set(aliasName, name);
-        if (!decl.aliases.includes(aliasName)) decl.aliases.push(aliasName);
-        return self;
-      },
       option: (optName: string, syntax: string, opts?: OptionRegisterOptions) => {
         decl.options.push(parseOptionSyntax(optName, syntax, opts));
         return self;
@@ -294,32 +286,9 @@ export class CommandRegistry implements CommandService {
     if (dropped.length === 0) return;
     // 栈空但仍有子节点 → 退回自动分组节点（`/parent` 仍可列出子指令），不删。
     if (stack.length === 0 && this.directChildren(name).length === 0) this.nodes.delete(name);
-    // 别名按**剩余声明**重建，不是把摘掉那层的别名逐个 delete。
-    // 后者会连坐：`alias()` 允许后注册者抢占已有别名（只 warn），于是 A 起了 `p`、B 也起
-    // `p`、B 卸载时把 `p` 整条删掉，A 的别名再也回不来——与「覆盖者卸载把整个节点连根删掉」
-    // 是同一个病，只是从指令节点挪到了别名表。而且删完 A 的 `Decl.aliases` 里仍留着 `p`，
-    // `/help` 会展示一个解析不到的别名，注册表自相矛盾。
-    for (const a of new Set(dropped.flatMap(d => d.aliases))) this.rebindAlias(a);
     // 回收随之变空的祖先分组。放在早退之后，只有真摘到东西才扫。
     this.pruneEmptyGroups();
     this.logger.debug(`注销指令: ${this.prefix}${name} (来自 ${contextId ?? '全部'})`);
-  }
-
-  /**
-   * 把一个别名重新绑到**仍然声明着它**的指令上；没有人再声明就删除。
-   *
-   * 遍历全表看似浪费，但别名总数是「指令数」量级（当前全仓 0 个），而 unregister 只在
-   * 插件装卸时发生——拿这点代价换「不必维护别名的引用计数」是划算的：引用计数是又一个
-   * 要靠人肉维持的不变量。
-   */
-  private rebindAlias(alias: string): void {
-    for (const [cmdName, stack] of this.nodes) {
-      if (stack.some(d => d.aliases.includes(alias))) {
-        this.aliases.set(alias, cmdName);
-        return;
-      }
-    }
-    this.aliases.delete(alias);
   }
 
   /**
@@ -360,22 +329,16 @@ export class CommandRegistry implements CommandService {
     const head = parts[0];
     if (!head) return null;
     // 无前缀模式下，只有命中已知命令首段才认为是命令
-    if (!this.prefix && !this.hasTopSegment(head)) return null;
+    if (!this.prefix && !this.nodes.has(head)) return null;
     return { name: head, args: parts.slice(1), raw: trimmed };
   }
 
   has(name: string): boolean {
-    return this.hasTopSegment(name);
-  }
-
-  private hasTopSegment(name: string): boolean {
-    return this.nodes.has(name) || this.aliases.has(name);
+    return this.nodes.has(name);
   }
 
   get(name: string): Command | undefined {
-    const real = this.aliases.get(name) ?? name;
-    if (!this.nodes.has(real)) return undefined;
-    return this.materialize(real);
+    return this.nodes.has(name) ? this.materialize(name) : undefined;
   }
 
   getNode(path: string | string[]): Command | undefined {
@@ -396,10 +359,9 @@ export class CommandRegistry implements CommandService {
    * 返回命中节点的完整 dotName 与剩余 tokens。
    */
   private resolve(head: string, tokens: string[]): { name: string; remaining: string[] } | null {
-    const realHead = this.aliases.get(head) ?? head;
-    if (!this.nodes.has(realHead)) return null;
+    if (!this.nodes.has(head)) return null;
 
-    let current = realHead;
+    let current = head;
     let consumed = 0;
     for (let i = 0; i < tokens.length; i++) {
       const candidate = `${current}.${tokens[i]}`;
@@ -528,13 +490,6 @@ export class CommandRegistry implements CommandService {
       visibility,
       confirm,
       risk,
-      // 别名 = 全栈声明过的 ∩ **当前真的解析回本指令的**。
-      //
-      // 两个方向都要：只取栈顶会漏掉底层声明但仍然可用的别名（rebindAlias 是按「剩余全部
-      // 声明」重绑的，见 unregister）；而只取全栈又会印出已被别的指令抢走的那些——
-      // `alias()` 允许后注册者抢占已有别名（只 warn），被抢者的 `Decl.aliases` 里仍留着它，
-      // 于是 /help 会展示一个敲下去跑到别处的别名。按别名表回查即两头都真。
-      aliases: [...new Set(stack.flatMap(d => d.aliases))].filter(a => this.aliases.get(a) === name),
       positionalArgs: [...(top?.positionalArgs ?? [])],
       options: [...(top?.options ?? [])],
       usage: top?.usage,

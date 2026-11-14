@@ -110,7 +110,7 @@ function world(opts: WorldOptions = {}) {
       lifecycle.abort();
       return tasks.close();
     },
-    slow: (name = 'zz_slow', spec: Spec = {}) => registry.register(slowTool(runs, name, spec), 'zz-test'),
+    slow: (name = 'zz_slow', spec: Spec = {}) => registry.register(slowTool(runs, name, spec), 'zz-test', 'zz-test'),
     plain: (name: string, handler: RegisteredTool['handler']) =>
       registry.register(
         {
@@ -120,6 +120,7 @@ function world(opts: WorldOptions = {}) {
           },
           handler,
         },
+        'zz-test',
         'zz-test',
       ),
     outputs: () => of<ToolOutputMessage>('tool:output'),
@@ -1179,6 +1180,7 @@ describe('四个后台任务工具', () => {
         background: {},
         handler: async () => ({ content: 'zz-drawn', images: ['data:image/png;base64,AA=='] }),
       },
+      'zz-test',
       'zz-test',
     );
     const { taskId } = parse(await w.registry.execute('zz_draw', { runInBackground: true }, turn().ctx));

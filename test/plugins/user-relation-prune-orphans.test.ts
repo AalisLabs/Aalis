@@ -96,7 +96,6 @@ function captureCommands(): { commands: BoundCommands; run(name: string): Promis
   const commands = {
     command(name: string): CommandBuilder {
       const builder: CommandBuilder = {
-        alias: () => builder,
         option: () => builder,
         argument: () => builder,
         usage: () => builder,

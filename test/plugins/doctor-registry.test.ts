@@ -49,7 +49,6 @@ import { type PageHost, pageHost } from '../fixtures/page-host.js';
 /** 极简 commands 替身：只记下声明了哪些指令，builder 的链式调用原样吞掉 */
 function makeCommandService(recorded: Array<{ name: string; description?: string }>) {
   const builder = {
-    alias: () => builder,
     option: () => builder,
     action: () => builder,
     usage: () => builder,

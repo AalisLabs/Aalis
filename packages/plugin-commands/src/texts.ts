@@ -30,7 +30,6 @@ const SOURCE = {
   options: '选项：',
   subcommands: '子指令：',
   described: '{item}：{description}',
-  aliases: '别名：{names, list}',
   displayName: '内置指令',
   prefixLabel: '指令前缀',
   prefixDescription: '指令触发前缀，设为空字符串可使用纯关键词触发',

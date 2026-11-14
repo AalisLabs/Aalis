@@ -104,7 +104,7 @@ export function renderOverview(entries: Entry[], prefix: string, localize: Local
 }
 
 /**
- * 详情：标题（带完整描述）、用法、示例、参数、选项、子指令、别名，各段之间空一行。给了 error 时（选项写错附上用法）报错在
+ * 详情：标题（带完整描述）、用法、示例、参数、选项、子指令，各段之间空一行。给了 error 时（选项写错附上用法）报错在
  * 最前面
  */
 export function renderDetail(
@@ -132,7 +132,6 @@ export function renderDetail(
     optionLines: cmd.options.flatMap(optionLines),
     subcommands: t('subcommands'),
     children: children.map(entryTexts),
-    aliases: cmd.aliases.length > 0 ? t('aliases', { names: cmd.aliases.map(a => spelled(a, prefix)) }) : '',
   });
   return [
     texts.error,
@@ -148,7 +147,6 @@ export function renderDetail(
       texts.subcommands,
       texts.children.map((e, i) => entryLine(children[i].cmd.name, e, prefix)),
     ),
-    texts.aliases,
   ]
     .filter(Boolean)
     .join('\n\n');

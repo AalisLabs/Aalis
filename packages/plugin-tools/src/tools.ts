@@ -36,6 +36,52 @@ interface Entry {
   withdrawn: AbortController;
 }
 
+/** 表里的一行：名字、登记方的位次与登记的内容 */
+interface Row<T> {
+  name: string;
+  seat: string;
+  value: T;
+}
+
+/**
+ * 按登记方的位次排的登记表：先比位次的码元序（宿主的根是空串，排最前；插件是它的实例 id），同一位次按登记先后。
+ * 不看登记发生的时刻：插件重启、换提供者整批重挂之后各条落回原来的位置。同名的几条都留着，排在前面的那条生效，
+ * 它撤回后下一条顶上；同一位次里旧的那条还在时又登记同名的，新的一条排到它前面（生效的换成新的）。经绑定接口再登记
+ * 同名的走不到这里：旧的那条先撤回，新的一条按登记先后排在这个登记方那一段的末尾
+ */
+class SeatTable<T> {
+  readonly #rows: Row<T>[] = [];
+
+  /** 登记一条；交回登记之前这个名字生效的那一条（有的话即重名，供调用方告警）与撤回（已撤过时返回 false） */
+  add(name: string, seat: string, value: T): { rival?: T; off: () => boolean } {
+    const rival = this.get(name);
+    const row: Row<T> = { name, seat, value };
+    let at = this.#rows.findIndex(other => other.name === name && other.seat === seat);
+    if (at < 0) for (at = this.#rows.length; at > 0 && this.#rows[at - 1].seat > seat; ) at--;
+    this.#rows.splice(at, 0, row);
+    return {
+      rival,
+      off: () => {
+        const index = this.#rows.indexOf(row);
+        if (index >= 0) this.#rows.splice(index, 1);
+        return index >= 0;
+      },
+    };
+  }
+
+  /** 这个名字生效的那一条 */
+  get(name: string): T | undefined {
+    return this.#rows.find(row => row.name === name)?.value;
+  }
+
+  /** 各个名字生效的那一条，按表里的次序 */
+  values(): T[] {
+    const first = new Map<string, T>();
+    for (const row of this.#rows) if (!first.has(row.name)) first.set(row.name, row.value);
+    return [...first.values()];
+  }
+}
+
 /**
  * 工具注册表 —— 管理 AI 可调用工具的注册、查询、执行
  *
@@ -43,16 +89,17 @@ interface Entry {
  * 消费方声明 @aalis/api-tools 的 `tools` 描述符，经绑定接口注册与查询。
  *
  * 与 plugin-commands/CommandRegistry 同属"中心 Registry 模式"：
- * - 一张登记表，name 全局唯一（重名警告并覆盖），另加四个自带的后台任务工具：它们的名字保留，同名登记被拒并告警
+ * - 一张按登记方位次排的登记表（见 SeatTable），重名时位次靠前的那条生效并告警；另加四个自带的后台任务工具：
+ *   它们的名字保留，同名登记被拒并告警
  * - register() 返回退订，退订按条目身份，由绑定门面在激活撤回时调用
  * - 通过 setExecutionGuard() 注入统一权限/安全检查钩子；经审批放行的调用按批的人执行，取用判定（approveFor）也经守卫
  *
  * 声明了 background 的工具由执行器转后台（见 background.ts）；四个后台任务工具只在可见的工具里有可转后台的时才可见。
  */
 export class ToolRegistry implements ToolService {
-  private tools = new Map<string, Entry>();
+  private readonly tools = new SeatTable<Entry>();
   private readonly taskTools: Map<string, Entry>;
-  private _groups = new Map<string, ToolGroupInfo>();
+  private readonly _groups = new SeatTable<ToolGroupInfo>();
   private logger: Logger;
   private readonly tasks: BackgroundTasks;
   private _guard?: ExecutionGuard;
@@ -79,31 +126,32 @@ export class ToolRegistry implements ToolService {
 
   // ---- 注册 / 注销 ----
 
-  register(tool: Omit<RegisteredTool, 'pluginName'>, contextId: string): () => void {
+  register(tool: Omit<RegisteredTool, 'pluginName'>, contextId: string, seat: string): () => void {
     const name = tool.definition.function.name;
     if (this.taskTools.has(name)) {
       this.logger.warn(`工具名 "${name}" 留给后台任务工具，${contextId} 的这个登记已忽略`);
       return () => {};
-    }
-    if (this.tools.has(name)) {
-      this.logger.warn(`工具 "${name}" 已存在，将被覆盖 (来自 ${contextId})`);
     }
     const entry: Entry = {
       tool: { ...tool, pluginName: contextId },
       ...this.declare(tool),
       withdrawn: new AbortController(),
     };
-    this.tools.set(name, entry);
+    const { rival, off } = this.tools.add(name, seat, entry);
+    if (rival) {
+      const winner = this.tools.get(name) as Entry;
+      const loser = winner === entry ? rival : entry;
+      this.logger.warn(
+        `工具 "${name}" 重名：${winner.tool.pluginName} 的那条生效，${loser.tool.pluginName} 的那条被压住，生效的撤回后顶上`,
+      );
+    }
     this.logger.debug(`注册工具: ${name} (来自 ${contextId})`);
-    // 退订按条目引用比对：同名重注册后，旧退订闭包不得误删新登记（按 name + contextId 比对会）。
-    // 这个登记在跑的调用随撤回一并中止（所属插件停用），不论它是否已被同名登记顶掉；还在过守卫的（可转后台与否）不再执行。
+    // 这个登记在跑的调用随撤回一并中止（所属插件停用），不论它此刻是不是生效的那条；还在过守卫的（可转后台与否）不再执行。
     // 中止原因写明撤回登记：普通调用的处理函数按它抛出时，回执就是这句话
     return () => {
       entry.withdrawn.abort(new TextError(t('withdrawn', { name })));
       this.tasks.withdraw(entry, name);
-      if (this.tools.get(name) !== entry) return;
-      this.tools.delete(name);
-      this.logger.debug(`注销工具: ${name}`);
+      if (off()) this.logger.debug(`注销工具: ${name}`);
     };
   }
 
@@ -168,7 +216,7 @@ export class ToolRegistry implements ToolService {
    * 可见的工具里有可转后台的，才连同四个后台任务工具
    */
   private filtered(filter?: { groups?: string[] }): Entry[] {
-    const visible = [...this.tools.values()].filter(e => this.groupAllowed(e.tool, filter?.groups ?? []));
+    const visible = this.tools.values().filter(e => this.groupAllowed(e.tool, filter?.groups ?? []));
     return visible.some(e => e.yieldSeconds !== undefined) ? [...visible, ...this.taskTools.values()] : visible;
   }
 
@@ -176,9 +224,9 @@ export class ToolRegistry implements ToolService {
   private taskTool(name: string, groups: readonly string[] | undefined): Entry | undefined {
     const entry = this.taskTools.get(name);
     if (!entry) return undefined;
-    const available = [...this.tools.values()].some(
-      e => e.yieldSeconds !== undefined && (!groups || this.groupAllowed(e.tool, groups)),
-    );
+    const available = this.tools
+      .values()
+      .some(e => e.yieldSeconds !== undefined && (!groups || this.groupAllowed(e.tool, groups)));
     return available ? entry : undefined;
   }
 
@@ -207,19 +255,16 @@ export class ToolRegistry implements ToolService {
     });
   }
 
-  registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, contextId: string): () => void {
-    const info: ToolGroupInfo = { ...group, pluginName: contextId };
-    this._groups.set(group.name, info);
+  registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, contextId: string, seat: string): () => void {
+    const { off } = this._groups.add(group.name, seat, { ...group, pluginName: contextId });
     this.logger.debug(`注册工具分组: ${group.name} (来自 ${contextId})`);
     return () => {
-      if (this._groups.get(group.name) !== info) return;
-      this._groups.delete(group.name);
-      this.logger.debug(`注销工具分组: ${group.name}`);
+      if (off()) this.logger.debug(`注销工具分组: ${group.name}`);
     };
   }
 
   getGroups(): ToolGroupInfo[] {
-    return [...this._groups.values()];
+    return this._groups.values();
   }
 
   // ---- 执行 ----
@@ -233,7 +278,8 @@ export class ToolRegistry implements ToolService {
     const q = query.toLowerCase();
     const qTokens = new Set(q.split(/[_\s-]+/).filter(Boolean));
     const scored: Array<{ name: string; score: number }> = [];
-    for (const [name, { tool }] of this.tools) {
+    for (const { tool } of this.tools.values()) {
+      const name = tool.definition.function.name;
       // 不把本会话未暴露分组的工具名建议回模型：那等于替它把闸外的名字念一遍
       if (enabledGroups && !this.groupAllowed(tool, enabledGroups)) continue;
       const n = name.toLowerCase();

@@ -71,7 +71,6 @@ describe('help: 各平台通用的纯文本', () => {
   function registry(): CommandRegistry {
     const r = new CommandRegistry(silent, fixedRef(allowAll), ref());
     r.command('clear', '清空当前会话记忆；用 --type 选择类型', { examples: ['/clear', '/clear -t context,vector'] })
-      .alias('cls')
       .option('type', '-t <type:string[]>', {
         description: '清理类型，可重复或用逗号分隔',
         choices: [{ value: 'all', description: '全部类型' }, { value: 'context', description: '消息历史' }, 'vector'],
@@ -106,7 +105,7 @@ describe('help: 各平台通用的纯文本', () => {
     );
   });
 
-  it('详情按用法、示例、参数、选项、子指令、别名排列；选项一行一个，取值与说明逐项列在下面', () => {
+  it('详情按用法、示例、参数、选项、子指令排列；选项一行一个，取值与说明逐项列在下面', () => {
     expect(registry().detail(['clear'], caller)).toBe(
       [
         '/clear — 清空当前会话记忆；用 --type 选择类型',
@@ -126,8 +125,6 @@ describe('help: 各平台通用的纯文本', () => {
         '',
         '子指令：',
         '- /clear all — 【危险】清空全部会话',
-        '',
-        '别名：/cls',
       ].join('\n'),
     );
   });
@@ -289,7 +286,6 @@ async function setup(appConfig: object = {}) {
       description: '查找方式',
       choices: [{ value: 'exact', description: '完全一致' }, 'fuzzy'],
     })
-    .alias('pb')
     .action(() => {
       ran.push('probe');
       return 'found';
@@ -357,7 +353,6 @@ describe('help: 按调用者的等级过滤', () => {
     expect(detail.split('\n')[0]).toBe('/probe — 探针。按关键词查找');
     expect(await ask(MEMBER, '/probe -h')).toBe(detail);
     expect(await ask(MEMBER, '/probe 苹果 -m exact --help')).toBe(detail);
-    expect(await ask(MEMBER, '/pb -h')).toBe(detail);
     expect(ran).toEqual([]);
     expect(await ask(MEMBER, '/clear all -h')).toBe(await ask(MEMBER, '/help clear all'));
     const ownerDetail = await ask(OWNER, '/help clear all');

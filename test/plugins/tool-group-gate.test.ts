@@ -41,6 +41,7 @@ function setup(): Probe {
       },
     },
     'probe-plugin',
+    'probe-plugin',
   );
   reg.register(
     {
@@ -54,6 +55,7 @@ function setup(): Probe {
       },
       handler: async () => 'PLAIN-RAN',
     },
+    'probe-plugin',
     'probe-plugin',
   );
   return { reg, ran: () => ran };

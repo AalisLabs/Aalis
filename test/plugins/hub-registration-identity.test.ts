@@ -21,7 +21,7 @@ import { makeToolRegistry } from '../fixtures/tool-registry.js';
 // ════════════════════════════════════════════════════════════
 // 枢纽服务的退订闭包必须按「这一次登记」比对，而不是按 name + contextId：
 // 同一登记者用同名重注册后，旧闭包仍然成立的判据会把新登记一起删掉。
-// 枢纽登记表一律按条目引用退订；这里钉住 tools / 工具分组 / webui 页面 / agent 预处理器四处同一口径。
+// 枢纽登记表一律按条目引用退订；这里钉住工具分组与 agent 预处理器两处；工具表的同名登记由 tools-seat-order 的用例守着，webui 页面的在 webui-page-registry 的用例里。
 // ════════════════════════════════════════════════════════════
 
 function silentLogger(): Logger {
@@ -36,25 +36,10 @@ const def = (name: string) => ({
 });
 
 describe('ToolRegistry 退订按条目身份', () => {
-  it('同名重注册后，旧退订闭包不误删新登记；新闭包正常删', () => {
+  it('工具分组同名重注册后，旧退订闭包只摘自己那一条', () => {
     const reg = makeToolRegistry(silentLogger());
-    const oldOff = reg.register({ definition: def('t'), handler: async () => 'old' }, 'p');
-    const newOff = reg.register({ definition: def('t'), handler: async () => 'new' }, 'p');
-
-    oldOff();
-    expect(
-      reg.getAll().map(t => t.name),
-      '旧闭包对已被替换的登记应无动作',
-    ).toEqual(['t']);
-
-    newOff();
-    expect(reg.getAll(), '当前生效的登记由它自己的闭包删除').toEqual([]);
-  });
-
-  it('工具分组同一口径', () => {
-    const reg = makeToolRegistry(silentLogger());
-    const oldOff = reg.registerGroup({ name: 'g', label: 'g', description: 'old' }, 'p');
-    reg.registerGroup({ name: 'g', label: 'g', description: 'new' }, 'p');
+    const oldOff = reg.registerGroup({ name: 'g', label: 'g', description: 'old' }, 'p', 'p');
+    reg.registerGroup({ name: 'g', label: 'g', description: 'new' }, 'p', 'p');
 
     oldOff();
     expect(reg.getGroups().map(g => g.description)).toEqual(['new']);
@@ -289,7 +274,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
   it('withToolGroups 视图的读接口是活的，跟着提供者换人', async () => {
     const { host, reg, offProvide, tools: bound } = await world();
     const view = withToolGroups(bound, ['g']);
-    reg.register({ definition: def('only-in-first'), handler: async () => '' }, 'x');
+    reg.register({ definition: def('only-in-first'), handler: async () => '' }, 'x', 'x');
     expect(view.getAll().map(t => t.name)).toContain('only-in-first');
     offProvide();
     expect(() => view.getAll(), '提供者撤回后打不到').toThrow();

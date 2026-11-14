@@ -109,7 +109,7 @@ function buildSearchToolDef(catalog?: string): ToolDefinition {
 /**
  * 在工具摘要列表中按关键词搜索。每个关键词取命中的最具体一档：名字全等 6、前缀 5、包含 4、工具自己的说明 2、所在分组的
  * 名字与说明 1（分组说明是同组工具共用的，不如工具自己的说明具体）；整条的得分是各关键词得分之和，多命中一个关键词的排前面，
- * 同分按登记顺序
+ * 同分保留工具表里的次序
  */
 function searchTools(summaries: ToolSummary[], query: string, groups: readonly ToolGroupInfo[]): ToolSummary[] {
   // 排除 search_tools 自身

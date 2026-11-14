@@ -75,17 +75,17 @@ type ToolCallRequest = Omit<ToolCallContext, 'approveFor'>; // 调用方交给�
 ### 2.3 服务接口 `ToolService`
 
 ```ts
-register(tool: Omit<RegisteredTool, 'pluginName'>, contextId: string): () => void;
+register(tool: Omit<RegisteredTool, 'pluginName'>, contextId: string, seat: string): () => void;
 getDefinitions(filter?: { groups?: string[] }): ToolDefinition[];
 getSummaries(filter?: { groups?: string[] }): ToolSummary[];
 getAll(): Array<{ name; description; pluginName; visibility; confirm?; risk?; groups? }>;
 execute(toolName, args, callCtx: ToolCallRequest): Promise<ToolExecutionResult>;
 setExecutionGuard(guard: ExecutionGuard | undefined): void; // 传 undefined 摘掉，退回 fail-closed
-registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, contextId: string): () => void;
+registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, contextId: string, seat: string): () => void;
 getGroups(): ToolGroupInfo[];
 ```
 
-插件侧不要自己传 `contextId`。`getDefinitions`/`getSummaries`：**不传 `groups` 时只返回「无分组」的通用工具**；`'*'` 表示全部分组。
+插件侧不要自己传 `contextId` 与 `seat`（登记方的位次，门面填；同名工具位次靠前的那条生效）。`getDefinitions`/`getSummaries`：**不传 `groups` 时只返回「无分组」的通用工具**；`'*'` 表示全部分组。
 
 **执行面过同一道闸**：`execute` 在调用方给了 `enabledGroups` 时按同样判据校验。
 
@@ -185,7 +185,7 @@ const result = tools.present
 - **守卫缺失 = fail-closed（拒绝）**：若 `plugin-authority` 未加载，参考实现等同所有人都是默认等级、没人能确认——需要更高等级（restricted 或 risk 为 sensitive / dangerous）或声明了 `confirm` 的工具一律拒绝并提示缺少权限插件，默认等级可用且无需确认的工具照常执行。
 - **`http_download`** 现为 `restricted + confirm:'session'`。新写下载/上传类工具照此挂闸。
 - **`file_read` 的 `allowedRoots`** 默认 `['workspace', 'tmp']`，配置可设 `["*"]`。
-- **重名即覆盖**。应选用带前缀的工具名。
+- **重名的几条都留着，位次靠前的那条生效**（见 [plugin-tools](../plugins/plugin-tools.md)）。应选用带前缀的工具名。
 - **参数校验是「轻量」级**：只查 `required` 缺失 + （仅当 `additionalProperties:false` 时）未知键。
 
 ## 8. 交叉链接

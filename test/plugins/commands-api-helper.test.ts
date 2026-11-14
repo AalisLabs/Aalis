@@ -5,7 +5,7 @@
  *  1. **hot-forward**：提供者已在场时，链式调用在 apply 返回前就落到真 builder
  *  2. **buffer-replay**：提供者缺席时链式调用全部缓冲，提供者上线后一次性重放
  *  3. **provider 换人重挂**：提供者被注销 → 换一个新的，先前声明的指令带全部
- *     alias/option/action 自动挂到新提供者上，旧提供者上不留残留
+ *     option/action 自动挂到新提供者上，旧提供者上不留残留
  *  4. **关闭时与原语同一拍撤回**，不等本插件所提供服务的下游交接
  *  5. **同一激活同名再登记是替换**：只留后一次的那一层
  */
@@ -31,7 +31,6 @@ interface RegisteredCmd {
   name: string;
   description?: string;
   meta: InternalCommandMeta;
-  aliases: string[];
   options: Array<{ name: string; syntax: string; opts?: OptionRegisterOptions }>;
   arguments: Array<{ name: string; description: string | TextRef }>;
   actions: CommandHandler[];
@@ -47,7 +46,6 @@ function makeCommandService(): { svc: CommandService; cmds: Map<string, Register
         name,
         description,
         meta: (meta ?? {}) as InternalCommandMeta,
-        aliases: [],
         options: [],
         arguments: [],
         actions: [],
@@ -56,10 +54,6 @@ function makeCommandService(): { svc: CommandService; cmds: Map<string, Register
       };
       cmds.set(name, reg);
       const builder: CommandBuilder = {
-        alias(n) {
-          reg.aliases.push(n);
-          return builder;
-        },
         option(n, syntax, opts) {
           reg.options.push({ name: n, syntax, opts });
           return builder;
@@ -137,20 +131,18 @@ describe('commands 门面 — hot-forward + 换人重挂', () => {
 
     // 在 apply 里就地取快照：热转发的判据是「apply 返回前已经落到真 builder」，
     // 等 await 之后再看的话，缓冲重放同样会满足，断言就分不出这两条路径了。
-    let hot: { aliases: string[]; options: number; actions: number; usage: string[] } | undefined;
+    let hot: { options: number; actions: number; usage: string[] } | undefined;
     await loadProbe(
       app,
       commandProbe('probe-hot', commands => {
         commands
           .command('ping', 'p')
-          .alias('p')
           .option('verbose', '-v')
           .action(async () => undefined)
           .usage('ping [opts]');
         const cmd = cmds.get('ping');
         if (cmd) {
           hot = {
-            aliases: [...cmd.aliases],
             options: cmd.options.length,
             actions: cmd.actions.length,
             usage: [...cmd.usage],
@@ -160,14 +152,13 @@ describe('commands 门面 — hot-forward + 换人重挂', () => {
     );
 
     expect(hot, 'apply 返回前链式调用就该落到真 builder').toBeDefined();
-    expect(hot?.aliases).toEqual(['p']);
     expect(hot?.options).toBe(1);
     expect(hot?.actions).toBe(1);
     expect(hot?.usage).toEqual(['ping [opts]']);
     await app.stop();
   });
 
-  it('commands 换人：新提供者上线后命令带全部 alias/option/action 自动重挂', async () => {
+  it('commands 换人：新提供者上线后命令带全部 option/action 自动重挂', async () => {
     const app = newApp();
     const host = app.bind({ provide });
     const a = makeCommandService();
@@ -178,11 +169,11 @@ describe('commands 门面 — hot-forward + 换人重挂', () => {
       commandProbe('probe-rebind', commands => {
         commands
           .command('echo', 'e')
-          .alias('say')
+          .option('loud', '-l')
           .action(async () => undefined);
       }),
     );
-    expect(a.cmds.get('echo')?.aliases).toEqual(['say']);
+    expect(a.cmds.get('echo')?.options).toHaveLength(1);
 
     // 换人：注销旧提供者，再上一个新的
     handle();
@@ -194,7 +185,7 @@ describe('commands 门面 — hot-forward + 换人重挂', () => {
 
     const cmd = b.cmds.get('echo');
     expect(cmd, 'echo 应在新提供者上被自动重挂').toBeDefined();
-    expect(cmd?.aliases).toEqual(['say']);
+    expect(cmd?.options).toEqual([{ name: 'loud', syntax: '-l', opts: undefined }]);
     expect(cmd?.actions).toHaveLength(1);
     // 旧提供者不应再保留
     expect(a.cmds.has('echo')).toBe(false);
@@ -211,7 +202,6 @@ describe('commands 门面 — hot-forward + 换人重挂', () => {
       commandProbe('probe-lazy', commands => {
         commands
           .command('lazy', 'l')
-          .alias('lz')
           .option('count', '-c')
           .action(async () => undefined);
         bufferedDuringApply = true;
@@ -226,7 +216,6 @@ describe('commands 门面 — hot-forward + 换人重挂', () => {
 
     const cmd = cmds.get('lazy');
     expect(cmd).toBeDefined();
-    expect(cmd?.aliases).toEqual(['lz']);
     expect(cmd?.options).toEqual([{ name: 'count', syntax: '-c', opts: undefined }]);
     expect(cmd?.actions).toHaveLength(1);
     await app.stop();
@@ -328,15 +317,31 @@ describe('commands 门面 — 卸载只摘自己那一层（走真 CommandRegist
       }),
     );
 
-    expect(await registry.execute('ping', execInput()), '栈顶是后注册的 B').toBe('b');
+    expect(await registry.execute('ping', execInput()), '位次靠前的 probe-a 生效，不看登记的先后').toBe('a');
 
-    await app.plugins.unload('probe-b');
+    await app.plugins.unload('probe-a');
     await settle(app);
     expect(
       registry.getAll().find(c => c.name === 'ping'),
-      'B 卸载后 A 的声明必须还在（连根删除会让整个节点消失）',
+      'A 卸载后 B 的声明必须还在（连根删除会让整个节点消失）',
     ).toBeDefined();
-    expect(await registry.execute('ping', execInput()), '复位到 A 的实现').toBe('a');
+    expect(await registry.execute('ping', execInput()), '被压住的 B 顶上').toBe('b');
+    await app.stop();
+  });
+
+  it('宿主的根经门面登记的同名指令生效：门面带着登记方的位次，根最靠前', async () => {
+    const app = newApp();
+    const host = app.bind({ provide, commands });
+    const registry = new CommandRegistry(mkLogger() as never, ref(), ref());
+    host.provide.use(commands, registry);
+    await loadProbe(
+      app,
+      commandProbe('probe-a', commands => {
+        commands.command('ping', 'A 的 ping').action(async () => 'a');
+      }),
+    );
+    host.commands.use.command('ping', '根的 ping').action(async () => 'root');
+    expect(await registry.execute('ping', execInput())).toBe('root');
     await app.stop();
   });
 
@@ -349,7 +354,7 @@ describe('commands 门面 — 卸载只摘自己那一层（走真 CommandRegist
       commandProbe('probe-replay', commands => {
         commands
           .command('ping', '探针的 ping')
-          .alias('pp')
+          .usage('ping')
           .action(async () => 'probe');
       }),
     );
@@ -360,8 +365,8 @@ describe('commands 门面 — 卸载只摘自己那一层（走真 CommandRegist
     const flaky = {
       command: (name: string, description?: string, meta?: InternalCommandMeta) =>
         Object.assign(Object.create(registry.command(name, description, meta)) as CommandBuilder, {
-          alias: () => {
-            throw new Error('别名冲突');
+          usage: () => {
+            throw new Error('用法被拒');
           },
         }),
       unregister: (name: string, contextId?: string) => registry.unregister(name, contextId),

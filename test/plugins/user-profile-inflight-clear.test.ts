@@ -31,7 +31,6 @@ function captureCommands() {
   const service = {
     command(name: string): CommandBuilder {
       const builder: CommandBuilder = {
-        alias: () => builder,
         option: () => builder,
         argument: () => builder,
         usage: () => builder,

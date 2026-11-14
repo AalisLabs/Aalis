@@ -43,8 +43,8 @@ describe('registrar 接真实 tools 枢纽', () => {
     const reg = makeToolRegistry(silent);
     const box: { bound?: BoundTools } = {};
     const orig = reg.register.bind(reg);
-    reg.register = (tool, activation) => {
-      const off = orig(tool, activation);
+    reg.register = (tool, activation, seat) => {
+      const off = orig(tool, activation, seat);
       if (tool.definition.function.name === 'alpha' && box.bound) {
         box.bound.register({ definition: toolDef('zulu'), handler: async () => 'from-reenter' });
       }
@@ -96,8 +96,8 @@ describe('registrar 接真实 tools 枢纽', () => {
     const box: { bound?: BoundTools } = {};
     const wrap = (reg: ToolRegistry) => {
       const orig = reg.register.bind(reg);
-      reg.register = (tool, activation) => {
-        const off = orig(tool, activation);
+      reg.register = (tool, activation, seat) => {
+        const off = orig(tool, activation, seat);
         if (tool.definition.function.name === 'alpha' && box.bound) {
           box.bound.register({ definition: toolDef('zulu'), handler: async () => 'reenter' });
         }
@@ -148,8 +148,8 @@ describe('registrar 接真实 tools 枢纽', () => {
     };
     const register = provider.register.bind(provider);
     let once = true;
-    provider.register = (tool, owner) => {
-      const off = register(tool, owner);
+    provider.register = (tool, owner, seat) => {
+      const off = register(tool, owner, seat);
       if (once) {
         once = false;
         bound.register({ definition, handler: async () => 'orphan' });

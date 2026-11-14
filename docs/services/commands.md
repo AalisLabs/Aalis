@@ -33,7 +33,7 @@ export interface BoundCommands extends CommandService {
 }
 ```
 
-Builder 链式追加 `alias / option / argument / action / usage / example`。`commands.use.command` 把 `pluginName` 填成本次激活 id；撤回时只摘自己那一层。不要自己调不带 `contextId` 的 `unregister`。
+Builder 链式追加 `option / argument / action / usage / example`。`commands.use.command` 把 `pluginName` 填成本次激活 id；撤回时只摘自己那一层。不要自己调不带 `contextId` 的 `unregister`。
 
 重要类型：
 
@@ -167,7 +167,7 @@ handler 内对外抓取须走 `safeFetch`；文件读写走 storage URI。storag
 
 1. **没有守卫时 fail-closed**：`plugin-authority` 未加载时，等同所有人都是默认等级、没人能确认——需要更高等级（restricted 或 risk 为 sensitive / dangerous）或声明了 `confirm` 的命令一律拒绝并提示缺少权限插件，其余照常执行。
 2. **守卫随 follow 重挂期间存在窗口**：守卫由 plugin-authority 经 `commands.follow` 注入，与命令执行独立；provider 换人瞬间新实例尚未注入守卫，这段时间内需要鉴权或确认的命令按上一条被拒。
-3. **同名命令分层覆盖**：不同激活登记同名命令时，plugin-commands 记一条 warn、压上新的一层，执行最新那层的实现，安全轴取各层里最严的；后登记的撤回后复位到下一层。同一激活再登记同名命令是替换：先撤回自己原来那层。第三方应加领域前缀。
+3. **同名命令分层覆盖**：不同激活登记同名命令时，plugin-commands 记一条 warn、各占一层，执行位次靠前那层的实现（宿主的根最前，插件按实例 id 的码元序，不看登记的先后），安全轴取各层里最严的；生效的那层撤回后下一层顶上。同一激活再登记同名命令是替换：先撤回自己原来那层。第三方应加领域前缀。
 4. **位置参数都是 `unknown`**。
 5. **`text` 类型贪婪**，必须放在最后。
 6. **纯关键词模式（prefix=''）需命中首段**。
