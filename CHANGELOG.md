@@ -8,6 +8,15 @@
 
 ---
 
+## 2026-11-15（core 0.23.1 patch；35 个包：35 patch）
+
+没有破坏性变更，也没有看得到的行为变化。
+
+按补丁版本：core 0.23.1、schema-config 0.17.1、schema-i18n 0.1.2、schema-message 0.12.2、api-agent 0.13.1、api-approval 0.3.1、api-asr 0.12.3、api-authority 0.12.2、api-checkpoint 0.2.1、api-code-sandbox 0.7.1、api-commands 0.10.1、api-contributions 0.2.1、api-cron-engine 0.9.1、api-doctor 0.11.1、api-events 0.1.1、api-flow-control 0.9.1、api-gateway 0.11.1、api-hooks 0.4.1、api-i18n 0.1.1、api-llm 0.16.1、api-media 0.14.2、api-memory 0.10.1、api-package-manager 0.3.2、api-persona 0.10.1、api-process 0.10.2、api-session-history 0.3.1、api-session-manager 0.14.1、api-session-settings 0.2.1、api-storage 0.10.2、api-todo-list 0.2.1、api-tools 0.14.1、api-trigger 0.3.2、api-user-relation 0.2.1、api-webui 0.15.1、api-workflow 0.14.1。
+
+- 34 个契约包（`api-*`、`schema-*`）：源码里的说明文字不再点名第一方插件，按角色写（提供者、消费方、适配器、触发插件等）。类型与运行时代码不变，随包发布的类型声明里的说明随之更新。
+- @aalis/core 0.23.1：内部的限时等待删掉一处不起作用的拒绝处理，行为不变。
+
 ## 2026-11-14（core 0.23.0 minor；25 个包：17 minor / 8 patch）
 
 按次版本：core 0.23.0、runtime 0.22.0、schema-config 0.17.0、api-agent 0.13.0、api-commands 0.10.0、api-doctor 0.11.0、api-host-config 0.5.0、api-session-protocol 0.3.0、api-tools 0.14.0、plugin-agent 0.19.0、plugin-cli 0.16.0、plugin-commands 0.17.0、plugin-file-reader 0.17.0、plugin-media 0.19.0、plugin-session-server 0.5.0、plugin-tools 0.14.0、plugin-webui-client 0.19.0；按补丁版本：create-aalis 0.11.1、api-media 0.14.1、schema-message 0.12.1、plugin-doctor 0.11.1、plugin-hooks 0.4.1、plugin-message-archive 0.15.1、plugin-tool-search 0.13.2、plugin-webui-server 0.19.1。
