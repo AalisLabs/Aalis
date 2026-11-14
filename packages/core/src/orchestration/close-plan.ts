@@ -25,6 +25,7 @@
 // ============================================================
 
 import type { Activation } from './activation.js';
+import { heapPop, heapPush } from './min-heap.js';
 import type { LogWriter } from '../infrastructure/logger.js';
 
 type Kind = 'drain' | 'close';
@@ -142,20 +143,23 @@ function planClose(roots: Activation[], owned: Map<Activation, () => void>, logg
   const order: Stage[] = [];
   const blockers = new Map(stages.map(stage => [stage, stage.after.size]));
   const remaining = new Set(stages);
+  // 堆里恰是就绪阶段（还没放行、前驱都已放行）的 index：阶段在前驱数降到 0 时进一次，取出即放行。成环时直接放行的是环内的
+  // 收尾阶段：它们前驱数不为 0、不在堆里，放行之后 release 不再给它们减前驱数；放行它们只会让关闭阶段就绪（收尾阶段的后继
+  // 全是关闭阶段，见上面四处 link）。所以堆里不会有已放行的阶段
+  const ready: number[] = [];
+  for (const stage of stages) if (stage.after.size === 0) heapPush(ready, stage.index);
   const release = (stage: Stage): void => {
     remaining.delete(stage);
     order.push(stage);
     for (const next of stage.before) {
-      if (remaining.has(next)) blockers.set(next, blockers.get(next)! - 1);
+      if (!remaining.has(next)) continue;
+      blockers.set(next, blockers.get(next)! - 1);
+      if (blockers.get(next) === 0) heapPush(ready, next.index);
     }
   };
   while (remaining.size > 0) {
-    let ready: Stage | undefined;
-    for (const stage of remaining) {
-      if (blockers.get(stage) === 0 && (!ready || stage.index < ready.index)) ready = stage;
-    }
-    if (ready) {
-      release(ready);
+    if (ready.length > 0) {
+      release(stages[heapPop(ready)]);
       continue;
     }
     // 按自然次序排：点名的顺序就是环内实际的关闭次序，与图的遍历次序无关
@@ -167,10 +171,7 @@ function planClose(roots: Activation[], owned: Map<Activation, () => void>, logg
     const soft = drains.filter(stage => ![...stage.after].some(([prev, hard]) => hard && remaining.has(prev)));
     if (soft.length > 0) logger.debug(`关停顺序：optional 依赖成环 [${names}]，只被 optional 边挡着的成员先收尾`);
     else logger.warn(`关停顺序：required 依赖成环 [${names}]，环内成员先全部收尾再关，有的消费者清理时提供者已收尾`);
-    for (const stage of soft.length > 0 ? soft : drains) {
-      blockers.set(stage, 0);
-      release(stage);
-    }
+    for (const stage of soft.length > 0 ? soft : drains) release(stage);
   }
   return order;
 }

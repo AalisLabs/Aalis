@@ -14,7 +14,7 @@ import {
 import { activationHost, createInspectableApp } from './inspectable-app.js';
 
 /** 带种子的伪随机数（mulberry32）：同一种子同一序列 */
-function mulberry32(seed: number): () => number {
+export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
     a = (a + 0x6d2b79f5) >>> 0;

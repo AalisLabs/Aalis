@@ -221,6 +221,39 @@ describe('关停编排：混合依赖环', () => {
       '关停顺序：required 依赖成环 [w, y]，环内成员先全部收尾再关，有的消费者清理时提供者已收尾',
     ]);
   });
+
+  it('成环时放行的收尾在计划里只排一次：它的消费者关完之后不再排一遍，收尾抛错只记一笔', async () => {
+    const w = world();
+    const a = defineService<object>('zz-oe-once-a');
+    const b = defineService<object>('zz-oe-once-b');
+    // 互为 optional：停机时成环，两者的收尾先放行
+    await w.app.plugin(
+      definePlugin({
+        name: 'once-a',
+        uses: { provide, b: optional(b) },
+        provides: [a],
+        apply: ({ provide }) => void provide.use(a, {}),
+      }),
+    );
+    await w.app.plugin(
+      definePlugin({
+        name: 'once-b',
+        uses: { provide, a: optional(a) },
+        provides: [b],
+        apply: ({ provide }) => void provide.use(b, {}),
+      }),
+    );
+    await w.app.plugins.idle();
+    const onceA = [...rootActivation(w.app).children].find(child => child.id === 'once-a')!;
+    onceA.resources.drain = () => {
+      throw new Error('注入的收尾故障');
+    };
+    await w.app.stop();
+    expect(w.at('error').filter(text => text.startsWith('关停 "once-a" 的'))).toEqual([
+      expect.stringContaining('关停 "once-a" 的收尾阶段抛错'),
+      expect.stringContaining('关停 "once-a" 的关闭阶段抛错'),
+    ]);
+  });
 });
 
 describe('管理动作的幂等早退', () => {

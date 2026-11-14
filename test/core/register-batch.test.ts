@@ -58,6 +58,7 @@ describe('pluginAll', () => {
     const app = world();
     await app.pluginAll(
       [
+        definePlugin({ name: 'early', uses: { svc }, apply: () => void order.push('early') }),
         plain('a'),
         definePlugin({
           name: 'z',
@@ -73,8 +74,8 @@ describe('pluginAll', () => {
       ].map(definition => ({ definition })),
     );
     await app.plugins.idle();
-    // 逐个 plugin() 的历史次序同为 a z b c；先就绪先出队的拓扑会排成 a z c b
-    expect(order).toEqual(['a', 'z', 'b', 'c']);
+    // 逐个 plugin() 的历史次序同为 a z early b c；先就绪先出队的拓扑会排成 a z c early b
+    expect(order).toEqual(['a', 'z', 'early', 'b', 'c']);
   });
 
   it('返回值逐项对应：重名与非法定义为 false，其余照常登记', async () => {

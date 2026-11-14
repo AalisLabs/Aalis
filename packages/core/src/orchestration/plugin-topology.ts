@@ -5,6 +5,7 @@
 // 关闭次序不在这里：那由关停编排按实际依赖与归属决定（orchestration/close-plan.ts）。
 // ============================================================
 
+import { heapPop, heapPush } from './min-heap.js';
 import type { PluginRecord } from './plugin-activation.js';
 import type { LogWriter } from '../infrastructure/logger.js';
 
@@ -29,7 +30,6 @@ export function topoSortByDeps(entries: PluginRecord[], logger: LogWriter): Plug
   }
   const inDegree = new Map<string, number>();
   const dependents = new Map<string, Set<string>>();
-  const entryById = new Map(entries.map(e => [e.instanceId, e]));
   for (const e of entries) {
     inDegree.set(e.instanceId, 0);
     dependents.set(e.instanceId, new Set());
@@ -61,20 +61,19 @@ export function topoSortByDeps(entries: PluginRecord[], logger: LogWriter): Plug
     inDegree.set(id, inDegree.get(id)! + 1);
   }
   const result: PluginRecord[] = [];
-  const queue: string[] = [];
-  for (const [id, deg] of inDegree) {
-    if (deg === 0) queue.push(id);
-  }
+  // 就绪者里取登记序最早的（而非先就绪的）：激活次序只由依赖与登记序决定。堆里是就绪登记的位次，
+  // 每个登记在入度降到 0 时进一次，取出的就是此刻就绪者里位次最小的
   const rank = new Map(entries.map((e, i) => [e.instanceId, i]));
-  while (queue.length) {
-    // 就绪者里取登记序最早的（而非先就绪的）：激活次序只由依赖与登记序决定
-    let at = 0;
-    for (let i = 1; i < queue.length; i++) if (rank.get(queue[i])! < rank.get(queue[at])!) at = i;
-    const [id] = queue.splice(at, 1);
-    result.push(entryById.get(id)!);
-    for (const dep of dependents.get(id)!) {
+  const ready: number[] = [];
+  for (const [id, deg] of inDegree) {
+    if (deg === 0) heapPush(ready, rank.get(id)!);
+  }
+  while (ready.length) {
+    const entry = entries[heapPop(ready)];
+    result.push(entry);
+    for (const dep of dependents.get(entry.instanceId)!) {
       inDegree.set(dep, inDegree.get(dep)! - 1);
-      if (inDegree.get(dep) === 0) queue.push(dep);
+      if (inDegree.get(dep) === 0) heapPush(ready, rank.get(dep)!);
     }
   }
   if (result.length < entries.length) {
