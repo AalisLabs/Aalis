@@ -1,6 +1,6 @@
 // ----- 会话管理服务接口（types + 描述符 + 事件 augmentation）-----
 //
-// 该包是 plugin-session-manager 的契约边界：类型、运行时描述符
+// 该包是会话管理的契约边界：类型、运行时描述符
 // `sessionManager`，以及 session:* 事件 augmentation。
 // 下游应 `import { sessionManager } from '@aalis/api-session-manager'`
 // 写入 uses；不要依赖 impl 包，以免工作区依赖与编译循环。
@@ -13,7 +13,7 @@ import { t } from './texts.js';
 
 /**
  * 会话种类：task 为子会话；room 为有出生平台的根会话（IM 房间，含 owner 自己的私聊）；其余为 owner
- * （owner 在 WebUI 与 CLI 的会话，以及 mcp-server、`workflow::<id>` 等没有出生平台的根会话）。
+ * （owner 在 WebUI 与 CLI 的会话，以及 `mcp-server`、`workflow::<id>` 等没有出生平台的根会话）。
  * 会话列表的分区、设置项的 appliesTo 与会话协议的会话种类都按它。与审批的发起类别是两回事：
  * owner 在自己的私聊里亲手发起的回合照样能产生审批
  */
@@ -265,7 +265,7 @@ export type RoomClass = 'owner-only' | 'room' | 'internal';
 /**
  * 按会话字段判房间类别，子会话取根会话的：有出生平台的，聊天窗口为多方的是 room，一对一而对端是 owner 身份的是
  * owner-only，其余一对一是 room（只认多方标记，不认类型名）；没有出生平台、带创建来源的是 owner-only；其余（不在会话表里的、
- * 按 id 建档的、mcp-server、编排与定时任务的会话）一律 internal，失败关闭。isOwner 由调用方传入（如 authority 的 owner 判定）
+ * 按 id 建档的、MCP 服务端、编排与定时任务的会话）一律 internal，失败关闭。isOwner 由调用方传入（如 authority 的 owner 判定）
  */
 export function roomClass(
   info: SessionInfo | undefined,
@@ -339,7 +339,6 @@ export type SessionUpdates = Partial<Pick<SessionInfo, 'name' | 'status' | 'meta
  * 会话管理服务
  *
  * 负责会话的创建、查询、场所与树形管理。
- * 由 plugin-session-manager 实现并注册为 'session-manager' 服务。
  *
  * 设计要点：
  * - 会话管理不认识设置：插件按会话、按场所存的数据放在两种记录的 metadata 里（如会话设置）
@@ -479,7 +478,7 @@ export interface SessionManagerService {
 }
 
 declare module '@aalis/api-events' {
-  /** 会话生命周期事件（由 plugin-session-manager 增量声明） */
+  /** 会话生命周期事件 */
   interface AalisEvents {
     'session:created': [session: SessionInfo];
     /** 会话档案变了；建、删子会话时父会话的子会话列表也变了，父会话随后发一次 */

@@ -7,8 +7,6 @@
 // - Builder API：commands.command(name).option().action()（`commands` 为本包导出的服务描述符，经 uses 声明）
 // - inline DSL 声明位置参数：'memory.set <key:string> [value:text]'
 // - 位置参数作为 handler 形参传入：(argv, key, value) => ...
-//
-// 实现见 @aalis/plugin-commands。
 
 import type { CapabilityConfirm, CapabilityRisk, CapabilityVisibility, ExecutionGuard } from '@aalis/api-authority';
 import { defineService } from '@aalis/core';
@@ -133,7 +131,7 @@ export interface ExecutionInput {
   /**
    * 跳过指令声明的确认（confirm 为 always 的照常确认）；authorize 仍然生效。
    *
-   * 供没人可问的受信任来源使用：scheduler 触发的指令（owner 建任务时已经授权，身份是创建时固化的 actor）、
+   * 供没人可问的受信任来源使用：定时任务触发的指令（owner 建任务时已经授权，身份是创建时固化的 actor）、
    * runtime 一次性子命令（owner 在本机终端亲手输入）。**不**绕过 authorize（防提权）。
    * 只对授权身份是 owner 的执行生效：创建者不是 owner 的定时任务里，需要确认的指令照旧无从确认、直接拒。
    */

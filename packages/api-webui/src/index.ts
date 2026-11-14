@@ -16,7 +16,7 @@ import { t } from './texts.js';
  * 负责启动 HTTP 服务器，提供 REST API（插件管理、配置、页面等）与 WebSocket（会话协议、管理面推送），
  * 同时托管前端静态文件。
  *
- * 默认由 plugin-webui-server 提供，第三方可替换整个实现或仅替换前端部分。插件不直接调登记方法，经绑定接口
+ * 第三方可替换整个实现或仅替换前端部分。插件不直接调登记方法，经绑定接口
  * {@link BoundWebui} 的 definePage 与 notify 登记，归属与撤回由门面管。
  */
 export interface WebUIService {
@@ -56,8 +56,8 @@ declare module '@aalis/core' {
  *
  * @example
  * definePlugin({
- *   name: '@aalis/plugin-scheduler',
- *   extends: { events: ['scheduler:tick', 'scheduler:error'], hooks: ['schedule:before'] },
+ *   name: '@acme/plugin-example',
+ *   extends: { events: ['example:tick', 'example:error'], hooks: ['example:before'] },
  *   …
  * });
  */

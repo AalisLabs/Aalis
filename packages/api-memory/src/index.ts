@@ -43,11 +43,7 @@ export interface MetadataEntry {
   /**
    * 最后写入时间（毫秒时间戳）。
    *
-   * 三家后端本来就存着这一列（sqlite 的 `metadata.updatedAt`、mongodb 的 `updatedAt: Date`），
-   * 历史上从不返回——应用层拿不到时间信息，「按时间清理」在契约上做不到。此列入契约后
-   * 已有消费者：`plugin-adapter-onebot` 的合并转发持久化用它做 7 天惰性回收
-   *（forward-expand 的 sweepPersisted），历史上「持久化侧零清理路径、磁盘只增不减」的
-   * 状况即由此了结——本注释曾以现状口吻描述该旧况，2026-08-28 如实化。
+   * 应用层据此按时间清理（如平台适配器对合并转发的持久化用它做 7 天惰性回收）。
    *
    * 读不到写入时间时为 0（如外部写入、缺该字段的条目），条目本身照常返回。
    */
@@ -164,8 +160,8 @@ export interface MemoryService {
   // 4. **namespace 不做 `ctx.id` stamping。** 现状是无主的全局字符串空间，与 events /
   //    services / hooks 三原语「注册经闭包 ctx.id 的门面」的纪律确实背离。但它拦不住恶意
   //    ——插件与内核同进程同权限，绕过门面直接 `getService('memory')` 就能读任意 namespace
-  //    ——只拦得住手滑。而唯一的实例（`plugin-media` 读 `plugin-user-profile` 的档案）是
-  //    **有意的跨插件读**，正解是 DI（user-profile 导出服务）而非 stamping，且该并入
+  //    ——只拦得住手滑。而唯一的实例（媒体识别读用户画像的档案）是
+  //    **有意的跨插件读**，正解是 DI（用户画像导出服务）而非 stamping，且该并入
   //    「避免污染共享契约」那次统一处置，不单修一处留下不一致。
   //    代价则是一次带迁移的破坏性变更（既有数据的 namespace 全变，而存量数据没有任何标记
   //    能告诉我们哪个 namespace 归谁）。
@@ -200,7 +196,7 @@ export interface MemoryService {
    * 批量提交一组元数据变更。
    *
    * **要的是「一次调用交付整批」，不是速度**（实测 500 条批量写只快 1.1×）。没有它的时候，
-   * `plugin-session-manager` 的刷盘是「逐条 saveMetadata + 全表扫删孤儿」，任何一条抛错
+   * 会话管理的刷盘是「逐条 saveMetadata + 全表扫删孤儿」，任何一条抛错
    * 就停在半新半旧，而它已经把 dirty 置 false、下一次 debounce 不会重试。
    *
    * ⚠️ **原子性按后端分档，不是统一承诺** —— 不要按「要么全成要么全不成」来依赖它：
@@ -210,7 +206,7 @@ export interface MemoryService {
    *   对单机部署也要能用）。语义是「按序执行、遇错即停」：失败点之前的写已生效、之后的未执行，
    *   不会乱序，但会停在半新半旧；大批量还会被驱动分批，并发读能采到中间态。
    *
-   * 因此调用方要么容忍半新半旧、要么自己具备重试能力（如 session-manager 每次写全量快照，
+   * 因此调用方要么容忍半新半旧、要么自己具备重试能力（如会话管理每次写全量快照，
    * 失败后 dirty 复位、下次自愈）。
    *
    * `data` 必须是 **JSON 可序列化**的值。循环引用会让三家后端都抛错（sqlite/inmemory 在
@@ -325,9 +321,9 @@ export function historyCleared(data: HookContextMap['memory:clear']): boolean {
 
 // ----- 记忆变更事件契约 -----
 //
-// 落库之后动了已有消息的一方发通知：删除由动手的检查点发（回滚），改写由改写的一方发（plugin-message-archive 给发出的附件补上
-// 识图描述、plugin-media 的 update_image_description 写回描述）。消费方：plugin-memory-vector（按会话与时间戳删掉或重收录派生
-// 的向量）、plugin-session-server（history:changed 时通知订阅的客户端重新取快照）。
+// 落库之后动了已有消息的一方发通知：删除由动手的检查点发（回滚），改写由改写的一方发（消息存档给发出的附件补上
+// 识图描述、改写图片描述的工具写回描述）。消费方：向量记忆（按会话与时间戳删掉或重收录派生
+// 的向量）、会话服务（history:changed 时通知订阅的客户端重新取快照）。
 declare module '@aalis/api-events' {
   interface AalisEvents {
     /** 某会话的若干消息被按时间戳删除（回滚等场景），下游存储应同步清理 */
@@ -345,7 +341,7 @@ declare module '@aalis/api-events' {
 // ----- 会话压缩 -----
 //
 // 压缩把切分点之前的全部活跃历史压成一份摘要，摘要模型挑出的原文原样留在活跃历史里、接在摘要之后，切分点之后到达的消息再
-// 接在它们后面。提供方：plugin-memory-summary（回合结束时用量或会话条数到线，它自己在后台触发）；使用方：plugin-session-server
+// 接在它们后面。提供方：记忆摘要（回合结束时用量或会话条数到线，它自己在后台触发）；使用方：会话服务
 // （手动压缩；功能位与用量条目的压缩线看这个服务在不在）。进度经 'session:compressing' 广播，会话服务转成时间线上的压缩通知。
 
 /** 会话压缩服务 */

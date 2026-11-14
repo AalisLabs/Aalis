@@ -2,7 +2,7 @@
  * @aalis/api-checkpoint — 回合检查点契约
  *
  * 一轮对话里经受控存储做的写入、删除与移动，在改动发生前备份原内容，事后可以按回合回滚。
- * 本包只有服务描述符 `checkpoint` 与对外类型，实现见 @aalis/plugin-checkpoint。
+ * 本包只有服务描述符 `checkpoint` 与对外类型。
  *
  * 两类使用方：
  * - 存储实现在每次改动前探测本服务，在场就调 `beforeMutate` 留一次快照机会；

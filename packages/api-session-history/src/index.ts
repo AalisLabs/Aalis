@@ -32,7 +32,7 @@ export type SessionHistoryReadResult =
   | { error: string };
 
 /**
- * `session-history` 服务公开接口。由 `@aalis/plugin-tool-session` 实现并 provide。
+ * `session-history` 服务公开接口。
  * 平台插件 / webui 等：`import { sessionHistory } from '@aalis/api-session-history'`，写入 uses。
  */
 export interface SessionHistoryService {

@@ -5,7 +5,7 @@
 // （读者的语言链、语言包），缺席时与 render 抛错时按原文语言渲染。出口统一写
 // localizeFor(caps.i18n, 值, 读者, { skip, escape, onError })。模型生成、给人看的文字（会话标题、摘要等）的输出语言写进
 // 提示词，统一取 outputLanguageFor(caps.i18n, 读者, 原文语言)。
-// 语言包经贡献点 i18n:pack 交付。默认提供者：@aalis/plugin-i18n。
+// 语言包经贡献点 i18n:pack 交付。
 // ============================================================
 
 import type {} from '@aalis/api-contributions'; // declaration merging 锚点（下方 ContributionPointMap 增强）

@@ -2,16 +2,16 @@
 // @aalis/api-flow-control — 流控服务契约
 //
 // 导出运行时描述符 `flowControl`（defineService）与类型。下游消费者
-// （平台 adapter、trigger-policy 等）应当 `import { flowControl } from
-// '@aalis/api-flow-control'` 写入 uses，而不是依赖 plugin-flow-control
-// 具体实现：实现包可被替换、可被禁用。
+// （平台 adapter、触发插件等）应当 `import { flowControl } from
+// '@aalis/api-flow-control'` 写入 uses，而不是依赖某个具体实现：
+// 实现包可被替换、可被禁用。
 //
 // FlowControlService 是会话级节流硬闸，只管"能不能说"，不管"要不要说"：
 //   - 禁言（禁言关键词或平台禁言事件写入，落盘，重启后恢复）
 //   - 回复后冷却
 //   - 限速窗口
 // 冷却与限速按 agent 的真实回复（outbound:message，source=agent）计。
-// "要不要开口"由触发插件决定（trigger 服务的胜者，如 trigger-policy 的 @/名字/计数评分/闲置主动开口）。
+// "要不要开口"由触发插件决定（trigger 服务的胜者，判据如 @、名字、计数评分、闲置主动开口）。
 //
 // 服务名：'flow-control'
 // ============================================================

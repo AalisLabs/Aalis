@@ -3,7 +3,7 @@
 //
 // 把"音频 → 文本"抽象为核心 `asr` 服务：whisper.cpp / 云 ASR 等后端都以
 // `provide(asr, impl, { priority })` 注册为多 provider。
-// 第一方消费者 plugin-media 枚举全部 asr 提供者，与音频 LLM 同池，按 media 的
+// media 服务的提供者枚举全部 asr 提供者，与音频 LLM 同池，按 media 的
 // audio.prefer、再按 priority 选择（服务偏好只在优先级相同时决胜）；直接用
 // asr.use 的第三方消费方按核心的挑选规则（本插件偏好 > 全局偏好 > 优先级 > 位次）打到选中的那一家。
 //

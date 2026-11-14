@@ -170,7 +170,7 @@ export function mediaScopeOf(
 /**
  * 不属于任何会话的本机文件（存储里不在会话媒体目录下的文件）这次调用能不能取：这一轮的主体是 owner（owner 亲手那一轮，
  * 参与者都是 owner，含它的续做与它派的子任务）；或只有一位参与者、他是 owner、所在会话的房间类别不是 room（非人回合的条款，
- * 如 owner 自己会话里的定时任务、按 owner 跑的编排、mcp-server 的调用）
+ * 如 owner 自己会话里的定时任务、按 owner 跑的编排、MCP 服务端的调用）
  */
 export function localFileInScope(call: MediaScopeCall, deps: LocalFileDeps): boolean {
   if (deps.principalOf(call) === 'owner') return true;

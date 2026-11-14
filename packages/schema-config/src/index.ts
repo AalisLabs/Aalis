@@ -699,7 +699,7 @@ function validateFields(
       // 声明了 default 的字段永远不算缺失：顶层/分组的默认值多已在调用点合并，但合并不覆盖
       // 显式 null（YAML 裸键），这类值照样走到这里，
       // 数组元素的默认值不参与任何合并（defaultsFrom 把 SchemaArray 当叶子），
-      // 全靠这里放行——否则 required+default 的 item 字段会误报（scheduler jobs[].platform 型）。
+      // 全靠这里放行——否则 required+default 的 item 字段会误报（如定时任务配置的 jobs[].platform）。
       if (entry.required && !('default' in entry)) push(path, 'missing', { code: 'missing', text: t('missing') });
       continue;
     }

@@ -8,7 +8,7 @@ import { defineService } from '@aalis/core';
 //   - restricted：门槛较高的能力；等级不够、所属组也不覆盖即拒，没有别的放行口。
 //   - 单 owner 终态：等级与组成员只由 owner 管理（无委托树 / 子委托）。
 //
-// 任何需要「执行前权限校验」的服务（plugin-tools / plugin-commands 等）从本包导入
+// 任何需要「执行前权限校验」的服务（工具、指令的提供者等）从本包导入
 // ExecutionGuard / ExecutionGuardContext；消费权限服务的插件导入 AuthorityService。
 
 import type { OriginKind } from '@aalis/api-approval';
@@ -164,7 +164,7 @@ export interface ExecutionGuardContext {
   /** 操作参数 */
   args?: Record<string, unknown>;
   /**
-   * 系统/受信源（如 scheduler，无人能点交互确认）：仍走 authorize 评估调用者能力，**不**绕过它（防提权）。
+   * 系统/受信源（如定时任务，无人能点交互确认）：仍走 authorize 评估调用者能力，**不**绕过它（防提权）。
    * 已授权时跳过非 always 的确认，always 照常确认；只对参与者都是 owner 的回合生效。
    */
   skipConfirm?: boolean;
@@ -172,7 +172,7 @@ export interface ExecutionGuardContext {
   turnId?: string;
   /** 这次工具调用的 id（同 ToolCallContext.callId）；审批卡据它挂到工具卡上 */
   callId?: string;
-  /** 调用所在的入站回合；缺省 = 调用不在由入站消息驱动的回合里（编排的节点、mcp-server 等） */
+  /** 调用所在的入站回合；缺省 = 调用不在由入站消息驱动的回合里（编排的节点、MCP 服务端等） */
   inbound?: InboundTurn;
   /**
    * 向发出者本人核对意图（指令用）：调用方能在同一会话里当面问到发出者时提供，resolve true 为发出者确认。
@@ -241,7 +241,7 @@ export function originTurnOf(
 
 /**
  * 执行守卫函数。经审批放行的带回批的人 by：工具一路这次调用按他执行（指令一路的参与者只有发出者，不会有）。
- * 由 plugin-authority 通过 setExecutionGuard() 注入，停用时摘掉。
+ * 由权限服务的提供者通过 setExecutionGuard() 注入，停用时摘掉。
  */
 export type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<Verdict>;
 
@@ -375,7 +375,7 @@ declare module '@aalis/api-host-config' {
     /**
      * 免确认白名单：allow 列出不必确认的能力 glob（['*'] 全放）；duration 生效时长（秒，0=永久）。
      * 只免 confirm 为 session 的确认，always 照常确认；只对参与者都是 owner 的回合生效；不放宽授权，等级不够、所属组也不覆盖的照样拒。
-     * 运行时启用时点（enabledAt）不持久化，是 plugin-authority 运行时状态。
+     * 运行时启用时点（enabledAt）不持久化，是权限服务提供者的运行时状态。
      */
     restrictedPolicy?: {
       allow?: string[];
@@ -389,7 +389,7 @@ declare module '@aalis/api-host-config' {
     authorityGroups?: Record<string, string[]>;
     /**
      * 网络出口闸（SSRF 防护，粗粒度高效）：限制由 LLM/用户 URL 触发的出口能连到哪，即 safeFetch，
-     * 以及 tool-browser 开启 blockPrivate 时的浏览器网络闸（三项都遵循）。
+     * 以及浏览器工具开启私网拦截（blockPrivate）时的浏览器网络闸（三项都遵循）。
      * 不影响你自己配置的固定本地服务（ollama/onebot daemon 走裸 fetch，不过 safeFetch）。
      * 改了即时生效；写错一处时经出网闸的请求一律拒绝，直到改对。
      */

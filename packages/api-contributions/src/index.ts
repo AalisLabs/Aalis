@@ -3,7 +3,6 @@
 //
 // 与 services 成对偶的数据原语：确定性枚举全量。登记表永不执行插件代码；
 // 如何调用 spec（并行 / 隔离 / 超时）是收集方（贡献点 owner）的策略。
-// 默认提供者：@aalis/plugin-contributions。
 //
 // 贡献点键由各 -api 包经 declaration merging 注入 ContributionPointMap：
 //   declare module '@aalis/api-contributions' {

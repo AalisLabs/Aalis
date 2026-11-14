@@ -1,7 +1,6 @@
 // ===== Cron 引擎服务契约 =====
 //
-// scheduler / workflow 等插件共享的 cron 解析与订阅协议。
-// 实现见 @aalis/plugin-cron-engine。
+// 定时任务、编排等插件共享的 cron 解析与订阅协议。
 
 import { defineService } from '@aalis/core';
 import type { ValidateResult } from '@aalis/util-cron';
@@ -11,7 +10,7 @@ import type { ValidateResult } from '@aalis/util-cron';
 // cron 表达式的解析/匹配是与 Aalis 无关的通用算法，实现在 @aalis/util-cron；
 // 本契约包只管订阅协议。这里转出两个类型是因为下方 `CronEngine.validate` 的
 // 签名要用到——契约应自描述，消费者不必为读懂返回值去依赖 util 包。
-// 函数不转发：仓内三个消费者（cron-engine、scheduler、workflow）直连 util 包，转发层只会是没人走的死面。
+// 函数不转发：仓内的实现与消费方都直连 util 包，转发层只会是没人走的死面。
 export type { CronExprKind, ValidateResult } from '@aalis/util-cron';
 
 // ─── 服务接口 ───

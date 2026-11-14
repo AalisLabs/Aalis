@@ -5,7 +5,7 @@
 // handler 在事件内部串行执行洋葱模型（next 交棒），按登记方的位次排（宿主的根最前，插件按实例 id 的码元序），同一登记方的几条按登记先后。
 // 不用数字 priority：相位之间的次序由调度方显式表达；相位内部的 handler 应顺序无关，或由相位拥有方约定。
 // 链序不看登记发生的时刻：插件重启、提供者重启或换人都不改变它。
-// 默认提供者：@aalis/plugin-hooks。没有提供者时 run 返回被拒的 Promise（不执行默认动作）。
+// 没有提供者时 run 返回被拒的 Promise（不执行默认动作）。
 //
 // 钩子键由各 -api 包经 declaration merging 注入 HookContextMap：
 //   declare module '@aalis/api-hooks' {

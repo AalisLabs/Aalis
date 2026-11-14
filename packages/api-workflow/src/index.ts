@@ -3,7 +3,6 @@ import { defineService } from '@aalis/core';
 // @aalis/api-workflow
 //
 // Workflow 插件的公共契约：DSL 类型、运行实例类型、服务接口。
-// 实际执行引擎由 @aalis/plugin-workflow 提供。
 //
 // 设计要点：
 //   - 工作流 = 触发器 + DAG（节点 + deps 边）
@@ -182,7 +181,7 @@ export interface WorkflowService {
 
 declare module '@aalis/api-events' {
   interface AalisEvents {
-    /** 触发器触发 — 由 scheduler/event/webhook 等触发源发出，workflow 订阅 */
+    /** 触发器触发 — 由定时、事件、webhook 等触发源发出，workflow 订阅 */
     'trigger:fired': [
       info: {
         /** 触发器来源标识（如 scheduler:job-name / event:session:end） */

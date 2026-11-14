@@ -2,11 +2,11 @@
  * @aalis/api-doctor — 诊断子系统的公共类型与消费者帮手
  *
  * 设计动机：
- *   plugin-doctor 是开放注册中心（DoctorService.registerCheck）。其它插件应
- *   贡献自己领域的检查项（例如 storage 检查存储根可写、embedding-ollama 检查
+ *   doctor 服务是开放注册中心（DoctorService.registerCheck）。其它插件应
+ *   贡献自己领域的检查项（例如存储检查存储根可写、嵌入模型的提供者检查
  *   模型可用），而不是把所有逻辑放回 doctor 内部。
  *
- *   为避免 storage 等下游插件直接 runtime depend 实现包 plugin-doctor
+ *   为避免存储等下游插件直接 runtime depend doctor 的实现包
  *   （会形成「实现包 ↔ 业务插件」的双向耦合），仿照 api-storage /
  *   api-commands 的模式抽出本 api 包，仅含类型 + 服务描述符 `doctor`
  *   （检查项的登记随激活撤回、doctor 未上线时排队到它上线）。
@@ -14,8 +14,7 @@
  *   AalisEvents 的模块增强统一在本文件做，避免多包
  *   重复声明导致 TS 合并冲突。
  *
- *   另有「缺」与「在等」的共享判据（unmet.ts）：插件未启动时沿依赖链追到根，
- *   runtime 的启动告警、plugin-doctor、WebUI、终端界面与市场的卸载闸都用它；
+ *   另有「缺」与「在等」的共享判据（unmet.ts）：插件未启动时沿依赖链追到根；
  *   以及插件失败给人看的说明（failure.ts）：core 只存失败的原值，说明按它现取。
  *
  *   给人看的文字可以是字符串或 @aalis/schema-i18n 的文字对象，出口按读者语言渲染。

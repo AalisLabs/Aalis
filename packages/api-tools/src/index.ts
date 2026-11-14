@@ -13,8 +13,6 @@
 //
 // 注：`ToolCall`（assistant 消息携带的调用载荷）位于 @aalis/schema-message，
 // 与 Message 同源同生命周期。本包不依赖 message-api（双向解耦）。
-//
-// 实现见 @aalis/plugin-tools。
 
 import type {
   CapabilityConfirm,
@@ -62,7 +60,7 @@ export interface ToolCallContext {
   platform?: string;
   /**
    * 这一轮的参与者（授权身份，与 platform/userId 解耦）：agent 按 api-authority 的 originTurnOf 算，权限守卫对每个参与者各
-   * 裁决一次。不在入站回合里的调用方填它自己的身份（编排的运行身份、mcp-server 的客户端），没有身份的填一个无主体
+   * 裁决一次。不在入站回合里的调用方填它自己的身份（编排的运行身份、MCP 服务端的客户端），没有身份的填一个无主体
    * （账号为空串）。经审批放行的调用，交给处理函数的上下文里参与者换成批的人。要记一个人的取 {@link actingIdentity}
    */
   participants: readonly UserIdentity[];
@@ -70,7 +68,7 @@ export interface ToolCallContext {
   enabledGroups?: string[];
   /**
    * 这次调用的主模型能亲眼看图（agent 按模型服务登记的能力填）。不能看时能出图的工具退回文字结果，调用方也不把
-   * {@link ToolExecutionResult.images} 交给模型；缺省 false：mcp-server / workflow 等只读 content 的调用方拿不到图。
+   * {@link ToolExecutionResult.images} 交给模型；缺省 false：MCP 服务端、workflow 等只读 content 的调用方拿不到图。
    */
   acceptsImages?: boolean;
   /**
@@ -83,7 +81,7 @@ export interface ToolCallContext {
   signal?: AbortSignal;
   /**
    * 调用所在的入站回合（只由 agent 工具循环填写，字段见 InboundTurn）。缺省 = 调用不在由入站消息驱动的
-   * agent 回合里（workflow 节点、mcp-server 等）；需要「真人发起」判据的工具应把缺省当作不满足。
+   * agent 回合里（workflow 节点、MCP 服务端等）；需要「真人发起」判据的工具应把缺省当作不满足。
    */
   inbound?: InboundTurn;
   /** 调用所在回合的 id（只由 agent 工具循环填写，与 inbound 同时出现） */
@@ -244,7 +242,6 @@ export interface ToolGroupInfo {
  * 工具服务接口
  *
  * 管理 AI 可调用的工具的注册、查询、执行。
- * 由 plugin-tools 创建 ToolRegistry 并注册为服务。
  */
 export interface ToolService {
   /**
@@ -390,7 +387,7 @@ export interface BackgroundTaskOutput {
   truncated: boolean;
 }
 
-/** 后台任务登记，由 @aalis/plugin-tools 提供 */
+/** 后台任务登记 */
 export interface BackgroundTaskService {
   /** 在跑的与保留的结束的任务；给 sessionId 时只列这个会话的 */
   list(filter?: { sessionId?: string }): BackgroundTask[];

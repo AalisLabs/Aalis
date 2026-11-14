@@ -1,5 +1,4 @@
 // ----- 人格服务接口 -----
-// 由 @aalis/plugin-persona 拥有并导出。消费者从本包 import type。
 
 import { defineService } from '@aalis/core';
 

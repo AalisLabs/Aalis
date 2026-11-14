@@ -1,8 +1,7 @@
 // ============================================================
 // @aalis/api-package-manager — 包管理契约
 //
-// 默认提供者：@aalis/plugin-package-manager。消费方（如 WebUI 市场）以
-// optional(packageManager) 声明，缺席时自行降级。
+// 消费方（如 WebUI 市场）以 optional(packageManager) 声明，缺席时自行降级。
 // ============================================================
 
 import { defineService } from '@aalis/core';

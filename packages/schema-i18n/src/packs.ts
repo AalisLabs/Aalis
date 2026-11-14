@@ -26,7 +26,7 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
- * 建语言包索引，同一语言按交来的先后取先（plugin-i18n 按贡献点的全局键交来，包的实例 id 在前）。语言包来自第三方：
+ * 建语言包索引，同一语言按交来的先后取先（调用方按贡献点的全局键交来，包的实例 id 在前）。语言包来自第三方：
  * 形状不对或访问时抛错的包、语言标签不合法的包、形状不对的表与条目都跳过，不影响别的包；
  * 取舍（只补缺、指纹、解析失败与参数不兼容）在解析时做
  */

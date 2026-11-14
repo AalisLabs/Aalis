@@ -8,7 +8,6 @@
 //   - 出站：提供 `dispatchOutbound()` 接口，运行 `outbound:dispatch` 钩子链，
 //           默认动作是向 `outbound:message` 事件总线广播，平台插件接收并发送。
 //
-// core 不再绑定具体的路由实现，gateway 服务由 plugin-gateway 提供。
 // 需要 gateway 的插件在 uses 里声明 `gateway` 描述符。core 无入站路由兜底：
 // 不加载 gateway 则 `inbound:message` 无人消费、消息静默丢弃，按必需件对待。
 
@@ -30,7 +29,7 @@ import { t } from './texts.js';
 export interface InboundPhaseData {
   message: IncomingMessage;
   metadata: Record<string, unknown>;
-  /** 当前可用的 agent 服务；plugin-gateway 在调度前已注入。 */
+  /** 当前可用的 agent 服务；gateway 的提供者在调度前已注入。 */
   agent: AgentService | undefined;
   /**
    * 这条入站所在的聊天窗口：网关对没有 source 的入站按这个平台适配器的类型声明算一次（{@link chatScopeOf}），平台服务缺席时
@@ -88,7 +87,6 @@ declare module '@aalis/api-events' {
 /**
  * Gateway 服务 —— 消息流编排中枢
  *
- * 默认实现由 `@aalis/plugin-gateway` 提供。
  * 业务层不应再直接 `emit('outbound:message')`，而应调用 `dispatchOutbound()`，
  * 以便所有出站消息都经过 outbound:dispatch 钩子链（脱敏、限速、审计等）。
  */
@@ -120,15 +118,15 @@ export interface GatewayService {
  *
  * 每个相位是一个独立的命名钩子键，对应一个职责清晰的拦截点。
  * 同一相位内部的多个 handler 按 **登记方的位次** 执行洋葱模型 (next 语义)，
- * 跨相位则由 plugin-gateway 顺序调度，无需任何优先级数字。
+ * 跨相位则由 gateway 的提供者顺序调度，无需任何优先级数字。
  *
- *   COMMAND  → 指令解析与执行（由 plugin-commands 占据）。指令的意图确认也在这里：发出者对确认提示的回复
+ *   COMMAND  → 指令解析与执行（由指令服务的提供者占据）。指令的意图确认也在这里：发出者对确认提示的回复
  *              命中即吞掉、不进入后续相位，不会被当成插进在跑的一轮的输入
  *   TRIGGER  → 要不要开口：禁言关键词、点名识别与判定，结果写入 message.triggerType（由生效的触发插件
- *              占据，即 trigger 服务胜者，如 plugin-trigger-policy 的计数与评分）
+ *              占据，即 trigger 服务胜者）
  *   FLOW     → 节流硬闸：禁言期一律吞；回复后冷却与限速只挡非 immediate 触发，其中带 source 的
- *              内部注入不过冷却、仍受限速（由 plugin-flow-control 占据）
- *   DISPATCH → 默认派发到 agent.handleMessage（plugin-gateway 提供 default action）
+ *              内部注入不过冷却、仍受限速（由流控服务的提供者占据）
+ *   DISPATCH → 默认派发到 agent.handleMessage（gateway 的提供者给出 default action）
  *
  * 任一相位的 handler 不调用 next() 即视为"我已处理"，
  * 整个入站管道立即停止（不再进入后续相位）。

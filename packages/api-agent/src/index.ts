@@ -1,7 +1,6 @@
 // ----- Agent 服务接口（完整定义）-----
 //
 // 提供 AgentService 完整契约 + agent:* 钩子声明。
-// 默认实现由 @aalis/plugin-agent 提供。
 //
 // 第三方插件若要 augment HookContextMap 的 agent:* 键，需要把本包加入
 // 依赖（或 import 一次 side-effect）以确保 TS 编译期看到 augmentation。
@@ -21,7 +20,6 @@ import type { IncomingMessage, Message, TurnRecord } from '@aalis/schema-message
  * 负责接收用户消息并编排完整的对话流程：
  * 组装系统提示、加载历史、调用 LLM、执行工具调用循环、发出回复。
  *
- * 默认由 @aalis/plugin-agent 提供。
  * 外部插件可以注册自己的 AgentService 来完全接管或扩展对话编排逻辑。实现者守三条约定，会话服务回看历史、标「未发出」
  * 依据它们：
  * - 落库的回复与工具结果在元数据里按 schema-message 登记的键（WellKnownMetadataKeys）记下回合与调用的 id、
@@ -308,8 +306,7 @@ export interface TokenUsagePart {
  * breakdown 与 parts 是同一份输入按来源估算的拆分，各项之和不必等于 used。breakdown 是按固定桶的数，供程序判断；
  * parts 是同一份数按显示的次序排好、带显示名的拆分表（不含为回复预留的 maxTokens），供界面照画。
  *
- * 发射方：plugin-agent；已知消费方：plugin-session-server（会话的用量条目）、
- * plugin-memory-summary（回合结束时判定自动压缩）、plugin-prompt-budget（AI 自检工具）。
+ * 消费方拿它做会话的用量条目、回合结束时判定自动压缩、AI 自检工具。
  */
 export interface TokenUsageEvent {
   sessionId: string;
@@ -349,14 +346,13 @@ declare module '@aalis/api-events' {
     'token:usage': [usage: TokenUsageEvent];
     /**
      * 请求 agent 重发某会话的最新 token:usage 快照。
-     * 发射方：plugin-session-server（订阅时还没有这个会话的用量、手动压缩之后；房间不填，其余填连接的入口平台）；
-     * 消费方：plugin-agent。
-     * platform 是调用方的入口平台，没有出生平台的会话（WebUI、CLI 等）的快照按它选档；缺省时消费方对
+     * 发射方：会话服务（订阅时还没有这个会话的用量、手动压缩之后；房间不填，其余填连接的入口平台）。
+     * platform 是调用方的入口平台，没有出生平台的会话（WebUI、CLI 等）的快照按它选档；缺省时 agent 对
      * IM 房间按会话管理记下的出生平台（子会话取根会话的）、其余按 'webui' 兜底。
      */
     'token:request': [req: { sessionId: string; platform?: string }];
     /**
-     * 这个会话排着与待插入、还没进一轮的输入（已过逐条处理，按入队先后）：入队、进了一轮、被放掉时发。发射方：plugin-agent
+     * 这个会话排着与待插入、还没进一轮的输入（已过逐条处理，按入队先后）：入队、进了一轮、被放掉时发。发射方：agent 的提供者
      */
     'agent:queue': [state: { sessionId: string; waiting: readonly IncomingMessage[] }];
   }

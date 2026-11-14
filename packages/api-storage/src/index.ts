@@ -216,8 +216,7 @@ export function isHostAbsolutePath(input: string): boolean {
 }
 
 /**
- * 把配置里的路径/裸名归一为 storage URI —— 契约级文法，全体后端消费者（memory/vectorstore/
- * checkpoint/scheduler/persona…）复用，勿各自重抄。
+ * 把配置里的路径/裸名归一为 storage URI —— 契约级文法，全体消费者复用，勿各自重抄。
  * - 本机路径（宿主机绝对路径与数据目录简写 `~/…`）→ 抛配置错误（不带堆栈），写明要填 storage URI 并举例：
  *   首段当根名只会撞上「未知存储根」，而首段恰好与某个根同名时（如 `/data/x`）会悄悄落到那个根里。
  *   数据目录简写不进 {@link isHostAbsolutePath}：那是工具路径也用的判据，工具侧的 `~` 按普通目录名相对 cwd 求值
@@ -401,8 +400,8 @@ type StorageMethods = StorageService & Required<Pick<StorageService, 'resolveLoc
 
 /**
  * 本插件在某个根下的目录上的存储视图：私有目录 {@link BoundStorage.own} 与内容目录 {@link BoundStorage.content}。目录名是
- * 包名去掉 `plugin-` 前缀：`@aalis` 与不带作用域的包只取包名（`@aalis/plugin-draw` → `draw`），别的作用域另带作用域、
- * 以 `+` 相连（`@acme/plugin-draw` → `acme+draw`，npm 包名里没有 `+`，两个作用域的同名插件不共用目录）；取不出单段
+ * 包名去掉 `plugin-` 前缀：`@aalis` 与不带作用域的包只取包名（`@aalis/plugin-foo` → `foo`），别的作用域另带作用域、
+ * 以 `+` 相连（`@acme/plugin-foo` → `acme+foo`，npm 包名里没有 `+`，两个作用域的同名插件不共用目录）；取不出单段
  * 目录名的插件名在绑定时抛错。多实例共用这个目录、由插件自己分子目录。方法与 {@link StorageService} 相同，路径参数
  * 相对这个目录：规范化之后越出目录的（`..` 越过目录）、宿主机绝对路径与存储地址都抛错，空路径即目录本身
  * （`own.delete('')` 删掉整个私有目录）；返回值里的地址是完整的存储地址。

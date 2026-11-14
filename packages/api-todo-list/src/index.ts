@@ -2,7 +2,7 @@
  * @aalis/api-todo-list — 待办契约
  *
  * 会话级的待办清单：模型用工具整份写入，会话的客户端读来显示、需要时清空。本包有服务描述符 `todoList`、
- * 待办项类型与 `todo:updated` 事件，实现见 @aalis/plugin-todo-list。
+ * 待办项类型与 `todo:updated` 事件。
  */
 
 import type {} from '@aalis/api-events'; // declaration merging 锚点（下方 AalisEvents 增强）

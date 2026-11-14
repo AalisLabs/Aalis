@@ -2,9 +2,9 @@
 // @aalis/api-media — 多模态媒体识别契约
 //
 // Aalis 把"媒体 → 文本"的处理路径抽象为 MediaProcessor。
-// plugin-media 既是该契约的调度器，也是 LLM 服务的内置 adapter
+// media 服务的提供者既是该契约的调度器，也是 LLM 服务的内置 adapter
 // （任意声明了 vision / audio 能力的 LLM 都自动暴露为对应 processor）。
-// 音频后端（如 whisper.cpp / 云 ASR）走 asr 服务（@aalis/api-asr），由 plugin-media 包成音频 processor；
+// 音频后端（如 whisper.cpp / 云 ASR）走 asr 服务（@aalis/api-asr），由提供者包成音频 processor；
 // registerProcessor 只用于非音频、非 LLM 的 backend。
 // 另导出会话媒体的目录约定（session-media.ts：写入方写在哪、怎么清）与媒体判据（scope.ts：一次调用能取哪些存储里的
 // 媒体，发媒体、看图的工具与回复里的媒体标记共用）。
@@ -72,7 +72,7 @@ export interface DescribeInput {
    */
   hint?: string;
   /**
-   * 对话上下文文本（可选）：plugin-media 从近期聊天历史构建，
+   * 对话上下文文本（可选）：提供者从近期聊天历史构建，
    * processor 可拼接到 prompt 里让 LLM 能联系上下文理解附件。
    */
   context?: string;
@@ -99,8 +99,7 @@ export interface TranscribeInput {
   /** 期望语种（ISO 639-1，如 'zh' / 'en'）；不填由 backend 自检 */
   language?: string;
   /**
-   * 是否需要时间戳分段。后端可忽略：第一方只有经 asr 桥接的 plugin-asr-openai 返回 segments，
-   * 音频 LLM 与 plugin-asr-whisper-cpp 只给整段 text。
+   * 是否需要时间戳分段。后端可忽略：给不出分段的（如音频 LLM）只给整段 text。
    */
   withTimestamps?: boolean;
   /**
@@ -126,7 +125,7 @@ export interface TranscribeResult {
 
 // ----- 服务接口 -----
 
-/** plugin-media 暴露的服务（subsystem='media'） */
+/** media 服务（subsystem='media'） */
 export interface MediaService {
   /** 注册非音频、非 LLM 的 backend（LLM 走内置 adapter 自动注册，音频后端走 asr 服务，都无需手动调用） */
   registerProcessor(p: MediaProcessor): () => void;
@@ -143,7 +142,7 @@ export interface MediaService {
    * 把每条附件的文本描述写入 msg._attachmentDescriptions（与 attachments 同长度；
    * 本服务不写描述的位，如文件，保留调用前已有的值）。
    * 同一消息对象重复调用共享同一次处理（进行中则等它、返回同一份报告），不重复识别。
-   * 由 plugin-media 挂在 `agent:input:before` 上的中间件调用；触发插件判定前要看附件描述时（如 plugin-trigger-laya）也会提前调用。
+   * 由提供者挂在 `agent:input:before` 上的中间件调用；触发插件判定前要看附件描述时也会提前调用。
    */
   processMessage(msg: IncomingMessage): Promise<MediaProcessReport>;
 
@@ -175,7 +174,7 @@ export interface MediaService {
    * （适配器把远端网址落成 `data:/images/…` 时、WebUI 的 base64 落盘时）。
    * 此后按**原始来源**查描述（lookupDescription）、识别后写描述都落到落盘地址的那条描述上——
    * OneBot 引用消息只拿得到原始网址时也不必重认。别名按来源串相等命中；
-   * QQ 直链的 rkey 会轮换，由适配器在登记与查询两侧剥掉后再登记/再查一次（见 plugin-adapter-onebot）。
+   * QQ 直链的 rkey 会轮换，由适配器在登记与查询两侧剥掉后再登记/再查一次。
    */
   rememberDescriptionAlias(source: string, landedRef: string): void;
 }
@@ -247,7 +246,7 @@ export interface MediaProcessReport {
 declare module '@aalis/api-events' {
   interface AalisEvents {
     /**
-     * 一条入站消息的所有附件已被 plugin-media 处理（成功或失败均会发）。
+     * 一条入站消息的所有附件已处理完（成功或失败均会发）。
      * 用于 webui / archive / 调试日志。
      */
     'media:processed': [data: { sessionId: string; report: MediaProcessReport }];

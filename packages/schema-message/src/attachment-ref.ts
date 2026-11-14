@@ -3,10 +3,9 @@
 //
 // Aalis 在多个地方需要把附件（图片 / 音频 / 视频 / 文件）以可读、可解析的
 // 形式放回 LLM 上下文里。依赖 `[图片: desc | ref:xxx]` 这种格式的调用点：
-//   - plugin-adapter-onebot 入站构造附件占位
-//   - plugin-message-archive 把发出的附件记进会话历史（outboundMediaMessage）
-//   - plugin-media 到达识别写入描述（service.ts），以及按 ref 匹配并重写
-//     历史描述（tools.ts，另有一处本地正则提取 ref）
+//   - 平台适配器入站构造附件占位
+//   - 消息存档把发出的附件记进会话历史（outboundMediaMessage）
+//   - 媒体识别在到达时写入描述，以及按 ref 匹配并重写历史描述（另有一处本地正则提取 ref）
 // 任何一处格式漂移都会让其它调用点的解析悄悄断链。
 //
 // 本模块提供单一格式来源 + 类型安全的 kind 枚举：
@@ -108,7 +107,7 @@ export function parseAttachmentRefs(text: string): AttachmentRef[] {
 
 /**
  * 构造一个用于在文本中匹配「指定 kind + 指定 ref」的全部已存在占位符的正则。
- * 主要给 plugin-media 的 update_image_description 工具用，让它不必重新硬编码格式。
+ * 主要给改写图片描述的工具用，让它不必重新硬编码格式。
  */
 export function buildAttachmentRefMatcher(kind: AttachmentRefKind, ref: string): RegExp {
   const escapedKind = kind.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

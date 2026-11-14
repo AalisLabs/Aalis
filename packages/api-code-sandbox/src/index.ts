@@ -2,10 +2,10 @@
 // @aalis/api-code-sandbox — 代码沙箱契约
 //
 // 「在 OS 隔离下执行不可信代码」是 code_runner 独有的诉求，不属于通用 `process` 子进程契约
-// （package-manager / scheduler 等跑子进程都不需要），故独立成自己的服务，避免污染共享面。
+// （package-manager 等跑子进程都不需要），故独立成自己的服务，避免污染共享面。
 //
-// 实现由 @aalis/plugin-code-sandbox-os（macOS sandbox-exec / Linux bubblewrap）提供；
-// 未来可有 -docker / -wasm / -e2b 等不同机制的实现，经同一 `code-sandbox` 服务按优先级/偏好替换。
+// 实现可以用操作系统自带的隔离（macOS sandbox-exec / Linux bubblewrap），也可以是容器、wasm、远端沙箱等别的机制，
+// 经同一 `code-sandbox` 服务按优先级/偏好替换。
 // ============================================================
 
 import type { ExecResult } from '@aalis/api-process';

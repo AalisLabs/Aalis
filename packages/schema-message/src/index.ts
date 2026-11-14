@@ -281,7 +281,7 @@ export interface IncomingMessage {
    */
   triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
   /**
-   * 代理身份（与 platform/userId 解耦）：当本条消息并非由人类直接发送，而是由 scheduler、
+   * 代理身份（与 platform/userId 解耦）：当本条消息并非由人类直接发送，而是由定时任务、
    * idle-trigger、workflow 等系统侧触发器投递时，记录"AI 应代谁执行"。
    *
    * 与 platform/userId 的区别：
@@ -289,7 +289,7 @@ export interface IncomingMessage {
    * - actor 表示授权身份，agent 算这一轮的参与者时优先使用 actor（api-authority 的 originTurnOf），
    *   从而让 authority 守卫按 actor 的 (platform, userId) 查权限等级。
    *
-   * 触发器（如 scheduler）应在创建任务时 snapshot 调用者身份，触发时回填此字段；
+   * 触发器（如定时任务）应在创建任务时 snapshot 调用者身份，触发时回填此字段；
    * 不能由 LLM/AI 在工具入参中自由指定，避免提权。
    *
    * 没有人的注入（不延续调用的宿主通知等）没有可代之人：注入方回填 {@link selfInitiatedActor}（userId 为空串 = 无主体），
@@ -335,7 +335,7 @@ export interface IncomingMessage {
     reportOnly?: boolean;
     /**
      * 回复这条通知时引用哪条消息：平台消息 id，取自发起那次调用的入站消息（ToolCallContext.inbound.messageId）。
-     * plugin-agent 回复时把它带进出站消息的 {@link OutgoingMessage.replyTo}；入站消息没有平台消息 id 的不设
+     * agent 回复时把它带进出站消息的 {@link OutgoingMessage.replyTo}；入站消息没有平台消息 id 的不设
      */
     replyTo?: string;
     /**
@@ -417,7 +417,7 @@ export type OutboundDeliveryResult =
 /**
  * 发起方等待传输确认的上限。适配器自身的发送可能更久（如 OneBot 先下载附件落盘、再逐条发出，下载与每条的回执各等 30 秒），
  * 超过上限时发起方应报「未确认、请勿重发」而不是失败；上限只为不带回合中止信号的调用方
- * （mcp-server、workflow）不至于一等两三分钟。
+ * （MCP 服务端、workflow）不至于一等两三分钟。
  */
 export const DELIVERY_WAIT_MS = 90_000;
 
@@ -489,7 +489,7 @@ export interface OutgoingMessage {
    * 正文含平台标记、要解析：有标记语法的适配器（如 OneBot 的 `<at>`、`<image|record|video url>`、`<reply>`）把它们解析成
    * @、媒体与引用，并可分条延迟发送；不设的正文按纯文字原样整条发出，不解析、不分条。要发平台标记的出站自己设它；
    * attachments 不受它影响。媒体标记的地址不是网址的（本机路径、存储地址、data URI 等），适配器不得自己读取，也不交给实现端，
-   * 一律去掉并报投递失败：存储里的媒体由 plugin-image-sender 在派发前过媒体判据转成附件，留在正文里的存储地址是没转成的（过
+   * 一律去掉并报投递失败：存储里的媒体由发图的插件在派发前过媒体判据转成附件，留在正文里的存储地址是没转成的（过
    * 不了判据、读不出、不是对应媒体，或没装它）。正文里的媒体标记怎么发，见 docs/services/media.md
    */
   markup?: boolean;
@@ -789,7 +789,7 @@ export interface TurnRecord {
  *
  * `noticeType` 字段是开放字符串（各平台 adapter 自由填写），但列在这里的是**共享语义词**：
  * 语义与平台解耦，各平台 adapter 负责把自家等价事件映射到同一个词，下游的通用插件
- * （如 trigger-policy 的直触发判定）只认这份词汇表，不认平台私有事件名。
+ * （如触发插件的直触发判定）只认这份词汇表，不认平台私有事件名。
  */
 export const WellKnownNoticeTypes = {
   /**

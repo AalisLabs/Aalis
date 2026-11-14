@@ -5,7 +5,7 @@
 //
 // 层（后面的压过前面的）：全局（插件配置）› 平台档 › 平台类型档 › 场所 › 本会话。要对所有群生效的设置按平台分别设在平台类型档。
 // 全局层就是插件配置里的值；平台档、平台类型档在宿主配置文档的 sessionConfig 里；场所与本会话在会话管理的记录上。
-// 解析只在本包的 resolveFields 一处做：读取器在插件进程内调它，提供者（@aalis/plugin-session-settings）只交出原样的层值。
+// 解析只在本包的 resolveFields 一处做：读取器在插件进程内调它，提供者只交出原样的层值。
 // 提供者缺席时读取器只取全局层，插件配置里的值照常生效。
 
 import type {} from '@aalis/api-events'; // declaration merging 锚点（下方 AalisEvents 增强）
@@ -324,7 +324,7 @@ export type SessionFieldRow = {
   actual?: { value: unknown; label?: string | TextRef };
 };
 
-/** 提供者（@aalis/plugin-session-settings 实现） */
+/** 提供者实现的接口 */
 export interface SessionSettingsService {
   /** 只由门面经 registrar 调用；readGlobal 交全局层的原样值（不校验） */
   register(

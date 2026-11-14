@@ -3,8 +3,6 @@
 //
 // 把所有 child_process / os.tmpdir 用法集中到一个能力插件后面，
 // 使其他业务插件无需直接 import node:child_process / node:os / node:fs。
-//
-// 由 @aalis/plugin-process-local 提供默认本地实现。
 // ============================================================
 
 import type { Readable, Writable } from 'node:stream';

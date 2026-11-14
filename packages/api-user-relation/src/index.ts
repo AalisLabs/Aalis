@@ -2,7 +2,7 @@
 // @aalis/api-user-relation — 关系图契约
 //
 // 只收消费方实际用到的查询面；关系图的完整实现（抽取、整理、工具、指令、页面）
-// 住在默认提供者 @aalis/plugin-user-relation。
+// 住在提供者里。
 // ============================================================
 
 import { defineService } from '@aalis/core';
