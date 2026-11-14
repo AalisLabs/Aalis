@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DisposableChain } from '../../packages/core/src/kernel/disposable-chain.js';
+import { awaitWithTimeout, DisposableChain } from '../../packages/core/src/kernel/disposable-chain.js';
 import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
@@ -46,5 +46,27 @@ describe('DisposableChain 异步拒绝兜底（内核自足）', () => {
     pending.reject(late);
     await tick();
     expect(r.warns.at(-1)).toEqual({ message: 'DisposableChain: dispose 抛出，已忽略 [db]:', err: late });
+  });
+});
+
+describe('awaitWithTimeout：放弃等待之后原 promise 才拒绝', () => {
+  it('到时限放弃之后，原 promise 迟到的拒绝不成为未处理的拒绝；时限之内的拒绝照常抛给调用方', async () => {
+    const escaped: unknown[] = [];
+    const onEscape = (err: unknown) => {
+      escaped.push(err);
+    };
+    process.on('unhandledRejection', onEscape);
+    try {
+      const pending = deferred();
+      const timeouts: number[] = [];
+      await awaitWithTimeout(pending.promise, 5, ms => timeouts.push(ms));
+      expect(timeouts).toEqual([5]);
+      pending.reject(new Error('late'));
+      await tick();
+    } finally {
+      process.off('unhandledRejection', onEscape);
+    }
+    expect(escaped).toEqual([]);
+    await expect(awaitWithTimeout(Promise.reject(new Error('early')), 50, () => {})).rejects.toThrow('early');
   });
 });

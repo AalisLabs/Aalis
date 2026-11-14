@@ -170,8 +170,7 @@ export async function awaitWithTimeout(
       }),
     ]);
     if (winner === 'timeout') {
-      // 放弃等待，但给原 promise 挂空 catch——迟到的 rejection 不得逃逸成 unhandledRejection
-      p.catch(() => {});
+      // 不另给 p 挂 catch：p 迟到的拒绝沿上面 p.then 派生的 promise 落进已落定的 race，不会成为 unhandledRejection
       onTimeout(timeoutMs);
     }
   } finally {
