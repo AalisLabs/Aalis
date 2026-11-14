@@ -44,7 +44,7 @@ preflight 执行；core 源码禁用 v8 / c8 / istanbul 的 ignore 注释，由 
 - 非管理动作引起的提供者换人（提供者自行撤回登记、偏好切换、更高优先级上线）不改变插件的目标状态，经选择层的 `watch` 可观察。要跟随换人用 `follow`，不要指望消费者被级联重启。管理动作拆掉下游选中的那一家时 required 下游随之重启，见上文关闭编排一条。提供者因自己的 required 依赖丢失而退场时，required 服务会随它一起失去全部提供者的下游（传递闭包）并入同一批，先收尾、先关；还有后备提供者的不算，不重启（别的计划正关着的提供者不算后备）。
 - 激活超过 `slowThresholdMs`（默认 60 秒，0 = 不设限）仍未完成：告警点名一次、转入后台，重算接着激活其余插件；它以 `activating`、`slow: true` 可见，`idle()` 不等它。它落定后成功转 active 并上线服务，失败进 error，均另触发一次重算。仍在初始化（在飞或后台）的插件被停用、卸载、重启或停机接手，或后台激活因 required 依赖下线被拆时，先 abort，再自其收尾段开始至多等 `disposeTimeoutMs`，到期不再等待。两个值都非 0 时 `stop()` 总能结束。
 - 同一 instanceId 任何时刻至多一个实例在跑：激活关完仍有工作没落定（`apply` 或清理超过宽限被放弃等待），条目照写目标态，`getStatus()` 给出 `lingering: true`；这些工作全部落定之前同一 id 不启动新实例（含卸载后同 id 重新登记），落定后按目标态继续。管理动作与 `idle()` 不等它。core 只看得见交给它的工作：`apply`、`onDrain` / `onDispose` 返回的 Promise，`follow` / `registrar` / `track` 撤回的返回值。
-- required 依赖缺失 → 顶层插件停在 pending（不阻塞、不轮询）；依赖就绪自动激活（旧实例还没停下的等它停下，见上条）。初始化期间本次 required 依赖的 `use` 句柄抛出的不可用错误原样传出时，先回滚资源再回到 pending；optional、`of(id)`、自造/包装异常及其他激活的错误不适用。这类自动重试与后台激活因 required 依赖下线被拆按插件计入同一份预算，跨重算累计、有界，用尽转 `error`（需 `enable` / `bounce`），不影响其他插件与管理操作。
+- required 依赖缺失 → 顶层插件停在 pending（不阻塞、不轮询）；依赖就绪自动激活（旧实例还没停下的等它停下，见上条）。初始化期间本次 required 依赖的 `use` 句柄抛出的不可用错误原样传出时，先回滚资源再回到 pending；optional、`of(id)`、自造/包装异常及其他激活的错误不适用。这类自动重试与后台激活因 required 依赖下线被拆都不计次数，依赖每回来一次就再装一次；行为互相矛盾的插件之间的来回 core 不判断、不拦。
 
 ## 三、明确不承诺（实现自由区）
 
@@ -75,7 +75,7 @@ preflight 执行；core 源码禁用 v8 / c8 / istanbul 的 ignore 注释，由 
 
 | 层 | 成员 | 承诺 |
 |---|---|---|
-| stable | `definePlugin` / `defineService` / `optional`、选择层 `ServiceSelection` 的 `list()` / `use` / `of()` / `present` / `follow()` 与条目 `ProviderEntry`、业务句柄的转发语义、基础服务描述符（`logger` / `config` / `lifecycle` / `provide` / `services`）、宿主描述符（`appService` / `pluginsService`）、`App.plugin` / `App.pluginAll` / `App.bind` / `App.plugins` 与 `AppOptions` 的全部成员：宿主注入件 `logger` / `logHub` / `version`，调节项 `logLevel` / `disposeTimeoutMs` / `slowThresholdMs`（接口即清单）、`PluginManagerService` 接口的全部成员（接口即清单，不在此另抄一份）、core 自己的失败所带 `code` 的取值与各自的数据属性（`CoreFailureCode`：`required-retry-exhausted` 带 `service`，`provides-not-registered` 带 `services`，`exclusive-conflict` 带 `service`，`service-unavailable` 带 `service` 与 `provider`） | 1.x 内不破坏 |
+| stable | `definePlugin` / `defineService` / `optional`、选择层 `ServiceSelection` 的 `list()` / `use` / `of()` / `present` / `follow()` 与条目 `ProviderEntry`、业务句柄的转发语义、基础服务描述符（`logger` / `config` / `lifecycle` / `provide` / `services`）、宿主描述符（`appService` / `pluginsService`）、`App.plugin` / `App.pluginAll` / `App.bind` / `App.plugins` 与 `AppOptions` 的全部成员：宿主注入件 `logger` / `logHub` / `version`，调节项 `logLevel` / `disposeTimeoutMs` / `slowThresholdMs`（接口即清单）、`PluginManagerService` 接口的全部成员（接口即清单，不在此另抄一份）、core 自己的失败所带 `code` 的取值与各自的数据属性（`CoreFailureCode`：`provides-not-registered` 带 `services`，`exclusive-conflict` 带 `service`，`service-unavailable` 带 `service` 与 `provider`） | 1.x 内不破坏 |
 | internal | `@internal` 标注成员、私有方法、激活记录类、注册表类 `ServiceContainer` 与 `PluginManager` 类、`DisposableChain` 等未从包根导出者 | 无承诺 |
 
 ## 七、1.0 之前的实况（避免误读上表）

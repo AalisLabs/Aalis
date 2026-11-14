@@ -17,20 +17,17 @@ const dependency = defineService<{ value: number }>('activation-required-loss');
 // apply 解构的绑定会遮住描述符；恢复提供者仍使用契约描述符。
 const dependencyDescriptor = dependency;
 const owned = defineService<{ attempt: number }>('activation-owned-resource');
-/** 与被测插件无关的服务：它上线再下线，各请求一次重算 */
-const unrelated = defineService<object>('activation-unrelated');
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 
 const apps: App[] = [];
 const releases: Array<() => void> = [];
 function world(options: Partial<AppOptions> = {}) {
   const errors: unknown[] = [];
-  const warnings: string[] = [];
   const debugs: string[] = [];
   const logger: Logger = {
     debug: (...args) => void debugs.push(args.map(String).join(' ')),
     info() {},
-    warn: (...args) => void warnings.push(args.map(String).join(' ')),
+    warn() {},
     error: (...args) => void errors.push(...args),
     child: () => logger,
   };
@@ -42,7 +39,7 @@ function world(options: Partial<AppOptions> = {}) {
   });
   apps.push(app);
   const host = app.bind({ provide, services });
-  return { app, host, errors, warnings, debugs, logger };
+  return { app, host, errors, debugs };
 }
 const consumer = (app: App) => app.plugins.getPlugin('consumer')!;
 afterEach(async () => {
@@ -255,81 +252,8 @@ describe('初始化期间 required 依赖消失', () => {
     expect(activationOf(app, 'consumer')).toBeUndefined();
   });
 
-  it.each([
-    'ordinary',
-    'recompute',
-    'register',
-  ] as const)('持续制造真实缺失也须有界，%s 不能重置自动重试预算；用尽转 error，重算不再重试，enable 后重试', async mode => {
+  it('初始化里连着 30 次用到已被撤的 required 依赖：每次回到 pending、依赖在就再装，不按次数停下；不再丢时照常激活', async () => {
     const { app, host, errors, debugs } = world();
-    let off = host.provide.use(dependency, { value: 1 });
-    let attempts = 0;
-    let firstLimit = 0;
-    let helpers = 0;
-    let stable = false;
-    await app.plugin(
-      definePlugin({
-        name: 'consumer',
-        uses: { dependency },
-        async apply({ dependency }) {
-          attempts++;
-          if (stable) return void dependency.use.value;
-          // 错误实现也只能运行到保险丝为止，不能让测试一直阻塞或占满微任务队列。
-          if (attempts === 31) throw new Error('测试保险丝：自动重试未被收敛预算拦住');
-          if (mode === 'recompute') host.provide.use(unrelated, {})();
-          if (mode === 'register') {
-            await app.plugin(definePlugin({ name: `helper-${attempts}`, apply: () => void helpers++ }));
-          }
-          if (attempts === 1) firstLimit = app.plugins.getStatus().length * 2 + 8;
-          off();
-          try {
-            dependency.use.value;
-          } catch (error) {
-            off = host.provide.use(dependencyDescriptor, { value: attempts });
-            throw error;
-          }
-        },
-      }),
-    );
-    await app.plugins.idle();
-    expect(attempts).toBe(firstLimit);
-    expect(consumer(app).state).toBe('error');
-    expect(activationOf(app, 'consumer')).toBeUndefined();
-    // 点名的是 apply 抛出的不可用错误里的服务：apply 抛错前已把它恢复，此刻容器里并不缺。最后一次的不可用错误挂成 cause
-    expect(consumer(app).error).toBe(
-      '初始化期间 required 依赖反复缺失（最后一次缺 "activation-required-loss"），自动重试未收敛，已停止；enable 或 bounce 后重试' +
-        ' ← 服务 "activation-required-loss" 不可用（"consumer" 声明的依赖当前没有提供者）',
-    );
-    expect(consumer(app).failure).toEqual(
-      expect.objectContaining({ code: 'required-retry-exhausted', service: 'activation-required-loss' }),
-    );
-    expect((consumer(app).failure as Error).cause).toEqual(
-      expect.objectContaining({ name: 'ServiceUnavailableError', service: 'activation-required-loss' }),
-    );
-    expect(errors.filter(message => String(message).includes('自动重试未收敛'))).toHaveLength(1);
-    // 同一个不可用错误作这条 error 日志的附加参数：宿主日志里看得到 apply 里哪一行访问了缺席的句柄
-    expect(errors[errors.findIndex(message => String(message).includes('自动重试未收敛')) + 1]).toBe(
-      (consumer(app).failure as Error).cause,
-    );
-    // 用尽的那一次只记 error，不再说等待依赖恢复
-    expect(debugs.filter(message => message.includes('等待依赖恢复'))).toHaveLength(attempts - 1);
-    if (mode === 'register') expect(helpers, '新注册的正常插件仍须完成激活').toBe(attempts);
-
-    stable = true;
-    const previous = attempts;
-    host.provide.use(unrelated, {})();
-    await app.plugins.idle();
-    expect(consumer(app).state, 'error 态不自动重试').toBe('error');
-    expect(attempts).toBe(previous);
-    expect(await app.plugins.enable('consumer')).toBe(true);
-    await app.plugins.idle();
-    expect(consumer(app).state).toBe('active');
-    expect(consumer(app).error).toBeUndefined();
-    expect(consumer(app).failure).toBeUndefined();
-    expect(attempts).toBe(previous + 1);
-  });
-
-  it.each(['enable', 'bounce'] as const)('用尽后 %s 重新给满额度', async action => {
-    const { app, host } = world();
     let off = host.provide.use(dependency, { value: 1 });
     let attempts = 0;
     await app.plugin(
@@ -337,7 +261,7 @@ describe('初始化期间 required 依赖消失', () => {
         name: 'consumer',
         uses: { dependency },
         apply({ dependency }) {
-          if (++attempts === 31) throw new Error('测试保险丝：自动重试未被收敛预算拦住');
+          if (++attempts > 30) return void dependency.use.value;
           off();
           try {
             dependency.use.value;
@@ -349,68 +273,23 @@ describe('初始化期间 required 依赖消失', () => {
       }),
     );
     await app.plugins.idle();
-    // 只有 consumer 一个插件：额度 2×1+8
-    expect(attempts).toBe(10);
-    expect(consumer(app).state).toBe('error');
-    expect(await app.plugins[action]('consumer')).toBe(true);
-    await app.plugins.idle();
-    expect(attempts, '不能沿用已用尽的余额').toBe(20);
-    expect(consumer(app).state).toBe('error');
+    expect(attempts).toBe(31);
+    expect(consumer(app).state).toBe('active');
+    expect([consumer(app).error, consumer(app).failure]).toEqual([undefined, undefined]);
+    expect(errors).toEqual([]);
+    expect(debugs.filter(message => message.includes('等待依赖恢复'))).toHaveLength(30);
   });
 
-  it('激活成功清零预算：此后再遇缺失重新计起', async () => {
-    const { app, host } = world();
+  it('转入后台的初始化连着 12 次在途中丢 required 依赖：每次被拆、回到 pending、依赖回来再装，不按次数停下', async () => {
+    const { app, host, errors, debugs } = world({ slowThresholdMs: 10, disposeTimeoutMs: 1000 });
     let off = host.provide.use(dependency, { value: 1 });
     let attempts = 0;
-    let failures = 6;
     await app.plugin(
       definePlugin({
         name: 'consumer',
         uses: { dependency },
         async apply({ dependency }) {
-          attempts++;
-          if (failures === 0) return void dependency.use.value;
-          failures--;
-          // 依赖恢复时 apply 在 provide 调用里同步开始：让出一拍，等 off 换成新句柄
-          await Promise.resolve();
-          off();
-          try {
-            dependency.use.value;
-          } catch (error) {
-            off = host.provide.use(dependencyDescriptor, { value: attempts });
-            throw error;
-          }
-        },
-      }),
-    );
-    await app.plugins.idle();
-    expect(consumer(app).state).toBe('active');
-    expect(attempts).toBe(7);
-
-    // 已激活的插件依赖下线被拆不计预算：恢复后再失败 9 次，余额刚好还剩 1，仍须激活；多扣这 1 次就会转 error
-    failures = 9;
-    off();
-    await app.plugins.idle();
-    expect(consumer(app).state).toBe('pending');
-    off = host.provide.use(dependencyDescriptor, { value: 0 });
-    await app.plugins.idle();
-    expect(consumer(app).state).toBe('active');
-    expect(attempts).toBe(17);
-  });
-
-  it('后台激活反复拆掉自己的 required 依赖：与前台同一本预算，用尽转 error，enable 后重试', async () => {
-    const { app, host, errors } = world({ slowThresholdMs: 10, disposeTimeoutMs: 1000 });
-    let off = host.provide.use(dependency, { value: 1 });
-    let attempts = 0;
-    let stable = false;
-    await app.plugin(
-      definePlugin({
-        name: 'consumer',
-        uses: { dependency },
-        async apply({ dependency }) {
-          attempts++;
-          if (stable) return void dependency.use.value;
-          if (attempts === 31) throw new Error('测试保险丝：自动重试未被收敛预算拦住');
+          if (++attempts > 12) return void dependency.use.value;
           // 先转入后台，再让自己的 required 依赖下线：重算在 apply 抛错之前就把它拆掉
           await new Promise(resolve => setTimeout(resolve, 15));
           off();
@@ -424,67 +303,15 @@ describe('初始化期间 required 依赖消失', () => {
       }),
     );
     const deadline = Date.now() + 5000;
-    while (consumer(app).state !== 'error' && Date.now() < deadline)
+    while (consumer(app).state !== 'active' && Date.now() < deadline)
       await new Promise(resolve => setTimeout(resolve, 5));
     await app.plugins.idle();
-    expect(consumer(app).state).toBe('error');
-    // 只有 consumer 一个插件：额度 2×1+8
-    expect(attempts).toBe(10);
-    expect(consumer(app).error).toContain('最后一次缺 "activation-required-loss"');
-    expect(errors.filter(message => String(message).includes('自动重试未收敛'))).toHaveLength(1);
-    // 被重算拆掉时用尽，没有这一次抛出的不可用错误：failure 不带 cause，那条 error 也不多带一个 undefined 参数
-    expect((consumer(app).failure as Error).cause).toBeUndefined();
-    expect(errors).not.toContain(undefined);
-
-    stable = true;
-    expect(await app.plugins.enable('consumer')).toBe(true);
-    await app.plugins.idle();
+    expect(attempts).toBe(13);
+    // 12 次都是转入后台之后被重算拆掉的：apply 随后抛出的不可用错误落在已被接手的激活上
+    expect(debugs.filter(message => message.includes('激活中止且已被接手'))).toHaveLength(12);
     expect(consumer(app).state).toBe('active');
-    expect(attempts).toBe(11);
-  });
-
-  it('预算用尽告警里的新注册与 enable 请求不丢失，只停下失稳的 entry', async () => {
-    const { app, host, logger } = world();
-    let enabled = 0;
-    await app.plugin(definePlugin({ name: 'normal', apply: () => void enabled++ }));
-    await app.plugins.disable('normal');
-    let inserted = 0;
-    const operations: Promise<unknown>[] = [];
-    const error = logger.error;
-    let acted = false;
-    logger.error = (...args) => {
-      error(...args);
-      if (acted || !String(args[0]).includes('自动重试未收敛')) return;
-      acted = true;
-      operations.push(app.plugin(definePlugin({ name: 'inserted', apply: () => void inserted++ })));
-      operations.push(app.plugins.enable('normal'));
-    };
-    let off = host.provide.use(dependency, { value: 1 });
-    let attempts = 0;
-    await app.plugin(
-      definePlugin({
-        name: 'consumer',
-        uses: { dependency },
-        apply({ dependency }) {
-          if (++attempts === 41) throw new Error('测试保险丝：自动重试未被收敛预算拦住');
-          off();
-          try {
-            dependency.use.value;
-          } catch (error) {
-            off = host.provide.use(dependencyDescriptor, { value: attempts });
-            throw error;
-          }
-        },
-      }),
-    );
-    await Promise.all(operations);
-    await app.plugins.idle();
-    expect(acted).toBe(true);
-    expect(attempts).toBeLessThanOrEqual(12);
-    expect(consumer(app).state).toBe('error');
-    expect(app.plugins.getPlugin('inserted')?.state).toBe('active');
-    expect(app.plugins.getPlugin('normal')?.state).toBe('active');
-    expect([inserted, enabled]).toEqual([1, 2]);
+    expect([consumer(app).error, consumer(app).failure]).toEqual([undefined, undefined]);
+    expect(errors).toEqual([]);
   });
 
   it.each(['disable', 'unload', 'stop'] as const)('%s 接管在飞初始化后，缺失错误不得抢回状态或重激活', async action => {

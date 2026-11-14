@@ -16,18 +16,17 @@ interface PluginEntry {
   instanceId: string;          // 单实例时与 definition.name 相同，多实例时为 `name:suffix`
   config: Record<string, unknown>;
   state: PluginState;
-  error?: string;              // 激活失败的说明，由 failure 现算：错误消息后接 cause 链摘要；另有 core 的固定说明（见下表）
+  error?: string;              // 激活失败的说明，由 failure 现算：错误消息后接 cause 链摘要
   failure?: unknown;           // 激活失败时抛出的原值（core 自己的失败带 code，见下文）
 }
 ```
 
 公开条目不含内部激活记录与依赖表；依赖信息只在 `getStatus()` 条目的 `uses` 里（包含 Core 基础服务）。`getStatus()` 条目同样带 `error` 与 `failure`。
 
-`failure` 可能不可序列化、可能含敏感数据，激活成功、`enable`、`disable`、`bounce` 清掉之前一直留在内存里：展示方只取其中挂的文字对象与 `code`，不整体序列化或下发。core 自己的失败是挂 `code` 与数据属性的普通 Error，取值见包根类型 `CoreFailureCode`：
+`failure` 可能不可序列化、可能含敏感数据，`enable`、`disable`、`bounce` 清掉之前一直留在内存里：展示方只取其中挂的文字对象与 `code`，不整体序列化或下发。core 自己的失败是挂 `code` 与数据属性的普通 Error，取值见包根类型 `CoreFailureCode`：
 
 | code | 情形 | 数据 |
 |---|---|---|
-| `required-retry-exhausted` | 初始化期间 required 依赖反复缺失、自动重试用尽 | `service`：最后一次缺的服务；最后一次是激活时抛出的不可用错误时，它挂成 `cause` |
 | `provides-not-registered` | 激活完成时 provides 声明的服务没有登记 | `services`：缺的那些 |
 | `exclusive-conflict` | 服务为独占登记期间又登记同名提供者 | `service` |
 | `service-unavailable` | 业务句柄选不到提供者（`ServiceUnavailableError`） | `service`；指名或钉住的那一家另给 `provider` |
@@ -45,7 +44,7 @@ interface PluginEntry {
 | `active` | 已激活，正常运行 |
 | `disabled` | 手动禁用 |
 | `disposed` | 已卸载（单向终态） |
-| `error` | 激活失败，或初始化期间 required 依赖反复缺失、自动重试用尽（见下文）（激活失败时带 `error` 信息：错误消息后接 cause 链各层的首行，以 ` ← ` 相连，至多 5 层；`AggregateError` 层之后接至多 3 条子错误的首行，以 `; ` 相连；上一层首行与本层首行相同，或以冒号接本层首行结尾时，省略本层；非 Error 的值只取首行、至多 200 字符。不会在后续 recompute 中自动重试，需 `enable` / `bounce`） |
+| `error` | 激活失败（带 `error` 信息：错误消息后接 cause 链各层的首行，以 ` ← ` 相连，至多 5 层；`AggregateError` 层之后接至多 3 条子错误的首行，以 `; ` 相连；上一层首行与本层首行相同，或以冒号接本层首行结尾时，省略本层；非 Error 的值只取首行、至多 200 字符。不会在后续 recompute 中自动重试，需 `enable` / `bounce`） |
 
 ## 生命周期流程
 
@@ -69,8 +68,8 @@ register(definition, config?, instanceId?, { disabled? })
 - 超过阈值仍未完成：记一条 warn 点名，转入后台继续，重算接着激活后面的插件；`register` / `pluginAll` / `idle()` 照常在阈值处返回，启动流程不再卡在插件登记。此后不再提醒，后台状态看 `getStatus()` 的 `slow`；阈值定时器只触发一次，没调 `stop()` 的宿主进程至多被它拖到阈值到点才退出。
 - 重算逐个激活，每个慢激活都单独等满一个阈值：排在前面的慢插件有 N 个时，后面插件的激活与 `register` / `pluginAll` / `idle()` 的返回约晚 N×阈值。
 - 后台期间条目停在 `activating`，`getStatus()` 对它给出 `slow: true`。它经 `provide` 登记的服务不对外：`get` / `all` / `inspect` / `names` 与激活闸都看不到，阈值前已登记的在转入后台时撤下（选择层的 `watch` 随之调用），后台期间新登记的照常触发 `watch` 但重读看不到；依赖它的插件保持 `pending`。它经 `registrar` 登记到别处的条目（含事件监听）照常生效；它的就绪回调（`lifecycle.onReady`）等它激活成功后才跑。
-- 落定：成功则先转 `active` 再上线服务（选择层的 `watch` 随之调用），依赖方随之激活；失败进 `error`，服务从未上线；`apply` 期间 required 依赖丢失的回到 `pending`（计入下文的重试预算）。无论哪种都另补一次重算。
-- 后台激活的 required 依赖下线时被拆掉（它 `apply` 里拿到的已是旧实例），abort 与宽限同下文，回到 `pending` 并计入下文的重试预算（用尽转 `error`）。在飞（未到阈值）的激活由重算等它落定后再按依赖判定。
+- 落定：成功则先转 `active` 再上线服务（选择层的 `watch` 随之调用），依赖方随之激活；失败进 `error`，服务从未上线；`apply` 期间 required 依赖丢失的回到 `pending`（见下文）。无论哪种都另补一次重算。
+- 后台激活的 required 依赖下线时被拆掉（它 `apply` 里拿到的已是旧实例），abort 与宽限同下文，回到 `pending`，依赖回来再装。在飞（未到阈值）的激活由重算等它落定后再按依赖判定。
 
 `apply` 尚未完成时被停机或管理动作接手（`disable` / `unload` / `bounce`，或它的 required 提供者被这样处理），或后台激活因 required 依赖下线被拆，它的 `lifecycle.use.signal` 在关闭计划排定后立即 abort（停机在冻结时），重算不再等它；关闭时自它的收尾段开始至多再等 `disposeTimeoutMs` 让 `apply` 落定，到期仍未落定就不再等待，流程继续。被放弃的 `apply` 之后落定也不会改写条目（让位检查比对状态），它迟到的 `provide.use` / `events.use.on` 按已关闭的激活拒收、`onDispose` 就地执行。
 
@@ -78,7 +77,7 @@ register(definition, config?, instanceId?, { disabled? })
 
 一个激活关完时还有工作没落定（`apply` 或某项清理超过 `disposeTimeoutMs` 被放弃等待，或关闭后就地执行的清理还在跑），core 把它记在实例 id 名下：条目照写目标态（`bounce` 为 `pending`、`disable` 为 `disabled`、依赖下线被拆的回到 `pending`），`getStatus()` 对它给出 `lingering: true`，记一条 warn；这些工作全部落定之前，同一 id 不启动新实例，`bounce`、`updateConfig`、`enable`、依赖恢复与卸载后同 id 重新登记都一样。落定后去掉标记、补一次重算，按目标态继续。管理动作与 `idle()` 不等它。永不落定的工作会让这个 id 一直等下去，只有重启进程能解决。
 
-若本次激活 required 依赖的 `use` 句柄在 `apply` 中抛出的服务不可用错误原样传出，Core 会先撤回本次资源，再回到 `pending` 等待或重新观察依赖。这类自动重试与后台激活因 required 依赖下线被拆，按插件记入同一份重试预算，跨重算累计、有界；用尽转 `error`（「初始化期间 required 依赖反复缺失（最后一次缺 "<服务名>"），自动重试未收敛，已停止；enable 或 bounce 后重试」），不再自动重试。optional 依赖与 `of(id)` 句柄的错误、其他激活传来的错误、包装后的新异常与普通业务错误仍进入 `error`；不按错误文本或“此刻恰好缺服务”猜测原因。
+若本次激活 required 依赖的 `use` 句柄在 `apply` 中抛出的服务不可用错误原样传出，Core 会先撤回本次资源，再回到 `pending` 等待或重新观察依赖。这类自动重试与后台激活因 required 依赖下线被拆都不计次数：依赖每回来一次就再装一次。几个插件的行为互相矛盾（一方装好就让另一方撤掉它必需的服务，它被拆后那个服务又回来）时会一直重试下去，其间不让出事件循环的会占住进程，core 不判断也不拦。optional 依赖与 `of(id)` 句柄的错误、其他激活传来的错误、包装后的新异常与普通业务错误仍进入 `error`；不按错误文本或“此刻恰好缺服务”猜测原因。
 
 ## 统一状态机：`recompute()`
 

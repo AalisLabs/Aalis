@@ -14,8 +14,6 @@ const SOURCE = {
   unprovidedVia: '{path} → 没有已装的插件提供 {service}',
   cycle: '互相等待成环：{instances, list}',
   cycleVia: '{path} → 互相等待成环：{instances, list}',
-  retryExhausted:
-    '初始化期间 required 依赖反复缺失（最后一次缺 {service}），自动重试未收敛，已停止；重新启用或重载后重试',
   providesNotRegistered: '声明提供 {services, list}，但激活完成时没有登记这些服务',
   exclusiveConflict: '服务 {service} 为独占登记，不能再添加提供者',
   unavailable: '服务 {service} 当前没有提供者',

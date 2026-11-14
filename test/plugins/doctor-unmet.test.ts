@@ -410,11 +410,6 @@ describe('failureText：插件失败给人看的说明', () => {
 
   it.each([
     [
-      { code: 'required-retry-exhausted', service: 'llm' },
-      '初始化期间 required 依赖反复缺失（最后一次缺 llm），自动重试未收敛，已停止；重新启用或重载后重试',
-      'A required dependency kept going missing during initialization (last missing: llm); automatic retries did not settle and stopped. Re-enable or reload it to retry',
-    ],
-    [
       { code: 'provides-not-registered', services: ['a', 'b'] },
       '声明提供 a、b，但激活完成时没有登记这些服务',
       'Declares that it provides a, b, but had not registered them when activation finished',

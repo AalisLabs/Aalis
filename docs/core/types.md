@@ -70,7 +70,7 @@ interface PluginEntry {
   failure?: unknown; // 激活失败时抛出的原值
 }
 
-type CoreFailureCode = 'required-retry-exhausted' | 'provides-not-registered' | 'exclusive-conflict' | 'service-unavailable';
+type CoreFailureCode = 'provides-not-registered' | 'exclusive-conflict' | 'service-unavailable';
 
 function parseInstanceId(instanceId: string): { moduleName: string; suffix?: string };
 ```

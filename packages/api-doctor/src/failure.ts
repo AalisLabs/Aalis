@@ -17,7 +17,6 @@ interface FailureData {
 }
 
 const CORE_FAILURES: { readonly [C in CoreFailureCode]: (data: FailureData) => TextRef } = {
-  'required-retry-exhausted': ({ service }) => t('retryExhausted', { service: String(service) }),
   'provides-not-registered': ({ services }) =>
     t('providesNotRegistered', { services: Array.isArray(services) ? services.map(String) : [] }),
   'exclusive-conflict': ({ service }) => t('exclusiveConflict', { service: String(service) }),

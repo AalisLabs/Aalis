@@ -38,8 +38,7 @@ export default defineLocale<Source>()({
   noPluginManager: 'PluginManagerService is unavailable; plugin checks skipped',
   pluginsActive: '{active, number} of {total, plural, one {# plugin} other {# plugins}} active',
   noErrored: 'No plugins in the error state',
-  errored:
-    '{count, plural, one {# plugin is} other {# plugins are}} in error (activation failed or automatic retries ran out)',
+  errored: '{count, plural, one {# plugin is} other {# plugins are}} in error (activation failed)',
   noLacking: 'No plugins missing services',
   lacking: '{count, plural, one {# plugin is} other {# plugins are}} missing services and not ready',
   waiting: '{count, plural, one {# plugin is} other {# plugins are}} waiting for other plugins to start',

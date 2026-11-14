@@ -188,7 +188,6 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
     const activating = activatePlugin(entry, {
       host,
       logger: new DefaultLogger('test'),
-      spendRetry: () => 'pending',
       activated: () => {},
       linger: () => {},
     });

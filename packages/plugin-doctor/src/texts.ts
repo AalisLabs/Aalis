@@ -37,7 +37,7 @@ const SOURCE = {
   noPluginManager: 'PluginManagerService 不可用，跳过插件检查',
   pluginsActive: '已激活插件 {active, number} 个 / 共 {total, number} 个',
   noErrored: '无错误状态插件',
-  errored: '{count, number} 个插件处于 error（激活失败或自动重试用尽）',
+  errored: '{count, number} 个插件处于 error（激活失败）',
   noLacking: '无缺服务的插件',
   lacking: '{count, number} 个插件缺服务，未就绪',
   waiting: '{count, number} 个插件在等别的插件启动',

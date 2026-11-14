@@ -20,15 +20,14 @@ import { cloneConfigObject } from '../infrastructure/config-values.js';
 import { type LogWriter, summarizeError } from '../infrastructure/logger.js';
 
 /**
- * 注册表里的记录：公开的 {@link PluginEntry} 加上登记时取定的定义、这次激活与重试余额（不进公开类型）。
- * 失败只存一份 failure，error 在投影时现算
+ * 注册表里的记录：公开的 {@link PluginEntry} 加上登记时取定的定义与这次激活（不进公开类型）。
+ * 失败只存一份 failure，error 在投影时现算。failure 只在激活失败、转 error 的那个同步段里写入，离开 error 的 enable、disable、
+ * bounce 都先清掉它：pending、activating、active、disabled 下它恒为空，激活成功与回到 pending 时不必再清
  */
 export interface PluginRecord extends Omit<PluginEntry, 'error'> {
   /** 登记时取定的定义：core 只读它，不回到 definition 上现读 */
   readonly spec: DefinitionSpec;
   activation?: Activation;
-  /** 初始化期 required 缺失的自动重试余额，跨重算累计；未取额时为 undefined（见 PluginManager 的 spendRetry） */
-  retriesLeft?: number;
 }
 
 /**
@@ -40,8 +39,6 @@ export interface ActivationDeps {
   logger: LogWriter;
   /** 拆卸时单个异步清理项的等待上限，也是 abort 后等在飞初始化落定的宽限（毫秒；缺省不设限） */
   disposeTimeoutMs?: number;
-  /** 初始化期 required 缺失时记一次重试，返回这次拆卸的目标态（见 PluginManager 的 #spendRetry） */
-  spendRetry: (entry: PluginRecord, missing: string, cause?: unknown) => 'pending' | 'error';
   /** 激活刚落定为 active：就绪相位已开始时由此跑它的就绪回调，不等 */
   activated: (activation: Activation) => void;
   /** 关完的激活仍有工作没落定（rest 落定时兑现）：记在实例 id 名下，落定之前同一 id 不启动新实例 */
@@ -102,8 +99,8 @@ export async function retireBatch(
 /**
  * 尝试激活一个 pending 插件：建激活 → 挂载定义 → provides 校验。
  *
- * 本次 required 引用缺席：记一次重试（deps.spendRetry），清理失败激活后回到 pending，并让重算继续观察可能已恢复的
- * 依赖；重试余额用尽则转 error。其余失败转为 error 态（带 message），外层 recompute 不会重试。
+ * 本次 required 引用缺席：清理失败激活后回到 pending，重算继续观察可能已恢复的依赖，不计次数。其余失败转为 error 态
+ * （带 message），外层 recompute 不会重试。
  * 前置条件（唯一调用方 PluginManager.#activate 由 Phase B 调用，Phase B 在同一拍里已判定）：entry 为 pending、
  * 旧激活已清，required 依赖都有提供者，且它为这些服务选中的那一家都未进关闭计划。同步段返回时 entry.activation 已是本次激活（配置拷贝失败时没有激活）。
  * 转入后台期间它的服务暂不对外（ServiceContainer.hold）；成功时先写 active 再上线，失败与被接管时随拆卸摘除。
@@ -157,8 +154,6 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     }
 
     entry.state = 'active';
-    entry.failure = undefined;
-    entry.retriesLeft = undefined;
     // 转入过后台的激活此刻上线服务：先写 active，上线触发的重算才看得到它已激活
     for (const name of services.release(activation.owner)) host.runtime.serviceChanged(name);
     logger.info(`插件已激活: ${entry.instanceId}`);
@@ -171,12 +166,8 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     // 配置拷贝失败时没有激活，也就谈不上缺服务
     const missing = activation && missingRequiredService(err, activation.resources, entry.spec.required);
     if (missing !== undefined) {
-      entry.failure = undefined;
-      const target = deps.spendRetry(entry, missing, err);
-      // 用尽时 spendRetry 已记 error「已停止」，不再说等待恢复
-      if (target === 'pending')
-        logger.debug(`插件 "${entry.instanceId}" 初始化期间 required 服务不可用，清理后等待依赖恢复`);
-      await retireBatch([entry], target, deps);
+      logger.debug(`插件 "${entry.instanceId}" 初始化期间 required 服务不可用（缺 "${missing}"），清理后等待依赖恢复`);
+      await retireBatch([entry], 'pending', deps);
       return;
     }
     logger.error(`插件 "${entry.instanceId}" 激活失败:`, err);

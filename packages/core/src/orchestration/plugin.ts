@@ -1,4 +1,3 @@
-import { coreFailure } from '../types/failure.js';
 import type { PluginManagerService, PluginStatusEntry } from '../types/index.js';
 import { type PluginEntry, type PluginState, parseInstanceId } from '../types/plugin.js';
 
@@ -162,7 +161,6 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
       host,
       logger: this.#logger,
       disposeTimeoutMs,
-      spendRetry: (...args) => this.#spendRetry(...args),
       activated: activation => {
         if (this.#ready) void activation.resources.ready(this.#slowMs);
       },
@@ -410,7 +408,6 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
     // 其间转 pending 会被激活侧的「旧激活未清」闸跳过——回滚完成后补跑的重算会把它接上。
     entry.state = 'pending';
     entry.failure = undefined;
-    entry.retriesLeft = undefined;
     this.#logger.info(`插件已启用: ${instanceId}`);
     await this.#recompute();
     return true;
@@ -493,7 +490,6 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
     }
 
     entry.failure = undefined;
-    entry.retriesLeft = undefined;
     return this.#manage(entry, 'pending');
   }
 
@@ -555,23 +551,6 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
     }
   }
 
-  /**
-   * 初始化期 required 缺失的自动重试预算。两条路径记在同一份记录里：激活时 required 绑定抛不可用，后台激活的 required
-   * 依赖下线被拆。额度按图规模取 2×插件数+8（+8 为小图垫底，不设调优旋钮），首次取额时按当时的插件数算；之后按条目
-   * 跨重算累计（`#queued` 补跑、落定后补的重算都不重置），激活成功、enable、bounce 时清零。返回这次拆卸的目标态：
-   * 未用尽回 pending，用尽转 error、不再自动重试，说明里点名这次缺的服务 missing，这次抛出的不可用错误（cause，
-   * 激活路径才有）挂在 failure 上。在拆卸之前调用（写终态的是随后的 retireBatch），不抛。
-   */
-  #spendRetry(entry: PluginRecord, missing: string, cause?: unknown): 'pending' | 'error' {
-    entry.retriesLeft = (entry.retriesLeft ?? this.#plugins.size * 2 + 8) - 1;
-    if (entry.retriesLeft > 0) return 'pending';
-    const message = `初始化期间 required 依赖反复缺失（最后一次缺 "${missing}"），自动重试未收敛，已停止；enable 或 bounce 后重试`;
-    entry.failure = coreFailure(message, 'required-retry-exhausted', { service: missing }, cause);
-    // 不可用错误另作附加参数：failure 不整体下发，宿主日志里要看得到 apply 里哪一行访问了缺席的句柄
-    this.#logger.error(`插件 "${entry.instanceId}" ${message}`, ...(cause === undefined ? [] : [cause]));
-    return 'error';
-  }
-
   /** 单次完整重算：fixed-point 状态转移，收敛后通知 watch 的订阅 */
   async #recomputeOnce(): Promise<void> {
     let changed = true;
@@ -587,13 +566,11 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
       const retiring = this.#closure([], [...order].reverse());
       if (retiring.length > 0) {
         const leaving = new Set(retiring.map(entry => entry.activation!.owner));
-        const target = (entry: PluginRecord): PluginState => {
+        for (const entry of retiring) {
           const unmet = entry.spec.required.find(name => this.#lost(name, leaving))!;
           this.#logger.info(`依赖 "${unmet}" 不可用，停用插件: ${entry.instanceId}`);
-          // 本 flight 此刻没有在飞的激活：activating 即后台，它 apply 里拿到的已是旧实例，拆它记入重试预算
-          return entry.state === 'activating' ? this.#spendRetry(entry, unmet) : 'pending';
-        };
-        await retireBatch(retiring, target, this.#deps);
+        }
+        await retireBatch(retiring, 'pending', this.#deps);
         changed = true;
       }
 
