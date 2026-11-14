@@ -8,6 +8,62 @@
 
 ---
 
+## 2026-11-14（core 0.23.0 minor；25 个包：17 minor / 8 patch）
+
+按次版本：core 0.23.0、runtime 0.22.0、schema-config 0.17.0、api-agent 0.13.0、api-commands 0.10.0、api-doctor 0.11.0、api-host-config 0.5.0、api-session-protocol 0.3.0、api-tools 0.14.0、plugin-agent 0.19.0、plugin-cli 0.16.0、plugin-commands 0.17.0、plugin-file-reader 0.17.0、plugin-media 0.19.0、plugin-session-server 0.5.0、plugin-tools 0.14.0、plugin-webui-client 0.19.0；按补丁版本：create-aalis 0.11.1、api-media 0.14.1、schema-message 0.12.1、plugin-doctor 0.11.1、plugin-hooks 0.4.1、plugin-message-archive 0.15.1、plugin-tool-search 0.13.2、plugin-webui-server 0.19.1。
+
+依赖下限随本批改形的契约抬高：api-doctor 的 `@aalis/core` peer 到 `>=0.23.0 <1.0.0`；plugin-agent 对 api-agent 到 0.13.0，plugin-commands 对 api-commands 到 0.10.0，plugin-tools 对 api-tools 到 0.14.0，plugin-session-server、plugin-cli 对 api-session-protocol 到 0.3.0，runtime 对 schema-config 到 0.17.0、对 api-host-config 到 0.5.0。
+
+须同批升级的两组：plugin-agent 与 plugin-media、plugin-file-reader（旧版的后两者在新版契约下激活失败，或登记落空、附件不被处理）；plugin-session-server 与连它的客户端 plugin-webui-client、plugin-cli（协议号不符即断开）。
+
+### 删掉应用名称
+
+- @aalis/core（破坏性）：删 `AppOptions.name`。启动日志第一行固定写 `Aalis Core <版本>`。
+- @aalis/schema-config、@aalis/api-host-config、@aalis/runtime（破坏性）：配置文档顶层的 `name` 不再是核心键。`CORE_CONFIG_SCHEMA` 与 `AalisConfig` 去掉它，设置页的全局配置少一项，`--init` 生成的主配置不带它；`PUT /api/config` 只收 `logLevel` 与 `slowThresholdMs`，带 `name` 回 400。已有配置文件里的 `name` 行不再起作用，当作普通的顶层字段原样保留，可以手动删掉。
+- create-aalis：生成的主配置不带 `name`。
+- @aalis/api-session-protocol、@aalis/plugin-session-server（破坏性）：握手回应去掉 `appName`；plugin-session-server 不再使用 `host-config` 服务。会话协议号升到 `0.3.0`（删字段是不兼容的修改）：报 `0.2.x` 的客户端连上来按版本不符断开。
+- @aalis/plugin-webui-client：标签页标题与房间里她的回复的说话人固定写 Aalis；握手报协议号 `0.3.0`。
+- @aalis/plugin-cli：欢迎行固定写「欢迎使用 Aalis」，不再取人设名；页眉、回复前的署名与状态页照旧写人设名。握手报协议号 `0.3.0`。
+
+### 删掉指令别名
+
+- **破坏性**：`@aalis/api-commands` 的 `CommandBuilder.alias()` 与 `Command.aliases` 删除，`@aalis/plugin-commands` 不再按别名解析，帮助详情不再有别名一行。要两个叫法的插件把同一个处理函数登记成两条指令，两个名字各自算权限。指令选项的短写（`-x`）不变。
+
+### 删掉输入预处理器登记接口
+
+- **破坏性**：`@aalis/api-agent` 的 `PreprocessorFn`、`AgentService.registerPreprocessor` 与绑定接口 `BoundAgent` 删除，`@aalis/plugin-agent` 一并删掉实现。要在每条输入进一轮之前加工它的插件改挂钩子：`hooks.use.middleware('agent:input:before', ({ message }, next) => …)`，不调 `next()` 即丢掉这条输入的规则不变。
+- @aalis/plugin-media、@aalis/plugin-file-reader：处理改挂 `agent:input:before`，按各自的位次排（原先排在 plugin-agent 的位次上）；第一方的执行次序不变（文件读取、识图、技能、用户画像）。plugin-file-reader 的可选依赖 `agent` 换成 `hooks`，plugin-media 不再声明 `agent`。
+- @aalis/plugin-media：挂上中间件时的日志由「媒体识别预处理器已注册」改为「媒体识别已挂到输入阶段」，中间件失败时的告警由「media preprocessor 失败」改为「输入阶段的媒体中间件失败」。
+
+### 登记表按登记方的位次排
+
+与钩子链、事件监听、同优先级的服务提供者同一条规则：宿主的根最前，插件按实例 id 的码元序，同一登记方按登记先后；不看登记发生的时刻，插件重启后不换位置。
+
+- @aalis/api-tools、@aalis/plugin-tools（破坏性）：提供者契约 `ToolService.register`、`registerGroup` 多一个参数 `seat`，绑定接口代传。给模型的工具清单按位次排，保存一个插件的配置之后清单不再换次序。重名的工具、分组都留着：位次靠前的那条生效，它撤回后下一条顶上，工具重名另记一条告警（原先后登记的覆盖先登记的，生效的撤回后这个名字就没有工具了）。
+- @aalis/api-commands、@aalis/plugin-commands：同名指令的几层声明按位次叠放，位次靠前的那层生效（原先后登记的生效，插件一重启生效的就换人）。权限照旧取各层里最严的。
+
+### 删掉初始化期的重试预算
+
+required 服务被撤，依赖它的插件下场、回到 `pending`，服务回来再装，这条照旧。
+
+- @aalis/core（破坏性）：删掉初始化期 required 缺失的重试预算（每个插件 `2 × 插件数 + 8` 次）。初始化里用到已被撤的 required 服务、转入后台的初始化途中 required 下线，这两种情形原先记满转 `error`，现在都回到 `pending`、不计次数，依赖每回来一次就再装一次。失败码 `required-retry-exhausted` 从 `CoreFailureCode` 删除，插件不会再因为这个原因进 `error`。
+- 行为互相矛盾的插件组合（一方装好就让另一方撤掉它必需的服务，它被拆后那个服务又回来）会一直重试，core 不判断也不拦；其间不让出事件循环的会占住进程。已在运行的插件丢依赖本来就不计次数，这一点没有变。
+- @aalis/api-doctor：删这个失败码的说明文字，需要 core 0.23.0。@aalis/plugin-doctor：`plugins.errored` 的说明去掉「或自动重试用尽」。
+
+### 关闭与重算
+
+- @aalis/core：提供者关闭时，跟随它的下游即使自己已在关闭，挂在这个提供者上的那一条跟随清理也先于提供者自己的清理执行。原先已在关闭的跟随者留到自己的撤回段，同一拍里先卸提供者再卸下游、互相跟随的插件一起停机、宿主的根跟随插件的服务这几种情形里，跟随的清理拿到的是已清理的提供者。这一条清理因此可能早于跟随者自己的收尾。
+- @aalis/core：一次登记或启停引起的重算，`plugins` 服务的 `watch` 订阅收到一次通知（原先多为两次）。
+
+### 两处原本无声的情形记告警
+
+- @aalis/plugin-hooks：同一个 handler 再调 `next()`，每次记一条 warn 点名钩子与登记方（不等结果的调用方原先收不到任何提示）。
+- @aalis/plugin-webui-server：运行中 `webui-client` 的提供者一家不剩时照旧托管最后挂上的目录，刚变成这样时告警一次并写明目录。
+
+### 只改注释的包
+
+- @aalis/schema-message、@aalis/api-media、@aalis/plugin-message-archive、@aalis/plugin-tool-search：只改注释里的说法，行为不变。
+
 ## 2026-11-13（core 0.22.0 minor；71 个包：62 minor / 6 patch / 3 新包 api-events、plugin-events、api-host-restart）
 
 按次版本：core 0.22.0、runtime 0.21.0、create-aalis 0.11.0、api-agent 0.12.0、api-approval 0.3.0、api-doctor 0.10.0、api-gateway 0.11.0、api-hooks 0.4.0、api-host-config 0.4.0、api-llm 0.16.0、api-media 0.14.0、api-memory 0.10.0、api-session-manager 0.14.0、api-session-settings 0.2.0、api-todo-list 0.2.0、api-tools 0.13.0、api-webui 0.15.0、api-workflow 0.14.0、schema-message 0.12.0、plugin-adapter-onebot 0.18.0、plugin-agent 0.18.0、plugin-authority 0.16.0、plugin-chat-approval 0.2.0、plugin-checkpoint 0.18.0、plugin-cli 0.15.0、plugin-commands 0.16.0、plugin-doctor 0.11.0、plugin-file-reader 0.16.0、plugin-flow-control 0.17.0、plugin-gateway 0.10.0、plugin-hooks 0.4.0、plugin-i18n 0.2.0、plugin-image-sender 0.11.0、plugin-llm-deepseek 0.17.0、plugin-llm-ollama 0.15.0、plugin-llm-openai 0.17.0、plugin-media 0.18.0、plugin-memory-summary 0.15.0、plugin-memory-vector 0.16.0、plugin-message-archive 0.15.0、plugin-package-manager 0.12.0、plugin-persona 0.16.0、plugin-process-local 0.11.0、plugin-prompt-budget 0.10.0、plugin-reach 0.4.0、plugin-scheduler 0.18.0、plugin-session-manager 0.17.0、plugin-session-server 0.4.0、plugin-session-settings 0.2.0、plugin-skills 0.16.0、plugin-subtask 0.16.0、plugin-todo-list 0.14.0、plugin-tool-browser 0.16.0、plugin-tool-onebot 0.14.0、plugin-tools 0.13.0、plugin-trigger-policy 0.18.0、plugin-usage-stats 0.3.0、plugin-user-profile 0.16.0、plugin-user-relation 0.18.0、plugin-webui-client 0.18.0、plugin-webui-server 0.19.0、plugin-workflow 0.18.0；按补丁版本：schema-config 0.16.3、api-asr 0.12.2、api-trigger 0.3.1、plugin-contributions 0.3.2、plugin-tool-system 0.14.3、plugin-websearch-serper 0.13.2；新包：api-events 0.1.0、plugin-events 0.1.0、api-host-restart 0.1.0。
