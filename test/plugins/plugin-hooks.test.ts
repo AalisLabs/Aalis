@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { Registry as HookRegistry } from '../../packages/plugin-hooks/src/index.js';
+import { hooks } from '../../packages/api-hooks/src/index.js';
+import { App, definePlugin, type Logger } from '../../packages/core/src/index.js';
+import hooksPlugin, { Registry as HookRegistry } from '../../packages/plugin-hooks/src/index.js';
 
 // plugin-hooks 的登记表：洋葱链、截停、登记序、运行中变更与卡链上报。归属与撤回在绑定门面的归属表，不在本表。
 // 这里的登记都给同一个位次（空串），比的是同一登记方之内的登记序；跨登记方的次序见 hub-seat-order.test.ts。
@@ -222,6 +224,47 @@ describe('HookRegistry：同一个中间件里 next() 只能调一次', () => {
     } finally {
       process.off('unhandledRejection', onUnhandled);
     }
+  });
+
+  it('再调时上报是哪个钩子的哪个 handler（没等结果的调用方收不到那个错）；只调一次的不报', async () => {
+    const calls: unknown[][] = [];
+    const reg = new HookRegistry(undefined, (...args) => void calls.push(args));
+    reg.register(
+      'zz:once',
+      async (_data, next) => {
+        await next();
+        void next();
+        void next();
+      },
+      'ctx-twice',
+      ++seq,
+      '',
+    );
+    reg.register('zz:once', async (_data, next) => next(), 'ctx-once', ++seq, '');
+    expect(await reg.run('zz:once', {})).toBe(true);
+    expect(calls).toEqual([
+      ['zz:once', 'ctx-twice'],
+      ['zz:once', 'ctx-twice'],
+    ]);
+  });
+
+  it('onRepeat 自身抛错：再调的那一次照样交回被拒的 Promise，不变成同步抛错', async () => {
+    const reg = new HookRegistry(undefined, () => {
+      throw new Error('sink broken');
+    });
+    let second: unknown;
+    reg.register(
+      'zz:once',
+      async (_data, next) => {
+        await next();
+        second = await next().catch((err: unknown) => err);
+      },
+      'ctx-twice',
+      ++seq,
+      '',
+    );
+    expect(await reg.run('zz:once', {})).toBe(true);
+    expect((second as Error).message).toBe('钩子 zz:once: handler(来自 ctx-twice) 重复调用 next()');
   });
 
   it('只调一次时交回的是链自己的 Promise：await next() 不多绕微任务', async () => {
@@ -447,5 +490,49 @@ describe('HookRegistry 登记序', () => {
     add('b', 20);
     await reg.run('inbound:command', {} as never);
     expect(trail).toEqual(['a', 'b', 'c', 'd']);
+  });
+});
+
+describe('plugin-hooks：登记表的两种上报经本插件的日志器告警', () => {
+  it('再调 next() 的与卡链的各一条 warn，点名钩子与登记方', async () => {
+    const warns: string[] = [];
+    const logger: Logger = {
+      debug() {},
+      info() {},
+      warn: (message: string) => void warns.push(message),
+      error() {},
+      child: () => logger,
+    };
+    const app = new App({ logLevel: 'warn', logger });
+    try {
+      await app.plugin(hooksPlugin);
+      const member = (name: string, handler: (next: () => Promise<void>) => Promise<void>) =>
+        definePlugin({
+          name,
+          uses: { hooks },
+          apply({ hooks }) {
+            hooks.use.middleware(
+              'zz:warned' as never,
+              ((_data: unknown, next: () => Promise<void>) => handler(next)) as never,
+            );
+          },
+        });
+      await app.plugin(
+        member('zz-a-twice', async next => {
+          await next();
+          void next();
+        }),
+      );
+      await app.plugin(member('zz-b-stalled', async () => {}));
+      await app.plugin(member('zz-c-after', next => next()));
+      const host = app.bind({ hooks });
+      expect(await host.hooks.use.run('zz:warned' as never, {} as never, undefined, { warnOnStall: true })).toBe(false);
+      expect(warns).toEqual([
+        '钩子 zz:warned: handler(来自 zz-b-stalled) 未调用 next()，其后 1 个 handler 被跳过',
+        '钩子 zz:warned: handler(来自 zz-a-twice) 重复调用 next()，多出的调用被拒绝',
+      ]);
+    } finally {
+      await app.stop();
+    }
   });
 });

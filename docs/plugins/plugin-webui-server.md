@@ -320,7 +320,7 @@ socket.onmessage = event => {
 
 扫描的目录是安装集（`host-paths` 的 `app`）下的 `packages/` 与 `node_modules/@aalis`，另按安装集 `package.json` 的依赖解析前端包。宿主不提供 `host-paths` 时没有可扫的目录，发现不到任何前端，整个 WebUI 前端不可用，页面路径回 404「前端未就绪」，只剩 HTTP 接口；同时市场列表（`/api/marketplace`）与系统组件（`/api/system-components`）判断不了已装的包，返回 503。Node 宿主 `@aalis/runtime` 总会提供 `host-paths`。
 
-**挂载哪个**：`servicePreferences['webui-client']` > provider 优先级 > 位次。扫描到的前端由本插件以优先级 -1 代登记，插件主动提供的（缺省 0）默认胜出。改偏好（`POST /api/services/webui-client/prefer` `{contextId}`，owner 闸；默认前端在设置「系统」的服务偏好里改）后**实时重挂静态目录，向 `/admin` 推 `client.reload`**，无需重启进程；主动提供前端的插件运行中上线或下线、胜者换了目录时同样重挂。
+**挂载哪个**：`servicePreferences['webui-client']` > provider 优先级 > 位次。扫描到的前端由本插件以优先级 -1 代登记，插件主动提供的（缺省 0）默认胜出。改偏好（`POST /api/services/webui-client/prefer` `{contextId}`，owner 闸；默认前端在设置「系统」的服务偏好里改）后**实时重挂静态目录，向 `/admin` 推 `client.reload`**，无需重启进程；主动提供前端的插件运行中上线或下线、胜者换了目录时同样重挂。运行中提供者一家不剩时照旧托管最后挂上的目录、不重挂，刚变成这样时告警一次：`已没有前端提供者（webui-client），仍在托管最后挂上的前端目录: <目录>`。
 
 **前端的字典**：挂载一个前端时，读它静态目录下的 `aalis-texts.json`（api-webui 的 `CLIENT_TEXTS_FILE`，随前端打包的字典的目录条目），逐条登记进服务进程的目录（schema-i18n 的 `registerCatalogEntry`），「翻译」页因此列得出外壳的字典。没有这个文件照常挂载；读不出、不是数组时不登记，有条目不合格时合格的照登，都记告警。目录没有删除，换掉的前端的字典留着。
 

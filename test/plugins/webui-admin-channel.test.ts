@@ -234,10 +234,12 @@ describe('/admin 管理面推送', () => {
     await vi.waitFor(() => expect(a.events).toContainEqual({ type: 'client.reload' }));
   });
 
-  it('主动提供前端的插件运行中上线、下线：胜者换了目录才重挂并推 client.reload', async () => {
+  it('主动提供前端的插件运行中上线、下线：胜者换了目录才重挂并推 client.reload；一家不剩时照旧托管最后挂上的目录并告警', async () => {
+    const dirOf: Record<string, string> = {};
     const clientOf = (name: string, mark: string) => {
       const dir = mkdtempSync(join(tmpdir(), 'aalis-admin-client-'));
       dirs.push(dir);
+      dirOf[mark] = dir;
       writeFileSync(join(dir, 'index.html'), '<!doctype html>');
       writeFileSync(join(dir, 'mark.txt'), mark);
       return definePlugin({
@@ -250,9 +252,11 @@ describe('/admin 管理面推送', () => {
       });
     };
     const mounts: string[] = [];
+    const orphaned: string[] = [];
     const logger: Logger = {
       ...silent,
       info: (...args) => void (String(args[0]).startsWith('前端静态目录') && mounts.push(String(args[0]))),
+      warn: (...args) => void (String(args[0]).includes('前端提供者') && orphaned.push(String(args[0]))),
       child: () => logger,
     };
     const app = quietApp({ logLevel: 'info', logger });
@@ -282,9 +286,35 @@ describe('/admin 管理面推送', () => {
     expect(await change(() => app.plugins.disable('aa-client-early-seat'))).toBe('B');
     await vi.waitFor(() => expect(a.count('client.reload')).toBe(2));
 
-    // 一家都不剩：没有可换的目录，不推
-    await change(() => app.plugins.disable('zz-client-late-seat'));
+    // 一家都不剩：没有可换的目录，不推；照旧托管最后挂上的那个，告警一次写明是哪个目录
+    expect(orphaned).toEqual([]);
+    expect(await change(() => app.plugins.disable('zz-client-late-seat'))).toBe('B');
     expect(a.count('client.reload')).toBe(2);
+    expect(orphaned).toEqual([`已没有前端提供者（webui-client），仍在托管最后挂上的前端目录: ${dirOf.B}`]);
+    // 还是一家不剩时的别的插件变化不再告警
+    await change(() => app.plugin(definePlugin({ name: 'zz-unrelated-later', apply() {} })));
+    expect(orphaned).toHaveLength(1);
+    // 又有了提供者之后再一家不剩：再告警一次
+    expect(await change(() => app.plugins.enable('aa-client-early-seat'))).toBe('A');
+    await change(() => app.plugins.disable('aa-client-early-seat'));
+    expect(orphaned).toEqual([
+      `已没有前端提供者（webui-client），仍在托管最后挂上的前端目录: ${dirOf.B}`,
+      `已没有前端提供者（webui-client），仍在托管最后挂上的前端目录: ${dirOf.A}`,
+    ]);
+  });
+
+  it('启动时一个前端都没有、从没挂过目录：之后的插件变化不报「已没有前端提供者」', async () => {
+    const warns: string[] = [];
+    const logger: Logger = { ...silent, warn: (...args) => void warns.push(String(args[0])), child: () => logger };
+    const app = quietApp({ logger });
+    const port = await start(app);
+    expect(warns.some(line => line.includes('未发现任何前端'))).toBe(true);
+    const a = await openAdmin(port);
+    const before = a.count('plugins.changed');
+    await app.plugin(definePlugin({ name: 'zz-unrelated', apply() {} }));
+    await app.plugins.idle();
+    await vi.waitFor(() => expect(a.count('plugins.changed')).toBeGreaterThan(before));
+    expect(warns.filter(line => line.includes('前端提供者'))).toEqual([]);
   });
 
   it('8 个标签页的 /admin 与 /session 都是 WebSocket 升级（101），不占浏览器对每个主机约 6 条的 HTTP 连接', async () => {

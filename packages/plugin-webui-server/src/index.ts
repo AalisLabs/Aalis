@@ -490,12 +490,22 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     // 动态查而不写进 uses：条目多由本插件代前端包登记，声明它会让本插件的按插件偏好也改到选择，静态目录的重挂只跟全局偏好
     return services.use.get(webuiClient)?.getClientDir?.();
   }
+  /** 提供者一家不剩、托管的仍是最后挂上的那个目录：刚变成这样时告警一次 */
+  let orphaned = false;
+  /** 就绪之后取当前活跃前端目录；一家不剩时照旧托管原来的目录，不换成 404 */
+  function activeClientDir(): string | undefined {
+    const dir = currentClientDir();
+    if (!dir && clientDist && !orphaned)
+      logger.use.warn(`已没有前端提供者（webui-client），仍在托管最后挂上的前端目录: ${clientDist}`);
+    orphaned = !dir;
+    return dir;
+  }
   /**
    * 活跃前端可能变了时调用（改或清除 webui-client 的服务偏好、摘掉已不在的前端包、插件上线或下线换了胜者）：重挂当前活跃前端，
    * 经 /admin 推 client.reload 让页面整页重载，换前端不重启进程。
    */
   function remountActiveClient(): void {
-    const dir = currentClientDir();
+    const dir = activeClientDir();
     if (dir) {
       clientDist = dir;
       mountStaticDir(dir);
@@ -946,8 +956,8 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       admin.send({ type: 'plugins.changed' });
       attention.pluginsChanged();
       // 主动提供前端的插件运行中上线或下线，webui-client 的胜者随之换人：目录换了才重挂
-      const dir = currentClientDir();
-      if (clientsReady && dir && dir !== clientDist) remountActiveClient();
+      const dir = clientsReady ? activeClientDir() : undefined;
+      if (dir && dir !== clientDist) remountActiveClient();
     }),
   );
   // 宿主配置文档变了（插件详情保存、手改配置文件、会话设置写全局层与偏好）：插件详情与界面语言据它重取

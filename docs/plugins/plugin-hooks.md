@@ -27,8 +27,9 @@ export default definePlugin({
 - **链序**：`register` 按（位次 `seat`，登记序 `order`）插入该钩子的链：先比位次的码元序，同一位次按登记序。插件重启后它的登记落回自己的位次；换提供者时各插件的登记整批重挂，链序不变。
 - **快照遍历**：`run` 开始时对链做快照，执行途中新登记的 handler 不进入本次遍历，途中已撤回的 handler 跳过。
 - **退订**：只撤对应的那一条，重复调用无副作用；链清空时删除该钩子的表项。
-- **next 只能调一次**：每个 handler 拿到自己的 `next`，再调一次返回被拒的 Promise：`钩子 <hook>: handler(来自 <contextId>) 重复调用 next()`。等它的收到这个错；没等的不成为未处理的拒绝。
-- **卡链告警**：`run` 带 `warnOnStall` 时，某个 handler 没有调用 `next()`、且其后还有 handler，经本插件的日志器告警：`钩子 <hook>: handler(来自 <contextId>) 未调用 next()，其后 <N> 个 handler 被跳过`。告警本身出错不影响主流程。
+- **next 只能调一次**：每个 handler 拿到自己的 `next`，再调一次返回被拒的 Promise：`钩子 <hook>: handler(来自 <contextId>) 重复调用 next()`。等它的收到这个错；没等的不成为未处理的拒绝。每次再调另经本插件的日志器告警：`钩子 <hook>: handler(来自 <contextId>) 重复调用 next()，多出的调用被拒绝`。
+- **卡链告警**：`run` 带 `warnOnStall` 时，某个 handler 没有调用 `next()`、且其后还有 handler，经本插件的日志器告警：`钩子 <hook>: handler(来自 <contextId>) 未调用 next()，其后 <N> 个 handler 被跳过`。
+- 两种告警本身出错都不影响主流程。
 - **归属**：登记的归属与撤回由绑定门面的归属表负责，激活关闭时与事件、服务登记同一拍撤回；本插件只按条目身份删除。
 
 ## 部署

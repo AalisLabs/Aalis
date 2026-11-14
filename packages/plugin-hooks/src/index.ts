@@ -21,8 +21,14 @@ interface Entry {
 export class Registry implements HookRegistry {
   readonly #chains = new Map<string, Entry[]>();
 
-  /** @param onStall 广播型相位的卡链上报；缺省不报 */
-  constructor(private readonly onStall?: (hook: string, contextId: string, skipped: number) => void) {}
+  /**
+   * @param onStall 广播型相位的卡链上报；缺省不报
+   * @param onRepeat 同一个 handler 再调 next() 的上报；缺省不报
+   */
+  constructor(
+    private readonly onStall?: (hook: string, contextId: string, skipped: number) => void,
+    private readonly onRepeat?: (hook: string, contextId: string) => void,
+  ) {}
 
   register(hook: string, fn: MiddlewareFn<unknown>, contextId: string, order: number, seat: string): () => void {
     let list = this.#chains.get(hook);
@@ -58,10 +64,16 @@ export class Registry implements HookRegistry {
         // 每个 handler 拿到自己的 next，只能调一次：再调的话游标已经往后走了，会越过上一次停在那里的 handler
         // （截停的、抛错的、还没返回的）接着往下，走到底时默认动作再执行一遍。包装不是 async：第一次调用交回的就是
         // 链自己的 Promise，不多绕微任务。再调时交回被拒的 Promise，并先挂上空处理：等它的照样收到这个错，
-        // 没等的不成为未处理的拒绝（宿主把未处理的拒绝当致命错误，一个插件的这种写法不该带走整个进程）
+        // 没等的不成为未处理的拒绝（宿主把未处理的拒绝当致命错误，一个插件的这种写法不该带走整个进程），
+        // 它也就收不到这个错：另报一次，点名是哪个 handler
         let called = false;
         await entry.fn(data, () => {
           if (called) {
+            try {
+              this.onRepeat?.(hook, entry.contextId);
+            } catch {
+              // 上报失败不影响主流程
+            }
             const refused = Promise.reject(new Error(`钩子 ${hook}: handler(来自 ${entry.contextId}) 重复调用 next()`));
             refused.catch(() => {});
             return refused;
@@ -96,8 +108,11 @@ export default definePlugin({
   apply({ provide, logger }) {
     provide.use(
       hooks,
-      new Registry((hook, contextId, skipped) =>
-        logger.use.warn(`钩子 ${hook}: handler(来自 ${contextId}) 未调用 next()，其后 ${skipped} 个 handler 被跳过`),
+      new Registry(
+        (hook, contextId, skipped) =>
+          logger.use.warn(`钩子 ${hook}: handler(来自 ${contextId}) 未调用 next()，其后 ${skipped} 个 handler 被跳过`),
+        (hook, contextId) =>
+          logger.use.warn(`钩子 ${hook}: handler(来自 ${contextId}) 重复调用 next()，多出的调用被拒绝`),
       ),
     );
   },
