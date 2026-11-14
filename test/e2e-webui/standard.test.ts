@@ -19,6 +19,7 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 import {
   aria,
   attentionRows,
+  networkIdle,
   onViewport,
   openWebui,
   sessionIdOf,
@@ -239,7 +240,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     await page.waitForSelector(`${home} ${text('向量记忆')}`);
     expect(await attentionRows(page, home)).toEqual(ATTENTION);
     // 有能对话的（假）模型：模型列表取回之后首页不出「开始使用」
-    await page.waitForNetworkIdle();
+    await networkIdle(page);
     expect(await page.$(`${phone ? 'nav[aria-label="会话"]' : 'main'} ${aria('开始使用', 'region')}`)).toBeNull();
     await page.locator(`${home} ${aria('去配置 OpenAI Embedding', 'link')}`).click();
     await page.waitForFunction(
@@ -302,7 +303,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
       const ref = `${encodeURIComponent(instance)}/${encodeURIComponent(key)}`;
       await page.goto(`${stack.origin}${placement === 'settings' ? '/settings' : ''}/p/${ref}`);
       await page.waitForSelector(`main ${aria(title, 'heading')}`);
-      await page.waitForNetworkIdle({ idleTime: 300 });
+      await networkIdle(page, { idleTime: 300 });
       expect(await page.$$('main .page-block'), title).not.toHaveLength(0);
       expect(await page.$$('main [role="alert"]'), title).toHaveLength(0);
       opened.push(title);

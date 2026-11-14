@@ -4,7 +4,15 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import puppeteer, { type Browser, type HTTPResponse, type Page, type Viewport } from 'puppeteer';
+import puppeteer, {
+  type Browser,
+  type HTTPRequest,
+  type HTTPResponse,
+  type Page,
+  TimeoutError,
+  type Viewport,
+  type WaitForNetworkIdleOptions,
+} from 'puppeteer';
 import { afterAll, afterEach, beforeAll, expect, vi } from 'vitest';
 import type { AalisConfig } from '../../packages/api-host-config/src/index.js';
 import { hostLogs } from '../../packages/api-host-logs/src/index.js';
@@ -179,6 +187,12 @@ export async function webuiStack(options: {
 }
 
 /**
+ * openWebui 打开的各页面此刻还没收到响应的请求：networkIdle 没等到时据此点名。与 waitForNetworkIdle 同一口径：
+ * 收到响应头就不再算在途，正文还在传的不算
+ */
+const pendingRequests = new WeakMap<Page, Set<HTTPRequest>>();
+
+/**
  * 开一个新的浏览器上下文（各用例的存储互不相通），按 token 登录后打开 origin 上的 path。页面里的未捕获异常、
  * CSP 拦下的加载与回 4xx、5xx 的请求都记进 problems，用例结束时应为空。回错误码的请求要等浏览器补齐响应的附加信息
  * 才记下，可能晚于页面里的请求结束：断言具体的错误请求时用 vi.waitFor 等它出现
@@ -188,6 +202,12 @@ export async function openWebui(browser: Browser, origin: string, viewport: View
   cleanups.push(() => context.close());
   const page = await context.newPage();
   await page.setViewport(viewport);
+  const pending = new Set<HTTPRequest>();
+  pendingRequests.set(page, pending);
+  page.on('request', request => void pending.add(request));
+  page.on('response', response => void pending.delete(response.request()));
+  page.on('requestfinished', request => void pending.delete(request));
+  page.on('requestfailed', request => void pending.delete(request));
   const problems: string[] = [];
   page.on('pageerror', error => void problems.push(`未捕获的异常：${String(error)}`));
   page.on('response', response => {
@@ -203,6 +223,33 @@ export async function openWebui(browser: Browser, origin: string, viewport: View
   });
   const response = (await page.goto(`${origin}${path}?token=${TOKEN}`)) as HTTPResponse;
   return { page, problems, response };
+}
+
+const requestLine = (request: HTTPRequest) => `${request.method()} ${request.url()}`;
+const listed = (lines: string[]) => (lines.length > 0 ? lines.join('、') : '没有');
+
+/**
+ * 等 openWebui 打开的页面网络空闲。没等到时报错里写出此刻还没收到响应的请求，与等待期间发起的请求（条数与最后几条）：
+ * 前者指向某条请求挂住，后者指向请求一条接一条、中间没有空档
+ */
+export async function networkIdle(page: Page, options?: WaitForNetworkIdleOptions): Promise<void> {
+  const pending = pendingRequests.get(page);
+  if (!pending) throw new Error('networkIdle 只收 openWebui 打开的页面');
+  const started: string[] = [];
+  const note = (request: HTTPRequest) => void started.push(requestLine(request));
+  page.on('request', note);
+  try {
+    await page.waitForNetworkIdle(options);
+  } catch (error) {
+    if (!(error instanceof TimeoutError)) throw error;
+    throw new Error(
+      `${error.message}。还没收到响应的请求：${listed([...pending].map(requestLine))}；` +
+        `等待期间发起了 ${started.length} 条，最后几条：${listed(started.slice(-5))}`,
+      { cause: error },
+    );
+  } finally {
+    page.off('request', note);
+  }
 }
 
 /** scope 里的一组行（「需要处理」与「开始使用」同一个样子）：标题、说明与行尾的操作 */

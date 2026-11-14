@@ -26,6 +26,7 @@ import {
   aria,
   attentionRows,
   framePackage,
+  networkIdle,
   onViewport,
   openWebui,
   sessionIdOf,
@@ -928,7 +929,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
   it('最少插件组合：「需要处理」为空，首页摘要不出现、标签页标题只有 Aalis，运行状况没有角标；没有计划标签、回滚、压缩与压缩线，用量拆分表的行名照样出现、没有「用量统计」页，没有页面时图标栏只有宿主项（手机上第一层没有固定的页面，入口是运行状况、插件、设置）、右侧面板没有「+」，也没有空着的区域与框架；没有可转后台的工具与派生子会话的插件，模型拿到的工具里没有后台任务工具，没有「后台」标签，头部、左栏与运行状况都没有后台工作，会话行没有子任务展开', async () => {
     const stack = await startStack({ 你好: '好的。' });
     const { page, problems } = await openPage(stack, viewport);
-    await page.waitForNetworkIdle({ idleTime: 300 });
+    await networkIdle(page, { idleTime: 300 });
     // 列表为空也就没有 MCP 的提示
     await page.waitForFunction(() => document.title === 'Aalis');
     expect(await page.$$(aria('需要处理', 'region'))).toHaveLength(0);
@@ -984,7 +985,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     const tabs = await page.$$eval('[role="tab"]', elements => elements.map(element => element.textContent));
     expect(tabs).toEqual(phone ? ['设置'] : ['设置', '用量']);
     expect(await page.$$('.setting-row')).not.toHaveLength(0);
-    await page.waitForNetworkIdle({ idleTime: 300 });
+    await networkIdle(page, { idleTime: 300 });
     expect(await page.$$(aria('打开标签', 'button'))).toHaveLength(0);
     if (!phone) {
       await page.locator(aria('用量', 'tab')).click();
@@ -1006,7 +1007,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
     expect(rowButtons).toEqual(['更多']);
     await other.page.goto(`${stack.origin}/health`);
     await other.page.waitForSelector(`main ${aria('平台连接', 'list')}`);
-    await other.page.waitForNetworkIdle({ idleTime: 300 });
+    await networkIdle(other.page, { idleTime: 300 });
     expect(await other.page.$$(`main ${aria('正在运行', 'region')}`)).toHaveLength(0);
     expect(problems).toEqual([]);
     expect(other.problems).toEqual([]);
@@ -1622,7 +1623,7 @@ describe.each(Object.entries(VIEWPORTS))('%s', (width, viewport) => {
       if (!phone) return (await railNames(page)).slice(1, -3);
       await page.locator(aria('返回', 'button')).click();
       await page.waitForFunction(() => location.pathname === '/');
-      await page.waitForNetworkIdle({ idleTime: 300 });
+      await networkIdle(page, { idleTime: 300 });
       const names = await page.$$eval('[aria-label="固定的页面"] a', links => links.map(link => link.textContent));
       await page.goto(`${stack.origin}${pagePath(PAGES_PROBE, 'board')}`);
       await page.waitForSelector(aria('看板', 'heading'));
@@ -3137,4 +3138,41 @@ describe('附件', () => {
     expect(await shown()).toEqual(media);
     expect(problems).toEqual([]);
   }, 60_000);
+});
+
+describe('等网络空闲没等到', () => {
+  /** 本机起一个页面，装载后执行 script；/hang 一直不回应，/stream 回了响应头、正文一直不结束，其余路径立即回应 */
+  async function pageRunning(script: string) {
+    const server = createHttpServer((req, res) => {
+      if (req.url === '/hang') return;
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      if (req.url === '/stream') res.write('x');
+      else res.end(`<script>${script}</script>`);
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    cleanups.push(
+      () =>
+        new Promise<void>(resolve => {
+          server.closeAllConnections();
+          server.close(() => resolve());
+        }),
+    );
+    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    return { origin, ...(await openWebui(e2e.browser, origin, VIEWPORTS.desktop, cleanups)) };
+  }
+
+  it('有请求一直没收到响应：报错点名这条请求，已收到响应头、正文还在传的不算', async () => {
+    const { origin, page } = await pageRunning(`fetch('/stream'); fetch('/hang')`);
+    await expect(networkIdle(page, { idleTime: 100, timeout: 500 })).rejects.toThrow(
+      `还没收到响应的请求：GET ${origin}/hang；`,
+    );
+  }, 30_000);
+
+  it('请求一条接一条、中间没有空档：报错写出等待期间发起的请求', async () => {
+    // 收到上一条的响应就发下一条，不靠定时器：后台页面的定时器会被浏览器放慢
+    const { origin, page } = await pageRunning(`(function next() { fetch('/tick').then(next) })()`);
+    await expect(networkIdle(page, { idleTime: 300, timeout: 800 })).rejects.toThrow(
+      new RegExp(`等待期间发起了 \\d+ 条，最后几条：[^；]*GET ${origin}/tick`),
+    );
+  }, 30_000);
 });
