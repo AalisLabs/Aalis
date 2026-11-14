@@ -149,4 +149,57 @@ describe('交叠的关闭计划', () => {
     expect(trace).toEqual(['k 收尾结束，sm 在', 'm 清理']);
     expect(cycles).toEqual([]);
   });
+
+  it('两个消费者 a、b 都还在别的计划里收尾，卸载它们共同的提供者 x：x 等两个都关完；只被 a 挡着的 y 在 a 关完后就收尾，不等登记在后的 b', async () => {
+    const { app, trace } = world();
+    const sx = defineService<object>('cpo-w-sx');
+    const sy = defineService<object>('cpo-w-sy');
+    const x = definePlugin({
+      name: 'cpo-w-x',
+      provides: [sx],
+      uses: { provide, lifecycle },
+      apply({ provide, lifecycle }) {
+        provide.use(sx, {});
+        lifecycle.use.onDrain(() => void trace.push('x 收尾'));
+      },
+    });
+    // y 用着 x 的服务，随 x 一起卸载；它自己的服务只有 a 在用
+    const y = definePlugin({
+      name: 'cpo-w-y',
+      provides: [sy],
+      uses: { provide, lifecycle, sx },
+      apply({ provide, lifecycle }) {
+        provide.use(sy, {});
+        lifecycle.use.onDrain(() => void trace.push('y 收尾'));
+      },
+    });
+    // a、b 的收尾各卡在自己的闸门上，x 的卸载落在这段时间里
+    const started = { a: deferred(), b: deferred() };
+    const gates = { a: deferred(), b: deferred() };
+    const waiting = (name: 'a' | 'b', uses: { lifecycle: typeof lifecycle; sx: typeof sx; sy?: typeof sy }) =>
+      definePlugin({
+        name: `cpo-w-${name}`,
+        uses,
+        apply: ({ lifecycle }) =>
+          void lifecycle.use.onDrain(async () => {
+            started[name].resolve();
+            await gates[name].promise;
+            trace.push(`${name} 收尾完`);
+          }),
+      });
+    const plugins = [x, y, waiting('a', { lifecycle, sx, sy }), waiting('b', { lifecycle, sx })];
+    await app.pluginAll(plugins.map(definition => ({ definition })));
+    await app.plugins.idle();
+    const unloads = [app.plugins.unload('cpo-w-a'), app.plugins.unload('cpo-w-b')];
+    await Promise.all([started.a.promise, started.b.promise]);
+    unloads.push(app.plugins.unload('cpo-w-x'));
+    await macrotask();
+    gates.a.resolve();
+    await macrotask();
+    await macrotask();
+    expect(trace).toEqual(['a 收尾完', 'y 收尾']);
+    gates.b.resolve();
+    await Promise.all(unloads);
+    expect(trace).toEqual(['a 收尾完', 'y 收尾', 'b 收尾完', 'x 收尾']);
+  });
 });

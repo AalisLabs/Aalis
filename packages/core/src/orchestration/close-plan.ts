@@ -121,8 +121,12 @@ function planClose(roots: Activation[], owned: Map<Activation, () => void>, logg
     close.index = stages.push(close) - 1;
   };
   for (const root of roots) visit(root);
-  for (const ctx of owned.keys())
-    for (const consumer of ctx.closingConsumers()) if (!drainOf.has(consumer)) visit(consumer);
+  // 等着关的消费者，成员按冻进计划的次序逐个去取。归组先算好与逐个现算结果一样：排计划期间在册表、关闭位与依赖都不变（visit 只读）
+  let consumersOf: Map<Activation, Activation[]> | undefined;
+  for (const ctx of owned.keys()) {
+    consumersOf ??= ctx.closingConsumers();
+    for (const consumer of consumersOf.get(ctx) ?? []) if (!drainOf.has(consumer)) visit(consumer);
+  }
 
   for (const [ctx, drain] of drainOf) {
     const close = closeOf.get(ctx)!;

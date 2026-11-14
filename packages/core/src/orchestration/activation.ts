@@ -99,11 +99,21 @@ export class Activation {
     return pending.length === 0 ? undefined : Promise.all(pending);
   }
 
-  /** 已进了关闭计划、还没关完、依赖本激活所提供服务的其他激活 */
-  closingConsumers(): Activation[] {
-    return [...this.#owners.values()].filter(
-      other => other !== this && other.resources.disposed && other.providers().has(this),
-    );
+  /**
+   * 已进了关闭计划、还没关完的激活，按它依赖的提供者归组：提供者 → 依赖它所提供服务的激活（在册次序）。
+   * 同一个应用的激活共用一张在册表，由哪个激活来算结果都一样；每个激活的依赖只算一遍
+   */
+  closingConsumers(): Map<Activation, Activation[]> {
+    const consumers = new Map<Activation, Activation[]>();
+    for (const other of this.#owners.values()) {
+      if (!other.resources.disposed) continue;
+      for (const provider of other.providers().keys()) {
+        const list = consumers.get(provider);
+        if (list) list.push(other);
+        else consumers.set(provider, [other]);
+      }
+    }
+    return consumers;
   }
 
   /**

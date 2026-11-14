@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DefaultLogger } from '../../packages/core/src/index.js';
 import { quietLogger } from '../../packages/core/src/infrastructure/logger.js';
+import { Activation } from '../../packages/core/src/orchestration/activation.js';
 import { ActivationHost } from '../../packages/core/src/orchestration/activation-host.js';
 import { closeActivations } from '../../packages/core/src/orchestration/close-plan.js';
 import { heapPop } from '../../packages/core/src/orchestration/min-heap.js';
@@ -82,5 +83,15 @@ describe('互不依赖的插件变多时，编排里量的几项次数不按平�
     const pops = vi.mocked(heapPop).mock.calls.length;
     await closing;
     expect(pops).toBe(2 * 101);
+  });
+
+  it('排关闭计划时每个激活的依赖至多算两遍：成员各一遍，找等着关的消费者时全体各一遍', async () => {
+    const host = hostWith(60);
+    const providers = vi.spyOn(Activation.prototype, 'providers');
+    const closing = closeActivations([host.root], undefined, log);
+    const calls = providers.mock.calls.length;
+    providers.mockRestore();
+    await closing;
+    expect(calls).toBeLessThanOrEqual(2 * 61);
   });
 });
