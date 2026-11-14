@@ -1684,6 +1684,9 @@ importers:
       '@aalis/api-events':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-events
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.4.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-media':
         specifier: workspace:>=0.13.0 <1.0.0
         version: link:../api-media

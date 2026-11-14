@@ -19,7 +19,7 @@ interface IncomingMessage {
   nickname?: string;
   messageId?: string;                  // 平台侧消息 id（如 OneBot 的 message_id），存档记成 MessageId，引用回复据此反查归档原文
   attachments?: MessageAttachment[];   // 多模态附件的唯一入口，各平台适配器都只填它
-  _attachmentDescriptions?: Array<string | undefined>; // plugin-media 给各附件写的文本描述，按 attachments 下标对齐
+  _attachmentDescriptions?: Array<string | undefined>; // 预处理时各插件给自己负责的附件写的文本描述，按 attachments 下标对齐
   sessionType?: string;                // 平台类型名：适配器在 PlatformAdapter.sessionTypes 里声明的类型之一，会话管理建档时按它记下聊天窗口；不带时平台声明了多方类型的按其中第一个、多方，只声明了一对一类型的按第一个，没声明的按 private、一对一
   selfId?: string;                     // 收到这条消息的机器人账号（平台给出时由适配器填，如 OneBot 的 self_id）
   source?: string;                     // 系统侧注入者标识；真人消息不设。带 source 即内部注入（不经触发策略、不过冷却、不过指令解析，不进长期记忆），各自成一轮、不与别的输入叠加
@@ -257,7 +257,7 @@ interface ArchivedAttachment {
 }
 ```
 
-附件种类（`MessageAttachment['kind']`）到引用种类（`AttachmentRefKind`）的对应只有一份，`ATTACHMENT_REF_KINDS`：写引用与按种类认引用的各方（媒体、OneBot 适配器，以及 `outboundMediaMessage` 自己）都查它，`AttachmentRefKind` 加种类时只改这一处。附件的 `data` 不是地址时（内联数据、本机路径、预处理器换上的私有引用），存档取预处理器写在这个附件 `ref` 上的落盘地址：预处理器把附件落盘或换掉 `data` 时把地址写在那里，读历史的一方就能显示它。附件描述只给模型看，存档不从里面取地址：描述里有群友起的文件名，附件清单是媒体判据认的系统记下的引用。存档怎么取地址见 [plugin-message-archive](../plugins/plugin-message-archive.md)。
+附件种类（`MessageAttachment['kind']`）到引用种类（`AttachmentRefKind`）的对应只有一份，`ATTACHMENT_REF_KINDS`：写引用与按种类认引用的各方（媒体、OneBot 适配器，以及 `outboundMediaMessage` 自己）都查它，`AttachmentRefKind` 加种类时只改这一处。附件的 `data` 不是地址时（内联数据、本机路径、预处理换上的私有引用），存档取预处理时写在这个附件 `ref` 上的落盘地址：预处理把附件落盘或换掉 `data` 时把地址写在那里，读历史的一方就能显示它。附件描述只给模型看，存档不从里面取地址：描述里有群友起的文件名，附件清单是媒体判据认的系统记下的引用。存档怎么取地址见 [plugin-message-archive](../plugins/plugin-message-archive.md)。
 
 会话服务读历史只认登记的键，会话服务自己经 `agent:tool:after` 写进工具结果元数据的几个（审批结算、已发出、停止时还没结束、退出码、后台任务 id）除外：api-agent 约定 agent 把这份元数据原样落库。没有 `SpokenContent`、`Attachments` 的旧提问按存档正文原样显示。
 
@@ -293,4 +293,4 @@ const DIRECTIVE_KINDS: ReadonlyArray<string>; // [CrossSessionDelegation, HostNo
 ## 相关
 
 - 入站编排见 [api-gateway](./api-gateway.md)
-- Agent 预处理见 [api-agent](./api-agent.md)
+- 输入阶段的钩子 `agent:input:before` 见 [api-agent](./api-agent.md)

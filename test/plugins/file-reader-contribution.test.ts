@@ -1,10 +1,10 @@
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
-import { type AgentService, agent, type PreprocessorFn } from '../../packages/api-agent/src/index.js';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { events } from '../../packages/api-events/src/index.js';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type MediaService, media } from '../../packages/api-media/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
@@ -46,10 +46,9 @@ import { toolRequest } from '../fixtures/tool-call.js';
 // plugin-file-reader 的 agent:prompt 贡献（局部 id = file-reader-history，
 // 锚位 turn-context）。三条互斥路径：
 //   - 会话有文件 + 本轮无新上传 → 「历史上传文件」清单
-//   - 本轮有新上传（这一轮输入的附件里有预处理器写下的、本会话已知文件的引用）→ 「本轮新上传」清单
+//   - 本轮有新上传（这一轮输入的附件里有输入阶段写下的、本会话已知文件的引用）→ 「本轮新上传」清单
 //   - 会话无文件 / 无 sessionId → 不注入
-// 上传面走插件自己注册的 preprocessor（经 agent 服务的 registerPreprocessor
-// 拿到），存储面用最小内存 storage（根 pluginData），不碰真实文件系统。
+// 上传面走插件挂在输入阶段（agent:input:before）的处理，存储面用最小内存 storage（根 pluginData），不碰真实文件系统。
 // ════════════════════════════════════════════════════════════
 
 const FIXED_TIME = '2026-01-01T00:00:00.000Z';
@@ -152,16 +151,16 @@ interface Fixture {
   /** 当前有提供者的全部服务名 */
   serviceNames(): string[];
   emitSessionDeleted(sessionId: string): Promise<void>;
-  /** 经插件注册的 preprocessor 上传一个文件（默认按文本），返回文件 ID、附件描述与处理过的入站消息 */
+  /** 经输入阶段上传一个文件（默认按文本），返回文件 ID、附件描述与处理过的入站消息 */
   upload(
     sessionId: string,
     name: string,
     content: string | Buffer,
     mimeType?: string,
   ): Promise<{ id: string; desc: string; message: IncomingMessage }>;
-  /** 经 preprocessor 处理一个任意来源的文件附件，返回附件描述与处理过的入站消息 */
+  /** 经输入阶段处理一个任意来源的文件附件，返回附件描述与处理过的入站消息 */
   attach(sessionId: string, attachment: MessageAttachment): Promise<{ desc: string; message: IncomingMessage }>;
-  /** 把一条入站消息交给 preprocessor，next 是它处理完交给的下一步 */
+  /** 把一条入站消息交给输入阶段，next 是处理完交给的下一步 */
   preprocess(message: IncomingMessage, next: () => Promise<void>): Promise<void>;
   /** 装上真工具服务（上线晚于 file-reader，登记在上线后补挂），放行执行闸 */
   tools(): Promise<ToolService>;
@@ -184,7 +183,7 @@ async function setup(
 ): Promise<Fixture> {
   const app = new App({ logLevel: 'error' });
   await registerHubs(app);
-  const host = app.bind({ provide, services, events, contributions, logger });
+  const host = app.bind({ provide, services, events, contributions, hooks, logger });
   const store = createMemoryStorage();
   host.provide.use(storage, store);
   if (opts.media) host.provide.use(media, opts.media as MediaService);
@@ -196,27 +195,6 @@ async function setup(
     host.provide.use(authority, { isOwner } as never);
   }
 
-  // agent 桩：只负责把插件的 preprocessor 交到测试手上（file-reader 走
-  // registerPreprocessor 分支，因为桩实现了这个可选方法）
-  let preprocessor: PreprocessorFn | undefined;
-  const agentStub: AgentService = {
-    async handleMessage() {
-      /* 测试不驱动完整对话 */
-    },
-    async assignModel() {},
-    abort: () => false,
-    async clearing(_sessionIds, clear) {
-      await clear();
-    },
-    registerPreprocessor(_name: string, handler: PreprocessorFn) {
-      preprocessor = handler;
-      return () => {
-        preprocessor = undefined;
-      };
-    },
-  };
-  host.provide.use(agent, agentStub);
-
   const load = async (cfg: Record<string, unknown> = config): Promise<void> => {
     await app.plugin(fileReaderPlugin, cfg);
     await app.plugins.idle();
@@ -224,8 +202,7 @@ async function setup(
   await load();
 
   const preprocess = async (message: IncomingMessage, next: () => Promise<void>): Promise<void> => {
-    if (!preprocessor) throw new Error('插件未注册 preprocessor');
-    await preprocessor(message, next);
+    await host.hooks.use.run('agent:input:before', { message }, next);
   };
 
   return {
@@ -277,7 +254,7 @@ async function setup(
 
 /**
  * 跑一轮组装，返回 messages 与 file-reader 注入的那条（若有）。
- * history 插在 persona 与最后一条 user 之间，用于多轮 fixture；inputs 是这一轮的输入（经预处理器处理过的那几条），
+ * history 插在 persona 与最后一条 user 之间，用于多轮 fixture；inputs 是这一轮的输入（预处理过的那几条），
  * 本轮新上传按它们认，不给时这一轮的输入不带附件。
  */
 async function assemble(
@@ -393,7 +370,7 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
       const old = await fx.upload('s-1', 'old.txt', '往轮上传的正文');
       const fresh = await fx.upload('s-1', 'fresh.txt', '本轮上传的正文');
 
-      // 真实链路里 user message 会带上 preprocessor 生成的附件描述
+      // 真实链路里 user message 会带上输入阶段生成的附件描述
       expect(fresh.desc).toContain('[文件: fresh.txt');
       expect(fresh.desc).toContain(`(ID: ${fresh.id})`);
 
@@ -1535,7 +1512,7 @@ describe('plugin-file-reader: 内联全文的结束标记', () => {
     }
   });
 
-  it('归档后会话服务的提问只有发言人写的话、文件是卡片：伪造了结束标记的内联全文不进正文；预处理器换上的私有引用不记成附件地址', async () => {
+  it('归档后会话服务的提问只有发言人写的话、文件是卡片：伪造了结束标记的内联全文不进正文；预处理换上的私有引用不记成附件地址', async () => {
     const fx = await setup();
     try {
       await fx.app.plugin(memoryInMemoryPlugin);

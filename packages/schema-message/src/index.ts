@@ -154,7 +154,7 @@ export interface MessageAttachment {
   description?: string;
   /**
    * 稳定的地址（网址或存储地址）。出站：记进会话历史时用它，没有时取 data 里的地址（见 api-message-archive 的
-   * outboundAddress），与平台落盘后改写的 data 无关。入站：预处理器把附件落了盘或换掉 data 时写的地址（媒体识别落盘上传的
+   * outboundAddress），与平台落盘后改写的 data 无关。入站：预处理把附件落了盘或换掉 data 时写的地址（媒体识别落盘上传的
    * 图片、文件读取换成文件引用前的地址），存档的附件清单在 data 不是地址时按它记；适配器不填
    */
   ref?: string;
@@ -188,12 +188,12 @@ export interface IncomingMessage {
   /**
    * 多模态附件统一载体（唯一入口）。
    * 所有平台适配器（OneBot / WebUI / CLI 等）都应只填此字段；
-   * plugin-media 在 preprocess 阶段会为每条 attachment 生成文本描述写入 _attachmentDescriptions。
+   * 预处理时各插件为自己负责的 attachment 生成文本描述，写入 _attachmentDescriptions。
    */
   attachments?: MessageAttachment[];
   /**
-   * 预处理器为各 attachments 生成的文本描述（按 attachments 下标对齐；未识别项为 undefined）。
-   * 由 plugin-media 写入。
+   * 预处理时为各 attachments 生成的文本描述（按 attachments 下标对齐；未识别项为 undefined）。
+   * 哪个插件负责哪一类附件就写那几位，只动自己负责的位，别的位保留。
    */
   _attachmentDescriptions?: Array<string | undefined>;
   /**
@@ -557,7 +557,7 @@ declare module '@aalis/api-events' {
      *
      * payload 字段：
      * - `incoming`：原始入参（含 platform/userId/nickname/groupName/triggerType 等会话上下文，未必持久化）
-     * - `archivedMessage`：实际写入 memory 的 `Message`（经过预处理器变换后的最终内容，可能与 `incoming.content` 不同）
+     * - `archivedMessage`：实际写入 memory 的 `Message`（经过预处理变换后的最终内容，可能与 `incoming.content` 不同）
      */
     'inbound:message:archived': [data: { sessionId: string; incoming: IncomingMessage; archivedMessage: Message }];
     'outbound:message': [message: OutgoingMessage];
@@ -656,7 +656,7 @@ export interface ArchivedAttachment {
   kind: MessageAttachment['kind'];
   /** 入站附件带的文件名 */
   name?: string;
-  /** 地址：存储地址（`<根>:/路径`）或网址；入站附件的 data 不是地址（内联数据、本机路径、预处理器的私有引用）、预处理器也没在它的 ref 上写地址的没有 */
+  /** 地址：存储地址（`<根>:/路径`）或网址；入站附件的 data 不是地址（内联数据、本机路径、预处理换上的私有引用）、预处理时也没在它的 ref 上写地址的没有 */
   ref?: string;
 }
 

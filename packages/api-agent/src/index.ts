@@ -16,15 +16,6 @@ import type { TextRef } from '@aalis/schema-i18n';
 import type { IncomingMessage, Message, TurnRecord } from '@aalis/schema-message';
 
 /**
- * 消息预处理器函数
- *
- * 每条输入一次，在它进入一轮之前对 IncomingMessage 进行变换。
- * 遵循洋葱模型：调用 `next()` 将控制权传递给下一个预处理器，
- * 不调用则丢掉这条输入（不进一轮、不归档）。
- */
-export type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void>) => Promise<void>;
-
-/**
  * Agent 服务 —— 对话编排引擎
  *
  * 负责接收用户消息并编排完整的对话流程：
@@ -69,14 +60,6 @@ export interface AgentService {
   clearing(sessionIds: readonly string[] | undefined, clear: () => Promise<unknown>, reason?: string): Promise<void>;
 
   /**
-   * 注册消息预处理器
-   *
-   * 预处理器在 `agent:input:before` 阶段运行：每条输入一次，在它进入一轮之前，可以修改 IncomingMessage（如将图片转文字、
-   * 解析文件）。底层通过中间件系统实现，按注册顺序洋葱式执行。
-   */
-  registerPreprocessor?(name: string, handler: PreprocessorFn): () => void;
-
-  /**
    * 把这个会话本会话层的对话模型设成 model（写进会话设置）：子任务插件给子会话指定模型时，在建好之后、发首条消息之前调。
    * 会话设置不在或写入被拒时抛错
    */
@@ -97,7 +80,7 @@ export interface TurnInput {
 declare module '@aalis/api-hooks' {
   interface HookContextMap {
     /**
-     * 每条输入一次，在它进入一轮之前（预处理器挂在这里）：next 之前可以改写这条，不调 next 即丢弃这条，不进一轮、不归档，
+     * 每条输入一次，在它进入一轮之前：next 之前可以改写这条（如把图片转成文字、解析文件），不调 next 即丢弃这条，不进一轮、不归档，
      * agent 照发流结束标记。默认动作把它交给 agent 并等它落定，next 返回时这条已落定（所在的一轮结束，或它被放掉）
      */
     'agent:input:before': { message: IncomingMessage };
@@ -379,23 +362,6 @@ declare module '@aalis/api-events' {
   }
 }
 
-// ===== 服务描述符（按激活绑定）=====
+// ===== 服务描述符 =====
 
-/** `agent` 的业务层：对话调用转发给选中的那一家，预处理器登记自动归属这次激活 */
-export interface BoundAgent extends AgentService {
-  /**
-   * 登记输入预处理器：同名替换，提供者换人自动重挂，随激活撤回。当前提供者不支持预处理器时
-   * 本次不生效，换到支持的提供者时补上。
-   */
-  registerPreprocessor(name: string, handler: PreprocessorFn): () => void;
-}
-
-export const agent = defineService<AgentService, BoundAgent>('agent', port => {
-  const preprocessors = port.registrar<{ name: string; handler: PreprocessorFn }>({
-    key: item => item.name,
-    register: (service, item) => service.registerPreprocessor?.(item.name, item.handler) ?? (() => {}),
-  });
-  return Object.assign(Object.create(port.provider) as BoundAgent, {
-    registerPreprocessor: (name: string, handler: PreprocessorFn) => preprocessors.add({ name, handler }),
-  });
-});
+export const agent = defineService<AgentService>('agent');

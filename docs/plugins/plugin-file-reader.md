@@ -5,7 +5,7 @@
 
 ## 概述
 
-多格式文件上传处理器，支持文本、代码、文档（DOCX/PDF）等文件的读取与内容提取。经 agent 的输入预处理器（`agent.use.registerPreprocessor`）自动处理消息附件；这是唯一的入口，agent 提供者不支持预处理器时附件不被处理，插件也不记日志。插件不提供服务：上传的文件只经它自己的工具与会话面板取用。
+多格式文件上传处理器，支持文本、代码、文档（DOCX/PDF）等文件的读取与内容提取。挂在 agent 的输入阶段（`agent:input:before` 钩子）自动处理消息附件；这是唯一的入口，agent 提供者不跑这条钩子链时附件不被处理，插件也不记日志。插件不提供服务：上传的文件只经它自己的工具与会话面板取用。
 
 ## 插件声明
 
@@ -20,7 +20,7 @@ export default definePlugin({
     events,
     contributions,
     tools: optional(tools),
-    agent: optional(agent),
+    hooks: optional(hooks),
     media: optional(media),
     webui: optional(webuiServer),
     sessionManager: optional(sessionManager),
@@ -45,7 +45,7 @@ export default definePlugin({
 
 `toolDefaultMaxLength` 是 `read_uploaded_file` 没传 `maxLength` 时的截断字符数，避免把超大文档一次读进模型上下文、超出 token 上限；负数与小数报配置错误。
 
-`historyHintEnabled` 开启时，会话里有上传文件就在模型调用前注入一条 system 提示列出可用文件（含 ID），避免模型遗忘过往上传：本轮有新上传时注入本轮清单与历史清单（本轮文件单独标出），否则只注入历史清单；只列最近 20 个，更早的在列表末尾写一句个数、用 `list_uploaded_files` 查。本轮新上传按这一轮各条输入的附件认：预处理器把处理过的文件附件改写成本插件的文件引用，引用的是本会话已知文件的就是；正文里写的文件描述不算。
+`historyHintEnabled` 开启时，会话里有上传文件就在模型调用前注入一条 system 提示列出可用文件（含 ID），避免模型遗忘过往上传：本轮有新上传时注入本轮清单与历史清单（本轮文件单独标出），否则只注入历史清单；只列最近 20 个，更早的在列表末尾写一句个数、用 `list_uploaded_files` 查。本轮新上传按这一轮各条输入的附件认：输入阶段把处理过的文件附件改写成本插件的文件引用，引用的是本会话已知文件的就是；正文里写的文件描述不算。
 
 `recognizeDocImages` 需启用 `media` 的识图，细节见下文「文档内嵌图片识别」。
 

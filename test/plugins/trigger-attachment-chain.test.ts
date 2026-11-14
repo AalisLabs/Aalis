@@ -11,7 +11,7 @@ import { storage } from '../../packages/api-storage/src/index.js';
 import { App, type Logger, provide } from '../../packages/core/src/index.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
-import { buildPreprocessor } from '../../packages/plugin-media/src/preprocessor.js';
+import { buildInputMiddleware } from '../../packages/plugin-media/src/input-middleware.js';
 import { type MediaConfigResolved, MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
@@ -26,12 +26,12 @@ import { deferred } from '../helpers/deferred.js';
 // 附件识别整条链：Laya 判定前启动的识别，放行与吞掉都不等它
 //
 // Laya 要看附件描述：判定前启动识别并最多等 mediaWaitMs；之后放行（交给 flow 相位与 agent）和吞掉
-// （影子归档）都不等识别完成。agent 预处理器与归档对同一个消息对象调 processMessage，按对象记忆命中
+// （影子归档）都不等识别完成。media 挂在输入阶段的中间件与归档对同一个消息对象调 processMessage，按对象记忆命中
 // 这次识别（在途则等它），整条链只识别一次。
 //
 // 真实插件：gateway + flow-control + trigger-laya + message-archive（内存 memory 与 storage）；侧车是本地假服务。
 // media 是真实的 MediaServiceImpl，识别模型换成可卡住的替身；agent 替身按真实 agent 的顺序先跑 media
-// 预处理器、再归档。每个用例用不同的图片 URL，避开描述缓存。
+// 输入阶段的中间件、再归档。每个用例用不同的图片 URL，避开描述缓存。
 // ════════════════════════════════════════════════════════════
 
 const AT = '<at self id="10000">Aalis</at> ';
@@ -127,13 +127,13 @@ async function setup(opts: { speak: boolean; flow?: Record<string, unknown> }) {
   } as MediaProcessor);
   host.provide.use(media, svc);
 
-  const preprocess = buildPreprocessor({ events: host.events, logger: fixedRef(silent) }, svc);
+  const preprocess = buildInputMiddleware({ events: host.events, logger: fixedRef(silent) }, svc);
   const entered: IncomingMessage[] = [];
   host.provide.use(agent, {
     abort: () => false,
     async handleMessage(msg: IncomingMessage) {
       entered.push(msg);
-      await preprocess(msg, async () => {
+      await preprocess({ message: msg }, async () => {
         await host.messageArchive.use.archiveIncoming(msg);
       });
     },
@@ -171,7 +171,7 @@ async function setup(opts: { speak: boolean; flow?: Record<string, unknown> }) {
 }
 
 describe('附件识别整条链只识别一次', () => {
-  it('放行不等识别：识别未完成时 agent 已收到消息，预处理器等完这次识别，归档不再识别', async () => {
+  it('放行不等识别：识别未完成时 agent 已收到消息，输入阶段的中间件等完这次识别，归档不再识别', async () => {
     const h = await setup({ speak: true });
     const msg = imageMsg('chain-release');
 
@@ -183,7 +183,7 @@ describe('附件识别整条链只识别一次', () => {
     h.vision.gate.resolve();
     await pending;
     await flush();
-    expect(h.vision.calls, '判定、预处理器、归档共用一次识别').toBe(1);
+    expect(h.vision.calls, '判定、输入阶段的中间件、归档共用一次识别').toBe(1);
     expect(h.archived).toHaveLength(1);
     expect(h.archived[0]).toContain('一只橘猫');
   });

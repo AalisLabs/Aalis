@@ -337,13 +337,13 @@ describe.each([
     const s = await boot({ sessions, decide: (_r, n) => (n === 1 ? callTool(PROBE) : { content: `回${n}` }) });
     const tool = heldTool();
     s.tool(tool.handler);
-    // 逐条输入的两个消费方：读文件的预处理器（写进附件描述），与按正文记录的中间件（关系分、技能触发同一个钩子）
+    // 逐条输入的两个消费方：按正文记录的中间件（关系分、技能触发同一个钩子），与读文件的中间件（写进附件描述）
     const seen: string[] = [];
     s.host.hooks.use.middleware('agent:input:before', async (data, next) => {
       seen.push(token(data.message.content));
       await next();
     });
-    s.agent.registerPreprocessor?.('zz-file-reader', async (message, next) => {
+    s.host.hooks.use.middleware('agent:input:before', async ({ message }, next) => {
       const file = message.attachments?.find(att => att.kind === 'file');
       if (file) message._attachmentDescriptions = [`[文件: ${file.name}]\n<文件正文>`];
       await next();
@@ -787,7 +787,7 @@ describe('能停下一轮的', () => {
 
   it('停机：app.stop 时在跑的一轮以 aborted 收尾，排着的 handleMessage 都落定、不开轮、已归档；放掉之后才完成逐条处理的那条同样不开轮', async () => {
     const late = deferred();
-    const s = await boot({ after: app => app.plugin(slowPreprocessor('<丁>', late.promise)).then(() => undefined) });
+    const s = await boot({ after: app => app.plugin(slowInputMiddleware('<丁>', late.promise)).then(() => undefined) });
     const inner = s.host.services.use.get(memory) as MemoryService;
     s.host.hooks.use.middleware('agent:turn:after', async (data, next) => {
       await next();
@@ -814,7 +814,7 @@ describe('能停下一轮的', () => {
     const late = deferred();
     const s = await boot({
       sessions: true,
-      after: app => app.plugin(slowPreprocessor('<丁>', late.promise)).then(() => undefined),
+      after: app => app.plugin(slowInputMiddleware('<丁>', late.promise)).then(() => undefined),
     });
     const held = s.model.hold(1);
     const a = s.say(WEBUI, '<甲>');
@@ -968,13 +968,13 @@ describe('回合记录', () => {
 /** 不在流控生效范围里的会话：流控只管禁言 */
 const GROUP_FREE = { sessionId: 'zz-steer-muted', platform: 'test', userId: 'u1' };
 
-/** 逐条处理里阻塞某一条输入的预处理器：正文是 content 的那条等 gate 落定才往下 */
-function slowPreprocessor(content: string, gate: Promise<void>) {
+/** 逐条处理里阻塞某一条输入的中间件：正文是 content 的那条等 gate 落定才往下 */
+function slowInputMiddleware(content: string, gate: Promise<void>) {
   return definePlugin({
-    name: 'zz-slow-preprocessor',
-    uses: { agent: agentService },
-    apply: ({ agent }) => {
-      agent.use.registerPreprocessor('zz-slow', async (message, next) => {
+    name: 'zz-slow-input-middleware',
+    uses: { hooks },
+    apply: ({ hooks }) => {
+      hooks.use.middleware('agent:input:before', async ({ message }, next) => {
         if (message.content === content) await gate;
         await next();
       });

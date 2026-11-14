@@ -84,7 +84,7 @@ sessionManager.follow(sm => {
 - 换人时先跑上次清理，等 Promise 落定（完成或被拒）才挂新选中的那一家；等待期间多次切换合并到最新。
 - 拒绝被隔离并报告，不证明旧资源已释放。旧清理永不落定会阻塞交接。
 
-往 hub 登记（工具 / 命令 / 页面 / 预处理器）走业务层的登记方法：`tools.use.register`、`commands.use.command`、`webui.use.definePage`、`agent.use.registerPreprocessor`。它们用 registrar：同键替换、换人整体重挂、关闭后拒收。它与 `follow` 的串行交接不同，不能声称新旧资源绝无重叠。
+往 hub 登记（工具 / 命令 / 页面）走业务层的登记方法：`tools.use.register`、`commands.use.command`、`webui.use.definePage`。它们用 registrar：同键替换、换人整体重挂、关闭后拒收。它与 `follow` 的串行交接不同，不能声称新旧资源绝无重叠。
 
 关停保护覆盖声明的服务的全部提供者：整机停机时，你经 `of(id)` 或 `list()` 条目用到的、不是此刻选中的那一家，同样等你关完才收尾。单独卸载、停用或重启某个提供者时，并入同一批先关的只有此刻选中它的 required 下游；你以 optional 声明它，或经 `of(id)`、`list()` 条目用到它，它照样先走：之后经 `of(id)` 与 `list()` 条目的访问抛 `ServiceUnavailableError`，`use` 换到下一家、选不到时同样抛错，调用处要能处理。
 
@@ -253,7 +253,7 @@ it('required 依赖到场后激活', async () => {
 - `events.use.on` / `events.use.emit`
 - `hooks.use.middleware` / `hooks.use.run`
 - `x.follow(attach)` 跟随会换人的提供者
-- `tools.use.register` / `commands.use.command` / `webui.use.definePage` / `agent.use.registerPreprocessor`（经 `uses` 拿到的业务层登记方法）
+- `tools.use.register` / `commands.use.command` / `webui.use.definePage`（经 `uses` 拿到的业务层登记方法）
 - `lifecycle.use.onDispose` / `onDrain` 清理外部资源与交接
 - 启动后台 worker / 连接外部服务（发起即可，不要在 apply 里等它就绪，见下）
 
@@ -360,7 +360,7 @@ declare module '@aalis/api-events' {
 
 | 顺序 | 写法 | 何时用 |
 |---|---|---|
-| ① | `uses: { tools }` 等描述符 + 业务层的登记方法 | 契约包的业务层带登记方法（tools / commands / webui / agent） |
+| ① | `uses: { tools }` 等描述符 + 业务层的登记方法 | 契约包的业务层带登记方法（tools / commands / webui） |
 | ② | `x.follow(attach)` | 跨插件消费 + 需要在 provider 换人时自动重接有状态资源 |
 | ③ | `uses: { x }`（required）+ `x.use.…` | 已声明依赖；激活时 provider 应在，但收敛间隙仍可能短暂选不到（访问成员抛 `ServiceUnavailableError`） |
 | ④ | `optional(x)` + 先看 `x.present` 再 `x.use.…` | 探测性可选依赖 |

@@ -1,11 +1,5 @@
 import { Buffer } from 'node:buffer';
-import {
-  type AgentService,
-  agent as agentService,
-  type PreprocessorFn,
-  type TokenUsageEvent,
-  type TurnInput,
-} from '@aalis/api-agent';
+import { type AgentService, agent as agentService, type TokenUsageEvent, type TurnInput } from '@aalis/api-agent';
 import { authority as authorityService, originTurnOf } from '@aalis/api-authority';
 import { commands as commandsService } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
@@ -218,9 +212,6 @@ class DefaultAgent implements AgentService {
   /** 已告警过的（llm 服务的偏好，实际用的模型）组合 */
   private readonly preferenceFallbacks = new Set<string>();
 
-  /** 已注册的预处理器（name → { dispose }） */
-  private preprocessors = new Map<string, { dispose: () => void }>();
-
   /** 本插件的按会话字段：每一轮按会话现读；模型没设时的 actual 是服务此刻为本插件挑的那一个 */
   readonly fields: SessionFieldReader<typeof configSchema>;
 
@@ -339,35 +330,6 @@ class DefaultAgent implements AgentService {
   async sessionDeleted(sessionId: string): Promise<void> {
     await this.queues.stopAll([sessionId], { archive: false, reason: '会话删除' });
     this.tokenLogState.delete(sessionId);
-  }
-
-  /**
-   * 注册输入预处理器（如图片识别、文件读取、用户画像等）。
-   * 多个预处理器按注册顺序串行执行（Koa-style 洋葱模型）。
-   *
-   * 底层通过 agent:input:before 中间件实现。
-   * 同名注册会自动替换旧的预处理器。
-   */
-  registerPreprocessor(name: string, handler: PreprocessorFn): () => void {
-    // 同名替换
-    this.preprocessors.get(name)?.dispose();
-
-    const dispose = this.caps.hooks.use.middleware('agent:input:before', async (data, next) => {
-      await handler(data.message, next);
-    });
-
-    // 退订按条目引用比对：同名重注册后，旧退订闭包只摘自己的中间件，不动新登记的条目
-    const entry = {
-      dispose: () => {
-        dispose();
-        if (this.preprocessors.get(name) !== entry) return;
-        this.preprocessors.delete(name);
-        this.logger.info(`预处理器已注销: ${name}`);
-      },
-    };
-    this.preprocessors.set(name, entry);
-    this.logger.info(`预处理器已注册: ${name}`);
-    return entry.dispose;
   }
 
   /**
@@ -590,7 +552,7 @@ class DefaultAgent implements AgentService {
   async handleMessage(incoming: IncomingMessage): Promise<void> {
     // 入口记下这个会话的代号：交给通道之前变了（会话管理这期间开始删了这个会话）的是删除之前的一代，放掉、不归档
     const generation = this.generationOf(incoming.sessionId);
-    // Hook: agent:input:before — 每条输入一次（预处理器挂在这里），中间件可以改写这条；不调 next() 即丢掉它，不进一轮
+    // Hook: agent:input:before — 每条输入一次，中间件可以改写这条；不调 next() 即丢掉它，不进一轮
     const inputData: HookContextMap['agent:input:before'] = { message: incoming };
     let placed = false;
     await this.caps.hooks.use.run('agent:input:before', inputData, async () => {

@@ -22,7 +22,7 @@
 
 | API 包 | 提供的核心契约 | 已知实现 |
 |---|---|---|
-| [api-agent](./api-agent.md) | `agent` 描述符 + `BoundAgent`（`registerPreprocessor`） | plugin-agent |
+| [api-agent](./api-agent.md) | `agent` 描述符 + `AgentService`，`agent:*` 钩子键与 `agent:prompt` 贡献点 | plugin-agent |
 | [api-approval](./api-approval.md) | `approvals` 描述符 + `BoundApprovals`（`registerSurface`）：审批的发起、在场、应答与结算；审批对象类型、`approval:*` 事件与卡片清洗 `sanitizeForCard` | plugin-session-server |
 | [api-authority](./api-authority.md) | `authority` 描述符 + `ExecutionGuard` | plugin-authority |
 | [api-checkpoint](./api-checkpoint.md) | `checkpoint` 描述符 + `CheckpointService`：存储写前快照、按回合回滚 | plugin-checkpoint |
@@ -76,4 +76,4 @@
 2. **按名仲裁**：同名多实现按「本插件偏好 > 全局偏好 > 优先级 > 位次」选中一家，偏好由用户在 WebUI 设置「系统」的服务偏好或配置 `servicePreferences` 里调整。领域能力（LLM 的 vision / tool-calling）挂在**服务实例 / model-handle 的元数据**上，由各领域 helper 过滤（如 `resolveLLMModel(caps.llm, ref, ['vision'])`），不经 core DI、也不用按能力选服务。
 3. **事件**通过 `declare module '@aalis/api-events' { interface AalisEvents }` 注入；订阅者在 `uses` 里声明 `events`（描述符从 `@aalis/api-events` 导入），用 `events.use.on` / `events.use.emit`；服务由 `@aalis/plugin-events` 提供，core 不内置。
 4. **钩子与贡献点**的键分别经 `declare module '@aalis/api-hooks' { interface HookContextMap }` 与 `declare module '@aalis/api-contributions' { interface ContributionPointMap }` 注入。使用方在 `uses` 里声明 `hooks` / `contributions`（描述符分别从这两个契约包导入），服务由 `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 提供，core 不内置。
-5. **业务层 vs 动态查询**：登记（工具、指令、页面、预处理器）走业务层上的登记方法，归属这次激活、提供者换人自动重挂。调用选中的那一家用 `x.use`（活句柄，每次访问重新解析，存起来也跟着换人；optional 先看 `x.present`）。动态按名查询走 `services.use.get`，**不产生依赖边**，关停期可能拿空。把它拿到的原始实例存进字段后，关停边不保护这份缓存引用：提供者有失效逻辑则抛，无则静默成功。
+5. **业务层 vs 动态查询**：登记（工具、指令、页面）走业务层上的登记方法，归属这次激活、提供者换人自动重挂。调用选中的那一家用 `x.use`（活句柄，每次访问重新解析，存起来也跟着换人；optional 先看 `x.present`）。动态按名查询走 `services.use.get`，**不产生依赖边**，关停期可能拿空。把它拿到的原始实例存进字段后，关停边不保护这份缓存引用：提供者有失效逻辑则抛，无则静默成功。

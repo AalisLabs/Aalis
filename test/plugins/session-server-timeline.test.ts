@@ -1356,7 +1356,7 @@ describe('条目', () => {
     await t.finish('silent');
   });
 
-  it('带文件与图片的提问归档后：实时推送与快照里的正文只有发言人写的话，文件是带句柄的卡片、图片按地址；预处理器写的附件描述（file-reader 之外的写法也一样）不进正文', async () => {
+  it('带文件与图片的提问归档后：实时推送与快照里的正文只有发言人写的话，文件是带句柄的卡片、图片按地址；预处理写的附件描述（file-reader 之外的写法也一样）不进正文', async () => {
     const { server, sm, archive } = await setup();
     const s = await sm.createSession({ name: 'S' });
     const c = client(server());
@@ -1371,7 +1371,7 @@ describe('条目', () => {
         { kind: 'file', name: '报告.txt', data: 'workspace:/up/报告.txt' },
         { kind: 'image', name: 'cat.png', data: 'data:image/png;base64,AAAA', ref: 'data:/images/s/media/cat.png' },
       ],
-      // 一个第三方的文件预处理器写的描述，与媒体识别落盘后按附件引用写的描述（落盘的地址在附件的 ref 上）
+      // 第三方插件预处理文件时写的描述，与媒体识别落盘后按附件引用写的描述（落盘的地址在附件的 ref 上）
       _attachmentDescriptions: [
         '〔附件 报告.txt：三页的周报，ID 9f〕',
         '[图片: 一只橘猫 | ref:data:/images/s/media/cat.png]',

@@ -1,6 +1,6 @@
 # media 服务
 
-`media` 把「媒体 → 文本」的多模态识别（图片描述、音频转写描述、视频抽帧加音轨）抽象成一个统一调度器。上层——agent preprocessor、工具、适配器——只需要向 `media` 提问，由它在一个 processor 池里仲裁并执行。这个池由「vision/audio LLM」与「独立的 ASR/Whisper backend」共同组成。
+`media` 把「媒体 → 文本」的多模态识别（图片描述、音频转写描述、视频抽帧加音轨）抽象成一个统一调度器。上层——输入阶段的中间件、工具、适配器——只需要向 `media` 提问，由它在一个 processor 池里仲裁并执行。这个池由「vision/audio LLM」与「独立的 ASR/Whisper backend」共同组成。
 
 - **服务注册名**：`'media'`（描述符 `media`，消费方经 `media.use` 调用）。
 - **契约包**：`@aalis/api-media`。契约除了服务本身，还导出底层的 `MediaProcessor` 抽象。你写「非 LLM、非音频的媒体 backend」时实现 `MediaProcessor` 再 `registerProcessor`（音频 backend 写成 `asr` provider，见 [§4](#_4-写一个-provider)）；写「服务消费」时只用 `MediaService`。
@@ -25,7 +25,7 @@ export interface MediaService {
   describe(attachments: MessageAttachment[], opts?: DescribeOptions): Promise<Array<string | undefined>>;
   transcribe(attachment: MessageAttachment, opts?: TranscribeOptions): Promise<string | undefined>;
 
-  // ----- 一站式：处理整条入站消息（preprocessor 与触发插件用）-----
+  // ----- 一站式：处理整条入站消息（输入阶段的中间件与触发插件用）-----
   processMessage(msg: IncomingMessage): Promise<MediaProcessReport>;             // 把每条附件描述写进 msg._attachmentDescriptions；同一消息对象只处理一次
 
   // ----- 单图/单视频主动识别 + 描述缓存 -----
@@ -167,8 +167,8 @@ interface LocalFileDeps {
 
 | 包 | 调用 | 说明 |
 | --- | --- | --- |
-| `plugin-media`（自身 preprocessor） | `svc.processMessage(msg)` | 经 `buildPreprocessor` 注册到 agent |
-| `plugin-trigger-laya`（私有）判定前等附件识别 | 先看 `media.present`，再 `media.use.processMessage(msg)` | 模型判定前提前识别（有等待上限）；之后预处理器与归档不再识别第二遍 |
+| `plugin-media`（自身挂在输入阶段的中间件） | `svc.processMessage(msg)` | 经 `buildInputMiddleware` 挂到 `agent:input:before` |
+| `plugin-trigger-laya`（私有）判定前等附件识别 | 先看 `media.present`，再 `media.use.processMessage(msg)` | 模型判定前提前识别（有等待上限）；之后输入阶段的中间件与归档不再识别第二遍 |
 | `plugin-file-reader` | `media.use.describeImage(uri)` | 识别 DOCX 内嵌图；先取 `media.present ? media.use : undefined`，再判 `if (!mediaService?.describeImage) return ''` |
 | `plugin-image-sender` | `media.use.describeImage(url, { detailLevel: 'casual' })` | 给候选图打描述以挑图 |
 | `plugin-adapter-onebot` | `media.use.lookupDescription(url)` | 只复用缓存、不触发识别 |
@@ -355,7 +355,7 @@ export default definePlugin({
 
 ### authority / 隔离
 
-`media` 服务本身不挂 authority 的 risk/visibility 门——它是 preprocessor 链路上的内部增强，调用语境（agent / 工具）由各自的 authority 把关。
+`media` 服务本身不挂 authority 的 risk/visibility 门——它是输入预处理链路上的内部增强，调用语境（agent / 工具）由各自的 authority 把关。
 
 不过落盘路径按会话分目录（`data:/images/<会话目录>/media/`），识别时拼的对话上下文也只读当前会话历史。`analyze_image` 读存储里的图之前过[媒体判据](#媒体判据)，读出后按文件头认格式，不是图片的拒绝。provider 实现新的存储路径时，应延续按 session 隔离，不要跨会话泄漏。
 
@@ -384,6 +384,6 @@ media 经 `storage` 写临时/缓存文件，但 storage 只是命名根加权�
 
 ## 8. 交叉链接
 
-- 概念：[service-model](../concepts/service-model.md)（DI 按名仲裁、无 capability 选择）｜[lazy-service-access](../concepts/lazy-service-access.md)（业务句柄是活的）｜[manifest-metadata](../concepts/manifest-metadata.md)（aalis.service 与 definePlugin provides/uses 双源）｜[storage-uri-grammar](../concepts/storage-uri-grammar.md)（`data:/` 与 data-URI 区分，直接引本服务为例）｜[security-model](../concepts/security-model.md)（SSRF / safeFetch）｜[message-llm-pipeline](../concepts/message-llm-pipeline.md)（preprocessor 在消息链路的位置）。
-- 服务：[storage](./storage.md)（落盘后端，非沙箱）｜[process](./process.md)（ffmpeg 子进程）｜[llm](./llm.md)（vision/audio LLM 自动成 processor）｜[message](./message.md)（`MessageAttachment` / `IncomingMessage` 类型源）｜[agent](./agent.md)（preprocessor 注册宿主）。
+- 概念：[service-model](../concepts/service-model.md)（DI 按名仲裁、无 capability 选择）｜[lazy-service-access](../concepts/lazy-service-access.md)（业务句柄是活的）｜[manifest-metadata](../concepts/manifest-metadata.md)（aalis.service 与 definePlugin provides/uses 双源）｜[storage-uri-grammar](../concepts/storage-uri-grammar.md)（`data:/` 与 data-URI 区分，直接引本服务为例）｜[security-model](../concepts/security-model.md)（SSRF / safeFetch）｜[message-llm-pipeline](../concepts/message-llm-pipeline.md)（附件占位符 `[图片 | ref:…]` 的文法）。
+- 服务：[storage](./storage.md)（落盘后端，非沙箱）｜[process](./process.md)（ffmpeg 子进程）｜[llm](./llm.md)（vision/audio LLM 自动成 processor）｜[message](./message.md)（`MessageAttachment` / `IncomingMessage` 类型源）｜[agent](./agent.md)（输入阶段的钩子 `agent:input:before` 由它驱动）。
 - 相关契约包：`@aalis/api-asr`（音频 backend 首选契约）。

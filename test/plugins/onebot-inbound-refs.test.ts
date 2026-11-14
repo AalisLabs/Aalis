@@ -3,8 +3,8 @@ import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { agent, type PreprocessorFn } from '../../packages/api-agent/src/index.js';
 import { events } from '../../packages/api-events/src/index.js';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import { media } from '../../packages/api-media/src/index.js';
 import { processService } from '../../packages/api-process/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
@@ -103,7 +103,7 @@ function memStorage(files: Map<string, Buffer>, reads: string[]) {
 /**
  * 假实现端 + onebot 适配器。replies 是各动作回的 data（缺省回机器人账号）；语音转码由 processService 替身给出一段 WAV。
  * post 推一个原始事件，inbound 是适配器发出的入站；storageReads 与 externalReads 是读过的存储地址与本机路径。
- * fileReader 时另装文件读取，readFiles 把一条入站交给它的预处理器、返回第一个附件的描述；forward 原样并进适配器配置的 forward
+ * fileReader 时另装文件读取，readFiles 把一条入站交给它挂在输入阶段的中间件、返回第一个附件的描述；forward 原样并进适配器配置的 forward
  */
 async function boot(
   protocol: 'v11' | 'v12',
@@ -134,7 +134,7 @@ async function boot(
   const app = new App({ logLevel: 'error' });
   cleanups.push(() => app.stop());
   await registerHubs(app);
-  const host = app.bind({ provide, events });
+  const host = app.bind({ provide, events, hooks });
   const files = new Map<string, Buffer>();
   const storageReads: string[] = [];
   const externalReads: string[] = [];
@@ -152,16 +152,7 @@ async function boot(
       return Buffer.from('LOCAL-PLACEHOLDER');
     },
   } as never);
-  let preprocessor: PreprocessorFn | undefined;
-  if (opts.fileReader) {
-    host.provide.use(agent, {
-      registerPreprocessor(_name: string, handler: PreprocessorFn) {
-        preprocessor = handler;
-        return () => {};
-      },
-    } as never);
-    await app.plugins.register(fileReaderPlugin, {});
-  }
+  if (opts.fileReader) await app.plugins.register(fileReaderPlugin, {});
   host.provide.use(media, {
     lookupDescription: (url: string) => DESCRIPTIONS.get(url) ?? null,
     rememberDescriptionAlias() {},
@@ -187,8 +178,8 @@ async function boot(
     externalReads,
     post: (event: Record<string, unknown>) => socket?.send(JSON.stringify({ time: 0, ...event })),
     async readFiles(msg: IncomingMessage): Promise<string> {
-      if (!preprocessor) throw new Error('文件读取没装上');
-      await preprocessor(msg, async () => undefined);
+      if (!opts.fileReader) throw new Error('文件读取没装上');
+      await host.hooks.use.run('agent:input:before', { message: msg }, async () => undefined);
       return msg._attachmentDescriptions?.[0] ?? '';
     },
   };

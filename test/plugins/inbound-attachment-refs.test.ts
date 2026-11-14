@@ -3,8 +3,8 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
 import { afterEach, expect, it } from 'vitest';
-import { agent, type PreprocessorFn } from '../../packages/api-agent/src/index.js';
 import { events } from '../../packages/api-events/src/index.js';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import { media, mediaInScope, sessionDirName } from '../../packages/api-media/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
@@ -23,9 +23,9 @@ import {
 import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
-// 存档的附件清单（metadata 的 Attachments）是媒体判据认的「历史里系统记下的引用」：地址只取附件的 data 与预处理器写在附件
+// 存档的附件清单（metadata 的 Attachments）是媒体判据认的「历史里系统记下的引用」：地址只取附件的 data 与预处理时写在附件
 // ref 上的落盘地址，不从附件描述里解析。描述里有群友起的文件名，按描述取就能把任意地址伪造成系统记下的引用。
-// 从原始 OneBot 帧起跑：本地假实现端推群消息 → 真 onebot 适配器 → 真文件读取预处理器 → 真存档（内存记忆替身）→ 判据
+// 从原始 OneBot 帧起跑：本地假实现端推群消息 → 真 onebot 适配器 → 真文件读取的预处理 → 真存档（内存记忆替身）→ 判据
 // （take 与 local 一律拒，只看历史与目录）。
 // ════════════════════════════════════════════════════════════
 
@@ -83,7 +83,7 @@ async function boot() {
   const app = new App({ logLevel: 'error' });
   cleanups.push(() => app.stop());
   await registerHubs(app);
-  const host = app.bind({ provide, events, messageArchive });
+  const host = app.bind({ provide, events, hooks, messageArchive });
   const files = new Map<string, Buffer>();
   const read = (uri: string) => {
     const f = files.get(uri);
@@ -113,13 +113,6 @@ async function boot() {
     },
     async getHistory(sessionId: string) {
       return saved.get(sessionId) ?? [];
-    },
-  } as never);
-  let preprocess: PreprocessorFn | undefined;
-  host.provide.use(agent, {
-    registerPreprocessor(_name: string, handler: PreprocessorFn) {
-      preprocess = handler;
-      return () => {};
     },
   } as never);
   host.provide.use(media, { lookupDescription: () => null, rememberDescriptionAlias() {} } as never);
@@ -155,7 +148,7 @@ async function boot() {
     );
     await until(() => inbound.length > before);
     const msg = inbound[before];
-    await preprocess?.(msg, async () => undefined);
+    await host.hooks.use.run('agent:input:before', { message: msg }, async () => undefined);
     await host.messageArchive.use.archiveIncoming(msg, { turnId: `t${before}`, entry: 'opened' });
     return { msg, archived: saved.get(GROUP)?.at(-1)?.metadata?.[WellKnownMetadataKeys.Attachments] };
   };

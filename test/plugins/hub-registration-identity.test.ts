@@ -1,27 +1,15 @@
 import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { agent } from '../../packages/api-agent/src/index.js';
-import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type BoundTools, tools, withToolGroups } from '../../packages/api-tools/src/index.js';
-import {
-  App,
-  definePlugin,
-  type LifecycleCap,
-  lifecycle,
-  optional,
-  provide,
-  services,
-} from '../../packages/core/src/index.js';
-import agentPlugin from '../../packages/plugin-agent/src/index.js';
+import { App, definePlugin, type LifecycleCap, lifecycle, optional, provide } from '../../packages/core/src/index.js';
 import type { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
-import { registerHubs } from '../fixtures/hubs.js';
 import { toolRequest } from '../fixtures/tool-call.js';
 import { makeToolRegistry } from '../fixtures/tool-registry.js';
 
 // ════════════════════════════════════════════════════════════
 // 枢纽服务的退订闭包必须按「这一次登记」比对，而不是按 name + contextId：
 // 同一登记者用同名重注册后，旧闭包仍然成立的判据会把新登记一起删掉。
-// 枢纽登记表一律按条目引用退订；这里钉住工具分组与 agent 预处理器两处；工具表的同名登记由 tools-seat-order 的用例守着，webui 页面的在 webui-page-registry 的用例里。
+// 枢纽登记表一律按条目引用退订；这里钉住工具分组；工具表的同名登记由 tools-seat-order 的用例守着，webui 页面的在 webui-page-registry 的用例里。
 // ════════════════════════════════════════════════════════════
 
 function silentLogger(): Logger {
@@ -289,35 +277,5 @@ describe('tools 绑定：同名替换与整体重挂', () => {
     const groupsOf = (name: string) => reg.getAll().find(t => t.name === name)?.groups;
     expect(groupsOf('t')).toEqual(['g']);
     expect(groupsOf('u'), '自带分组在前，默认分组追加在后').toEqual(['own', 'g']);
-  });
-});
-
-describe('agent 预处理器退订按条目身份', () => {
-  it('同名替换后，旧退订闭包只摘自己的中间件，不删新登记的条目', async () => {
-    const app = new App({ logLevel: 'error', logger: silentLogger() });
-    await registerHubs(app);
-    await app.plugins.register(agentPlugin, {});
-    await app.plugins.idle();
-    const host = app.bind({ services, hooks });
-    const svc = host.services.use.get(agent)!;
-    const ran: string[] = [];
-    const handler = (tag: string) => async (_m: unknown, next: () => Promise<void>) => {
-      ran.push(tag);
-      await next();
-    };
-    const run = () => host.hooks.use.run('agent:input:before', { message: {} as never }, async () => undefined);
-
-    const oldOff = svc.registerPreprocessor!('x', handler('old'));
-    svc.registerPreprocessor!('x', handler('new'));
-    oldOff();
-    await run();
-    expect(ran, '同名替换之后链上只跑最新的那个，旧闭包对已被替换的登记无动作').toEqual(['new']);
-
-    // 条目仍在，所以第三次同名登记能替换掉「new」的中间件——链上只剩最新一个
-    ran.length = 0;
-    svc.registerPreprocessor!('x', handler('newer'));
-    await run();
-    expect(ran).toEqual(['newer']);
-    await app.stop();
   });
 });

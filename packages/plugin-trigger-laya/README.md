@@ -26,7 +26,7 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 6. 识别点名：戳一戳按 `triggerOnPoke`；其余消息按 `triggerOnAt`（@ 自己）与名字检测。禁言关键词与名字检测都只看发言人自己写的话，随消息转发来的聊天记录不算。名字表是 `triggerNames` 与在用的人设的名字、昵称的并集（`@aalis/api-trigger` 的 `createBotNames`）。人设按会话取：会话与入口平台传给人设的 `getPersonaName` / `getNickNames`，人设插件经会话设置取这个会话用的角色卡（`persona`），与 agent 同一取法；会话改用别的角色卡时，算点名的是那张卡的名字、昵称，主卡的不算，别的会话不受影响。会话设置缺席时取人设插件配置里的卡。在用的人设是本插件按服务偏好选出的人设提供者：同时装了多个人设插件时，只有它的名字算点名；给 agent 单设了人设偏好时，本插件要设同一个。人设读名字抛错时名字表只剩 `triggerNames`，照常判定，记一条 warn（同一原因只记一次）。
 7. 判定前检查：bot 自己的账号 `selfId` 取消息上收到它的机器人账号（`IncomingMessage.selfId`，由适配器填，OneBot 填 `self_id`），不看平台与类型名；消息不带它的（适配器没填）取 session-manager 在房间建档时记下的机器人账号（`originChat.selfId`，子会话取根会话的）；都没有的用后备判定，每类消息（平台与类型名）首次遇到时记一条 warn；memory 缺席或侧车处于熔断期时用后备判定；托管的侧车还在启动或等重启时用后备判定（见「托管侧车」）。
 8. 取窗口：`memory.getFullHistory(sessionId, historyRows × 2)`（没有该方法时回落 `getHistory`），只留 `role` 为 `user` / `assistant` 且正文是字符串的行，取其中最后 `historyRows` 行，投影为 `{role, content, userId, nick}`：`userId` 取 `metadata.userId`，`nick` 取 `metadata.nickname`，缺失时回落 `name`。先过滤再取行，与侧车渲染回归（`replay_data.py`）的取法一致：只有工具调用的 assistant 行以空串落库，两边都计入窗口，到侧车渲染时才丢弃；正文不是字符串的行只有本插件滤掉，目前只有 subtask 在子任务会话里合成的 report 行是这样。最近 `historyRows × 2` 行里其它角色的行（tool、system、notice 等）与正文不是字符串的行多于 `historyRows` 条时，窗口不足 `historyRows` 行。
-9. 带附件、尚无描述时启动附件识别并最多等 `mediaWaitMs`，再用 `@aalis/schema-message` 的 `buildIncomingContent` 拼当前消息 `cur`，发送者前缀里的说话人按 `@aalis/api-message-archive` 的 `speakerOf` 给（受众只有 owner 的会话不带前缀，见 [services/message-archive.md](../../docs/services/message-archive.md) 的「发送者前缀」）。归档用的是同一个函数与同一条规则，两者不一致的情况见「已知局限」。放行与吞掉都不等识别执行完毕，agent 预处理器与归档复用这次识别，不再识别第二遍。
+9. 带附件、尚无描述时启动附件识别并最多等 `mediaWaitMs`，再用 `@aalis/schema-message` 的 `buildIncomingContent` 拼当前消息 `cur`，发送者前缀里的说话人按 `@aalis/api-message-archive` 的 `speakerOf` 给（受众只有 owner 的会话不带前缀，见 [services/message-archive.md](../../docs/services/message-archive.md) 的「发送者前缀」）。归档用的是同一个函数与同一条规则，两者不一致的情况见「已知局限」。放行与吞掉都不等识别执行完毕，media 挂在输入阶段的中间件与归档复用这次识别，不再识别第二遍。
 10. 取历史与等识别期间侧车已熔断的，本条用后备判定、不发请求。第 6 步的名字表作为 `selfNames` 随请求发出（见「侧车接口」）。请求体里字符串的孤代理换成 U+FFFD（侧车的分词器不接受孤代理：整条回 422 `bad_text`，这一条只能用后备判定；更早的侧车回 500 并计入熔断）。请求体按 UTF-8 字节数超过侧车的上限 1 MiB 时不发请求，本条用后备判定；否则记下 `cur` 的摘要供运行期自检（见「日志」），再 `POST {endpoint}/v1/score`，超时 `timeoutMs`（含读完响应体）。
 11. `speak = logit ≥ 阈值`，阈值取这个会话生效的 `threshold`（按会话现读），没设时用侧车随响应返回的模型阈值。开口则写 `triggerType` 放行；不开口则归档后吞掉。
 
@@ -136,7 +136,7 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
   - `一致`：逐字相同。
   - `不一致:缺附件描述`：判定时有非文件附件（图片、语音、视频等）缺描述（识别超过 `mediaWaitMs` 或识别失败），且两边不一致。不核对归档时是否补上了描述：某类附件始终没有描述时（如没配对应的识别模型），这类消息的其它偏差也计入此项。对应「已知局限」的「识别超时时 `cur` 缺附件描述」。
   - `不一致:含文件附件`：消息带文件附件，文件描述在 agent 预处理阶段才写入。对应「已知局限」的「文件描述不进 `cur`」。与上一项同时成立时计入上一项。
-  - `不一致:其它`：不属于上面两项的偏差，如 agent 预处理器或 `agent:input:before` 中间件改写了正文、发送者昵称等拼进 `cur` 的字段。
+  - `不一致:其它`：不属于上面两项的偏差，如 `agent:input:before` 中间件改写了正文、发送者昵称等拼进 `cur` 的字段。
   - `未归档`：表最多 1000 条，超出时按记下的先后淘汰最早的一条，淘汰时仍未归档的计入此项（如 plugin-message-archive 未启用或归档失败）。条目要等被淘汰才计入，这一项比实际滞后约 1000 次判定。
 
 ## 调阈值

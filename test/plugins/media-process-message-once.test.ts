@@ -1,6 +1,6 @@
 import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
-import { type AgentService, agent, type PreprocessorFn } from '../../packages/api-agent/src/index.js';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { MediaProcessor } from '../../packages/api-media/src/index.js';
 import { type StorageRootInfo, type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
@@ -14,13 +14,13 @@ import { deferred } from '../helpers/deferred.js';
 // ════════════════════════════════════════════════════════════
 // processMessage 按消息对象只处理一次
 //
-// 触发判定（判定模型要看附件描述）可能先于 agent 预处理器启动识别，预处理器再调时
+// 触发判定（判定模型要看附件描述）可能先于输入阶段（agent:input:before）启动识别，输入阶段再调时
 // 必须拿到同一次处理，否则同一条消息识别两遍——语音与视频没有描述缓存，延迟与算力翻倍。
-// 判据按消息对象，而不是「已有 _attachmentDescriptions 就跳过」：预处理器的先后取决于
-// 登记次序，file-reader 先跑时会先写好文件描述，按「有描述」跳过会漏掉图片识别；
+// 判据按消息对象，而不是「已有 _attachmentDescriptions 就跳过」：输入阶段的中间件按登记方的
+// 位次排，file-reader 先跑、先写好文件描述，按「有描述」跳过会漏掉图片识别；
 // 同理写回时不能整表覆盖，否则冲掉 file-reader 写好的文件描述。
 //
-// 触发判定启动的识别，宿主放行时不等它执行完毕，识别可能与 agent 预处理链并发：两边的写回都按
+// 触发判定启动的识别，宿主放行时不等它执行完毕，识别可能与输入阶段的处理并发：两边的写回都按
 // 写回那一刻的消息只补不换，file-reader 换好的 aalis-file:// 引用与另一方的描述都保留。
 // ════════════════════════════════════════════════════════════
 
@@ -118,12 +118,12 @@ afterEach(async () => {
   for (const app of booted.splice(0)) await app.stop();
 });
 
-/** 真实 file-reader 的预处理器，存储换成内存桩；writeGate 设上后存盘在它落定前不返回 */
-async function fileReaderPreprocessor() {
+/** 真实 file-reader 挂在输入阶段的处理，存储换成内存桩；writeGate 设上后存盘在它落定前不返回 */
+async function bootFileReader() {
   const app = new App({ logLevel: 'error' });
   booted.push(app);
   await registerHubs(app);
-  const host = app.bind({ provide });
+  const host = app.bind({ provide, hooks });
   const files = new Map<string, Buffer>();
   const writes: { gate?: Promise<void> } = {};
   host.provide.use(storage, {
@@ -141,24 +141,10 @@ async function fileReaderPreprocessor() {
       files.set(uri, typeof data === 'string' ? Buffer.from(data, 'utf-8') : Buffer.from(data));
     },
   } as unknown as StorageService);
-  let preprocessor: PreprocessorFn | undefined;
-  host.provide.use(agent, {
-    async handleMessage() {},
-    async assignModel() {},
-    abort: () => false,
-    async clearing(_sessionIds, clear) {
-      await clear();
-    },
-    registerPreprocessor(_name: string, handler: PreprocessorFn) {
-      preprocessor = handler;
-      return () => {};
-    },
-  } as AgentService);
   await app.plugins.register(fileReaderPlugin, {});
   await app.plugins.idle();
-  const run = preprocessor;
-  if (!run) throw new Error('file-reader 未登记预处理器');
-  return { run: (msg: IncomingMessage) => run(msg, async () => {}), writes };
+  const run = (message: IncomingMessage) => host.hooks.use.run('agent:input:before', { message }, async () => {});
+  return { run, writes };
 }
 
 const textFile = () => ({
@@ -172,7 +158,7 @@ describe('识别与 file-reader 预处理并发：写回只补不换', () => {
   it('file-reader 先完成：识别迟到的写回不把 aalis-file:// 引用改回原始数据', async () => {
     const vision = deferred();
     const { svc } = makeSvc(vision.promise);
-    const fileReader = await fileReaderPreprocessor();
+    const fileReader = await bootFileReader();
     const msg = message([
       textFile(),
       { kind: 'image', data: 'data:/images/onebot_10000_group_20001/onebot/race-1.jpg' },
@@ -193,7 +179,7 @@ describe('识别与 file-reader 预处理并发：写回只补不换', () => {
   it('识别先完成（file-reader 存盘途中）：file-reader 结尾的写回不冲掉图片描述', async () => {
     const vision = deferred();
     const { svc } = makeSvc(vision.promise);
-    const fileReader = await fileReaderPreprocessor();
+    const fileReader = await bootFileReader();
     const msg = message([
       textFile(),
       { kind: 'image', data: 'data:/images/onebot_10000_group_20001/onebot/race-2.jpg' },
@@ -216,7 +202,7 @@ describe('识别与 file-reader 预处理并发：写回只补不换', () => {
 
   it('识别在 file-reader 存盘途中补上文件的 mimeType：换引用时保留它', async () => {
     const { svc } = makeSvc();
-    const fileReader = await fileReaderPreprocessor();
+    const fileReader = await bootFileReader();
     const { mimeType: _, ...noMime } = textFile(); // 缺 mimeType：识别按 data URL 头补成 text/plain
     const msg = message([noMime]);
 

@@ -6,7 +6,7 @@
 
 `agent` 是**对话回合编排引擎**——接收一条入站消息，组装系统提示 + 历史，调用 `llm`，跑工具调用循环，最终把回复派发出去，并在每个阶段广播 `agent:*` 钩子。
 
-- 服务注册名：描述符 `agent`（`name: 'agent'`），绑定接口 `BoundAgent`
+- 服务注册名：描述符 `agent`（`name: 'agent'`）
 - 契约包：`@aalis/api-agent`（`packages/api-agent/src/index.ts`）
 - 默认实现：`@aalis/plugin-agent`（`packages/plugin-agent/src/index.ts`，类 `DefaultAgent`）
 
@@ -14,7 +14,7 @@
 
 ## 2. 契约
 
-`AgentService` 接口（`packages/api-agent/src/index.ts`）。`handleMessage`、`abort`、`clearing` 与 `assignModel` 必须实现，`registerPreprocessor` 可选：
+`AgentService` 接口（`packages/api-agent/src/index.ts`）。`handleMessage`、`abort`、`clearing` 与 `assignModel` 都必须实现：
 
 ```ts
 export interface AgentService {
@@ -24,17 +24,11 @@ export interface AgentService {
     options?: { turnId?: string; queued?: boolean; reason?: string; by?: NonNullable<IncomingMessage['actor']> },
   ): boolean;
   clearing(sessionIds: readonly string[] | undefined, clear: () => Promise<unknown>, reason?: string): Promise<void>;
-  registerPreprocessor?(name: string, handler: PreprocessorFn): () => void;
   assignModel(sessionId: string, model: ModelRef): Promise<void>;
-}
-
-export interface BoundAgent extends AgentService {
-  registerPreprocessor(name: string, handler: PreprocessorFn): () => void;
 }
 ```
 
-- `PreprocessorFn`：洋葱模型 `(message, next) => Promise<void>`，挂在 `agent:input:before` 上，每条输入一次、在它进入一轮之前；**不调 `next()` 即丢掉这条输入**（不进一轮、不归档）。
-- `registerPreprocessor` 走 `registrar`：同名替换、提供者换人自动重挂、随激活撤回。当前提供者不支持预处理器时本次不生效，换到支持的提供者时补上。
+- 加工每条输入（把图片识别为文字、解析文件内容等）挂 `agent:input:before` 钩子：每条输入一次、在它进入一轮之前；**不调 `next()` 即丢掉这条输入**（不进一轮、不归档）。实现者要在每条输入进一轮之前跑这条钩子链，不跑的话这些加工不生效。
 - 对话调用走业务句柄 `agent.use`（如 `agent.use.handleMessage(message)`）：转发给本插件选中的那一家，每次访问成员重新解析。`handleMessage` 返回时这条输入已落定（所在的一轮结束，或它被放掉、没进一轮就被丢掉）；入口记下这个会话的代号（api-session-manager 的 `generationOf`），交给通道之前（按住期间等着的放开之后）再取一次，变了的是会话删除之前的一代，放掉、不归档。
 - `abort(sessionId, { turnId?, queued?, reason?, by? })`：停下这个会话在跑的一轮。给了 `turnId` 而对不上（那一轮已结束或换成了新一轮）时什么也不停；`queued` 为真时连同排队与待插入、还没进一轮的输入一起放掉（不开轮，在那一轮落定之后归档，不带回合 id），否则它们照常开下一轮；`reason` 只写进回合结束那一行日志；`by` 是停下这一轮的人（与入站的 `actor` 同一形状），不给即没有具体的人，参考实现据此在历史里给下一轮的模型写停下标记（schema-message 的 `TurnStopped`）。返回有没有停下在跑的一轮。
 - `clearing(sessionIds, clear, reason?)`：清消息历史的一方（`/clear` 与会话管理删会话）把整条清理（`memory:clear` 链连同默认动作；会话管理删会话时交来的先删各级子会话、发 `session:deleted`）交给它：先停下这些会话（不给即全部会话）在跑的一轮、放掉排着与待插入的输入（不归档），等它们落定再跑 `clear`，按住这些会话到 `clear` 结束，这期间到的输入之后再处理。停下与按住在各家清理之外，不看中间件在清理链上的位置。实现者自己的 `session:deleted` 监听在这次按住之内被调用，不能等按住放开。`reason` 同 `abort` 的，只写进回合结束那一行日志。
@@ -71,15 +65,14 @@ export interface BoundAgent extends AgentService {
 - `plugin-flow-control`：禁言（`setMuted` 时长大于 0）调 `abort(sessionId, { queued: true, reason: '禁言' })`，不交 `by`。
 - `plugin-commands`：清消息历史的 `/clear` 把整条 `memory:clear` 链交给 `clearing`（`/clear all` 不给会话 id）。
 - `plugin-session-manager`：删会话时把发 `session:deleted` 与清数据两步交给 `clearing([id], …)`。
-- `plugin-file-reader` / `plugin-media`：`agent.use.registerPreprocessor(...)`。当前提供者不实现该方法时本次不生效，换到支持的提供者时补上（`packages/api-agent/src/index.ts`）。
 
-**钩子订阅方**：`plugin-persona`（`agent:reply:before`）、`plugin-checkpoint`、`plugin-session-manager`、`plugin-memory-summary`、`plugin-subtask` / `plugin-tool-search` 等。
+**钩子订阅方**：`plugin-file-reader` / `plugin-media`（`agent:input:before`，处理文件附件、识别媒体附件）、`plugin-persona`（`agent:reply:before`）、`plugin-checkpoint`、`plugin-session-manager`、`plugin-memory-summary`、`plugin-subtask` / `plugin-tool-search` 等。
 
 ## 4. 写一个 provider
 
 99% 的需求用**钩子**就够了，无需替换整个服务。只有当你要彻底接管编排逻辑时才自己 provide `agent`。
 
-**最小必须**：`handleMessage`、`abort`、`clearing` 与 `assignModel`。省略 `registerPreprocessor` 则绑定门面在当前提供者上本次不生效。
+**最小必须**：`handleMessage`、`abort`、`clearing` 与 `assignModel`。
 
 ```ts
 import { agent, type AgentService } from '@aalis/api-agent';
@@ -127,24 +120,25 @@ default agent 用整个 service 注册（不是 per-entry）。自定义 `handle
 if (agent.present) agent.use.abort(sessionId);
 ```
 
-登记预处理器：
+加工每条输入：
 
 ```ts
-import { agent } from '@aalis/api-agent';
-import { definePlugin, optional } from '@aalis/core';
+import type {} from '@aalis/api-agent';
+import { hooks } from '@aalis/api-hooks';
+import { definePlugin } from '@aalis/core';
 
 export default definePlugin({
   name: '@acme/plugin-my-pre',
-  uses: { agent: optional(agent) },
-  apply({ agent }) {
-    agent.use.registerPreprocessor('my-pre', async (msg, next) => {
+  uses: { hooks },
+  apply({ hooks }) {
+    hooks.use.middleware('agent:input:before', async ({ message }, next) => {
       await next();
     });
   },
 });
 ```
 
-门面已把退订挂到本次激活，不必再手写 `lifecycle.use.onDispose`。
+登记随本次激活撤回，不必再手写 `lifecycle.use.onDispose`。
 
 **服务缺失**：`agent` 全 optional 依赖。`llm` 缺失会回一条 `[系统]` 前缀诊断消息；`memory` 缺失则无历史；`gateway` 缺失则 fallback 到 `events.use.emit('outbound:message')`（**跳过审计/脱敏/限速/authority 中间件链，仅限测试/嵌入式**）。
 

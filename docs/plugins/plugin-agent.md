@@ -180,7 +180,7 @@ definePlugin({
 
 ## 扩展点
 
-其他插件可通过 `agent:*` 中间件钩子拦截或修改各阶段，通过 `agent:prompt` 贡献点向提示词注入内容，也可以用 `registerPreprocessor` 注册输入预处理器，都无需修改 Agent 代码。钩子键与预处理器见 [api-agent](../api/api-agent.md)，钩子机制见 [api-hooks](../api/api-hooks.md)，贡献点见 [api-contributions](../api/api-contributions.md)。
+其他插件可通过 `agent:*` 中间件钩子拦截或修改各阶段，通过 `agent:prompt` 贡献点向提示词注入内容，都无需修改 Agent 代码；加工每条输入（识别图片、解析文件）挂 `agent:input:before`。钩子键见 [api-agent](../api/api-agent.md)，钩子机制见 [api-hooks](../api/api-hooks.md)，贡献点见 [api-contributions](../api/api-contributions.md)。
 
 ## 模型调用的记账
 

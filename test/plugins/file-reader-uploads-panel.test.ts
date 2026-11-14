@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { type AgentService, agent, type PreprocessorFn } from '../../packages/api-agent/src/index.js';
 import { events } from '../../packages/api-events/src/index.js';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
@@ -17,7 +17,7 @@ import { sessionInfoOf } from '../fixtures/rooms.js';
 // ════════════════════════════════════════════════════════════
 // file-reader 的会话面板「上传的文件」：取代宿主写死的文件标签。只在本会话有上传文件时出现，列出本会话的文件，
 // 行动作删除；文件增删后带会话 id 推 invalidate，只有那个会话的面板重取。数据由 file-reader 从自己的存储读。
-// 上传走插件自己注册的 preprocessor；页面经 webui-server 的真实登记表登记与调用。
+// 上传走插件挂在输入阶段（agent:input:before）的处理；页面经 webui-server 的真实登记表登记与调用。
 // ════════════════════════════════════════════════════════════
 
 const ROOM = 'onebot:10000:group:20001';
@@ -45,7 +45,7 @@ async function boot({ refuse, seed = {}, config = {} }: BootOptions = {}) {
   const pages = pageHost({ sessions: id => sessionInfoOf(id) });
   running.push({ app, pages });
   await registerHubs(app);
-  const host = app.bind({ provide, events });
+  const host = app.bind({ provide, events, hooks });
   const files = new Map<string, string | Uint8Array>(Object.entries(seed));
   const store: StorageService = memoryStorage(files);
   host.provide.use(storage, {
@@ -57,25 +57,9 @@ async function boot({ refuse, seed = {}, config = {} }: BootOptions = {}) {
     },
   } as StorageService);
   host.provide.use(webuiServer, pages.service);
-  let preprocessor: PreprocessorFn | undefined;
-  host.provide.use(agent, {
-    async handleMessage() {},
-    async assignModel() {},
-    abort: () => false,
-    async clearing(_sessionIds, clear) {
-      await clear();
-    },
-    registerPreprocessor(_name: string, handler: PreprocessorFn) {
-      preprocessor = handler;
-      return () => {
-        preprocessor = undefined;
-      };
-    },
-  } satisfies AgentService);
   await app.plugin(fileReaderPlugin, config);
   await app.plugins.idle();
   const upload = async (sessionId: string, name: string, content: string | Buffer) => {
-    if (!preprocessor) throw new Error('插件未注册 preprocessor');
     const data = Buffer.from(content);
     const message: IncomingMessage = {
       content: '看看这个',
@@ -85,7 +69,7 @@ async function boot({ refuse, seed = {}, config = {} }: BootOptions = {}) {
         { kind: 'file', name, mimeType: 'text/plain', data: `data:text/plain;base64,${data.toString('base64')}` },
       ],
     };
-    await preprocessor(message, async () => undefined);
+    await host.hooks.use.run('agent:input:before', { message }, async () => undefined);
     return computeFileId(sessionId, data);
   };
   return { host, pages, files, upload };

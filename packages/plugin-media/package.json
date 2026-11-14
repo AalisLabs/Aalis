@@ -70,7 +70,6 @@
         "storage"
       ],
       "optional": [
-        "agent",
         "asr",
         "authority",
         "contributions",

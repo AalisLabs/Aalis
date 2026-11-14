@@ -138,7 +138,7 @@ describe('归档', () => {
     expect(message.content).toBe('[甲(30001)]: 看这个\n[引用 乙(30002) 的消息: 原话]\n[图片: 一只猫 | ref:data/a.png]');
   });
 
-  it('另记发言人写的话与附件清单：附件的地址取 data（网址与存储地址，相对路径不算），data 不是地址的取预处理器写在附件 ref 上的落盘地址，描述里的引用不算，都没有的只记种类与名字；存储地址只认存储服务根表里的根', async () => {
+  it('另记发言人写的话与附件清单：附件的地址取 data（网址与存储地址，相对路径不算），data 不是地址的取预处理时写在附件 ref 上的落盘地址，描述里的引用不算，都没有的只记种类与名字；存储地址只认存储服务根表里的根', async () => {
     const K = WellKnownMetadataKeys;
     const archived = await (await archiveService()).archiveIncoming(
       group({

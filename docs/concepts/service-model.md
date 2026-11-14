@@ -119,7 +119,7 @@ caps.provide.use(llm, handle, {
 
 ### 4.3 登记型业务层
 
-`tools` / `commands` / `webuiServer` / `agent` 等描述符在 `bind` 里用 `registrar` 把登记方法挂到业务层上（`caps.tools.use.register`）。经它登记的条目随激活撤回、同键替换、提供者换人整体重挂。绕过它、拿 `services.use.get` 查到的原始实例去登记，条目不会进归属表。
+`tools` / `commands` / `webuiServer` 等描述符在 `bind` 里用 `registrar` 把登记方法挂到业务层上（`caps.tools.use.register`）。经它登记的条目随激活撤回、同键替换、提供者换人整体重挂。绕过它、拿 `services.use.get` 查到的原始实例去登记，条目不会进归属表。
 
 ---
 

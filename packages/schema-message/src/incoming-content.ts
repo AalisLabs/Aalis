@@ -26,7 +26,7 @@ export function withForwards(content: string, forwards: readonly ForwardedChat[]
 /**
  * 入站消息 → 归档文本：转发的展开换回正文里占位的位置（{@link withForwards}）；给了说话人（speaker）就加发送者前缀
  * （getSenderLabel 的写法），不给不加；引用回复与附件描述（`_attachmentDescriptions`）追加在末尾。谁算说话人由调用方定
- * （参考规则是 api-message-archive 的 speakerOf），本函数不看平台。附件描述须已写好（识别由 plugin-media 负责，本函数只拼接）。
+ * （参考规则是 api-message-archive 的 speakerOf），本函数不看平台。附件描述须已写好（预处理时写，本函数只拼接）。
  */
 export function buildIncomingContent(
   incoming: IncomingMessage,
@@ -43,8 +43,8 @@ export function buildIncomingContent(
     content += `\n[引用 ${replyLabel} 的消息: ${incoming.replyTo.content}]`;
   }
 
-  // 把 plugin-media 写入的 _attachmentDescriptions 按 attachments 顺序追加。
-  // 这里是图片/语音/视频描述合入对话文本的**唯一**入口——preprocessor 只负责写 descs，不改 content。
+  // 把预处理时写入的 _attachmentDescriptions 按 attachments 顺序追加。
+  // 这里是附件描述合入对话文本的**唯一**入口——预处理只负责写 descs，不改 content。
   const attDescs = incoming._attachmentDescriptions;
   if (attDescs && attDescs.length > 0) {
     const lines = attDescs.filter((d): d is string => Boolean(d?.trim()));

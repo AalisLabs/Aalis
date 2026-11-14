@@ -4,7 +4,7 @@
 // 职责：
 //   1. 注册 'media' 服务（MediaService），调度 vision/audio/video 处理
 //   2. 内置 LLM-as-Processor adapter：自动把所有 vision/audio LLM 包装为 MediaProcessor
-//   3. 注册 agent preprocessor，归一化 IncomingMessage.attachments 并写描述
+//   3. 挂 agent:input:before 中间件，归一化 IncomingMessage.attachments 并写描述
 //   4. 视频处理编排：ffmpeg 抽帧 + ASR 抽音轨 → 拼综合描述
 //
 // 与 plugin-image-recognition 的关系：
@@ -12,7 +12,7 @@
 //   - 所有图片/动图/视频/音频路径统一走 attachments[]
 // ============================================================
 
-import { agent } from '@aalis/api-agent';
+import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子）——删掉会丢键类型，不可删
 import { asr } from '@aalis/api-asr';
 import { authority } from '@aalis/api-authority';
 import { contributions } from '@aalis/api-contributions';
@@ -30,8 +30,8 @@ import { type BoundOf, config, definePlugin, lifecycle, logger, optional, provid
 import { type ConfigOf, defineConfig, parseConfig, type SchemaField } from '@aalis/schema-config';
 import { type TextRef, textOf } from '@aalis/schema-i18n';
 import { clearDescriptionCache, closeDescriptionCache, DESCRIPTION_KINDS, loadDescriptionCache } from './cache.js';
+import { buildInputMiddleware } from './input-middleware.js';
 import { DEFAULT_AUDIO_PROMPT, DEFAULT_VISION_BATCH_PROMPT, DEFAULT_VISION_PROMPT } from './llm-adapter.js';
-import { buildPreprocessor } from './preprocessor.js';
 import { setMediaRuntime } from './runtime.js';
 import { MEDIA_WRITER, type MediaConfigResolved, MediaServiceImpl } from './service.js';
 import { t } from './texts.js';
@@ -286,7 +286,6 @@ const uses = {
   proc: processService,
   storage: storageService,
   llm: optional(llm),
-  agent: optional(agent),
   asr: optional(asr),
   tools: optional(tools),
   memory: optional(memory),
@@ -441,9 +440,9 @@ function run(caps: Caps): void {
   // 注册 analyze_image / update_image_description 工具
   registerMediaTools(caps, svc);
 
-  // 注册 preprocessor：agent 不在场时登记留在归属表里，它上线后自动补挂，随本次激活撤回
-  caps.agent.use.registerPreprocessor('media', buildPreprocessor(caps, svc));
+  // 挂到输入阶段：每条输入进一轮之前识别它的附件，随本次激活撤回
+  caps.hooks.use.middleware('agent:input:before', buildInputMiddleware(caps, svc));
   logger.info(
-    `媒体识别预处理器已注册 (vision=${cfg.vision.recognizeOnArrival ? 'recognize-on-arrival' : 'pointer-only'}/${cfg.vision.delivery}, audio=${cfg.audio.mode}, video=${cfg.video.mode})`,
+    `媒体识别已挂到输入阶段 (vision=${cfg.vision.recognizeOnArrival ? 'recognize-on-arrival' : 'pointer-only'}/${cfg.vision.delivery}, audio=${cfg.audio.mode}, video=${cfg.video.mode})`,
   );
 }

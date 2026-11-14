@@ -18,7 +18,7 @@ import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
-// agent 的两层入站钩子：agent:input:before 每条输入一次（data 只有这条消息，预处理器挂在它上面）；agent:turn:before 每轮
+// agent 的两层入站钩子：agent:input:before 每条输入一次（data 只有这条消息）；agent:turn:before 每轮
 // 一次，带回合 id、会话与这一轮的输入。开轮的输入在 turn:before 的默认动作开头归档，带这一轮的回合 id 与进入方式；
 // 不调 next 即这一轮不跑、输入不归档、不发回合结束，流结束标记照发。回合结束与提示词贡献的视图带同一份输入。
 // ════════════════════════════════════════════════════════════
@@ -56,12 +56,12 @@ const message = (sessionId: string, extra: Partial<IncomingMessage> = {}): Incom
 });
 
 describe('agent:input:before 每条输入一次', () => {
-  it('data 只有这条消息；它在 agent:turn:before 之前跑，预处理器写好的附件正文进了归档正文', async () => {
+  it('data 只有这条消息；它在 agent:turn:before 之前跑，中间件写好的附件正文进了归档正文', async () => {
     const { host, history } = await start();
     const order: string[] = [];
     const inputKeys: string[][] = [];
-    host.agent.use.registerPreprocessor('zz-file', async (msg, next) => {
-      msg._attachmentDescriptions = ['<文件正文>'];
+    host.hooks.use.middleware('agent:input:before', async ({ message }, next) => {
+      message._attachmentDescriptions = ['<文件正文>'];
       await next();
     });
     host.hooks.use.middleware('agent:input:before', async (data, next) => {

@@ -202,7 +202,7 @@ apply({ lifecycle }) {
 | 注册 AI 可调用的工具 | `uses: { tools }`，`tools.use.register(...)`（`@aalis/api-tools` 的描述符） |
 | 注册斜杠命令 | `uses: { commands }`，`commands.use.command(...)`（`@aalis/api-commands`） |
 | 自定义 WebUI 页面与提示 | `uses: { webui: optional(webuiServer) }`，`webui.use.definePage` / `notify`（`@aalis/api-webui`）。页面默认声明式，需要自绘时用插件前端；能放在哪见 [插件作者指南](../plugin-author-guide.md#ui-placement) |
-| 注册 agent 输入预处理器 | `uses: { agent }`，`agent.use.registerPreprocessor(...)`（`@aalis/api-agent`） |
+| 在每条输入进一轮之前加工它 | `uses: { hooks }`，`hooks.use.middleware('agent:input:before', …)`（键的类型来自 `@aalis/api-agent`） |
 | 监听事件 | `uses: { events }`，`events.use.on(…)`（`@aalis/api-events` 的描述符） |
 | 给人看的文字按读者语言显示 | 写 `src/texts.ts`（`@aalis/schema-i18n` 的 `defineTexts`），声明里用 `t()`，见 [多语言：给人看的文字](./i18n.md) |
 

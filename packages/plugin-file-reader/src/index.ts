@@ -1,8 +1,9 @@
 import path from 'node:path';
-import { agent } from '@aalis/api-agent';
+import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { authority } from '@aalis/api-authority';
 import { contributions } from '@aalis/api-contributions';
 import { events } from '@aalis/api-events';
+import { hooks } from '@aalis/api-hooks';
 import { media } from '@aalis/api-media';
 import { roomClass, sessionManager } from '@aalis/api-session-manager';
 import { isStorageNotFound, isStorageUri, isWebUrl, storage } from '@aalis/api-storage';
@@ -137,7 +138,7 @@ interface FileEntry extends FileMeta {
   metaUri: string;
 }
 
-/** 处理过的文件附件改写成的引用的前缀，后接文件 ID：预处理器写，本轮新上传的清单按它认 */
+/** 处理过的文件附件改写成的引用的前缀，后接文件 ID：preprocessFiles 写，本轮新上传的清单按它认 */
 const FILE_REF = 'aalis-file://';
 
 // ===== 工具名常量（硬编码，避免运行期改名） =====
@@ -183,7 +184,7 @@ const uses = {
   events,
   contributions,
   tools: optional(tools),
-  agent: optional(agent),
+  hooks: optional(hooks),
   media: optional(media),
   webui: optional(webuiServer),
   // 判这个会话的受众里有没有别人（见 inlinesIn）
@@ -202,7 +203,7 @@ export default definePlugin({
 });
 
 async function run(caps: Caps): Promise<void> {
-  const { logger, lifecycle, events, contributions, tools, agent, media, webui, sessionManager, authority } = caps;
+  const { logger, lifecycle, events, contributions, tools, hooks, media, webui, sessionManager, authority } = caps;
   const cfg = parseConfig(configSchema, caps.config.use, logger.use);
 
   const maxFileSize = cfg.maxFileSizeMB * 1024 * 1024;
@@ -374,7 +375,7 @@ async function run(caps: Caps): Promise<void> {
   }
 
   /**
-   * 下载网址的文件：声明的长度超过上限的不读，响应体流式累计超过上限即停，不缓冲整个响应。预处理器的契约不带中止信号：
+   * 下载网址的文件：声明的长度超过上限的不读，响应体流式累计超过上限即停，不缓冲整个响应。输入阶段的钩子不带中止信号：
    * 下载接本插件这次激活的，与超时谁先到按谁停
    */
   async function download(url: string): Promise<Source> {
@@ -834,7 +835,7 @@ async function run(caps: Caps): Promise<void> {
     const known = (entry: FileEntry, content?: Content) =>
       inline ? extractionOf(entry, content, lifecycle.use.signal) : entry.extraction;
     // 本插件写的描述先按下标记下，结尾写进那一刻的 _attachmentDescriptions，只动自己负责的位：
-    // 媒体识别可能与本预处理器并发（触发判定启动的识别，放行时不等它执行完毕），开头取的快照里
+    // 媒体识别可能与本函数并发（触发判定启动的识别，放行时不等它执行完毕），开头取的快照里
     // 没有其间写好的图片描述，整表写回会把它冲掉
     const own = new Map<number, string>();
     for (let i = 0; i < msg.attachments.length; i++) {
@@ -924,8 +925,8 @@ async function run(caps: Caps): Promise<void> {
     );
   }
 
-  // ===== 注册到 agent =====
-  agent.use.registerPreprocessor('file-reader', preprocessFiles);
+  // ===== 挂到输入阶段：每条输入进一轮之前处理它的文件附件 =====
+  hooks.use.middleware('agent:input:before', (data, next) => preprocessFiles(data.message, next));
 
   // ===== 历史 / 本轮新上传文件清单注入（agent:prompt 贡献） =====
   // 两种场景，互斥注入一条 system 提示，避免「上传完下一轮就忘」 或「本轮新文件

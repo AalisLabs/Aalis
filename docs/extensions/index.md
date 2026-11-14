@@ -136,12 +136,10 @@
 | `@aalis/api-tools` | `tools.use.register` / `registerGroup`；`withToolGroups(tools.use, groups)` |
 | `@aalis/api-commands` | `commands.use.command(name, description?)` |
 | `@aalis/api-webui` | `webui.use.definePage` / `notify`（描述符 `webuiServer`） |
-| `@aalis/api-agent` | `agent.use.registerPreprocessor` |
 
 示例：
 
 ```ts
-import { agent } from '@aalis/api-agent';
 import { commands } from '@aalis/api-commands';
 import { tools, withToolGroups } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
@@ -149,8 +147,8 @@ import { definePlugin, optional } from '@aalis/core';
 
 export default definePlugin({
   name: 'my-plugin',
-  uses: { tools, commands: optional(commands), webui: optional(webuiServer), agent: optional(agent) },
-  apply({ tools, commands, webui, agent }) {
+  uses: { tools, commands: optional(commands), webui: optional(webuiServer) },
+  apply({ tools, commands, webui }) {
     const grouped = withToolGroups(tools.use, ['my-group']);
     grouped.register({
       definition: {
@@ -163,10 +161,6 @@ export default definePlugin({
     commands.use.command('hello', 'hi').action(async () => 'hi');
 
     webui.use.definePage({ key: 'my', title: '我的', icon: 'star', content: [{ type: 'markdown', id: 'about', data: () => '你好' }] });
-
-    agent.use.registerPreprocessor('my-preproc', async (msg, next) => {
-      await next();
-    });
   },
 });
 ```

@@ -385,8 +385,8 @@ export class MediaServiceImpl implements MediaService {
   }
 
   /**
-   * 按消息对象记下的处理：触发判定可能先于 agent 预处理器启动识别（判定模型要看附件描述），
-   * 预处理器与归档再调时拿到同一次处理（进行中则等它），不重复识别。成败都不重来。
+   * 按消息对象记下的处理：触发判定可能先于输入阶段的中间件启动识别（判定模型要看附件描述），
+   * 中间件与归档再调时拿到同一次处理（进行中则等它），不重复识别。成败都不重来。
    */
   private readonly processed = new WeakMap<IncomingMessage, Promise<MediaProcessReport>>();
 
@@ -550,7 +550,7 @@ export class MediaServiceImpl implements MediaService {
     }
 
     // 写回 IncomingMessage：只补不换，都按写回这一刻的消息读。识别期间 file-reader 可能已把文件附件
-    // 换成 aalis-file:// 引用、写好文件描述（预处理器的先后取决于登记次序；触发判定启动的识别，放行时
+    // 换成 aalis-file:// 引用、写好文件描述（输入阶段中间件的先后取决于登记方的位次，file-reader 在前；触发判定启动的识别，放行时
     // 也不等它执行完毕），整表覆盖会把引用改回原始数据、把文件描述冲掉。attachments 逐项只补 mimeType 与
     // 落盘的地址（ref），描述只填本插件写了的位（文件、直通音频等保留已有值）
     msg.attachments = (msg.attachments ?? []).map((a, i) => ({

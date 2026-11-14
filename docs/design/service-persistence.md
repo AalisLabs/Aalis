@@ -25,7 +25,6 @@
 | `hooks` | `@aalis/plugin-hooks` | 钩子链 | n/a | 否（由登记方重建） | bounce 时必选依赖它的插件先关闭，再按拓扑序重新激活并重新登记；每条登记按登记方的位次落回原处，次序与冷启动相同 |
 | `contributions` | `@aalis/plugin-contributions` | 贡献登记表 | n/a | 否（由登记方重建） | 同上；`collect` 顺序只由全局键决定，重建后不变 |
 | `commands` | `@aalis/plugin-commands` | 命令注册表（Map） | n/a | 否 | bounce 后由各插件 apply 时重新 `register` |
-| `agent` | `@aalis/plugin-agent` | preprocessor / processor 列表 | n/a | 否 | 同上，依赖下游插件 apply 时回注 |
 | `tools` | `@aalis/plugin-tool-system` | tool 定义 Map | n/a | 否 | 同上 |
 | `webui-server` | `@aalis/plugin-webui-server` | 页面与提示的登记表 | n/a | 否 | bounce 后下游插件经业务层的 `definePage` / `notify` 由 registrar 跟随重挂；owner 的布局记录在插件数据里，不随之丢失 |
 | `doctor` | `@aalis/plugin-doctor` | `lastReport` 单例 | n/a | 否 | 重载后报告丢失，需重新 `runChecks` |

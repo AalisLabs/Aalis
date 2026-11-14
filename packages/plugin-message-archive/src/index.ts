@@ -32,7 +32,7 @@ const configSchema = defineConfig({
 });
 
 /**
- * 能当地址的写法：网址，以及根在存储服务根表里的存储地址。预处理器换上的私有引用（形似存储地址、根不存在）与相对路径
+ * 能当地址的写法：网址，以及根在存储服务根表里的存储地址。预处理换上的私有引用（形似存储地址、根不存在）与相对路径
  * 不算
  */
 function addressOf(value: string | undefined, roots: ReadonlySet<string>): string | undefined {
@@ -42,7 +42,7 @@ function addressOf(value: string | undefined, roots: ReadonlySet<string>): strin
 }
 
 /**
- * 入站附件的清单：地址取附件的 data；data 不是地址（内联数据、本机路径、预处理器的私有引用）时，取预处理器写在附件 ref 上的
+ * 入站附件的清单：地址取附件的 data；data 不是地址（内联数据、本机路径、预处理换上的私有引用）时，取预处理时写在附件 ref 上的
  * 落盘地址（如媒体识别把上传的图片落盘后、文件读取把 data 换成文件引用前写的）。不从附件描述里取：描述里有群友起的文件名，
  * 媒体判据把这份清单当作系统记下的引用
  */
@@ -276,7 +276,7 @@ function createArchiveService(
       if (incoming.triggerType === 'idle') return undefined;
 
       // 调用 plugin-media 一站式处理（识别 attachments 并写回 _attachmentDescriptions）
-      // 仅在 preprocessor 尚未运行（_attachmentDescriptions 未预设）时才调用，避免重复识别。
+      // 仅在还没预处理过（_attachmentDescriptions 未预设）时才调用，避免重复识别。
       // 对传入的消息对象调用（识别结果随之写回入参）：processMessage 按消息对象只处理一次，
       // 触发判定已启动的识别在这里命中（在途则等它），对拷贝调用会再识别一遍
       if (incoming.attachments && incoming.attachments.length > 0 && !incoming._attachmentDescriptions) {
