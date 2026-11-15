@@ -17,16 +17,18 @@ import { closeActivations } from './close-plan.js';
 import { missingRequiredService } from '../composition/binding.js';
 import type { DefinitionSpec } from '../composition/plugin-definition.js';
 import { cloneConfigObject } from '../infrastructure/config-values.js';
-import { type LogWriter, summarizeError } from '../infrastructure/logger.js';
+import { type Logger, type LogWriter, quietLogger, summarizeError } from '../infrastructure/logger.js';
 
 /**
- * 注册表里的记录：公开的 {@link PluginEntry} 加上登记时取定的定义与这次激活（不进公开类型）。
+ * 注册表里的记录：公开的 {@link PluginEntry} 加上登记时取定的定义、子日志器与这次激活（不进公开类型）。
  * 失败只存一份 failure，error 在投影时现算。failure 只在激活失败、转 error 的那个同步段里写入，离开 error 的 enable、disable、
  * bounce 都先清掉它：pending、activating、active、disabled 下它恒为空，激活成功与回到 pending 时不必再清
  */
 export interface PluginRecord extends Omit<PluginEntry, 'error'> {
   /** 登记时取定的定义：core 只读它，不回到 definition 上现读 */
   readonly spec: DefinitionSpec;
+  /** 登记时派生的子日志器：这条登记的每次激活都用它 */
+  readonly logger: Logger;
   activation?: Activation;
 }
 
@@ -102,29 +104,31 @@ export async function retireBatch(
  * 本次 required 引用缺席：清理失败激活后回到 pending，重算继续观察可能已恢复的依赖，不计次数。其余失败转为 error 态
  * （带 message），外层 recompute 不会重试。
  * 前置条件（唯一调用方 PluginManager.#activate 由 Phase B 调用，Phase B 在同一拍里已判定）：entry 为 pending、
- * 旧激活已清，required 依赖都有提供者，且它为这些服务选中的那一家都未进关闭计划。同步段返回时 entry.activation 已是本次激活（配置拷贝失败时没有激活）。
+ * 旧激活已清，required 依赖都有提供者，且它为这些服务选中的那一家都未进关闭计划。同步段返回时 entry.activation 已是本次激活。
  * 转入后台期间它的服务暂不对外（ServiceContainer.hold）；成功时先写 active 再上线，失败与被接管时随拆卸摘除。
  */
 export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps): Promise<void> {
   const { host, logger } = deps;
   const services = host.runtime.services;
 
-  // 先标记为 activating，防止服务变更触发的重算导致重入
+  // 建激活记录、写状态、挂记录在同一个同步段里做完，中间不执行外来代码：之后的外来代码（拷配置时的陷阱、装配函数、apply）
+  // 里发起的管理动作，接手的都是挂好的这次激活，下方照常让位。日志器与其他内置服务一样每次激活一份：登记时派生的那一个
+  // 每次激活包一层新的，插件就地改它、改它再派生出的子日志器，都只影响本次激活
+  const activation = host.create(entry.instanceId, quietLogger(entry.logger));
   entry.state = 'activating';
-
-  // 提到 try 外：catch 里认接手看的是本次激活自己，拆卸超过时限放行后 entry.activation 可能已被关闭计划清掉
-  let activation: Activation | undefined;
+  entry.activation = activation;
   try {
-    // 与其他内置服务一样，每次激活一份：插件改它只影响本次激活，碰不到注册表与下一次激活。拷贝在 try 里：按引用透传的
-    // 叶子此刻可能读不了（如登记后被撤销的 Proxy），这时没有激活可拆，照激活失败转 error
-    activation = host.create(entry.instanceId, cloneConfigObject(entry.config));
-    entry.activation = activation;
-    // 登记后再 await，让拆卸路径能先等 apply 落定（见 Resources.trackInitialization）
-    // 按取定的 uses 装配；this 仍是定义对象
-    const caps = host.bind(activation, entry.spec.uses);
-    const applying = Promise.resolve(Reflect.apply(entry.spec.apply, entry.definition, [caps]));
-    activation.resources.trackInitialization(applying);
-    await applying;
+    // 配置同样每次激活一份：插件改它只影响本次激活，碰不到注册表与下一次激活。按引用透传的叶子此刻可能
+    // 读不了（如登记后被撤销的 Proxy），照激活失败转 error
+    activation.config = cloneConfigObject(entry.config);
+    // 按取定的 uses 装配。拷配置的陷阱里已被接手的不装配，装配函数里已被接手的不调 apply，都由下方让位
+    const caps = activation.resources.disposed ? undefined : host.bind(activation, entry.spec.uses);
+    if (caps && !activation.resources.disposed) {
+      // this 仍是定义对象。登记后再 await，让拆卸路径能先等 apply 落定（见 Resources.trackInitialization）
+      const applying = Promise.resolve(Reflect.apply(entry.spec.apply, entry.definition, [caps]));
+      activation.resources.trackInitialization(applying);
+      await applying;
+    }
 
     // 接管检查：本次激活已冻进某张关闭计划，拆卸与终态归那张计划，本次激活的收尾（置 active / 报 error / 跑就绪回调）
     // 全部让位，也不转入 retireBatch 再 join 计划（停机时 App 正等当前 recompute 落定才执行计划，再 join
@@ -158,13 +162,13 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     for (const name of services.release(activation.owner)) host.runtime.serviceChanged(name);
     logger.info(`插件已激活: ${entry.instanceId}`);
   } catch (err) {
-    // 接管让位同上：apply 拒绝也不夺回拆卸责任，资源由接手的那张计划回滚。配置拷贝失败时没有激活，也谈不上被接手
-    if (activation?.resources.disposed) {
+    // 接管让位同上：apply 拒绝也不夺回拆卸责任，资源由接手的那张计划回滚。认的是本次激活自己，不经 entry.activation：
+    // 拆卸超过时限放行后它可能已被关闭计划清掉
+    if (activation.resources.disposed) {
       logger.debug(`插件 "${entry.instanceId}" 激活中止且已被接手（现态 ${entry.state}）:`, err);
       return;
     }
-    // 配置拷贝失败时没有激活，也就谈不上缺服务
-    const missing = activation && missingRequiredService(err, activation.resources, entry.spec.required);
+    const missing = missingRequiredService(err, activation.resources, entry.spec.required);
     if (missing !== undefined) {
       logger.debug(`插件 "${entry.instanceId}" 初始化期间 required 服务不可用（缺 "${missing}"），清理后等待依赖恢复`);
       await retireBatch([entry], 'pending', deps);

@@ -11,7 +11,7 @@ import {
 } from '../../packages/core/src/index.js';
 
 // 定义在登记时取定：core 用到的字段（name、displayName、reusable、apply、uses、provides）当场读一次，之后各处读这一份。
-// 登记后再改定义对象不生效；读字段、拷配置这些会执行外部代码的步骤都在查重之前，查重与写入之间不再执行外部代码。
+// 登记后再改定义对象不生效；读字段、拷配置、派生子日志器这些会执行外部代码的步骤都在查重之前，查重与写入之间不再执行外部代码。
 
 const apps: App[] = [];
 afterEach(async () => {
@@ -279,5 +279,64 @@ describe('定义登记时取定', () => {
     expect([outer, await inner]).toEqual([false, true]);
     expect(gen).toBe(1);
     expect(app.plugins.getPlugin('dup')?.config).toEqual({ mode: 'inner' });
+  });
+
+  it('宿主日志器的 child 在派生子日志器时重入登记同一 id：只登记、只启动一份', async () => {
+    const svc = defineService<{ gen: number }>('snapshot-dup-child');
+    let gen = 0;
+    const definition = definePlugin({
+      name: 'dup-child',
+      uses: { provide },
+      provides: [svc],
+      apply({ provide }) {
+        provide.use(svc, { gen: ++gen });
+      },
+    });
+    // 只在第一次派生时重入：里面那次登记自己也会派生一次
+    let fired = false;
+    let inner: Promise<boolean> | undefined;
+    const noop = (): void => {};
+    const logger: Logger = {
+      debug: noop,
+      info: noop,
+      warn: noop,
+      error: noop,
+      child(scope) {
+        if (scope === 'dup-child' && !fired) {
+          fired = true;
+          inner = app.plugin(definition, { mode: 'inner' });
+        }
+        return logger;
+      },
+    };
+    const app = new App({ logger });
+    apps.push(app);
+    await app.plugins.idle();
+    const outer = await app.plugin(definition, { mode: 'outer' });
+    await app.plugins.idle();
+    expect([outer, await inner]).toEqual([false, true]);
+    expect(gen).toBe(1);
+    expect(app.plugins.getPlugin('dup-child')?.config).toEqual({ mode: 'inner' });
+  });
+
+  it('宿主日志器的 child 在派生子日志器时停机：这次登记被挡下，不入注册表', async () => {
+    let stopping: Promise<void> | undefined;
+    const noop = (): void => {};
+    const logger: Logger = {
+      debug: noop,
+      info: noop,
+      warn: noop,
+      error: noop,
+      child(scope) {
+        if (scope === 'late') stopping ??= app.stop();
+        return logger;
+      },
+    };
+    const app = new App({ logger });
+    apps.push(app);
+    await app.plugins.idle();
+    expect(await app.plugin(definePlugin({ name: 'late', apply() {} }))).toBe(false);
+    await stopping;
+    expect(app.plugins.getStatus()).toEqual([]);
   });
 });

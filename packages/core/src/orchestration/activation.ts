@@ -24,7 +24,8 @@ export class Activation {
   /** 登记的位次：根激活是空串，插件激活是它的 id（见 ServiceEntry.seat） */
   readonly seat: string;
   readonly logger: Logger;
-  readonly config: Readonly<Record<string, unknown>>;
+  /** 本次激活的那份配置：插件激活建好之后填一次（见 activatePlugin），根激活恒为空 */
+  config: Readonly<Record<string, unknown>> = {};
   readonly resources: Resources;
   /** 根激活名下的插件激活；插件激活的恒为空 */
   readonly children = new Set<Activation>();
@@ -41,7 +42,6 @@ export class Activation {
     id: string,
     owner: symbol,
     logger: Logger,
-    config: Readonly<Record<string, unknown>>,
     resources: Resources,
     services: ServiceContainer,
     owners: Map<symbol, Activation>,
@@ -51,7 +51,6 @@ export class Activation {
     this.owner = owner;
     this.seat = seat;
     this.logger = logger;
-    this.config = config;
     this.resources = resources;
     this.#services = services;
     this.#owners = owners;

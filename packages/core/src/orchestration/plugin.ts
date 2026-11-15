@@ -37,8 +37,6 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
   #plugins = new Map<string, PluginRecord>();
   #logger: LogWriter;
   readonly #host: ActivationHost;
-  /** 单个异步清理项的等待上限（毫秒；0=不设限），由 App 从 AppOptions 注入 */
-  readonly #disposeTimeoutMs: number;
   /** 激活超过它仍未完成即转入后台（毫秒；非正数=不设限），由 App 注入 */
   readonly #slowMs: number;
   /**
@@ -153,7 +151,6 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
 
   constructor(host: ActivationHost, logger: Logger, disposeTimeoutMs: number, slowMs: number) {
     this.#host = host;
-    this.#disposeTimeoutMs = disposeTimeoutMs;
     this.#slowMs = slowMs;
     // 状态改到一半时记的日志推迟交给宿主（见 deferredLogger）；交给编排层自由函数的也是这一个
     this.#logger = deferredLogger(logger.child('plugins'));
@@ -223,8 +220,8 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
    * 校验并登记一条（同步）。返回登记时的状态；被拒返回 false，拒因已记一笔（级别见 {@link PluginManagerService}）
    */
   #admit(item: PluginRegistration): 'pending' | 'disabled' | false {
-    // 先完成会执行外部代码的两步（读登记项与定义的字段、拷配置：getter 与 Proxy 陷阱都在这里），之后的检查与写入之间
-    // 不再有：外部代码重入登记同一 id 时，查重看得到它。两步失败都只让本条被拒，不抛——六个管理动作统一
+    // 先完成会执行外部代码的三步（读登记项与定义的字段、拷配置、派生子日志器：getter、Proxy 陷阱与宿主日志器的 child
+    // 都在这里），之后的检查与写入之间不再有：外部代码重入登记同一 id 时，查重看得到它。前两步失败都只让本条被拒，不抛——六个管理动作统一
     // Promise<boolean>，registerAll 的其余条目照常登记。手写的定义对象（没经 definePlugin）在这里补上同一道校验
     let own: PluginRegistration;
     let spec: DefinitionSpec;
@@ -248,6 +245,9 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
       return false;
     }
 
+    // 派生失败时沿用上一层，不抛
+    const logger = this.#host.root.logger.child(id);
+
     if (this.#shuttingDown) return this.#refuse('register', id, '处于停机终态');
     if (this.#plugins.has(id)) {
       this.#logger.warn(`插件 "${id}" 已注册，跳过`);
@@ -267,7 +267,7 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
     }
     const state = disabled === true ? 'disabled' : 'pending';
 
-    this.#plugins.set(id, { definition, spec, instanceId: id, config: copy, state });
+    this.#plugins.set(id, { definition, spec, instanceId: id, config: copy, state, logger });
     this.#order = undefined;
     this.#logger.info(state === 'disabled' ? `插件已注册(禁用): ${id}` : `插件已注册: ${id}`);
     return state;
@@ -284,12 +284,12 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
     if (!entry) return false;
 
     // 'disposed' 单向化的 unload 侧：已有卸载在途时不再二次
-    // retire——join 其拆卸（disposeAsync 幂等）后只确保注册表摘除。删除必须
+    // retire——join 其拆卸（它已冻在那次卸载的计划里，等那张计划关完它）后只确保注册表摘除。删除必须
     // 带恒等卫：并发首个 unload 完成后同 id 可能已重新注册，按名盲删会把无辜的
     // 新 entry 扫出注册表，留下注册表外的活实例。
     if (entry.state === 'disposed') {
       const inflight = entry.activation;
-      if (inflight) await inflight.disposeAsync(this.#disposeTimeoutMs);
+      if (inflight) await inflight.disposeAsync();
       if (this.#plugins.get(instanceId) === entry) {
         this.#plugins.delete(instanceId);
         this.#order = undefined;
@@ -612,10 +612,10 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
    */
   #activate(entry: PluginRecord): Promise<void> {
     const landing = activatePlugin(entry, this.#deps);
-    // 同步段已挂上本次激活（配置拷贝失败时没有）；清引用最早在一个微任务之后
-    const activation = entry.activation;
-    // 没有待落定的 apply（同步段里就失败了，正在回滚）：照旧等它收尾
-    if (!activation?.resources.initializing) return landing;
+    // 同步段已挂上本次激活；清引用最早在一个微任务之后
+    const activation = entry.activation!;
+    // 没有待落定的 apply（同步段里就失败了、正在回滚，或调 apply 之前已被接手）：照旧等它收尾
+    if (!activation.resources.initializing) return landing;
     const { signal } = activation.resources;
     return new Promise((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | undefined;

@@ -183,6 +183,7 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
       instanceId: 'race-mod',
       config: {},
       state: 'pending',
+      logger: host.root.logger.child('race-mod'),
     };
 
     const activating = activatePlugin(entry, {

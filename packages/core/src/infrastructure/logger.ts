@@ -74,7 +74,7 @@ export interface Logger {
   info(message: string, ...args: unknown[]): void;
   warn(message: string, ...args: unknown[]): void;
   error(message: string, ...args: unknown[]): void;
-  /** 派生带子作用域的 Logger（创建插件激活时由 ActivationHost 调用） */
+  /** 派生带子作用域的 Logger（登记插件时调用：每条通过定义与配置校验的登记一次，之后才被拒的登记也已调过；这条登记的各次激活共用派生出的那一个） */
   child(scope: string): Logger;
 }
 

@@ -22,7 +22,7 @@ Node 宿主 `@aalis/runtime` 的做法见文末与 [运行态与配置文档](co
 |---|---|---|
 | `logLevel` | `LogLevel` | 默认 Logger 的级别；缺省 `'info'`。注入了 `logger` 时不用 |
 | `logHub` | `LogHub` | 自定义日志通道；缺省=`LogHub.default`（进程级共享）。注入了 `logger` 时不用 |
-| `logger` | `Logger` | 自定义 Logger 实现；缺省=`DefaultLogger`（写入 logHub）。注入的与缺省的都由 App 包一层再用：日志方法抛错或返回被拒的 Promise 不传进 core 与插件，`child` 派生失败（抛错，或派生出的不是日志器）时沿用上一层，`app.logger` 也是包过的这层。插件管理器（作用域 `plugins`）的日志推迟一个微任务交给它，彼此先后不变：日志回调里发起的管理动作或 `stop()` 看到的是改完之后的状态；插件自己的日志不推迟。要按 App 固定日志时间戳，注入 `new DefaultLogger('aalis', level, hub, now)` |
+| `logger` | `Logger` | 自定义 Logger 实现；缺省=`DefaultLogger`（写入 logHub）。注入的与缺省的都由 App 包一层再用：日志方法抛错或返回被拒的 Promise 不传进 core 与插件，`child` 派生失败（抛错，或派生出的不是日志器）时沿用上一层，`app.logger` 也是包过的这层。插件的子日志器在登记时经 `child` 派生（每条通过定义与配置校验的登记一次），它的各次激活共用。插件管理器（作用域 `plugins`）的日志推迟一个微任务交给它，彼此先后不变：日志回调里发起的管理动作或 `stop()` 看到的是改完之后的状态；插件自己的日志不推迟。要按 App 固定日志时间戳，注入 `new DefaultLogger('aalis', level, hub, now)` |
 | `disposeTimeoutMs` | `number` | 单个异步清理项的等待上限（毫秒），默认 5000；也是停用、卸载、重启、停机撞上仍在初始化的插件，或后台激活的 required 依赖下线时 abort 后的宽限（见下文）。0=不设限 |
 | `slowThresholdMs` | `number` | 慢操作阈值（毫秒），默认 60000：插件激活超过它仍未完成即告警、转入后台；单个就绪回调（`lifecycle.onReady`）超过它即告警、不再等待。0=不设限 |
 | `version` | `string` | 启动 banner 用的内核版本；core 不自读 package.json |

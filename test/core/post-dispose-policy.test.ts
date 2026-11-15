@@ -6,9 +6,8 @@ import { HubRegistry, hub } from '../helpers/hub.js';
 // ════════════════════════════════════════════════════════════
 // post-dispose 注册政策：实际能力与窄激活记录的行为契约。
 // - 订阅类（provide/选择层 follow 与 watch/资源口 registrar 归属表/onReady/plugins.watch）：warn + no-op
-// - 构造类（host.create）：抛错
 // - 清理类（onDispose、onDrain、track）：warn 后仍就地执行（握着资源，no-op 即泄漏）
-// 本文件钉住其中 7 个入口，含幽灵副作用断言与活路径回归；onReady 与两个 watch 的拒收在 lifecycle-ready.test.ts、
+// 本文件钉住其中 6 个入口，含幽灵副作用断言与活路径回归；onReady 与两个 watch 的拒收在 lifecycle-ready.test.ts、
 // watch.test.ts。
 // 归属表以测试枢纽 hub 为样本（events / hooks / contributions / tools 等契约包枢纽同一做法）。
 // ════════════════════════════════════════════════════════════
@@ -103,17 +102,6 @@ describe('订阅类 post-dispose：warn + no-op', () => {
   });
 });
 
-describe('构造类 post-dispose：抛错', () => {
-  it('create：抛错且不残留孤儿子激活（此前会放入 _children 永不排空）', async () => {
-    const ctx = createActivationFixture();
-    await ctx.activation.disposeAsync();
-    expect(() => bindActivationFixture(ctx.host, ctx.host.create('orphan'))).toThrowError(
-      /^激活 "[^"]+" 已关闭，无法创建插件激活 "orphan"/,
-    );
-    expect(ctx.activation.children.size).toBe(0);
-  });
-});
-
 describe('活路径回归：守卫对未 dispose 的 ctx 零影响', () => {
   it('三个订阅入口 + onDispose 正常注册、正常触发、dispose 正常清理', async () => {
     const { make } = makeWorld();
@@ -139,13 +127,6 @@ describe('活路径回归：守卫对未 dispose 的 ctx 零影响', () => {
     expect(peer.caps.services.use.get('alive-svc')).toBeUndefined();
     expect(peer.hub.use.list()).toEqual([]);
     await peer.activation.disposeAsync();
-  });
-
-  it('create 在活激活上照常可用', async () => {
-    const ctx = createActivationFixture();
-    const child = bindActivationFixture(ctx.host, ctx.host.create('kid'));
-    expect(child.activation.id).toBe('kid');
-    await ctx.activation.disposeAsync();
   });
 });
 

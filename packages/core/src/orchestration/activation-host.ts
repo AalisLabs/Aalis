@@ -26,7 +26,7 @@ export class ActivationHost {
         return () => watchers.delete(watcher);
       },
     };
-    this.root = this.#make('root', {}, logger, '');
+    this.root = this.#make('root', logger, '');
     const providers = coreProviders(this.runtime, (identity, name) => this.caller(identity, name));
     // 自举：provide 的提供者须先在容器里，根才能经 uses 取到 provide；其余四项与第三方服务同走 provide
     this.runtime.services.register(provide.name, providers.provide, 'root', this.root.owner, { exclusive: true });
@@ -41,15 +41,14 @@ export class ActivationHost {
     return activation;
   }
 
-  /** 插件激活：一律挂在根激活名下 */
-  create(id: string, config: Record<string, unknown> = {}): Activation {
-    if (this.root.resources.disposed) throw new Error(`激活 "${this.root.id}" 已关闭，无法创建插件激活 "${id}"`);
-    const activation = this.#make(id, config, this.root.logger.child(id));
+  /** 插件激活：一律挂在根激活名下。日志器由调用方备好时这里不执行外来代码 */
+  create(id: string, logger: Logger = this.root.logger.child(id)): Activation {
+    const activation = this.#make(id, logger);
     this.root.children.add(activation);
     return activation;
   }
 
-  #make(id: string, config: Record<string, unknown>, logger: Logger, seat = id): Activation {
+  #make(id: string, logger: Logger, seat = id): Activation {
     const owner = Symbol(id);
     const runtime = this.runtime;
     let removed: string[] = [];
@@ -71,7 +70,7 @@ export class ActivationHost {
     resources.onCut(() => {
       removed = runtime.services.unregisterByOwner(owner);
     });
-    const activation = new Activation(id, owner, logger, config, resources, runtime.services, this.#owners, seat);
+    const activation = new Activation(id, owner, logger, resources, runtime.services, this.#owners, seat);
     this.#owners.set(owner, activation);
     return activation;
   }

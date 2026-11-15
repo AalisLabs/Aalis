@@ -272,4 +272,8 @@ describe('每次激活一份配置：与其他内置服务一样', () => {
     expect(status.state).toBe('error');
     expect(status.error).toContain('revoked');
   });
+
+  it('宿主根（app.bind）取到的配置是空对象', () => {
+    expect(makeApp().bind({ config }).config.use).toEqual({});
+  });
 });
