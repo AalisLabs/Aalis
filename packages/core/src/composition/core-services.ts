@@ -60,8 +60,8 @@ export interface LifecycleCap {
   readonly signal: AbortSignal;
   /**
    * 登记就绪回调：整体装好之后开始对外干活（连接、监听端口、起子进程、开定时器），每次激活跑一次。
-   * `App.start()` 等插件状态机静置后，按激活顺序逐个激活、同一激活内按登记序逐个等，宿主根排在全部插件之后；启动之后
-   * 才激活的（启用、重启、热装）在自己的 apply 落定后跑，重算与 `plugins.idle()` 不等它；本激活的就绪回调开始跑之后
+   * `App.start()` 等插件状态机静置后跑此刻已激活的插件与宿主根的就绪回调并等待；此后才激活的（启用、重启、热装，
+   * 或所等的服务这时才上线）在自己激活成功后跑，`start()`、重算与 `plugins.idle()` 都不等它；本激活的就绪回调开始跑之后
    * 才登记的（含在回调里登记的），下一个微任务另跑，不排进这一趟，`start()` 不等它。
    * 单个回调至多等 `slowThresholdMs`，超过记 warn、不再等它；抛错与拒绝只记在本激活名下，不影响别的回调与
    * `start()`。退订的、本激活已开始关闭的不跑。在跑的回调算这次激活的在飞工作：关闭在收尾段之后等它落定，至多等
@@ -124,16 +124,16 @@ export interface PreferenceScope {
  * 动态查询与偏好管理（管理、展示面用）。查到的服务不是声明依赖：不参与激活闸，
  * 不享有重绑与关停顺序保证——需要这些保证就写进 uses。get / all 按全局口径（不看本插件偏好），inspect 不给 `for` 也是。
  * 插件的业务调用只经 uses 声明的选择层：get / all 只用来查在不在、列运行期服务名的提供者与取身份键；展示与对外输出用
- * inspect，它不含实例、可以放心序列化。偏好只由用户经管理面写（WebUI、配置），普通插件不调 prefer / unprefer。
+ * inspect，它不含实例。偏好只由用户经管理面写（WebUI、配置），普通插件不调 prefer / unprefer。
  */
 export interface Services {
   /** 全局胜者。按名字查时没有类型可依凭，由调用方自行收窄 */
   get<K extends ServiceKey>(key: K): KeyedProvider<K> | undefined;
   all<K extends ServiceKey>(key: K): ServiceView<KeyedProvider<K>>[];
-  /** 当前有提供者的全部服务名（与 get / all / inspect 同一口径：转入后台、尚未完成激活的提供者不算） */
+  /** 当前有提供者的全部服务名（与 get / all / inspect 同一口径：转入后台且尚未完成激活的提供者不算） */
   names(): string[];
   /**
-   * 只读登记元数据（不含实例）。给 `for`（插件实例 id）即按那个插件的解析顺序排列，选中的那一条带 selected 与 basis，
+   * 只读登记元数据（不含实例）。给 `for`（插件实例 id）即按那个插件的解析顺序排列，每条带 selected，选中的那一条另带 basis，
    * 与它的 `caps.xxx.list()` 同一条规则；不给即全局口径
    */
   inspect(key: ServiceKey, scope?: PreferenceScope): ServiceInfo[];

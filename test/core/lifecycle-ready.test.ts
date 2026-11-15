@@ -11,8 +11,9 @@ import {
 
 // ════════════════════════════════════════════════════════════
 // lifecycle.onReady：整体装好之后开始对外干活的回调，每次激活跑一次。
-//   - start() 等静置后，按激活顺序逐个激活、同一激活内按登记序逐个等；宿主根排在全部插件之后；
-//   - 启动之后才激活的（启用、重启、热装），在自己的 apply 落定后跑，重算与 idle() 不等它；
+//   - start() 等静置后跑此刻已激活的插件与宿主根的回调并等待：插件之间按排出的激活次序逐个等，同一激活内按登记序，
+//     宿主根排在这一趟的插件之后；
+//   - 此后才激活的（启用、重启、热装，或所等的服务这时才上线），在自己激活成功后跑，start()、重算与 idle() 不等它；
 //   - 已就绪之后才登记的，下一个微任务跑；
 //   - 单个回调至多等 slowThresholdMs；抛错、拒绝只记在该激活名下；
 //   - 退订的、所属激活已开始关闭的不跑；在跑的回调算这次激活的在飞工作，关闭等它落定。
@@ -59,7 +60,7 @@ function world(options: Partial<AppOptions> = {}) {
 const base = defineService<{ tag: string }>('ready-test:base');
 
 describe('lifecycle.onReady：start() 里的次序与等待', () => {
-  it('按激活顺序逐个等：被依赖的先跑，前一个落定后一个才开始，全部落定 start() 才返回', async () => {
+  it('插件之间按排出的激活次序逐个等：被依赖的先跑，前一个落定后一个才开始，全部落定 start() 才返回', async () => {
     const { app } = world();
     const log: string[] = [];
     const hook = (tag: string) => async () => {
@@ -113,7 +114,7 @@ describe('lifecycle.onReady：start() 里的次序与等待', () => {
     expect(log).toEqual(['一', '二']);
   });
 
-  it('宿主根（app.bind）登记的回调排在全部插件之后', async () => {
+  it('宿主根（app.bind）登记的回调排在这一趟的插件之后', async () => {
     const { app } = world();
     const log: string[] = [];
     app.bind({ lifecycle }).lifecycle.use.onReady(() => void log.push('root'));

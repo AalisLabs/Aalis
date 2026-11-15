@@ -142,8 +142,8 @@ export class Activation {
   }
 
   /**
-   * 关闭本激活并等它关完。已在某张关闭计划里时等那张计划关完它，不另设时限：每张计划逐项受同一上限约束，
-   * 先冻的总会关完；否则现组一张计划。
+   * 关闭本激活并等它关完。已在某张关闭计划里时等那张计划关完它，不另设时限（每张计划逐项受同一上限约束，
+   * 上限为正数时先冻的总会关完）；不在任何计划里时现组一张计划。
    */
   disposeAsync(timeoutMs?: number): Promise<void> {
     return this.#closing ?? closeActivations([this], timeoutMs, this.logger);

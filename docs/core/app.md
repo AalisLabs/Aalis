@@ -64,11 +64,11 @@ life.use.onReady(() => log.use.info('已启动'));
 ### `app.start()`
 
 1. 等插件状态机静置（`plugins.idle()`）
-2. 跑就绪回调（`lifecycle.onReady`）：此刻已激活的插件按激活顺序逐个跑，同一激活内按登记序逐个等，宿主根排在全部插件之后
+2. 跑此刻已激活的插件与宿主根的就绪回调（`lifecycle.onReady`）并等待
 
 单飞：重入返回同一 Promise。停机开始后（含停机完成后）调用记一条 warn 后直接返回；启动途中停机开始，进行中的 `start()` 照常落定，还没轮到的回调不再跑。App 只有一轮生命周期，要重新跑一轮就新建 App。
 
-单个回调至多等 `slowThresholdMs`，超过即 warn 点名（插件实例 id，宿主为 `root`），不再等它、转向下一个；抛错与拒绝只记在登记它的激活名下。`start()` 不等转入后台的插件激活：它们在自己的 `apply` 落定、激活成功后各自跑就绪回调。配置文档外部变更的热重载编排属宿主政策（runtime 的 `installConfigHotReload`），`start()` 不做。
+单个回调至多等 `slowThresholdMs`，超过即 warn 点名（插件实例 id，宿主为 `root`），不再等它；抛错与拒绝只记在登记它的激活名下。`start()` 不等转入后台的插件激活：它们在自己的 `apply` 落定、激活成功后各自跑就绪回调。配置文档外部变更的热重载编排属宿主政策（runtime 的 `installConfigHotReload`），`start()` 不做。
 
 ### `app.stop()`
 
@@ -80,7 +80,7 @@ life.use.onReady(() => log.use.info('已启动'));
 
 清理回调与就绪回调（`lifecycle.onReady`）不能 `await app.stop()`，也不能直接返回该 Promise：停机正等待这些回调返回，二者会互等（至多等到 `disposeTimeoutMs` 后被放弃，为 0 时一直等）。需要请求停机时可以调用 `void app.stop()`；完整停机完成由外部宿主等待。
 
-单个异步清理项的等待上限由 `AppOptions.disposeTimeoutMs` 控制，不是整个停机流程的总期限。仍在初始化的插件 abort 之后，自它的收尾段开始至多再等 `disposeTimeoutMs`，到期仍未落定就不再等待，停机继续。关闭后陆续登记进来的异步清理与撤回（清理里再登记、漏清的定时器一直往里登记），在每段收口共用这一个上限，不随新登记延长。`slowThresholdMs` 与 `disposeTimeoutMs` 都非 0 时 `stop()` 总能结束；`disposeTimeoutMs` 为 0（不设限）时，永不落定的 `apply` 或清理项仍可能让它等待不返回。边规则见 [插件定义与能力](context.md)。
+单个异步清理项的等待上限由 `AppOptions.disposeTimeoutMs` 控制，不是整个停机流程的总期限。仍在初始化的插件 abort 之后，自它的收尾段开始至多再等 `disposeTimeoutMs`，到期仍未落定就不再等待，停机继续。`slowThresholdMs` 与 `disposeTimeoutMs` 都为正数时 `stop()` 总能结束；`disposeTimeoutMs` 不设限时，永不落定的 `apply` 或清理项仍可能让它等待不返回。边规则见 [插件定义与能力](context.md)。
 
 ### `app.plugin(definition, config?, instanceId?, options?)`
 
@@ -89,13 +89,13 @@ life.use.onReady(() => log.use.info('已启动'));
 - `config` 原样生效：core 不合并默认值，也不读配置文档。入参会被拷贝（纯对象与普通数组逐层拷开，危险键 `__proto__` / `constructor` / `prototype` 跳过），调用方之后改它不影响实例；`Date`、`Map`、类实例等非纯对象按引用透传，调用方与插件都不要就地改它们。默认值回填是宿主政策：runtime 的 `withPluginConfigSync` 在登记前把 schema 派生默认值深合并进文档。
 - `options.disabled` 为 `true` 时以禁用态登记、不激活，之后经 `plugins.enable` 启用。core 不读禁用名单，由宿主按配置文档传入。
 
-resolve 语义 = 登记完成 + 尽力即时激活。有在飞 recompute 或管理动作的挂起段时本次请求排队，resolve 时激活可能尚未发生。需要「激活已落定」则 `await app.plugins.idle()`（不得在插件 apply / onDispose 内）。激活超过 `slowThresholdMs` 仍未完成的插件转入后台，本方法与 `idle()` 在阈值处返回，见 [插件管理](plugin.md) 的慢激活一节。
+resolve 语义 = 登记完成 + 尽力即时激活。有在飞 recompute 或管理动作的挂起段时本次请求排队，resolve 时激活可能尚未发生。需要「激活已落定」则 `await app.plugins.idle()`（不得在插件 apply / onDrain / onDispose 内）。激活超过 `slowThresholdMs` 仍未完成的插件转入后台，本方法与 `idle()` 在阈值处返回，见 [插件管理](plugin.md) 的慢激活一节。
 
 ### `app.pluginAll(items)`
 
 批量注册。条目为 `{ definition, config?, instanceId?, disabled? }`，各字段同 `app.plugin` 的参数；返回值与 `items` 逐项对应，口径同 `app.plugin`，单项校验失败只拒该项。
 
-整批同步登记后只重算一次：依赖方在同一次重算里按拓扑序排在它 required 服务的全部提供者之后激活，不会先挂到先登记的后备提供者上。同时就绪的插件按登记序激活。宿主的冷启动与热扫描都走这里。resolve 语义同 `app.plugin`。
+整批同步登记后只重算一次：这次重算按 required 依赖的拓扑序逐个尝试激活，依赖方排在首个声明提供（`provides`）它 required 服务的插件之后，其余声明提供者不成环时也排在它前面；沿首个声明提供者成环时，环上的插件与传递地依赖它们的插件排在其余插件之后，彼此按登记序。轮到依赖方时，它的声明提供者里按偏好、优先级与位次排第一的那一家已经激活完成的，依赖方直接挂到它上面，不会先挂到先登记的后备提供者上。同时就绪的插件按登记序激活。宿主的冷启动与热扫描都走这里。resolve 语义同 `app.plugin`。
 
 ## 基础指令
 

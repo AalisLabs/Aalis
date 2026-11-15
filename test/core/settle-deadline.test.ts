@@ -1,5 +1,6 @@
-// 关闭后不断续登的清理（清理里再登记一项、漏清的定时器一直往里登记）受同一个总时限：每段收口至多等
-// disposeTimeoutMs，到点放弃剩下的并记 warn。只给每轮那一批限时的话，每一项都比上限短时一轮接一轮永不收口。
+// 关闭期间不断续登的清理（清理里再登记一项、漏清的定时器一直往里登记）不让关闭一直等下去：所在那条链开始执行之前
+// 登记的排进链里逐项等，之后登记的就地执行、由段收口一并等，每段收口共用一个 disposeTimeoutMs 的时限，到点放弃剩下的
+// 并记 warn。只给每轮那一批限时的话，每一项都比上限短时一轮接一轮永不收口。
 // 没有在飞工作的收口不设时限，不设定时器。
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App, definePlugin, type Logger, lifecycle } from '../../packages/core/src/index.js';
@@ -33,7 +34,7 @@ function world() {
 const settlesWithin = (work: Promise<unknown>, ms: number) =>
   Promise.race([work.then(() => true), sleep(ms).then(() => false)]);
 
-describe('关闭后续登的清理受同一个总时限', () => {
+describe('关闭期间续登的清理不让关闭一直等下去', () => {
   it('清理里再登记一项异步清理：unload 在时限内落定，放弃时记 warn', async () => {
     const { app, warnings } = world();
     let rounds = 0;

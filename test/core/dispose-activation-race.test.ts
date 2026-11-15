@@ -7,7 +7,7 @@ import { createActivationFixture } from '../helpers/activation.js';
 import { deferred } from '../helpers/deferred.js';
 
 // ============================================================
-// disposeAsync 的时序承诺：「返回时异步清理已真正完成」。
+// disposeAsync 的时序：返回时异步清理已落定，或已超过 disposeTimeoutMs 被放弃等待。
 //
 // 被打破的场景是全仓最常见的资源写法——apply 里先 await 拿资源、再挂
 // onDispose（memory-mongodb 的 connect + 4 个 createIndex、memory-sqlite 的

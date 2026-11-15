@@ -15,12 +15,13 @@ import { HubRegistry, hub } from '../helpers/hub.js';
 // 管理操作撞上 activating 窗口（apply 在飞）的行为锚。
 //
 // 拆卸方一律「先写目标态、再对在飞 ctx disposeAsync」——管理意图是后写者，
-// 激活收尾以「state 仍为 activating」为继续条件（接管即让位）。
+// 激活收尾以「本次激活没有开始关闭」为继续条件（接管即让位）。
 // bounce = retireBatch(pending) + 重算；required 下游看容器现态，optional 不级联重启。
 //
-// 新旧实例不同期由两道闸分担：同一 entry 靠「激活记录未清不重新激活」
-// （bounce 路径，白盒读 PluginRecord.context），同 id 重装靠注册表查重
-// （unload 在拆卸完成后才 delete，窗口内 register 被 plugins.has 挡下）。
+// 新旧实例不同期由三道闸分担：同一 entry 靠「激活记录未清不重新激活」
+// （bounce 路径，白盒读 PluginRecord.activation），同 id 重装靠注册表查重
+// （unload 在拆卸完成后才 delete，窗口内 register 被 plugins.has 挡下），
+// 关完仍有工作没落定的旧实例靠按 id 记着的 lingering（卸载完成后同 id 重新登记的也挡）。
 //
 // 时序不靠 sleep 赌：apply / onDispose 进门时解析 entered、卡在 gate 上，
 // 「管理操作发起时对方必定在飞」是结构保证。
@@ -231,7 +232,7 @@ describe('provider 重载时 activating 的 required 下游一并收敛', () => 
 });
 
 describe('error 终态的不变量：激活记录已清', () => {
-  it('apply 抛错进 error 后 context 为空（enable 复活路径依赖此不变量）', async () => {
+  it('apply 抛错进 error 后激活记录为空（enable 复活路径依赖此不变量）', async () => {
     const { app } = makeWorld();
     let attempts = 0;
     await app.plugin(

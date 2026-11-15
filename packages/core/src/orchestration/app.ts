@@ -24,20 +24,19 @@ export interface AppOptions {
   /** 默认 Logger 的级别；缺省 'info'。注入了 `logger` 时不用 */
   logLevel?: LogLevel;
   /**
-   * 单个异步清理项（onDispose 返回的 promise）的等待上限（毫秒），默认 5000。
-   * 用于插件 unload / bounce / 停机路径的 disposeAsync——网络类关闭（数据库/
+   * 单个异步清理项（onDrain / onDispose 返回的 promise）的等待上限（毫秒），默认 5000。
+   * 用于插件 unload / disable / bounce、依赖丢失的拆卸、激活失败的回滚与停机路径的 disposeAsync——网络类关闭（数据库/
    * 浏览器/MCP 连接）卡死时放弃等待该项、继续后续清理并 warn 点名。
    * 也是停用、卸载、重启、停机撞上仍在初始化的插件，或后台激活的 required 依赖下线时的宽限：abort 它的
    * `lifecycle.signal` 后，自其收尾段开始至多再等这么久，到期仍未落定即不再等待。关完仍有工作没落定的旧实例停下之前，
-   * 同一 id 不启动新实例（`getStatus()` 的 `lingering`）。关闭后陆续登记进来的异步清理与撤回，在每段收口共用这一个上限，
-   * 不随新登记延长。该值不是整个停机的期限。
-   * 传 0 表示不设限；超过 2³¹−1（定时器的最大延迟）按 2³¹−1 计。
+   * 同一 id 不启动新实例（`getStatus()` 的 `lingering`）。该值不是整个停机的期限。
+   * 传 0 表示不设限（负数与 `NaN` 同）；超过 2³¹−1（定时器的最大延迟）按 2³¹−1 计。
    */
   disposeTimeoutMs?: number;
   /**
    * 慢操作阈值（毫秒），默认 60000。插件激活超过它仍未完成：记一条 warn 点名，转入后台继续（它提供的服务在激活
    * 完成前不对依赖方开放），重算接着处理后面的插件，此后不再提醒（后台状态看 `getStatus()` 的 `slow`）；就绪回调
-   * （`lifecycle.onReady`）单个超过它仍未返回：记 warn 点名，不再等它。传 0 表示不设限；超过 2³¹−1 按 2³¹−1 计。
+   * （`lifecycle.onReady`）单个超过它仍未返回：记 warn 点名，不再等它。传 0 表示不设限（负数与 `NaN` 同）；超过 2³¹−1 按 2³¹−1 计。
    */
   slowThresholdMs?: number;
   /**
@@ -159,12 +158,12 @@ export class App {
   /**
    * 注册插件
    *
-   * **resolve 语义 = 登记完成 + 尽力即时激活**：完全静置时激活在返回前同步收敛；
+   * **resolve 语义 = 登记完成 + 尽力即时激活**：
    * 有在飞 recompute（反应式级联/另一插件正在激活）**或挂起段在途**
    * （unload/disable/bounce 的拆卸窗口）时，本次请求排队并入其收尾，
    * resolve 时激活可能尚未发生（排队不丢失——单飞排队见 recompute）。需要
    * 「激活已落定」的确定时机，调用后 `await app.plugins.idle()`（不得在插件
-   * apply/onDispose 内这样做——自等死锁，见 idle）。激活超过 `slowThresholdMs` 仍未完成的
+   * apply/onDrain/onDispose 内这样做——互等，见 idle）。激活超过 `slowThresholdMs` 仍未完成的
    * 插件转入后台（`activating`、`slow: true`），本方法与 idle 在阈值处返回，它落定后另触发一次重算。
    *
    * @param definition 插件定义（definePlugin 的产物）
@@ -183,8 +182,11 @@ export class App {
   }
 
   /**
-   * 批量注册：全部登记后只重算一次。依赖方因此在同一次重算里按拓扑序排在它 required 服务的
-   * 全部提供者之后激活，不会先挂到先登记的后备提供者上——宿主冷启动与热扫描都走这里。
+   * 批量注册：全部登记后只重算一次。这次重算按 required 依赖的拓扑序逐个尝试激活，依赖方排在首个声明提供（`provides`）它
+   * required 服务的插件之后，其余声明提供者不成环时也排在它前面；沿首个声明提供者成环时，环上的插件与传递地依赖它们的插件
+   * 排在其余插件之后，彼此按登记序。轮到依赖方时，它的声明提供者里按偏好、优先级与位次排第一的那一家已经激活完成的，依赖方
+   * 直接挂到它上面，不会先挂到先登记的后备提供者上——
+   * 宿主冷启动与热扫描都走这里。
    * 条目各字段同 {@link plugin} 的参数；resolve 语义同 {@link plugin}，返回值与 items 逐项对应。
    */
   pluginAll(items: ReadonlyArray<PluginRegistration>): Promise<boolean[]> {
@@ -221,7 +223,7 @@ export class App {
    *
    * 每次调用都返回完整停机的同一 Promise，包括清理期间的调用。清理回调与 onReady 回调不得 await 或返回该 Promise，否则
    * 会等待自身（至多等到 `disposeTimeoutMs` 后被放弃，为 0 时一直等）。
-   * 仍在初始化的插件在 `beginShutdown()` 冻结时即 abort，flight 不再等它；两个上限都非 0 时停机总能结束。
+   * 仍在初始化的插件在 `beginShutdown()` 冻结时即 abort，flight 不再等它；两个上限都为正数时停机总能结束。
    */
   stop(): Promise<void> {
     // 同步启动：不能延后一轮微任务，否则 bounce 可能抢在 beginShutdown 前过闸

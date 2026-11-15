@@ -9,7 +9,8 @@ import type { ServiceRuntime } from './runtime.js';
 import type { Logger } from '../infrastructure/logger.js';
 import type { Resources } from '../infrastructure/resources.js';
 
-// 只认框架为本次激活装配的 required 依赖的 use 句柄；optional、of(id)、动态查询与自造端口不借用重试资格。
+// 只认本次激活 required 依赖的 use 目标抛出的不可用错误，转发到这个目标的句柄都算；optional、of(id)、list() 条目与
+// follow 交出的句柄是别的目标，动态查询拿到的是原始实例，都不借用重试资格。
 class ServiceUnavailableError extends Error {
   override name = 'ServiceUnavailableError';
   readonly code: CoreFailureCode = 'service-unavailable';
@@ -101,7 +102,7 @@ export function createSelection<P, B>(
     return targets.get(id)!;
   };
   const selected = target();
-  // list() 条目的句柄钉在那一条登记：对外时打到它，之后访问抛错；不再对外的在下次 list() 时退役
+  // list() 条目的句柄钉在那一条登记：它对外时访问转发给它，不对外时抛错；不再对外的在下次 list() 时退役，此后重新对外也不再转发
   const listed = new Map<ServiceEntry, Target>();
   // follow 交给 attach 的句柄钉在挂上的这一条登记：同 id 换了新实例也打不到新的；这次挂载的清理落定之前一直可用
   const pin = (entry: ServiceEntry, attach: (handle: B) => FollowCleanup): FollowCleanup => {

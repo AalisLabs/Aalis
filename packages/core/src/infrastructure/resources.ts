@@ -23,7 +23,7 @@ export class Resources {
   readonly withdrawals: DisposableChain;
   /** 清理段：onDispose，释放自有资源 */
   readonly disposables: DisposableChain;
-  /** 本激活发起、尚未落定的异步工作（落定自删），值是诊断名：每段收口等它们 */
+  /** 本激活发起、尚未落定的异步工作（落定自删），值是诊断名：每段收口等其中没放弃等待的 */
   readonly #inflight = new Map<Promise<void>, string>();
   /** 其中超过宽限、收口不再等的；关完仍有未落定的工作，旧实例就还没停下（见 lingering） */
   readonly #abandoned = new Set<Promise<void>>();
@@ -163,7 +163,7 @@ export class Resources {
     return () => this.#cuts.delete(cut);
   }
 
-  /** 只置关闭位：此后不再接新登记；收尾、撤回与清理由后续调用执行。 */
+  /** 只置关闭位：此后经 {@link refuses} 把关的登记拒收，清理类登记照收；收尾、撤回与清理由后续调用执行。 */
   markClosing(): void {
     this.#closing = true;
   }
@@ -202,7 +202,8 @@ export class Resources {
     for (const cut of this.#cuts) cut();
     const handover = this.#hooks.afterCut?.();
     if (handover) await awaitWithTimeout(handover, timeoutMs, this.#timeout('等待下游交接'));
-    // 撤回段整体先于清理段，段内逆序；每段收口等本段发起、还没落定的异步工作
+    // 撤回段整体先于清理段：清理链逆序逐项等；撤回链各项的异步部分不逐项等，进在飞记录由收口一并等。
+    // 每段收口等本激活还没落定、也没放弃等待的在飞工作（不分哪一段发起）
     for (const chain of [this.withdrawals, this.disposables]) {
       await chain.disposeAsync(timeoutMs);
       await this.#settle(timeoutMs);

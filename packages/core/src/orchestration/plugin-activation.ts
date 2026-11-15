@@ -101,8 +101,8 @@ export async function retireBatch(
 /**
  * 尝试激活一个 pending 插件：建激活 → 挂载定义 → provides 校验。
  *
- * 本次 required 引用缺席：清理失败激活后回到 pending，重算继续观察可能已恢复的依赖，不计次数。其余失败转为 error 态
- * （带 message），外层 recompute 不会重试。
+ * 本次 required 依赖的 use 句柄抛出不可用错误：条目回到 pending，这次激活清理完之后重算再按依赖重新激活，不计次数。其余失败转为 error 态
+ * （带 message），外层 recompute 不会重试。激活期间已被关闭计划接手的不改条目，终态归那张计划。
  * 前置条件（唯一调用方 PluginManager.#activate 由 Phase B 调用，Phase B 在同一拍里已判定）：entry 为 pending、
  * 旧激活已清，required 依赖都有提供者，且它为这些服务选中的那一家都未进关闭计划。同步段返回时 entry.activation 已是本次激活。
  * 转入后台期间它的服务暂不对外（ServiceContainer.hold）；成功时先写 active 再上线，失败与被接管时随拆卸摘除。

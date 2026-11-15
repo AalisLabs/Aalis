@@ -34,7 +34,7 @@ export interface PluginStatusEntry {
   /** 激活超过 `AppOptions.slowThresholdMs` 仍未完成、已转入后台（state 为 activating）时为 true，否则不给 */
   slow?: boolean;
   /**
-   * 旧实例关完仍有工作没落定（清理或被拆的初始化超过 `AppOptions.disposeTimeoutMs`）时为 true，否则不给。state 照常是
+   * 旧实例所在的那一批关完时仍有工作没落定（它自己的清理、被拆的初始化或在跑的就绪回调超过 `AppOptions.disposeTimeoutMs`，或迟到登记、就地执行的清理在那时还在跑；它停下之前才登记的迟到清理也算）时为 true，否则不给。state 照常是
    * 目标态；它停下之前同一 id 不启动新实例，停下后按目标态继续。与 `slow` 对称：一个是新实例没启动完，一个是旧实例没停完
    */
   lingering?: boolean;
@@ -98,10 +98,12 @@ export interface PluginManagerService {
     options?: { disabled?: boolean },
   ): Promise<boolean>;
   /**
-   * 等待插件状态机静置（无在飞/排队的 recompute）。变更 API 在 flight 在飞时
+   * 等待插件状态机静置（无在飞/排队的 recompute，也无管理动作的挂起段）。register 与 enable 在已有重算或管理动作的拆卸在途时
    * 排队早退，需要"尘埃落定后再观察"的调用方在变更后 await 本方法。
    * 不等转入后台的激活（超过 slowThresholdMs 仍未完成的，以 activating、`slow: true` 可见）：它落定后另触发一次重算。
-   * 不得在插件 apply / onDispose 内调用（互等死锁）。onReady 回调里可以等，但要与本激活的 `signal` 赛跑：等待期间本激活
+   * 不得在插件 apply、onDrain / onDispose 以及交给 follow / registrar / track 的清理里等待本方法：它所等的重算或管理动作若正等着
+   * 这个回调返回即互等，重算等它激活的 apply 至多到 `slowThresholdMs`，拆卸等回调（含被拆的 apply）至多到 `disposeTimeoutMs`，
+   * 对应的值不设限时一直等。onReady 回调里可以等，但要与本激活的 `signal` 赛跑：等待期间本激活
    * 开始关闭时，关闭等这个回调落定、回调等静置、静置等这次关闭，互等到宽限超时（`disposeTimeoutMs` 为 0 时一直等）。
    */
   idle(): Promise<void>;

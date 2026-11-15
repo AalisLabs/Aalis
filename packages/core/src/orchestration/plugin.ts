@@ -80,7 +80,7 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
   #ready = false;
 
   /**
-   * 就绪相位（App.start 单飞，只调一次）：此刻已激活的插件按激活顺序逐个就绪，宿主根最后（它用插件的服务）。
+   * 就绪相位（App.start 单飞，只调一次）：此刻已激活的插件按排出的激活次序逐个就绪，宿主根最后（它用插件的服务）。
    * 开头取定的是激活本身、不是条目：相位途中才激活的（含重启出来的新实例）不在这一趟里，落定时自己跑（见
    * ActivationDeps.activated）；途中开始关闭的（含停机冻结），回调在执行时跳过（见 Resources.ready）。轮到时才从条目上读
    * 的话，读到的可能是重启出来的新实例：它还在 apply 就被提前跑了回调，或者它已经自己开跑、这里再跑一遍与之并行。
@@ -122,16 +122,17 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
   /**
    * 等待插件状态机静置：无在飞 recompute、无排队请求、无挂起段。
    *
-   * register/unload/enable/disable 等变更 API 在已有 flight 在飞时会**排队并
+   * register 与 enable 在已有 flight 在飞或管理动作的拆卸在途时会**排队并
    * 立即返回**（单飞早退是刻意设计，join 在飞 promise 会在 apply/onDispose 内
-   * 同步触发的变更调用上自我死锁）。需要"尘埃落定后再观察"的外部调用方
+   * 同步触发的变更调用上自我死锁）；unload / disable / bounce / updateConfig 等自己的拆卸做完，
+   * 再发起一次重算，口径相同：有在途的就排队返回，没有就等它跑完。需要"尘埃落定后再观察"的外部调用方
    * （宿主引导、WebUI 刷新、测试断言）在变更后 await 本方法。
    *
    * 不等转入后台的激活：flight 对单个激活至多等到阈值（或它被停机、管理动作接手）为止。
    * 后台激活落定时自己再触发一次重算。
    *
-   * **不得在插件 apply / onDispose 内调用**——flight 正等着你返回，
-   * 等 flight 结束即互等死锁。onReady 回调里等它的约束见 {@link PluginManagerService.idle}。
+   * **不得在插件 apply、onDrain / onDispose 以及交给 follow / registrar / track 的清理里等待它**——flight 或管理动作的拆卸
+   * 正等着这个回调返回时，回调再等静置即互等，至多等到对应的时限。时限与 onReady 回调里等它的约束见 {@link PluginManagerService.idle}。
    */
   idle(): Promise<void> {
     if (!this.#reloading && !this.#suspended && !this.#queued) return Promise.resolve();
@@ -210,7 +211,8 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
 
   /**
    * 批量注册：整批同步登记后只重算一次。登记之间没有 await，在飞的重算看不到半批，
-   * 依赖方因此在同一次重算里排在它 required 服务的全部提供者之后激活。
+   * 依赖方因此在同一次重算里排在它 required 服务的首个声明提供者之后，其余声明提供者不成环时也在前；沿首个声明提供者成环的
+   * 连同依赖它们的按登记序排在最后（细则见 topoSortByDeps）。
    * 返回值与 items 逐项对应，口径同 {@link register}。
    */
   async registerAll(items: ReadonlyArray<PluginRegistration>): Promise<boolean[]> {

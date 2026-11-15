@@ -86,7 +86,7 @@ sessionManager.follow(sm => {
 
 往 hub 登记（工具 / 命令 / 页面）走业务层的登记方法：`tools.use.register`、`commands.use.command`、`webui.use.definePage`。它们用 registrar：同键替换、换人整体重挂、关闭后拒收。它与 `follow` 的串行交接不同，不能声称新旧资源绝无重叠。
 
-关停保护覆盖声明的服务的全部提供者：整机停机时，你经 `of(id)` 或 `list()` 条目用到的、不是此刻选中的那一家，同样等你关完才收尾。单独卸载、停用或重启某个提供者时，并入同一批先关的只有此刻选中它的 required 下游；你以 optional 声明它，或经 `of(id)`、`list()` 条目用到它，它照样先走：之后经 `of(id)` 与 `list()` 条目的访问抛 `ServiceUnavailableError`，`use` 换到下一家、选不到时同样抛错，调用处要能处理。
+关停保护覆盖声明的服务的全部提供者：整机停机时，你经 `of(id)` 或 `list()` 条目用到的、不是此刻选中的那一家，同样等你关完才收尾。单独卸载、停用或重启某个提供者时，并入同一批先关的是此刻选中它、或随这一批失去全部提供者的 required 下游；你以 optional 声明它，或经 `of(id)`、`list()` 条目用到它，它照样先走：之后经 `of(id)` 与 `list()` 条目的访问抛 `ServiceUnavailableError`，`use` 换到下一家、选不到时同样抛错，调用处要能处理。
 
 长期缓存 `services.use.get` / `services.use.all(desc)[i].instance` 拿到的原始实例：关停边不保护这份引用。提供者有失效逻辑则抛，没有则可能静默成功。
 
@@ -157,7 +157,7 @@ lifecycle.use.onDispose(() => {
 });
 ```
 
-外部资源（OS handle、网络连接、子进程、定时器）**必须**手动清理。回调**可以是异步的**：unload / bounce / 停机路径会逐项等待 promise（单项默认 5s 上限，超时放弃并 warn 点名）。
+外部资源（OS handle、网络连接、子进程、定时器）**必须**手动清理。回调**可以是异步的**：unload / disable / bounce、依赖丢失的拆卸、激活失败的回滚与停机路径会逐项等待 promise（单项默认 5s 上限，超时放弃并 warn 点名）。
 
 ### 应该放入 `onDrain`
 

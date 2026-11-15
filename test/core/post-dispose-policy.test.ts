@@ -6,7 +6,7 @@ import { HubRegistry, hub } from '../helpers/hub.js';
 // ════════════════════════════════════════════════════════════
 // post-dispose 注册政策：实际能力与窄激活记录的行为契约。
 // - 订阅类（provide/选择层 follow 与 watch/资源口 registrar 归属表/onReady/plugins.watch）：warn + no-op
-// - 清理类（onDispose、onDrain、track）：warn 后仍就地执行（握着资源，no-op 即泄漏）
+// - 清理类（onDispose、onDrain、track）：照常执行，所在那一段已开始的 warn 后就地执行（握着资源，no-op 即泄漏）
 // 本文件钉住其中 6 个入口，含幽灵副作用断言与活路径回归；onReady 与两个 watch 的拒收在 lifecycle-ready.test.ts、
 // watch.test.ts。
 // 归属表以测试枢纽 hub 为样本（events / hooks / contributions / tools 等契约包枢纽同一做法）。

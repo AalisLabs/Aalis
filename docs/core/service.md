@@ -41,7 +41,7 @@ export const inbox = defineService<Inbox, BoundInbox>('inbox', port => {
 
 - 契约包导出描述符（**值导入**，进 `dependencies`，不是 type-only）。类型与绑定实现随描述符走，不需要一张全局服务名 → 类型表。
 - 服务身份是描述符的 `name`。契约包装了两份也指向同一服务；同一服务名以不同的描述符对象登记时照常登记，`provide` 处记一条 warn 点名两边（无关契约撞名，或同一契约包装了两份）。第三方契约的服务名带包名前缀，见 [契约包](../design/api-packages.md)。
-- 描述符与 `optional()` 包装造出即冻结：改 `name`、换 `bind`、加字段都抛 `TypeError`。插件定义的 `uses` 与 `provides` 只收 `defineService` / `optional()` 造出来的那个对象，手写的同形对象与展开出来的副本在定义校验处（`definePlugin` 与注册）拒绝：`uses` 里的报「不是服务描述符（应为 defineService 的结果）」，`provides` 里的报「provides 含有不是描述符的元素」。`provide.use` 与 `app.bind` 不做这道检查：`provide.use` 只读服务名，没有服务名（缺、不是字符串、空白）即抛错。
+- 描述符与 `optional()` 包装造出即冻结：改 `name`、换 `bind`、加字段都不生效（严格模式下抛 `TypeError`）。插件定义的 `uses` 只收 `defineService` / `optional()` 造出来的那个对象，`provides` 只收 `defineService` 造出来的，手写的同形对象与展开出来的副本在定义校验处（`definePlugin` 与注册）拒绝：`uses` 里的报「不是服务描述符（应为 defineService 的结果）」，`provides` 里的报「provides 含有不是描述符的元素」。`provide.use` 与 `app.bind` 不做这道检查：`provide.use` 只读服务名，没有服务名（缺、不是字符串、空白）即抛错。
 - 进程里只能有一份 `@aalis/core`：另一份副本造的描述符、`optional` 包装在定义校验处（`definePlugin` 与注册）一律拒绝，错误写明「来自另一份 @aalis/core」；宿主 runtime 在 import 插件前也会核对包目录并只拒载该插件。插件以 peerDependencies 引用 core，排查见 [第三方插件开发者指南](../guide/third-party-plugin.md#two-cores)。
 - `provide.use(descriptor, impl)` 按描述符约束实现类型。
 - Core 默认登记的五项基础服务与第三方服务共用容器、描述符和 `bind`；`uses` 中的 required / optional 规则也相同。基础服务以 `exclusive` 登记，防止同名接口指向另一套实现；这项登记策略第三方同样可以使用。
@@ -98,7 +98,7 @@ interface ServiceView<T = unknown> {
 
 `services.use.all(key)` 返回该投影的数组快照，顺序遵循「全局偏好 > 优先级 > 位次」。选择层的 `list()` 给的是 `ProviderEntry`（`id` / `label` / `priority` / `selected` / `basis` / `use`），按本插件的口径排序，不含原始实例。
 
-`instance` 是登记进容器的对象本身，直接序列化会连同提供者的内部状态一起带出去。展示与对外输出用 `services.inspect(key, { for? })`（`get` / `all` 的用途见 [动态查询](context.md#动态查询-services)）：返回 `contextId` / `priority` / `label` / `exclusive`，选中的那一条另带 `selected` 与 `basis`，不含实例；给 `for`（插件实例 id）按那个插件的解析顺序排列，不给按全局口径。WebUI 的服务列表与插件详情里各插件此刻的选择都用这一元数据入口。
+`instance` 是登记进容器的对象本身，直接序列化会连同提供者的内部状态一起带出去。展示与对外输出用 `services.inspect(key, { for? })`（`get` / `all` 的用途见 [动态查询](context.md#动态查询-services)）：返回 `contextId` / `priority` / `label` / `exclusive` / `selected`，选中的那一条另带 `basis`，不含实例；给 `for`（插件实例 id）按那个插件的解析顺序排列，不给按全局口径。WebUI 的服务列表与插件详情里各插件此刻的选择都用这一元数据入口。
 
 ## 行为边界
 

@@ -170,7 +170,7 @@ core 的 `App` 构造只接收环境无关的选项（`logLevel` /
 
 - **插件发现驱动**：取得插件定义（例：Deno 用 import map、无 node_modules；浏览器打包成静态插件表），
   连同各实例的配置与禁用标记整批交给 `app.pluginAll([{ definition, config?, instanceId?, disabled? }, …])`。
-  整批登记只重算一次，依赖方排在它 required 服务的全部提供者之后激活。`@aalis/plugin-events`、`@aalis/plugin-hooks` 与
+  整批登记只重算一次，依赖方排在首个声明提供它 required 服务的插件之后（次序的细则见 [app.md](../core/app.md) 的 `pluginAll`）。`@aalis/plugin-events`、`@aalis/plugin-hooks` 与
   `@aalis/plugin-contributions` 放进同一批。
 - **配置文档**：core 只持运行态（各实例的配置、禁用态、服务偏好），文档的读写与落盘由宿主负责
   （例：浏览器配置走 fetch / IndexedDB）。交给 core 的配置原样生效，schema 默认值要由宿主先深合并进去
