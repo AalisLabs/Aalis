@@ -210,3 +210,89 @@ describe('登记收下的是拷贝', () => {
     expect(app.plugins.getPlugin('cfg-owner')?.config).toEqual(registered);
   });
 });
+
+// 拷新配置时执行的 getter 与 Proxy 陷阱排在判定之前：里面发起的动作改了条目或应用的状态，判定看得到；
+// 返回 false 时配置没有更换
+describe('updateConfig 先拷好新配置，再判定与写入', () => {
+  /** 一份新配置，读它时执行一次 act：getter 与 Proxy 陷阱两种 */
+  const armed: Array<[string, (act: () => void) => Record<string, unknown>]> = [
+    [
+      'getter',
+      act => ({
+        v: 2,
+        get late() {
+          act();
+          return 1;
+        },
+      }),
+    ],
+    [
+      'Proxy 陷阱',
+      act =>
+        new Proxy(
+          { v: 2 },
+          {
+            ownKeys(target) {
+              act();
+              return Reflect.ownKeys(target);
+            },
+          },
+        ),
+    ],
+  ];
+  const quiet = (name: string) => definePlugin({ name, apply() {} });
+
+  it.each(armed)('%s：拷新配置时停机，返回 false，旧配置不变', async (_, make) => {
+    const { app } = await mk();
+    await app.plugin(quiet('p'), { v: 1 });
+    await app.plugins.idle();
+    let stopping: Promise<void> | undefined;
+    const next = make(() => {
+      stopping ??= app.stop();
+    });
+    expect(await app.plugins.updateConfig('p', next)).toBe(false);
+    expect(app.plugins.getPlugin('p')?.config).toEqual({ v: 1 });
+    await stopping;
+  });
+
+  it('禁用态的条目，新配置的 getter 里停机：返回 false，仍是禁用态，旧配置不变', async () => {
+    const { app } = await mk();
+    await app.plugin(quiet('p'), { v: 1 }, undefined, { disabled: true });
+    let stopping: Promise<void> | undefined;
+    const next = armed[0][1](() => {
+      stopping ??= app.stop();
+    });
+    expect(await app.plugins.updateConfig('p', next)).toBe(false);
+    expect([app.plugins.getPlugin('p')?.state, app.plugins.getPlugin('p')?.config]).toEqual(['disabled', { v: 1 }]);
+    await stopping;
+  });
+
+  it('新配置的 getter 里卸载这个插件：返回 false，卸载中的条目上仍是旧配置', async () => {
+    const { app } = await mk();
+    await app.plugin(quiet('p'), { v: 1 });
+    await app.plugins.idle();
+    let unloading: Promise<boolean> | undefined;
+    const updating = app.plugins.updateConfig(
+      'p',
+      armed[0][1](() => {
+        unloading ??= app.plugins.unload('p');
+      }),
+    );
+    expect(app.plugins.getPlugin('p')?.config).toEqual({ v: 1 });
+    expect([await updating, await unloading]).toEqual([false, true]);
+  });
+
+  it('id 不在注册表，新配置的 getter 里登记了它：按登记之后的状态判定，返回 true 并换上新配置', async () => {
+    const { app } = await mk();
+    let registering: Promise<boolean> | undefined;
+    const next = armed[0][1](() => {
+      registering ??= app.plugin(quiet('p'), { v: 1 });
+    });
+    expect([await app.plugins.updateConfig('p', next), await registering]).toEqual([true, true]);
+    await app.plugins.idle();
+    expect([app.plugins.getPlugin('p')?.state, app.plugins.getPlugin('p')?.config]).toEqual([
+      'active',
+      { v: 2, late: 1 },
+    ]);
+  });
+});

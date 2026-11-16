@@ -460,16 +460,19 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
 
   /** 换上新配置并按 bounce 重启（见 {@link PluginManagerService.updateConfig}） */
   async updateConfig(instanceId: string, config: Record<string, unknown>): Promise<boolean> {
-    const entry = this.#target('updateConfig', instanceId);
-    if (!entry) return false;
     // 入参可能是调用方还要继续用的活对象（WebUI PUT / config-sync 浅铺开的 payload）。
-    // 注册表持有自己的拷贝：调用方之后改它不影响实例。不是纯对象或拷贝失败时保留旧配置并拒绝
+    // 注册表持有自己的拷贝：调用方之后改它不影响实例。不是纯对象或拷贝失败时不更换配置并拒绝。
+    // 先拷再判定：拷贝时要执行的 getter 与 Proxy 陷阱都在判定之前执行完，判定与写入之间不再有外来代码（与登记同一做法）
+    let copy: Record<string, unknown>;
     try {
-      entry.config = ownConfigObject(config);
+      copy = ownConfigObject(config);
     } catch (err) {
-      this.#logger.warn(`updateConfig: 插件 "${instanceId}" 的新配置无效，保留旧配置:`, err);
+      this.#logger.warn(`updateConfig: 插件 "${instanceId}" 的新配置无效，不更换配置:`, err);
       return false;
     }
+    const entry = this.#target('updateConfig', instanceId);
+    if (!entry) return false;
+    entry.config = copy;
     return entry.state === 'disabled' || this.bounce(instanceId);
   }
 

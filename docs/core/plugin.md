@@ -142,7 +142,7 @@ PluginManager 只有一个状态变更入口：服务上下线、注册、启停
 
 ### `updateConfig(instanceId, config)`
 
-换上新的运行配置，再按 `bounce` 重启。入参拷贝后再挂到 entry，插件经内置 `config` 就地改嵌套不会写穿调用方的对象；配置无效（规则同 `register`）时返回 false，保留旧配置。正常运行中 `disabled` 态只换上新配置、保持禁用，返回 true，启用时按新配置激活。停机中返回 false，不更换配置。
+换上新的运行配置，再按 `bounce` 重启。入参拷贝后再挂到 entry，插件经内置 `config` 就地改嵌套不会写穿调用方的对象；配置无效（规则同 `register`）时返回 false，保留旧配置。正常运行中 `disabled` 态只换上新配置、保持禁用，返回 true，启用时按新配置激活。停机中返回 false，不更换配置。新配置在前置检查之前拷好（同 `register`）：拷贝时执行的 getter 或 Proxy 陷阱里发起的动作，前置检查按动作之后的状态判定；新配置无效时不再做前置检查。
 
 ## 反应式监听
 
