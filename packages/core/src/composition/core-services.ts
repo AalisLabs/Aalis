@@ -178,22 +178,26 @@ export function coreProviders(
     if (typeof name !== 'string' || name.trim() === '') {
       throw new Error('provide 的第一个参数不是服务描述符（应为 defineService 的结果）');
     }
+    // 先读完选项再判定：选项上的 getter 在这里执行完，两条告警（宿主的日志器）挪到写入之后，判定与写入之间不再有外来代码。
+    // entryId 是普通读取（原型链上的照样读到），其余项只拷自有的可枚举属性；每项只读一次
+    const { entryId: given, ...rest } = options ?? {};
     if (c.resources.refuses(`provide("${name}")`)) return () => {};
-    const entryId = options?.entryId ?? c.id;
-    if (container.hasEntry(name, entryId, c.owner))
+    const entryId = given ?? c.id;
+    const duplicate = container.hasEntry(name, entryId, c.owner);
+    const rival = container.rivalOf(name, descriptor);
+    const off = container.register(name, implementation, entryId, c.owner, { ...rest, descriptor, seat: c.seat });
+    runtime.serviceChanged(name);
+    if (duplicate)
       c.logger.warn(
         `服务 "${name}" 已由本激活以 "${entryId}" provide 过一次，按 contextId 路由与设偏好只能命中其中一条。` +
           `一个激活登记多条时各传不同的 options.entryId；多套配置请在定义上声明 reusable，以 "<name>:<suffix>" 注册多个实例。`,
       );
-    const rival = container.rivalOf(name, descriptor);
     if (rival !== undefined)
       c.logger.warn(
         `服务 "${name}" 的登记来自两个不同的描述符对象：已有 "${rival}"，现在 "${c.id}"（照常登记）。` +
           `可能是两个无关的契约取了同一个服务名，也可能是同一个 api 包装了两份：对照两边导入描述符的包，` +
           `包名不同是撞名（服务名应带包名前缀），包名相同用 npm ls <包名> 查重复安装、去重后只留一份。`,
       );
-    const off = container.register(name, implementation, entryId, c.owner, { ...options, descriptor, seat: c.seat });
-    runtime.serviceChanged(name);
     // 一个激活登记多个条目（每个模型、每个存储根各一条）时带上条目 id，否则同名的登记行无从区分
     c.logger.debug(entryId === c.id ? `服务已注册: ${name}` : `服务已注册: ${name}（${entryId}）`);
     // 重复退订、激活关闭后再退订都是空操作，不通知
