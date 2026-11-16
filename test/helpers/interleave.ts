@@ -114,7 +114,7 @@ export function createWorld(seed: number, profile: Profile) {
   for (let i = 0; i < n; i++) group.push(i > 0 && r.chance(0.35) ? group[i - 1] : i);
   const descs = new Map(group.map(k => [k, defineService<Impl>(`zz-fz-s${k}`)]));
   const ownName = (i: number) => descs.get(group[i])!.name;
-  /** 撤下会同栈引发连锁收尾，所以在撤下之前记；剩下的提供者都在退场也算丢失 */
+  /** 剩下的提供者都在退场也算丢失 */
   const lose = (i: number) => {
     if (host.services.use.all(ownName(i)).every(v => v.contextId === ids[i] || !running(v.contextId)))
       lost.add(ownName(i));

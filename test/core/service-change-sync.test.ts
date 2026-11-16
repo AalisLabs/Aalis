@@ -13,6 +13,7 @@ import {
   type Services,
   services,
 } from '../../packages/core/src/index.js';
+import { deferred } from '../helpers/deferred.js';
 
 interface Hub {
   readonly items: string[];
@@ -100,17 +101,30 @@ describe('服务变更时 core 的跟随就地收敛', () => {
     expect(seen[0]).toEqual(['builtin']);
   });
 
-  // 硬依赖的消费方随提供者撤回整个转入拆卸，登记由它的撤回段统一收；照常运行的只有可选依赖的消费方
-  it('提供者撤回时可选依赖的消费方：登记在撤回这次调用里摘掉', async () => {
+  // 可选依赖的消费方照常运行；必需依赖的消费方由随后的重算拆掉（见下方 required 依赖撤回一条）。两种的登记都在撤回这次调用里摘掉
+  it.each([
+    ['可选', 'active'],
+    ['必需', 'pending'],
+  ])('提供者撤回时%s依赖的消费方：登记在撤回这次调用里摘掉', async (kind, settled) => {
     const { app, host } = await world();
     const table = hub();
     const off = host.provide.use(registry, table);
-    await app.plugin(consumer('consumer'));
+    await app.plugin(
+      kind === '可选'
+        ? consumer('consumer')
+        : definePlugin({
+            name: 'zz-consumer',
+            uses: { book: registry },
+            apply: ({ book }) => void book.use.register('consumer'),
+          }),
+    );
     await app.plugins.idle();
     expect(app.plugins.getPlugin('zz-consumer')?.state).toBe('active');
     expect(table.items).toEqual(['consumer']);
     off();
     expect(table.items).toEqual([]);
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('zz-consumer')?.state).toBe(settled);
   });
 
   it('切换偏好：登记在切换这次调用里搬到新选中的那一家', async () => {
@@ -161,8 +175,13 @@ describe('服务变更时 core 的跟随就地收敛', () => {
     expect([table.items, second.items]).toEqual([['outer'], ['inner']]);
   });
 
-  // 重算是第一个观察者：它的同步段先把要退场的消费者标成关闭，跟随随后跳过，清理照撤回段的次序排在收尾段之后
-  it('required 依赖撤回：消费者先进收尾段，跟随的清理在它的撤回段里跑', async () => {
+  // 重算晚一个微任务才跑：撤回的这次调用里消费者还没被标成关闭，它的跟随就地清理；随后的重算才拆它。
+  // 调度空闲、另有激活在途、管理动作的拆卸在途时次序相同
+  it.each([
+    '调度空闲',
+    '另有激活在途',
+    '管理动作的拆卸在途',
+  ])('required 依赖撤回（%s）：跟随的清理在撤回这次调用里跑，消费者随后才收尾', async occupied => {
     const { app, host } = await world();
     const feature = defineService<object>('zz-sync-required');
     const off = host.provide.use(feature, {});
@@ -177,11 +196,24 @@ describe('服务变更时 core 的跟随就地收敛', () => {
         },
       }),
     );
+    const gate = deferred();
+    // 被停用时卡在收尾里的插件：停用它的管理动作因此停在拆卸段
+    await app.plugin(
+      definePlugin({
+        name: 'zz-held',
+        uses: { lifecycle },
+        apply: ({ lifecycle }) => void lifecycle.use.onDrain(() => gate.promise),
+      }),
+    );
     await app.plugins.idle();
+    if (occupied === '另有激活在途') void app.plugin(definePlugin({ name: 'zz-slow', apply: () => gate.promise }));
+    if (occupied === '管理动作的拆卸在途') void app.plugins.disable('zz-held');
     off();
+    expect(order).toEqual(['cleanup']);
+    gate.resolve();
     await app.plugins.idle();
     expect(app.plugins.getPlugin('zz-dependent')?.state).toBe('pending');
-    expect(order).toEqual(['drain', 'cleanup']);
+    expect(order).toEqual(['cleanup', 'drain']);
   });
 
   // 原语与归属表条目同一拍撤掉，不等下游交接：下游跟随收敛、watch 回调收到通知时，拆卸中提供者的条目都已不在

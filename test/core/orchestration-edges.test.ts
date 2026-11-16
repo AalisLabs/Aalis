@@ -395,4 +395,28 @@ describe('保留的安全网：故障注入', () => {
     ]);
     expect(waited).toBe('settled');
   });
+
+  it('重算途中来过请求、随后抛错：排队标记同样不留着，idle 照常落定，停机照常完成', async () => {
+    const { app } = world();
+    const svc = defineService<object>('t:edges:fault-queued');
+    await app.start();
+    const broken = vi.spyOn(Resources.prototype, 'ready').mockImplementation(() => {
+      throw new Error('注入的故障');
+    });
+    // apply 里登记服务：这次重算在飞期间来了一个重算请求
+    const registering = app.plugin(
+      definePlugin({
+        name: 'provider',
+        uses: { provide },
+        provides: [svc],
+        apply: ({ provide }) => void provide.use(svc, {}),
+      }),
+    );
+    await expect(registering).rejects.toThrow('注入的故障');
+    broken.mockRestore();
+    const outcome = (work: Promise<unknown>) =>
+      Promise.race([work.then(() => 'settled'), new Promise(resolve => setTimeout(() => resolve('hung'), 200))]);
+    expect(await outcome(app.plugins.idle())).toBe('settled');
+    expect(await outcome(app.stop())).toBe('settled');
+  });
 });

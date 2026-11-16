@@ -290,9 +290,10 @@ describe('初始化期间 required 依赖消失', () => {
         uses: { dependency },
         async apply({ dependency }) {
           if (++attempts > 12) return void dependency.use.value;
-          // 先转入后台，再让自己的 required 依赖下线：重算在 apply 抛错之前就把它拆掉
+          // 先转入后台，再让自己的 required 依赖下线，并让出一拍：重算在 apply 抛错之前就把它拆掉
           await new Promise(resolve => setTimeout(resolve, 15));
           off();
+          await null;
           try {
             dependency.use.value;
           } catch (error) {
@@ -311,6 +312,34 @@ describe('初始化期间 required 依赖消失', () => {
     expect(debugs.filter(message => message.includes('激活中止且已被接手'))).toHaveLength(12);
     expect(consumer(app).state).toBe('active');
     expect([consumer(app).error, consumer(app).failure]).toEqual([undefined, undefined]);
+    expect(errors).toEqual([]);
+  });
+
+  it('转入后台的初始化期间 required 依赖在同一拍里下线又换上新的：不拆，apply 跑完后转 active', async () => {
+    const { app, host, errors, debugs } = world({ slowThresholdMs: 10, disposeTimeoutMs: 1000 });
+    let off = host.provide.use(dependency, { value: 1 });
+    let attempts = 0;
+    let seen: number | undefined;
+    await app.plugin(
+      definePlugin({
+        name: 'consumer',
+        uses: { dependency },
+        async apply({ dependency }) {
+          attempts++;
+          // 先转入后台，再在同一拍里撤下依赖、换上新的：轮到重算时服务已经在了
+          await new Promise(resolve => setTimeout(resolve, 15));
+          off();
+          off = host.provide.use(dependencyDescriptor, { value: 2 });
+          seen = dependency.use.value;
+        },
+      }),
+    );
+    const deadline = Date.now() + 5000;
+    while (consumer(app).state !== 'active' && Date.now() < deadline)
+      await new Promise(resolve => setTimeout(resolve, 5));
+    await app.plugins.idle();
+    expect([attempts, seen, consumer(app).state]).toEqual([1, 2, 'active']);
+    expect(debugs.filter(message => message.includes('激活中止且已被接手'))).toEqual([]);
     expect(errors).toEqual([]);
   });
 

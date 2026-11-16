@@ -38,8 +38,6 @@ describe('pluginAll', () => {
     ];
     const batched: string[] = [];
     const a = world();
-    // 先等构造期的重算落定，否则整批撞上在飞 run 排队，逐项重算也会被合并，本用例就分不出两种实现
-    await a.plugins.idle();
     await a.pluginAll(make(batched).map(definition => ({ definition })));
     await a.plugins.idle();
     expect(batched).toEqual(['preferred']);

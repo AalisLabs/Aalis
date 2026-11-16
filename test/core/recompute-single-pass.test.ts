@@ -1,7 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App, definePlugin, defineService, type Logger, provide } from '../../packages/core/src/index.js';
+import { ServiceContainer } from '../../packages/core/src/primitives/services.js';
 
 const svc = defineService<object>('single-pass-svc');
+const base = defineService<object>('single-pass-base');
 const tick = () => new Promise<void>(resolve => setTimeout(resolve, 0));
 
 const apps: App[] = [];
@@ -32,6 +34,33 @@ describe('重算收敛之后不另跑一遍', () => {
     await tick();
     expect(app.plugins.getPlugin('p')?.state).toBe('active');
     expect(notified).toBe(1);
+  });
+
+  it('激活一个提供服务的插件：重算的遍数与激活一个声明相同、什么都不提供的插件相同', async () => {
+    // 每一遍重算对每个 required 依赖判一次「还有没有人提供」：数这个判断的次数
+    const judged = vi.spyOn(ServiceContainer.prototype, 'survives');
+    const passes = async (definition: Parameters<App['plugin']>[0]): Promise<number> => {
+      const app = world();
+      app.bind({ provide }).provide.use(base, {});
+      await app.plugin(definePlugin({ name: 'needs', uses: { base }, apply() {} }));
+      await app.plugins.idle();
+      judged.mockClear();
+      await app.plugin(definition);
+      await app.plugins.idle();
+      await tick();
+      return judged.mock.calls.length;
+    };
+    const plain = await passes(definePlugin({ name: 'p', uses: { provide }, apply() {} }));
+    const provider = await passes(
+      definePlugin({
+        name: 'p',
+        uses: { provide },
+        provides: [svc],
+        apply: ({ provide }) => void provide.use(svc, {}),
+      }),
+    );
+    judged.mockRestore();
+    expect(provider).toBe(plain);
   });
 });
 

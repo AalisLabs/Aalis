@@ -158,7 +158,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     }
 
     entry.state = 'active';
-    // 转入过后台的激活此刻上线服务：先写 active，上线触发的重算才看得到它已激活
+    // 转入过后台的激活此刻上线服务：先写 active，上线这次调用里同步执行的跟随才读得到它已激活
     for (const name of services.release(activation.owner)) host.runtime.serviceChanged(name);
     logger.info(`插件已激活: ${entry.instanceId}`);
   } catch (err) {

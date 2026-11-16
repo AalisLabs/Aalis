@@ -35,7 +35,7 @@ const microtask = async () => {
   await Promise.resolve();
 };
 
-/** 一个已静置的 App（构造时登记宿主服务发起过一次重算，在飞期间的注册只排队）与它的 warn 记录 */
+/** 一个已静置的 App 与它的 warn 记录 */
 async function world(options: Partial<AppOptions> = {}) {
   const warns: string[] = [];
   const scoped = (scope: string): Logger => ({

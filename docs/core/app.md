@@ -74,7 +74,7 @@ life.use.onReady(() => log.use.info('已启动'));
 
 单飞：重入返回同一 Promise。现序：
 
-1. 插件管理进入停机终态（内部的 beginShutdown，不在 `app.plugins` 的公开面上）：置停机态、丢弃排队的重算，把根激活与全部插件激活冻进一张计划（之后六个管理动作一律返回 false；对这些激活的 `disposeAsync` 汇入该计划）。已静置时仍须先冻闸——`idle()` 会让出一轮微任务，同轮排队的 bounce 否则会在置位前过闸、留下 pending 幽灵。冻完后，`apply` 尚未完成的插件（在飞或后台）立即收到 `lifecycle.use.signal` 的 abort
+1. 插件管理进入停机终态（内部的 beginShutdown，不在 `app.plugins` 的公开面上）：置停机态，把根激活与全部插件激活冻进一张计划（之后六个管理动作一律返回 false，排队中与新来的重算都不再跑；对这些激活的 `disposeAsync` 汇入该计划）。已静置时仍须先冻闸——`idle()` 会让出一轮微任务，同轮排队的 bounce 否则会在置位前过闸、留下 pending 幽灵。冻完后，`apply` 尚未完成的插件（在飞或后台）立即收到 `lifecycle.use.signal` 的 abort
 2. `plugins.idle()`：排干在飞的 bounce / unload recompute；重算不再等已 abort 的激活
 3. 执行已冻的停机计划（内部的 stopAll）：逐项 drain / close，根激活也在这张计划里，返回时都已关完
 

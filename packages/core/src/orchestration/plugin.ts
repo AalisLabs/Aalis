@@ -52,7 +52,7 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
   readonly #lingering = new Set<string>();
   /** 交给编排层自由函数（activatePlugin / retireBatch）的宿主注入件，构造一次 */
   readonly #deps: ActivationDeps;
-  /** recompute 单飞标志：true 表示一次 recompute（含排队补跑）正在进行 */
+  /** recompute 单飞标志：true 表示一次 recompute 正在进行 */
   #reloading = false;
   /** 管理动作挂起段的层数（见 {@link #manage}） */
   #suspendDepth = 0;
@@ -60,9 +60,9 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
     return this.#suspendDepth > 0;
   }
   /**
-   * 有被推迟的重算：在飞 recompute 或挂起段期间到来的请求合并成一次。
-   * 目标态只看容器里此刻有没有服务，合并不丢信息。消费前先摘下；在飞的那次重算收敛时再清一次（执行期间到来的请求它都已
-   * 看到），收敛之后才到的另跑一次。
+   * 有不等结果的重算请求（{@link #kick}）还没消化：请求当场记在这里、下一个微任务才跑，idle() 等得到它。目标态只看容器里
+   * 此刻有没有服务，几次请求合并成一次不丢信息。任何一次重算结束时清掉（此前到来的请求改动的状态它都已看到），之后才到的
+   * 另跑一次；停机之后由重算的停机早退清掉。
    */
   #queued = false;
   /**
@@ -103,8 +103,6 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
    */
   beginShutdown(): void {
     this.#shuttingDown = true;
-    // 排队的重算已无意义；清掉排队项，让在飞重算/手动拆卸结束后 idle 能落定。
-    this.#queued = false;
     this.#shutdownSettle = freezeActivations([this.#host.root]);
     abortInitializing(this.#shutdownSettle);
   }
@@ -174,14 +172,21 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
     };
 
     // 服务可能变了就路由到统一 recompute()。
-    // 单飞/挂起/关机的取舍都在 recompute 内部处理（在飞期间排队，关机后跳过）。须是第一个服务观察者：重算的同步段
-    // 先把要退场的消费者标成关闭，它们的跟随随后跳过，交给撤回段统一收（拆卸路径上的下游由关闭计划先冻结）。
+    // 单飞/挂起/关机的取舍都在 recompute 内部处理（在飞期间并入在飞的那次，关机后跳过）。
     host.runtime.watchServices(name => this.#kick(`服务 ${name} 变更`));
   }
 
-  /** 不等结果地发起一次重算（反应式触发、后台激活落定）；报错点名触发原因，不外泄成未处理拒绝 */
+  /**
+   * 不等结果地请求一次重算（服务变更、flight 不再等的激活落定、旧实例停下）：当场记进排队，idle() 等得到它；下一个微任务
+   * 才跑，到时已被别的重算消化（排队已清）就不跑。不在变更方的同步段里跑，于是：变更那次调用里的跟随（follow、registrar）
+   * 总是先就地收敛，提供者自行撤回 required 服务时，依赖方挂在它上面的跟随先清理、之后才进收尾段，不随调度忙闲而变；
+   * 同一同步段里紧接着的登记自己起重算，返回时激活已落定，不会排到一个还没开始的重算后面。报错点名触发原因，不外泄成未处理拒绝
+   */
   #kick(why: string): void {
-    this.#recompute().catch(err => this.#logger.error(`recompute(${why}) 报错:`, err));
+    this.#queued = true;
+    queueMicrotask(() => {
+      if (this.#queued) this.#recompute().catch(err => this.#logger.error(`recompute(${why}) 报错:`, err));
+    });
   }
 
   /**
@@ -310,7 +315,7 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
   }
 
   /**
-   * 管理动作（unload / disable / bounce）的拆卸段：拆完调 done，退出挂起段后重算一次，消化期间排队的重算与级联（依赖被拆
+   * 管理动作（unload / disable / bounce）的拆卸段：拆完调 done，退出挂起段后重算一次，消化期间到来的重算请求与级联（依赖被拆
    * 插件所提供服务的下游转 pending）。挂起段期间拆卸引起的服务变更不立即重算：那会看到半成品状态，比如把正在禁用的插件
    * 重新激活。按层数计而非布尔：拆卸等待期间别的管理动作（含清理回调里级联发起的）可以进出各自的挂起段，内层退出时若复位
    * 布尔会过早解除外层的挂起，只有最外层退出（归零）才解除
@@ -526,83 +531,77 @@ export class PluginManager implements Omit<PluginManagerService, 'watch'> {
    * 判据只有一条：服务此刻在不在容器里（别的计划正关着的提供者不算在）。
    */
   async #recompute(): Promise<void> {
-    // 停机后重算无意义，拆卸全归停机计划。早退也要结算 idle 等待者：管理段收尾的 recompute 走到这里时
-    // 状态机已静置，不结算的话此前压进来的 idle() 永不落定（结算自己会核对三条静置守卫）
+    // 停机后重算无意义，拆卸全归停机计划：清掉还没轮到的不等结果的请求。早退也要结算 idle 等待者：管理段收尾的
+    // recompute 走到这里时状态机已静置，不结算的话此前压进来的 idle() 永不落定（结算自己会核对三条静置守卫）
     if (this.#shuttingDown) {
+      this.#queued = false;
       this.#settleIdleWaiters();
       return;
     }
-    this.#queued = true;
 
-    // 单飞 + 排队（修 lost wakeup）：在飞期间/挂起段的请求合并排队，由在飞的那次重算多看一轮吸收（它收敛之后才到的
-    // 由下面的循环再跑一次），或由挂起段收尾的 recompute 消化。注意这里必须
-    // 立即返回而不能把在飞 promise 交还调用方——若调用方恰在某插件 apply()
+    // 单飞：在飞期间到来的请求不另起一次，在飞的那次每等过一回就再看一整轮，自会看到它改动的状态；挂起段期间到来的由
+    // 挂起段收尾的 recompute 消化。注意这里必须立即返回而不能把在飞 promise 交还调用方——若调用方恰在某插件 apply()
     // 内同步调用（在飞 run 正 await 它），等待在飞 promise 会自我死锁。
     if (this.#reloading || this.#suspended) {
       return;
     }
 
+    // 就地写在这里，不另包一层 async 函数再 await：只在真有拆卸或激活要等时才让出，没有可做的时候在调用方的同步段里连同复位
+    // #reloading 一起做完。否则什么都不做的重算也要占着单飞多过一拍，这一拍里的登记会撞上单飞早退、在激活之前返回
     this.#reloading = true;
     try {
-      while (this.#queued) {
-        this.#queued = false;
-        await this.#recomputeOnce();
+      let changed = true;
+
+      // 停机后不再做状态转移：拆卸全归停机计划，这里再拆已冻进计划的激活会与计划互等
+      converge: while (changed && !this.#shuttingDown) {
+        changed = false;
+
+        const order = this.#activationOrder();
+
+        // Phase A：缺 required 的，连同随这批（与别的计划正关着的提供者）失去全部提供者的下游，成批关闭、下游先收尾
+        const services = this.#host.runtime.services;
+        const retiring = this.#closure([], [...order].reverse());
+        if (retiring.length > 0) {
+          const leaving = new Set(retiring.map(entry => entry.activation!.owner));
+          for (const entry of retiring) {
+            const unmet = entry.spec.required.find(name => this.#lost(name, leaving))!;
+            this.#logger.info(`依赖 "${unmet}" 不可用，停用插件: ${entry.instanceId}`);
+          }
+          await retireBatch(retiring, 'pending', this.#deps);
+          changed = true;
+        }
+
+        // Phase B: 正向遍历，激活目标 active 的 pending entry
+        for (const entry of order) {
+          // 已进入停机：不再启动新的实例
+          if (this.#shuttingDown) break converge;
+          // 旧激活仍在拆卸中（bounce 先置 'pending'、后异步拆旧激活，拆完才清 entry.activation），或关完仍有工作
+          // 没落定：此刻重新激活会让新旧实例同 instanceId 并存——同名服务重复 provide、偏好按 contextId 二义。跳过本轮，
+          // 等管理路径收尾后、或旧实例停下后的 recompute 重新调度
+          if (entry.state !== 'pending' || entry.activation || this.#lingering.has(entry.instanceId)) continue;
+          // 每个 required 服务都为它选得到一家，且那一家没进关闭计划（如被管理动作接手、flight 已不再等的在飞激活）：激活到
+          // 正在关闭的实例上拿到的是旧实例，等它关完、服务下线触发重算再判定。optional 不在判据里：它的上下线不改变目标态，
+          // 业务句柄每次访问解析当前那一家，有状态的接线经 follow 跟随提供者换人（Phase A 的退场另按 survives 判）
+          const ready = entry.spec.required.every(name => {
+            const owner = services.ownerOf(name, entry.instanceId);
+            return owner !== undefined && !this.#host.closing(owner);
+          });
+          if (!ready) continue;
+          // 等过一次激活就再看一轮，不论它落在哪个状态：等待期间到来的请求（服务变更、管理动作）都已改了注册表或容器
+          await this.#activate(entry);
+          changed = true;
+        }
       }
+
+      // 停机打断时没有收敛，但订阅方都已开始关闭，轮到时自己跳过
+      for (const poke of this.#watchers) poke();
     } finally {
+      // 最后一轮没有等过任何东西，此前到来的不等结果的请求改动的状态它都已看到，它们排下的那一次不必再跑；中途抛错也清掉，
+      // 否则没有人再来消化这个标记，idle() 与停机都等不到头
+      this.#queued = false;
       this.#reloading = false;
       this.#settleIdleWaiters();
     }
-  }
-
-  /** 单次完整重算：fixed-point 状态转移，收敛后通知 watch 的订阅 */
-  async #recomputeOnce(): Promise<void> {
-    let changed = true;
-
-    // 停机后不再做状态转移：拆卸全归停机计划，这里再拆已冻进计划的激活会与计划互等
-    converge: while (changed && !this.#shuttingDown) {
-      changed = false;
-
-      const order = this.#activationOrder();
-
-      // Phase A：缺 required 的，连同随这批（与别的计划正关着的提供者）失去全部提供者的下游，成批关闭、下游先收尾
-      const services = this.#host.runtime.services;
-      const retiring = this.#closure([], [...order].reverse());
-      if (retiring.length > 0) {
-        const leaving = new Set(retiring.map(entry => entry.activation!.owner));
-        for (const entry of retiring) {
-          const unmet = entry.spec.required.find(name => this.#lost(name, leaving))!;
-          this.#logger.info(`依赖 "${unmet}" 不可用，停用插件: ${entry.instanceId}`);
-        }
-        await retireBatch(retiring, 'pending', this.#deps);
-        changed = true;
-      }
-
-      // Phase B: 正向遍历，激活目标 active 的 pending entry
-      for (const entry of order) {
-        // 已进入停机：不再启动新的实例
-        if (this.#shuttingDown) break converge;
-        // 旧激活仍在拆卸中（bounce 先置 'pending'、后异步拆旧激活，拆完才清 entry.activation），或关完仍有工作
-        // 没落定：此刻重新激活会让新旧实例同 instanceId 并存——同名服务重复 provide、偏好按 contextId 二义。跳过本轮，
-        // 等管理路径收尾后、或旧实例停下后的 recompute 重新调度
-        if (entry.state !== 'pending' || entry.activation || this.#lingering.has(entry.instanceId)) continue;
-        // 每个 required 服务都为它选得到一家，且那一家没进关闭计划（如被管理动作接手、flight 已不再等的在飞激活）：激活到
-        // 正在关闭的实例上拿到的是旧实例，等它关完、服务下线触发重算再判定。optional 不在判据里：它的上下线不改变目标态，
-        // 业务句柄每次访问解析当前那一家，有状态的接线经 follow 跟随提供者换人（Phase A 的退场另按 survives 判）
-        const ready = entry.spec.required.every(name => {
-          const owner = services.ownerOf(name, entry.instanceId);
-          return owner !== undefined && !this.#host.closing(owner);
-        });
-        if (!ready) continue;
-        // 等过一次激活就再看一轮，不论它落在哪个状态：等待期间到来的请求（服务变更、管理动作）都已改了注册表或容器
-        await this.#activate(entry);
-        changed = true;
-      }
-    }
-
-    // 最后一轮没有等过任何东西，此前到来的请求改动的状态它都已看到：这些请求排下的补跑不必再跑。
-    // 停机打断的这一轮没有收敛，但订阅方都已开始关闭，轮到时自己跳过
-    this.#queued = false;
-    for (const poke of this.#watchers) poke();
   }
 
   /**

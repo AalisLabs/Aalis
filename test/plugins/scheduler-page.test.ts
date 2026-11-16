@@ -485,12 +485,14 @@ describe('激活中的页面', () => {
     try {
       await app.plugins.register(toolsPlugin, {});
       await app.plugins.register(cronEnginePlugin, {});
-      await app.plugins.register(schedulerPlugin, {
+      // 这次登记要等激活，而激活正卡在读持久化文件上：不等它，读开始之后先看页面
+      const registering = app.plugins.register(schedulerPlugin, {
         jobs: [{ name: 'static', interval: 60, sessionId: 'internal', platform: 'internal', content: 'x' }],
       });
       await started;
       expect(pages.pages(), '页面在它用到的调度表就绪前登记，取数与动作会撞上未初始化的服务').toEqual([]);
       release();
+      await registering;
       await app.plugins.idle();
       const rows = await pages.data<Array<{ name: string }>>('scheduler', 'jobs');
       expect(rows.map(row => row.name).sort()).toEqual(['saved', 'static']);
